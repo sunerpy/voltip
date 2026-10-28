@@ -5,9 +5,10 @@
 //! * [`Handshake`] — `Noise_XX_25519_ChaChaPoly_SHA256` via the `snow` crate; produces a
 //!   [`SessionCipher`] plus a [`SafetyCode`] derived from the handshake hash.
 //! * [`SafetyCode`] — four BIP-39 words + hex fingerprint that both users compare.
+//! * [`pairing_proof`] — HMAC-SHA256 proof that the joining side read the pairing ticket.
 //! * [`random_pair_code`] / [`random_nonce`] — CSPRNG helpers for the pairing layer.
 //!
-//! Nothing in this crate implements a primitive; it only composes `snow`, `sha2`, `rand`.
+//! Nothing in this crate implements a primitive; it only composes `snow`, `sha2`, `hmac`, `rand`.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -15,12 +16,14 @@
 
 mod handshake;
 mod keys;
+mod proof;
 mod safety;
 
 #[doc(hidden)]
 pub use handshake::complete_in_memory;
 pub use handshake::{HANDSHAKE_MESSAGE_LENS, Handshake, HandshakeOutcome, HandshakeStep, MAX_NOISE_MESSAGE_LEN, Role, SessionCipher, TAG_LEN};
 pub use keys::{PUBLIC_KEY_LEN, PublicKey, SecretKey, StaticKeypair};
+pub use proof::{PROOF_LEN, pairing_proof, verify_pairing_proof};
 pub use safety::{SafetyCode, WORD_COUNT, fingerprint_hex};
 
 /// Errors from the crypto layer. Deliberately coarse: callers must not branch on

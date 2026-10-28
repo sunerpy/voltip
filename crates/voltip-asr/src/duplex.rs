@@ -217,7 +217,7 @@ fn task_failed(value: &Value) -> AsrError {
     let (code, message) = (field("error_code"), field("error_message"));
     let said = || voltip_reply::clean(&if message.is_empty() { code.clone() } else { format!("{code}: {message}") });
     if is_quota_exhausted(&code, &message) {
-        AsrError::QuotaExhausted { message: voltip_reply::clean(&message), code }
+        AsrError::QuotaExhausted { message: voltip_reply::clean(&message), code, retry_at_ms: None }
     } else if code.starts_with("Throttling") {
         AsrError::RateLimited { retry_after_ms: None, message: said() }
     } else if code == "InvalidApiKey" {
@@ -502,7 +502,7 @@ pub(crate) mod tests {
         let (url, _) = serve(Script::Refuse(403, r#"{"code":"AllocationQuota.FreeTierOnly","message":"free tier exhausted"}"#)).await;
         assert_eq!(
             connect(&options(&url, Some("k"))).await.err(),
-            Some(AsrError::QuotaExhausted { code: "AllocationQuota.FreeTierOnly".into(), message: "free tier exhausted".into() })
+            Some(AsrError::QuotaExhausted { code: "AllocationQuota.FreeTierOnly".into(), message: "free tier exhausted".into(), retry_at_ms: None })
         );
         let (url, _) = serve(Script::FailAtStart("ModelNotFound", "Model not found (qwen3-asr-flash-realtime)!")).await;
         assert_eq!(
@@ -517,7 +517,7 @@ pub(crate) mod tests {
         let (url, _) = serve(Script::FailAtStart("AllocationQuota.FreeTierOnly", "x")).await;
         assert_eq!(
             connect(&options(&url, Some("k"))).await.err(),
-            Some(AsrError::QuotaExhausted { code: "AllocationQuota.FreeTierOnly".into(), message: "x".into() })
+            Some(AsrError::QuotaExhausted { code: "AllocationQuota.FreeTierOnly".into(), message: "x".into(), retry_at_ms: None })
         );
         let (url, _) = serve(Script::FailAtStart("InvalidApiKey", "no")).await;
         assert_eq!(connect(&options(&url, None)).await.err(), Some(AsrError::Unauthorized { message: "InvalidApiKey: no".into() }));

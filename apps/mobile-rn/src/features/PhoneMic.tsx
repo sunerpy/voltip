@@ -40,6 +40,7 @@ import {
   useAppTheme,
 } from "../ui/kit";
 import { SelectChip } from "../ui/Select";
+import { RecognitionUsedUp, TalkUsageLine, UsageNotices, useRecognitionUsedUp } from "./Usage";
 
 /** How often the listening timer redraws. */
 const TICK_MS = 250;
@@ -289,6 +290,8 @@ function TalkCard({
   stop,
   cancel,
   children,
+  blocked,
+  footer,
 }: {
   busy: boolean;
   /** The recording's time while it records. */
@@ -307,6 +310,11 @@ function TalkCard({
   cancel: () => void;
   /** The take's state line once it is past listening. */
   children?: ReactNode;
+  /** Why no take can start now and the ways on, in place of the label and the hint (the built-in
+   *  recognition used up, Penpot 「用量与额度」 board 15c); the button stays greyed. */
+  blocked?: ReactNode;
+  /** The card's last line (today's usage of the built-in recognition, board 15a). */
+  footer?: ReactNode;
 }) {
   const theme = useAppTheme();
   const { t } = useI18n();
@@ -407,14 +415,22 @@ function TalkCard({
         ? t("mobile.mic.releaseCancel")
         : releaseLabel;
   // The page's one solid accent, darker while held; over a release that cancels, the danger shade.
-  const fill = offButton
-    ? theme.voltip.dangerSoft
-    : held
-      ? theme.voltip.heroPressed
-      : theme.voltip.hero;
+  const fill =
+    blocked !== undefined
+      ? rgba(theme.voltip.subtle, 0.4)
+      : offButton
+        ? theme.voltip.dangerSoft
+        : held
+          ? theme.voltip.heroPressed
+          : theme.voltip.hero;
   const ink = offButton ? theme.voltip.danger : theme.voltip.onHero;
-  const glow = offButton ? theme.voltip.danger : theme.colors.primary;
-  const disabled = busy && !held;
+  const glow =
+    blocked !== undefined
+      ? theme.voltip.subtle
+      : offButton
+        ? theme.voltip.danger
+        : theme.colors.primary;
+  const disabled = blocked !== undefined || (busy && !held);
   const halos = held ? HALOS_HELD : HALOS_IDLE;
   return (
     <View
@@ -508,78 +524,93 @@ function TalkCard({
             borderColor: "rgba(255, 255, 255, 0.22)",
             alignItems: "center",
             justifyContent: "center",
-            opacity: disabled ? 0.5 : 1,
+            opacity: disabled && blocked === undefined ? 0.5 : 1,
             // A glow in the accent's own colour (board 03: 0 16 32, 45 %; held 0 10 28, 55 %).
-            boxShadow: held ? `0 10px 28px ${rgba(glow, 0.55)}` : `0 16px 32px ${rgba(glow, 0.45)}`,
+            boxShadow:
+              blocked !== undefined
+                ? "none"
+                : held
+                  ? `0 10px 28px ${rgba(glow, 0.55)}`
+                  : `0 16px 32px ${rgba(glow, 0.45)}`,
             transform: [{ scale }],
           }}>
           <Icon source={offButton ? "close" : "microphone"} size={44} color={ink} />
         </Animated.View>
       </View>
       {held && recording !== undefined && <Wave levels={levels} />}
-      <Text
-        testID="phone-mic-label"
-        style={[styles.label, { color: offButton ? theme.voltip.danger : theme.colors.onSurface }]}
-        numberOfLines={2}>
-        {label}
-      </Text>
-      <View style={styles.hint}>
-        {!held && (
-          <Text testID="phone-mic-route" style={[styles.hintText, { color: theme.voltip.subtle }]}>
-            {after}
-          </Text>
-        )}
-        <Text style={[styles.hintText, { color: theme.voltip.subtle }]}>
-          {tap ? t("mobile.mic.tapHint") : t("mobile.mic.slideCancel")}
-        </Text>
-        {codec !== undefined && <Mono style={{ textAlign: "center" }}>{codec}</Mono>}
-      </View>
-      {tap && held && (
-        <Button
-          compact
-          icon="close"
-          style={{ alignSelf: "center" }}
-          testID="phone-mic-cancel"
-          onPress={() => {
-            finish(true);
-          }}>
-          {t("mobile.mic.tapCancel")}
-        </Button>
-      )}
-      {children}
-      {/* The segments share the width they are given: centred on their own they had none and
-          collapsed to a sliver (Device Farm, 2026-10-13). */}
-      <View style={styles.mode}>
-        <Text
-          accessibilityElementsHidden
-          importantForAccessibility="no-hide-descendants"
-          style={[styles.modeLabel, { color: theme.voltip.subtle }]}>
-          {t("mobile.mic.mode")}
-        </Text>
-        <View style={styles.modeChoice}>
-          <Segmented<PhoneTalkMode>
-            testID="phone-talk-mode"
-            label={t("mobile.mic.mode")}
-            value={mode}
-            disabled={held || busy}
-            onChange={choose}
-            options={[
-              {
-                value: "hold",
-                icon: "gesture-tap-hold",
-                label: t("mobile.mic.modeHold"),
-                testID: "phone-talk-mode-hold",
-              },
-              {
-                value: "tap",
-                icon: "gesture-tap",
-                label: t("mobile.mic.modeTap"),
-                testID: "phone-talk-mode-tap",
-              },
+      {blocked ?? (
+        <>
+          <Text
+            testID="phone-mic-label"
+            style={[
+              styles.label,
+              { color: offButton ? theme.voltip.danger : theme.colors.onSurface },
             ]}
-          />
-        </View>
-      </View>
+            numberOfLines={2}>
+            {label}
+          </Text>
+          <View style={styles.hint}>
+            {!held && (
+              <Text
+                testID="phone-mic-route"
+                style={[styles.hintText, { color: theme.voltip.subtle }]}>
+                {after}
+              </Text>
+            )}
+            <Text style={[styles.hintText, { color: theme.voltip.subtle }]}>
+              {tap ? t("mobile.mic.tapHint") : t("mobile.mic.slideCancel")}
+            </Text>
+            {codec !== undefined && <Mono style={{ textAlign: "center" }}>{codec}</Mono>}
+          </View>
+          {tap && held && (
+            <Button
+              compact
+              icon="close"
+              style={{ alignSelf: "center" }}
+              testID="phone-mic-cancel"
+              onPress={() => {
+                finish(true);
+              }}>
+              {t("mobile.mic.tapCancel")}
+            </Button>
+          )}
+          {children}
+          {/* The segments share the width they are given: centred on their own they had none and
+          collapsed to a sliver (Device Farm, 2026-10-13). */}
+          <View style={styles.mode}>
+            <Text
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
+              style={[styles.modeLabel, { color: theme.voltip.subtle }]}>
+              {t("mobile.mic.mode")}
+            </Text>
+            <View style={styles.modeChoice}>
+              <Segmented<PhoneTalkMode>
+                testID="phone-talk-mode"
+                label={t("mobile.mic.mode")}
+                value={mode}
+                disabled={held || busy}
+                onChange={choose}
+                options={[
+                  {
+                    value: "hold",
+                    icon: "gesture-tap-hold",
+                    label: t("mobile.mic.modeHold"),
+                    testID: "phone-talk-mode-hold",
+                  },
+                  {
+                    value: "tap",
+                    icon: "gesture-tap",
+                    label: t("mobile.mic.modeTap"),
+                    testID: "phone-talk-mode-tap",
+                  },
+                ]}
+              />
+            </View>
+          </View>
+        </>
+      )}
+      {footer}
     </View>
   );
 }
@@ -627,8 +658,11 @@ function ComputerTalk({ target }: { target: DeviceView }) {
 }
 
 /** The phone recognises the take itself (docs/dictation.md §20.7): the built-in service
- *  transcribes and polishes it, and the result lands on the phone's clipboard. */
-function PhoneTalk() {
+ *  transcribes and polishes it, and the result lands on the phone's clipboard. While the built-in
+ *  recognition is used up and nothing stands in, no take starts (the phone keeps no recordings to
+ *  recognise again); the card says when the day starts again and offers `desktop`, the computer
+ *  online, and another model (docs/dictation.md §27). */
+function PhoneTalk({ desktop }: { desktop?: { name: string; choose: () => void } | undefined }) {
   const { backend } = useBackend();
   const { t } = useI18n();
   const { dictation } = useUiState();
@@ -640,8 +674,15 @@ function PhoneTalk() {
   const { frame, levels } = useTakeLevel(listening);
   const elapsed = listening && phase.ready ? now - phase.started_at : 0;
   const line = localTakeLine(phase, elapsed, t);
+  const usedUp = useRecognitionUsedUp();
   return (
     <TalkCard
+      blocked={
+        usedUp !== undefined && !running ? (
+          <RecognitionUsedUp usage={usedUp} desktop={desktop} />
+        ) : undefined
+      }
+      footer={<TalkUsageLine />}
       busy={running}
       recording={listening ? formatElapsed(elapsed) : undefined}
       starting={false}
@@ -716,6 +757,16 @@ export function PhoneMic({ desktops }: { desktops: readonly DeviceView[] }) {
     online.find((d) => d.device.public_key === picked) ??
     online[0];
   const running = toComputer || onPhone;
+  // What the used-up card offers instead: the computer a take would go to.
+  const desktop =
+    target === undefined || online.length === 0 || target.connection.state !== "online"
+      ? undefined
+      : {
+          name: target.device.name,
+          choose: () => {
+            setChoice("computer");
+          },
+        };
   return (
     <View style={{ gap: 12 }}>
       {desktops.length > 0 && (
@@ -765,7 +816,10 @@ export function PhoneMic({ desktops }: { desktops: readonly DeviceView[] }) {
       {route === "computer" && target !== undefined ? (
         <ComputerTalk target={target} />
       ) : (
-        <PhoneTalk />
+        <>
+          <PhoneTalk desktop={desktop} />
+          <UsageNotices online={online.length > 0} />
+        </>
       )}
     </View>
   );

@@ -62,6 +62,9 @@ pub enum DictationError {
         service: crate::providers::ServiceKind,
         /// The adapter's explanation: the service's code and message.
         detail: String,
+        /// When the quota is back, milliseconds since the epoch, when the service said (the
+        /// built-in service's day, docs/dictation.md §27).
+        retry_at_ms: Option<u64>,
     },
     /// The service turned the request down for now: too many requests (HTTP 429, docs/dictation.md
     /// §3.6). Not a used-up quota: a fallback model list does not move on for it.
@@ -115,6 +118,14 @@ impl DictationError {
     /// fallback model list moves on for (docs/dictation.md §3.5).
     pub fn is_quota_exhausted(&self) -> bool {
         matches!(self, Self::QuotaExhausted { .. })
+    }
+
+    /// When a used-up quota is back, when the service said.
+    pub fn quota_retry_at(&self) -> Option<u64> {
+        match self {
+            Self::QuotaExhausted { retry_at_ms, .. } => *retry_at_ms,
+            _ => None,
+        }
     }
 }
 
@@ -299,6 +310,14 @@ pub trait Transcriber: Send + Sync {
     /// ignore (the local engines have no prompt input); empty means no hint.
     async fn transcribe(&self, wav: &[u8], language: Option<&str>, glossary: &[String]) -> Result<Transcript, DictationError>;
 
+    /// [`Transcriber::transcribe`] for `call` (docs/dictation.md §27): what the request is for and
+    /// where the take came from, which a metered client tells the built-in service and the usage
+    /// record. A client that meters nothing ignores it (the default).
+    async fn transcribe_as(&self, wav: &[u8], language: Option<&str>, glossary: &[String], call: &crate::usage::AsrCall) -> Result<Transcript, DictationError> {
+        let _ = call;
+        self.transcribe(wav, language, glossary).await
+    }
+
     /// Get ready for the next [`Transcriber::transcribe`] with `language` (docs/dictation.md §10.7):
     /// an engine with something big to load (a local model) starts loading it in the background, so
     /// the first take after start-up or a configuration change does not wait for it. Returns at
@@ -449,6 +468,9 @@ pub struct RefineHints {
     pub preset: TakePreset,
     /// Where the text is going and what the scene asks for.
     pub context: RefineContext,
+    /// Where the take came from, for the usage record (docs/dictation.md §27); `None`: the
+    /// metering's default (this device, or the local speech service).
+    pub origin: Option<crate::usage::UsageOrigin>,
 }
 
 /// LLM clean-up of the raw transcript, and the rewrite of a voice edit.

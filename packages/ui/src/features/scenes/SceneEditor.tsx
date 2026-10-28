@@ -156,7 +156,12 @@ export function SceneEditor({
     try {
       if (scene === undefined) await backend.invoke("scenes_add", { scene: payload });
       else await backend.invoke("scenes_update", { id: scene.id, scene: payload });
-      shell.notify(t("sceneEditor.saved", { name: payload.name }));
+      // A built-in scene's stored name is its category (`chat`): it is shown by its label.
+      shell.notify(
+        t("sceneEditor.saved", {
+          name: builtin && scene !== undefined ? sceneLabel(scene, locale) : payload.name,
+        }),
+      );
       onClose();
     } catch (e) {
       setSaveError(errorText(e));

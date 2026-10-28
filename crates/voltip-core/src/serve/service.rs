@@ -24,6 +24,7 @@ use crate::presets::{CustomPreset, PresetRef, PresetStore};
 use crate::providers::{ProviderId, ServiceKind};
 use crate::scenes::{Scene, SceneRef, SceneStore};
 use crate::settings::{Settings, SettingsStore};
+use crate::usage::{AsrCall, UsageOrigin};
 use crate::vocabulary::{DictionaryEntry, DictionaryStore, ReplacementRule, RuleStore, Vocabulary};
 
 /// Samples per second of the audio the service processes (the app's recording rate).
@@ -243,6 +244,9 @@ pub struct FileSourceConfig {
     pub network: Arc<voltip_net::Network>,
     /// The manual proxy's password, read once when the server starts, like the keys.
     pub proxy_password: Option<String>,
+    /// Who the server is to the built-in service (docs/dictation.md §27): the app's usage id when
+    /// the app runs on this machine, else the server's own; `None` meters nothing.
+    pub metering: Option<crate::usage::Metering>,
 }
 
 /// `Settings.proxy` in force on the process's network: whether the plan changed, and why the
@@ -423,7 +427,7 @@ fn build_state(
     let engines = ResolvedEngines::resolve_with_models(&settings.engines, &config.secrets, &config.built_in, library);
     let (transcriber, refiner) = match previous.filter(|p| !rerouted && p.engines == engines) {
         Some(p) => (p.transcriber.clone(), p.refiner.clone()),
-        None => engine_clients(&config.factory, &engines, quota),
+        None => engine_clients(&config.factory, &engines, quota, config.metering.as_ref()),
     };
     ServeState {
         settings,
@@ -575,7 +579,8 @@ async fn recognize_whole(state: &ServeState, recipe: &Recipe, audio: &PcmFile) -
     if audio.samples < min_samples || wav::is_silent(&wav) {
         return Ok(None);
     }
-    match steps::recognize(state.transcriber.as_ref(), &wav, recipe.language.as_deref(), recipe.vocabulary.glossary(), recipe.script).await {
+    let call = AsrCall::take(Some(UsageOrigin::Serve));
+    match steps::recognize(state.transcriber.as_ref(), &wav, recipe.language.as_deref(), recipe.vocabulary.glossary(), recipe.script, &call).await {
         Ok(r) if r.text.is_empty() => Ok(None),
         Ok(r) => Ok(Some(Recognised { raw_text: r.text, asr_ms: r.asr_ms, asr_model: r.model, segments: 1 })),
         Err(DictationError::NoSpeech) => Ok(None),
@@ -631,7 +636,16 @@ async fn recognize_long(state: &ServeState, recipe: &Recipe, audio: &PcmFile, ca
             if cancel.is_cancelled() {
                 return Err(ServeError::Cancelled);
             }
-            match long::recognize_segment(state.transcriber.as_ref(), &wav, recipe.language.as_deref(), recipe.vocabulary.glossary(), recipe.script).await {
+            match long::recognize_segment(
+                state.transcriber.as_ref(),
+                &wav,
+                recipe.language.as_deref(),
+                recipe.vocabulary.glossary(),
+                recipe.script,
+                &AsrCall::take(Some(UsageOrigin::Serve)),
+            )
+            .await
+            {
                 Ok(t) => {
                     asr_ms += t.latency_ms;
                     if !t.text.trim().is_empty()

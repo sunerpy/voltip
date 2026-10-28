@@ -320,3 +320,82 @@ fn settings_from_before_the_proxy_follow_the_system() {
     assert_eq!(SettingsStore::new(dir.path()).load().unwrap().proxy, ProxySettings::default());
     assert_eq!(ProxySettings::default().mode, ProxyMode::System);
 }
+
+/// Issue #193: while the relay is not connected its status says why, the words included for a
+/// relay the user typed in, and forgets it once the relay connects. The relay's name resolves to
+/// an address nobody listens on first (the link reports `Refused`), then to the relay itself.
+#[tokio::test]
+async fn the_relay_status_says_why_it_is_not_connected_until_it_connects() {
+    let (relay_port, _stop) = relay().await;
+    // Bound without `listen`: nobody answers, and no other test's server can take the port.
+    let refusing = tokio::net::TcpSocket::new_v4().unwrap();
+    refusing.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let target = Arc::new(Mutex::new(refusing.local_addr().unwrap()));
+    let network = Network::with_plan(ProxyPlan::Off);
+    let resolve = Arc::clone(&target);
+    network.set_resolver(move |name, _| {
+        assert_eq!(name, RELAY_HOST);
+        Ok(vec![*resolve.lock()])
+    });
+    let off = ProxySettings { mode: ProxyMode::Off, ..ProxySettings::default() };
+    let mut desk = node(&relay_settings(relay_port, off), Arc::new(MemorySecretStore::new()), network);
+    let failure = wait(&mut desk, |e| match e {
+        CoreEvent::Relay(r) if r.state == ConnectionState::Reconnecting => r.last_failure.clone(),
+        _ => None,
+    })
+    .await;
+    assert_eq!(failure.kind, voltip_core::FailureKind::Refused, "{failure:?}");
+    assert!(failure.detail.as_deref().is_some_and(|d| d.starts_with("connect: ")), "{failure:?}");
+    assert!(failure.at > 0);
+
+    *target.lock() = SocketAddr::from(([127, 0, 0, 1], relay_port));
+    desk.handle.send(CoreCommand::ReconnectRelay).await.unwrap();
+    let cleared = wait(&mut desk, |e| match e {
+        CoreEvent::Relay(r) if r.state == ConnectionState::Connected => Some(r.last_failure.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(cleared, None, "a connected relay has no failure to show");
+    drop(refusing);
+}
+
+/// A forwarder to `to` that holds every connection for `delay` before it opens its own: a relay
+/// behind a slow path.
+async fn slow_path(to: SocketAddr, delay: Duration) -> SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                tokio::time::sleep(delay).await;
+                let Ok(mut upstream) = TcpStream::connect(to).await else { return };
+                let _ = tokio::io::copy_bidirectional(&mut socket, &mut upstream).await;
+            });
+        }
+    });
+    addr
+}
+
+/// Regression (issue #193): the self-check gave the relay 3 s and its report 4 s, so a relay a
+/// slow network reaches in 4.5 s counted as timed out while the link itself, allowed 8 s, reached
+/// it. The check now allows the relay as long as the link does.
+#[tokio::test]
+async fn regression_the_self_check_waits_for_a_slow_relay_as_long_as_the_link_does() {
+    let (relay_port, _stop) = relay().await;
+    let slow = slow_path(SocketAddr::from(([127, 0, 0, 1], relay_port)), Duration::from_millis(4500)).await;
+    let network = Network::with_plan(ProxyPlan::Off);
+    network.set_resolver(move |_, _| Ok(vec![slow]));
+    let off = ProxySettings { mode: ProxyMode::Off, ..ProxySettings::default() };
+    let mut desk = node(&relay_settings(relay_port, off), Arc::new(MemorySecretStore::new()), network);
+    wait_relay(&mut desk, ConnectionState::Connected).await;
+    desk.handle.send(CoreCommand::CheckConnectivity).await.unwrap();
+    let report = wait(&mut desk, |e| match e {
+        CoreEvent::Connectivity(status) if !status.running => status.report.clone(),
+        _ => None,
+    })
+    .await;
+    match report.relay.result {
+        Some(voltip_core::connectivity::ProbeResult::Ok { ms }) => assert!(ms >= 4500, "{ms} ms"),
+        other => panic!("{other:?}"),
+    }
+}

@@ -20,22 +20,23 @@ import java.util.concurrent.atomic.AtomicReference
 /**
  * The platform side of the Rust shell: `PlatformHost` of `apps/mobile-rn/rust/src/ffi.rs`, whose
  * Kotlin bindings (`dev.voltip.rn.uniffi`) scripts/build-android-rn.sh generates with UniFFI. It
- * hands the app the core's events and the level meter's frames, and does what only Android's own
- * APIs reach (docs/mobile-rn.md §4). Rust calls from its own threads, never from the main thread,
- * so a method may wait for the main thread here; a failure goes back to Rust as
- * [HostException.Failed] with its reason.
+ * hands the core's events and the level meter's frames to [VoltipRuntime]'s listeners (the app's
+ * JavaScript, the floating bubble), and does what only Android's own APIs reach
+ * (docs/mobile-rn.md §4). Rust calls from its own threads, never from the main thread, so a method
+ * may wait for the main thread here; a failure goes back to Rust as [HostException.Failed] with
+ * its reason.
  */
 class VoltipHost(
     private val context: Context,
     private val activity: () -> Activity?,
-    private val emit: (String, Map<String, Any?>) -> Unit,
+    private val onEvent: (String) -> Unit,
+    private val onChannel: (ULong, String) -> Unit,
 ) : PlatformHost {
     /** One `UiEvent` (`voltip://event`). */
-    override fun event(json: String) = platform { emit("onEvent", mapOf("json" to json)) }
+    override fun event(json: String) = platform { onEvent(json) }
 
     /** One frame of the stream [channel] (the level meter). */
-    override fun channel(channel: ULong, json: String) =
-        platform { emit("onChannel", mapOf("id" to channel.toDouble(), "json" to json)) }
+    override fun channel(channel: ULong, json: String) = platform { onChannel(channel, json) }
 
     /** 「发送剪贴板」: Android 10+ lets only the app in front read it, which Voltip is while the user taps. */
     override fun clipboardRead(): String? = platform {
@@ -46,7 +47,8 @@ class VoltipHost(
         }
     }
 
-    /** The result of a take the phone recognised itself, and the history's copy button. */
+    /** The result of a take the phone recognised itself (from the app or the floating bubble), and
+     *  the history's copy button. Android lets an app in the background write it. */
     override fun clipboardWrite(text: String) = platform {
         onMain {
             val manager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager

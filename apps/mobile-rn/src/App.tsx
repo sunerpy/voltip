@@ -25,6 +25,7 @@ import {
 } from "react-native-safe-area-context";
 
 import { BackendProvider, useBackend, useUiState } from "./backend/BackendProvider";
+import { type BubbleControl, BubbleProvider, useBubbleSync } from "./backend/bubble";
 import { I18nProvider, useT } from "./backend/i18n";
 import { RootNavigator, aboveDock } from "./navigation";
 import type { RootParams } from "./routes";
@@ -118,6 +119,12 @@ function useCoreEvents(register: (fn: (e: UiEvent) => void) => void) {
   }, [register, shell, t, backend]);
 }
 
+/** A bubble the user switched on comes back with the app (docs/dictation.md §20.12). */
+function BubbleSync() {
+  useBubbleSync();
+  return null;
+}
+
 /** A splash until `core_state` resolved, so the first screen comes from real data. */
 function Gate({ register }: { register: (fn: (e: UiEvent) => void) => void }) {
   const { state, error } = useBackend();
@@ -153,6 +160,7 @@ function Shell({
   const insets = useSafeAreaInsets();
   return (
     <ShellProvider bottomInset={aboveDock(insets.bottom)}>
+      <BubbleSync />
       <NavigationContainer ref={navigation} theme={navigationTheme(theme)}>
         <Gate register={register} />
       </NavigationContainer>
@@ -165,6 +173,7 @@ export function App({
   language = systemLanguage(),
   metrics = initialWindowMetrics,
   accent = null,
+  bubble,
 }: {
   backend: Backend;
   /** What `settings.locale = "system"` follows (tests pass one; the app reads the phone's). */
@@ -174,6 +183,8 @@ export function App({
   accent?: string | null;
   /** The window's size and insets before the first layout (tests pass them: there is no window). */
   metrics?: Metrics | null;
+  /** The floating bubble's native side (Root.tsx hands in the module's; tests a fake). */
+  bubble?: BubbleControl | undefined;
 }) {
   const handler = useRef<((e: UiEvent) => void) | undefined>(undefined);
   const onEvent = useCallback((e: UiEvent) => {
@@ -185,9 +196,13 @@ export function App({
   return (
     <SafeAreaProvider initialMetrics={metrics}>
       <BackendProvider backend={backend} onEvent={onEvent}>
-        <Localized language={language}>
-          <Themed accent={accent}>{(theme) => <Shell register={register} theme={theme} />}</Themed>
-        </Localized>
+        <BubbleProvider control={bubble}>
+          <Localized language={language}>
+            <Themed accent={accent}>
+              {(theme) => <Shell register={register} theme={theme} />}
+            </Themed>
+          </Localized>
+        </BubbleProvider>
       </BackendProvider>
     </SafeAreaProvider>
   );

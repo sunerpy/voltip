@@ -20,6 +20,7 @@ import { Appbar, Icon, Text, TouchableRipple } from "react-native-paper";
 
 import { useT } from "./backend/i18n";
 import { About } from "./screens/About";
+import { Bubble } from "./screens/Bubble";
 import { AiModels } from "./screens/AiModels";
 import { Appearance } from "./screens/Appearance";
 import { ComputerSettings } from "./screens/ComputerSettings";
@@ -39,6 +40,7 @@ import { Settings } from "./screens/Settings";
 import { SpeechModels } from "./screens/SpeechModels";
 import { Talk } from "./screens/Talk";
 import { ThisDevice } from "./screens/ThisDevice";
+import { Usage } from "./screens/Usage";
 import { Verify } from "./screens/Verify";
 import { type RootParams, type TabParams } from "./routes";
 import { cardShadow, useAppTheme } from "./ui/kit";
@@ -226,6 +228,8 @@ const PAGES: {
   { name: "HistorySettings", title: "mobile.title.historySettings", component: HistorySettings },
   { name: "Network", title: "mobile.title.network", component: Network },
   { name: "Feedback", title: "mobile.title.feedback", component: Feedback },
+  { name: "Usage", title: "mobile.title.usage", component: Usage },
+  { name: "Bubble", title: "mobile.title.bubble", component: Bubble },
   { name: "ComputerSettings", title: "mobile.title.computerSettings", component: ComputerSettings },
   { name: "Entry", title: "mobile.title.entry", component: Entry },
   { name: "MirrorEntry", title: "mobile.title.mirrorEntry", component: MirrorEntry },

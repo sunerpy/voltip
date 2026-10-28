@@ -161,6 +161,23 @@ export const zhCN = {
     closed: "已关闭",
     attempt: "{base} · 第 {n} 次",
     unconfigured: "未配置",
+    /** Below the relay's minimum version (docs/pairing.md 「最低版本」). */
+    tooOld: "需要更新",
+    /** Why the relay connection last failed (`voltip_transport::FailureKind`, issue #193). */
+    why: {
+      timeout: "连接超时，中继没有回应",
+      dns: "无法解析中继地址，请检查网络",
+      refused: "连接被拒绝",
+      unreachable: "网络不通，请检查网络连接",
+      tls: "加密连接失败",
+      not_relay: "该地址不是 Voltip 中继",
+      proxy: "代理无法连接中继，请检查代理设置",
+      version: "中继不支持此版本，请更新 Voltip",
+      too_old: "此版本过低，请更新 Voltip",
+      lost: "连接中断",
+      other: "连接失败",
+    },
+    lastFailure: "上次失败：{reason}",
   },
   failure: {
     timeout: "超时",
@@ -300,6 +317,152 @@ export const zhCN = {
     body: "最近一次听写未经 AI 润色，插入的是识别结果。可以在「AI 模型」中改用自己的服务商，例如申请一个免费的 Groq 密钥。",
     open: "打开 AI 模型",
   },
+  /** The built-in service's daily usage (docs/dictation.md §27; Penpot 「用量与额度」 boards 11–18):
+   *  the sidebar card, the 用量 page, the home lines and notices, the drawers and the phone. */
+  usage: {
+    title: "今日用量",
+    page: "用量",
+    service: { asr: "内置语音识别", llm: "内置 AI 润色" },
+    short: { asr: "识别", llm: "润色" },
+    unit: { asr: "分钟", llm: "次" },
+    amount: {
+      asr: { one: "{n} 分钟", other: "{n} 分钟" },
+      llm: { one: "{n} 次", other: "{n} 次" },
+    },
+    of: "{used} / {limit}",
+    used: "已用 {of}",
+    left: "剩余 {amount}",
+    leftUnderOne: "剩余不到 1 分钟",
+    underOneMinute: "不到 1 分钟",
+    usedUp: "已用完",
+    usedUpToday: "今日已用完",
+    unlimited: "暂不限量",
+    unlimitedNote: "统计期间不设上限，每天 {time} 重新计数",
+    unlimitedShort: "统计期间不设上限",
+    todayUsed: "今日已用 {amount}",
+    unavailable: "无法获取",
+    unavailableBody: "用量暂时无法获取",
+    unavailableHint: "联网后自动更新",
+    pending: "正在获取用量…",
+    reset: {
+      today: "今天 {time} 重置",
+      tomorrow: "明天 {time} 重置",
+      later: "{n} 天后 {time} 重置",
+    },
+    resetShort: "{time} 重置",
+    countdown: "还有 {duration}",
+    countdownUnderOne: "不到 1 分钟",
+    resetDaily: "内置服务每天 00:00（北京时间）重置",
+    resetDailyLocal: "内置服务每天北京时间 00:00（本机时间 {time}）重置",
+    /** One line under a model: home, the provider cards, the phone's talk page. */
+    inline: {
+      of: "今日 {used} / {limit}",
+      left: "今日剩余 {amount}",
+      underOne: "今日剩余不到 1 分钟",
+      out: "今日额度已用完 · {reset}",
+      unlimited: "今日已用 {amount} · 暂不限量",
+    },
+    builtinLine: "内置服务 · {usage}",
+    /** The sidebar card (board 14). */
+    card: {
+      /** The full card's heading, on one line beside the reset time. */
+      title: "今日用量",
+      open: "打开「用量」页",
+      own: "本机统计",
+      ownNote: "未使用内置服务，不限量",
+      ownValue: "{amount} · {provider}",
+      compact: "今日用量 · {value}",
+      compactValue: "{service}{value}",
+      compactNumbers: "{service} {value}",
+      rail: "今日用量：识别 {asr}，润色 {llm} · {reset}",
+    },
+    /** Where today's recognition came from, and what each origin is. */
+    origin: { this_device: "这台电脑", retake: "重新识别", serve: "本机语音服务" },
+    originNote: {
+      this_device: "直接听写",
+      phone: "手机发来的录音",
+      retake: "保留的录音再次识别",
+      serve: "其他应用通过本机语音服务",
+    },
+    purpose: { refine: "AI 润色", edit: "语音编辑" },
+    purposeNote: { refine: "听写后整理文字", edit: "用语音修改选中的文字" },
+    /** The 用量 page (board 14). */
+    view: {
+      intro: "这台电脑的用量 · {reset}",
+      basis: { asr: "按音频时长", llm: "润色与语音编辑" },
+      week: "近 7 天",
+      weekUnit: { asr: "分钟 · 虚线为每日上限", llm: "次 · 虚线为每日上限" },
+      weekUnitNoLimit: { asr: "分钟", llm: "次" },
+      detail: "今日明细",
+      origins: "识别 · 来源",
+      purposes: "润色 · 用途",
+      total: "共 {amount}",
+      nothing: "今天尚未使用",
+      notInUse: "{service}现在使用的是{provider}，不计入内置服务的额度",
+      others: "其他服务商 · 本月",
+      othersNote: "按这台电脑的记录统计，可能与服务商的账单不同。",
+      othersHead: { provider: "服务商与模型", used: "本月用量", quota: "额度" },
+      othersUse: { asr: "识别 {amount}", llm: "润色 {amount}" },
+      othersQuota: {
+        local: "不限量 · 在这台电脑上运行",
+        aliyun: "剩余额度请在百炼控制台查看",
+        other: "剩余额度请在服务商处查看",
+      },
+      othersQuotaLink: "查看额度",
+      othersEmpty: "本月尚未使用其他服务商",
+      phoneNote: "发送到电脑识别的录音计入电脑的用量",
+    },
+    /** The built-in service's drawer on the model pages (board 12). */
+    drawer: {
+      title: "今日用量",
+      body: {
+        asr: "按这台电脑计算，{reset}。已配对手机发到这台电脑识别的录音也计入这里；同一段录音的实时预览不重复计算。",
+        llm: "按这台电脑计算，{reset}。每次 AI 润色和语音编辑计 1 次；换模型重试不重复计算。",
+      },
+      origins: "今日来源",
+      purposes: "今日用途",
+      rules: "了解内置服务的用量规则",
+    },
+    /** The notices under the home page's 听写 card; closed, they stay away for the day. */
+    notice: {
+      asr_near: {
+        title: "内置语音识别今日剩余 {amount}",
+        body: "{reset}。用完后可以改用本机模型，或在「语音模型」中选择其他服务商。",
+      },
+      asr_out: {
+        title: "内置语音识别今日额度已用完",
+        body: "{reset}（{countdown}）。录音保留在本机，改用本机模型或其他服务商后可以重新识别。",
+        fallback: "{reset}（{countdown}）。在此之前由候补模型 {model} 识别。",
+      },
+      refine_near: {
+        title: "内置 AI 润色今日剩余 {amount}",
+        body: "{reset}。用完后识别结果将直接插入，不经润色；也可以在「AI 模型」中选择其他服务商。",
+      },
+      refine_out: {
+        title: "内置 AI 润色今日额度已用完",
+        body: "识别结果将直接插入，不经润色。{reset}；也可以在「AI 模型」中选择其他服务商。",
+        fallback: "{reset}。在此之前由候补模型 {model} 润色。",
+      },
+      useLocal: "改用本机模型",
+      downloadLocal: "下载本机模型",
+      openSpeech: "打开语音模型",
+      openAi: "打开 AI 模型",
+    },
+    /** The 听写 card while the built-in recognition is used up and nothing else can recognise. */
+    hero: {
+      title: "内置语音识别今日额度已用完",
+      body: "{reset}；现在可以改用本机模型或其他服务商。",
+      note: "快捷键仍然可用；识别失败的录音保留在本机，换模型后可以重新识别。",
+      mic: "内置识别不可用",
+    },
+    /** The pill (board 11). */
+    pill: {
+      asrOut: "今日内置识别额度已用完",
+      kept: "录音已保留",
+      switch: "换模型",
+      refineOut: "未润色 · 今日 AI 润色额度已用完",
+    },
+  },
   outputMode: {
     name: {
       whole_take: "整段输出",
@@ -380,6 +543,11 @@ export const zhCN = {
       none: "尚未配对手机 · 去配对",
       e2ee: "与手机之间端到端加密",
       open: "打开「手机」页",
+      /** Below the relay's minimum version (Penpot 「用量与额度」 board 20). */
+      tooOld: "这个版本低于中继要求的 {version}",
+      tooOldAny: "这个版本低于中继要求的版本",
+      updateTo: "更新到 {version}",
+      checkUpdate: "检查更新",
     },
     /** The home page's line under its title: today and the whole history. */
     subtitle: { home: "今天听写 {n} 次 · 节省 {saved} · 历史记录 {total} 条" },
@@ -413,6 +581,7 @@ export const zhCN = {
       feedback: "反馈",
       onboarding: "设置向导 / 第 {n} 步",
       overlay: "悬浮窗",
+      usage: "用量",
       notfound: "未找到",
     },
     readout: {
@@ -1561,6 +1730,15 @@ export const zhCN = {
       forget: "忘记",
     },
     copied: "已复制{what}",
+    /** Below the relay's minimum version (docs/pairing.md 「最低版本」, board 20). */
+    tooOld: {
+      title: "需要更新才能连接手机",
+      body: "中继现在要求 Voltip {min} 或更高版本，这台电脑是 {current}。更新后配对和重新连接恢复；听写不受影响。",
+      bodyAny:
+        "中继要求更新版本的 Voltip，这台电脑是 {current}。更新后配对和重新连接恢复；听写不受影响。",
+      update: "立即更新",
+      notes: "查看更新内容",
+    },
     identityBanner: {
       title: "「{name}」出示了不同的身份密钥",
       forget: "忘记设备",
@@ -1627,9 +1805,18 @@ export const zhCN = {
   },
   pairing: {
     title: "配对新设备",
+    /** Below the relay's minimum version: no pairing until the update (board 20). */
+    tooOld: {
+      title: "无法创建配对",
+      body: "中继要求 {min} 或更高版本。更新后重新打开此页即可配对。",
+      bodyAny: "中继要求更新版本的 Voltip。更新后重新打开此页即可配对。",
+      update: "立即更新",
+      code: "错误代码：client_too_old · 最低 {min}",
+      codeAny: "错误代码：client_too_old",
+    },
     windowOpen: "剩余 {remaining}",
     intro:
-      "生成一次性二维码和 6 位验证码。手机扫码或输入验证码后，两边核对同一组安全码，确认一致才会互相信任。配对 {ttl} 秒后失效。",
+      "生成一次性二维码和 6 位验证码。手机扫码后只需在手机上确认；输入验证码时，两边核对同一组安全码并确认。配对 {ttl} 秒后失效。",
     start: "开始配对",
     generating: "正在生成二维码",
     creating: "正在准备配对…",
@@ -1642,12 +1829,12 @@ export const zhCN = {
     scanNote: "手机扫码后会直接获取配对信息，无需手动输入。",
     alwaysOn: "常开配对",
     alwaysOnHelp:
-      "开启后，这台电脑会持续等待手机配对：二维码到期前自动更新，完成一台后继续等待下一台，直到关闭。每次配对仍需在这里核对安全码并确认。",
+      "开启后，这台电脑会持续等待手机配对：二维码到期前自动更新，完成一台后继续等待下一台，直到关闭。扫码的手机只需在手机上确认，输入验证码的仍需在这里核对安全码并确认。",
     alwaysOnOpen: "常开 · 本码剩余 {remaining}",
     alwaysOnIdle: "常开配对已打开，连上中继后自动开始。",
     alwaysOnNext: "常开配对：稍后自动开始下一次配对。",
     validity: "有效期",
-    warning: "不要截图或在共享屏幕上展示此二维码。",
+    warning: "扫到这个二维码的手机无需在这里确认即可配对：不要截图，也不要在共享屏幕上展示。",
     regenerate: "重新生成",
     regenerateQr: "重新生成二维码",
     copyLink: "复制链接",
@@ -1660,6 +1847,11 @@ export const zhCN = {
     peerDoneAnon: "对方设备已建立加密连接。",
     verifyNote: "两台设备会显示同一组安全码。核对一致后，在两边都点「确认配对」；不一致就拒绝。",
     waitingPeer: "等待对方确认…",
+    /** The phone proved it scanned the QR code (docs/pairing.md 「扫码配对只在手机上确认」): this
+     *  computer confirmed by itself. */
+    scanned:
+      "已扫码。在手机上点「确认并信任」即完成配对，这台电脑无需再确认；不是你的手机就点「拒绝」。",
+    waitingPhone: "等待手机确认…",
     confirm: "确认配对",
     reject: "拒绝",
     peerConfirmed: "对方已确认",
@@ -2870,6 +3062,7 @@ export const zhCN = {
     openAi: "打开 AI 模型",
     openFeedback: "打开反馈",
     openDevices: "打开手机",
+    openUsage: "打开用量",
   },
   app: {
     error: "出错了 · {message}",
@@ -2958,6 +3151,8 @@ export const zhCN = {
       historySettings: "历史记录",
       feedback: "反馈",
       network: "网络",
+      usage: "用量",
+      bubble: "悬浮球",
     },
     tab: { label: "主导航", talk: "说话", history: "记录", settings: "设置" },
     settings: {
@@ -2982,6 +3177,8 @@ export const zhCN = {
       networkSystem: "跟随系统",
       networkOff: "不使用代理",
       networkManual: "代理 {server}",
+      bubbleOn: "已开启",
+      bubbleOff: "在其他应用上方显示说话按钮",
     },
     /** docs/dictation.md §24: what the phone's network page says differently. */
     network: {
@@ -3089,8 +3286,9 @@ export const zhCN = {
         "配对后可以把这部手机用作电脑的麦克风和键盘。音频端到端加密后经中继传输，密钥只在两台设备之间。",
       e2ee: "端到端加密",
       e2eeBody: "只有配对的两台设备能解密内容，中继只能看到密文。",
-      safety: "双端核对安全码",
-      safetyBody: "两台设备显示同一组四个词，两边都确认才互相信任。",
+      safety: "扫码即核对",
+      safetyBody:
+        "扫码时由二维码核对两台设备，只需在手机上确认；输入验证码时，两边核对同一组四个词并确认。",
       identity: "身份变化即告警",
       identityBody: "已信任的电脑更换密钥时会标红提示，不会自动信任。",
       start: "连接电脑",
@@ -3114,7 +3312,7 @@ export const zhCN = {
     },
     pair: {
       intro:
-        "在电脑上打开「手机」页并开始配对，然后扫描它的二维码，或输入它显示的 6 位验证码。两种方式之后建立加密连接和核对安全码的步骤相同。",
+        "在电脑上打开「手机」页并开始配对，然后扫描它的二维码，或输入它显示的 6 位验证码。扫码后只需在手机上确认；输入验证码时，两台设备都要核对安全码并确认。",
       method: "配对方式",
       scan: "扫码",
       code: "输入 6 位验证码",
@@ -3134,6 +3332,20 @@ export const zhCN = {
       scanCancelled: "已取消扫码或未授予相机权限",
       retry: "重试",
       clearRetry: "清除并重试",
+      /** The relay link on the pairing page (issue #193): pairing needs it, so its state, why it
+       *  is not connected, and the self-check are there before anything is scanned. */
+      relay: "中继 · {state}",
+      relayHelp: "配对需要先连上中继。连不上时，可以运行下面的连接自检查看原因。",
+      relayDetail: "{reason}（{detail}）",
+      /** Below the relay's minimum version (board 20a). */
+      tooOld: {
+        title: "需要更新 Voltip",
+        body: "中继要求 {min} 或更高版本，这部手机是 {current}。更新后才能配对，以及与已配对的电脑重新连接。",
+        bodyAny:
+          "中继要求更新版本的 Voltip，这部手机是 {current}。更新后才能配对，以及与已配对的电脑重新连接。",
+        store: "前往 Google Play 更新",
+        check: "检查更新",
+      },
     },
     verify: {
       rejected: "配对已被拒绝，本次配对已取消。",
@@ -3146,8 +3358,13 @@ export const zhCN = {
       handshake: "{platform} · 已建立加密连接",
       note: "电脑屏幕上应显示同样的四个词和指纹。一致就点「确认并信任」；有任何不同就拒绝——那说明中间有人。",
       peerConfirmed: "对方已确认",
-      waiting: "已确认 · 等待电脑确认…",
+      waiting: "已确认 · 请在电脑上也点「确认配对」",
       waitingButton: "等待电脑确认…",
+      /** A scanned QR code (docs/pairing.md 「扫码配对只在手机上确认」): the computer confirms by
+       *  itself, so this phone's confirmation finishes the pairing. */
+      scannedNote: "扫码已核对这台电脑的身份，点「确认并信任」即完成配对，电脑上无需再操作。",
+      finishing: "已确认 · 正在完成配对…",
+      finishingButton: "正在完成…",
       confirm: "确认并信任",
       reject: "拒绝",
     },
@@ -3209,6 +3426,105 @@ export const zhCN = {
         offline: "电脑已离线",
       },
     },
+    /** The built-in service's usage on the phone (docs/dictation.md §27; Penpot 「用量与额度」
+     *  boards 15–16): the talk card's line and notices while the phone recognises, and 设置 › 用量. */
+    usage: {
+      intro: "这部手机 · {reset}",
+      computerNote: "发送到电脑的录音计入电脑的用量。",
+      othersNote: "按这部手机的记录统计，可能与服务商的账单不同。",
+      notice: {
+        asr_near: {
+          title: "内置识别今日剩余 {amount}",
+          body: "{reset}；也可以发送到电脑识别。",
+          alone: "{reset}；也可以在「语音模型」中选择其他服务商。",
+        },
+        asr_out: {
+          title: "内置识别今日额度已用完",
+          body: "{countdown}重置，可改为发送到电脑识别。",
+          alone: "{countdown}重置，可以在「语音模型」中选择其他服务商。",
+          fallback: "{reset}。在此之前由候补模型 {model} 识别。",
+        },
+        refine_near: {
+          title: "内置 AI 润色今日剩余 {amount}",
+          body: "{reset}。用完后识别结果直接复制，不经润色。",
+        },
+        refine_out: {
+          title: "内置 AI 润色今日额度已用完",
+          body: "识别结果将直接复制，不经润色。{reset}；也可以在「AI 模型」中选择其他服务商。",
+          fallback: "{reset}。在此之前由候补模型 {model} 润色。",
+        },
+      },
+      /** The talk card while the built-in recognition is used up and nothing stands in (board 15c). */
+      out: {
+        title: "今日内置识别额度已用完",
+        body: "{reset} · 可以改为发送到电脑，由电脑识别",
+        alone: "{reset} · 可以在「语音模型」中换用其他服务商",
+        toDesktop: "改为发送到 {name}",
+        switch: "换模型",
+      },
+    },
+    /** 设置 › 悬浮球 (docs/dictation.md §20.12; Penpot 「用量与额度」 boards 17–18): a talk button over
+     *  other apps, the result on the clipboard. */
+    bubble: {
+      lede: "在其他应用上方显示一个说话按钮。识别结果复制到剪贴板，在输入框中长按即可粘贴。",
+      show: "显示悬浮球",
+      needs: "需要先完成下面的权限设置",
+      on: "已开启 · 通知栏中可随时关闭",
+      progress: "已完成 {done} / {total} 项",
+      permissions: "需要的权限",
+      microphone: "麦克风",
+      microphoneBody: "用于录音",
+      overlay: "显示在其他应用上层",
+      overlayBody: "在系统设置中允许，用于显示悬浮球",
+      notifications: "通知",
+      notificationsBody: "悬浮球显示时，通知栏保留一条可关闭的通知",
+      granted: "已允许",
+      allow: "允许",
+      openSettings: "去设置",
+      vendor:
+        "部分手机（如小米、OPPO、vivo）还需要在系统设置中允许 Voltip 后台运行，否则悬浮球可能被系统关闭。",
+      vendorLink: "查看设置方法",
+      mode: "说话方式",
+      modeHold: "按住说话",
+      modeTap: "轻点开始，再点结束",
+      stowHint: "将悬浮球拖出屏幕边缘后松开，可收起为一个小把手；轻点把手或将它向内拉即可恢复。",
+      result: "识别结果",
+      refine: "AI 润色",
+      refineBody: "按「AI 模型」中的预设处理后再复制",
+      showResult: "显示识别结果",
+      showResultBody: "复制后在悬浮球旁显示 5 秒",
+      showDiscard: "显示「不复制」按钮",
+      showDiscardBody: "在识别结果旁显示，点一下清空剪贴板",
+      showDiscardNeeds: "打开「显示识别结果」后可用",
+      usage: "使用内置服务时计入这部手机的用量 · {usage}",
+      failed: "悬浮球未能开启：{message}",
+      notStarted: "悬浮球未能开启，请稍后重试",
+      /** What the bubble itself shows (its Kotlin service reads these from the app). */
+      native: {
+        channel: "悬浮球",
+        title: "悬浮球已开启",
+        bodyHold: "按住悬浮球说话，识别结果复制到剪贴板",
+        bodyTap: "轻点悬浮球说话，识别结果复制到剪贴板",
+        close: "关闭",
+        label: "Voltip 悬浮球",
+        recordingHold: "松开结束 · 上滑取消",
+        recordingTap: "轻点悬浮球结束",
+        releaseCancel: "松开取消",
+        cancel: "取消",
+        processing: "正在识别…",
+        refining: "正在润色…",
+        copied: "已复制 · 长按输入框粘贴",
+        again: "再说一次",
+        discard: "不复制",
+        noSpeech: "没有听到声音",
+        failed: "未完成：{message}",
+        quota: "今日内置识别额度已用完",
+        holdHint: "按住悬浮球说话",
+        microphone: "需要麦克风权限，请在 Voltip 中允许",
+        expand: "展开悬浮球",
+        stow: "收起到屏幕边缘",
+      },
+    },
     recent: {
       title: "最近结果",
       body: "这部手机识别的结果和发送到电脑的听写保存在这部手机上；与已配对的电脑同步时，手机识别的结果会把副本上传到电脑。",
@@ -3265,6 +3581,8 @@ export const zhCN = {
       },
       identityChanged:
         "这台电脑出示了不同的身份密钥（{fingerprint}），未自动信任；如果重装了系统，请忘记后重新配对。",
+      /** This phone is below the relay's minimum version (board 20a). */
+      tooOld: "无法连接 · 需要更新这部手机",
       testBody: "来自手机的测试消息",
       sendTest: "发测试消息",
       forget: "忘记 {name}",

@@ -138,7 +138,8 @@
       "platform": "android"
     },
     "local_confirmed": true,
-    "peer_confirmed": false
+    "peer_confirmed": false,
+    "scanned": true
   },
   "devices": [
     {
@@ -1433,5 +1434,95 @@
   "refine_notice": {
     "failure": "rate_limited",
     "at_ms": 1727400000000
+  },
+  "usage": {
+    "builtin": true,
+    "quota": {
+      "mode": "limit",
+      "basis": "device",
+      "day": "2026-10-27",
+      "reset_at": 1793116800,
+      "asr": {
+        "used_seconds": 1380,
+        "limit_seconds": 3600
+      },
+      "refine": {
+        "used": 72,
+        "limit": 100
+      }
+    },
+    "reported_at": 1793080000000,
+    "unavailable": false,
+    "days": [
+      {
+        "day": "2026-10-26",
+        "asr_seconds": 2400,
+        "refine": 88
+      },
+      {
+        "day": "2026-10-27",
+        "asr_seconds": 1380,
+        "refine": 72
+      }
+    ],
+    "asr_origins": [
+      {
+        "origin": {
+          "kind": "this_device"
+        },
+        "seconds": 1080
+      },
+      {
+        "origin": {
+          "kind": "phone",
+          "name": "Pixel 8"
+        },
+        "seconds": 300
+      },
+      {
+        "origin": {
+          "kind": "retake"
+        },
+        "seconds": 0
+      },
+      {
+        "origin": {
+          "kind": "serve"
+        },
+        "seconds": 0
+      }
+    ],
+    "refine_purposes": [
+      {
+        "purpose": "refine",
+        "count": 60
+      },
+      {
+        "purpose": "edit",
+        "count": 12
+      }
+    ],
+    "others": [
+      {
+        "provider": "local",
+        "service": "asr",
+        "model": "qwen3-asr-0.6b",
+        "amount": 7800
+      },
+      {
+        "provider": "openai",
+        "service": "llm",
+        "amount": 3
+      }
+    ],
+    "others_today": [
+      {
+        "provider": "local",
+        "service": "asr",
+        "model": "qwen3-asr-0.6b",
+        "amount": 420
+      }
+    ],
+    "dismissed": ["asr_near"]
   }
 }

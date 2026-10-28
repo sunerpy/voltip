@@ -293,4 +293,19 @@ describe("the scene cards and editor (desktop 场景 settings and the phone, doc
     expect(await screen.findByTestId("scene-editor-error")).toHaveTextContent("恢复不了");
     backend.destroy();
   });
+
+  it("regression: a saved built-in scene is named by its label, not its stored category", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend();
+    const { notify } = renderScenes(backend);
+    const chat = await screen.findByRole("article", { name: "即时聊天" });
+    await user.click(within(chat).getByRole("button", { name: "编辑 即时聊天" }));
+    await screen.findByTestId("scene-editor");
+    await user.click(screen.getByRole("button", { name: /保存/ }));
+    await waitFor(() => {
+      expect(notify).toHaveBeenCalledWith("已保存场景 · 即时聊天");
+    });
+    expect(notify).not.toHaveBeenCalledWith("已保存场景 · chat");
+    backend.destroy();
+  });
 });

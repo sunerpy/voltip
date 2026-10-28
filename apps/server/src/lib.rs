@@ -180,6 +180,32 @@ pub struct Prepared {
     pub unavailable: Option<String>,
 }
 
+/// The server's own directory (`ProjectDirs` dev / voltip / voltip-server): its usage id when no
+/// app runs on this machine.
+pub fn server_dir() -> PathBuf {
+    directories::ProjectDirs::from("dev", "voltip", "voltip-server")
+        .map(|d| d.data_dir().to_path_buf())
+        .unwrap_or_else(|| std::env::temp_dir().join("voltip-server"))
+}
+
+/// Who the server is to the built-in service (docs/dictation.md §27): the app's usage id when the
+/// app runs on this machine (one machine, one device), read without writing to the app's
+/// directory; else the server's own under `own_dir`. It keeps no record: nothing would show it.
+pub fn server_metering(app_dir: &Path, own_dir: &Path) -> voltip_core::usage::Metering {
+    let device = voltip_core::usage::read_device_id(app_dir).unwrap_or_else(|| {
+        voltip_core::usage::device_id(own_dir).unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "the server's usage id could not be saved; using one for this run");
+            voltip_core::usage::device_id(&std::env::temp_dir().join("voltip-server")).unwrap_or_default()
+        })
+    });
+    voltip_core::usage::Metering::new(
+        device,
+        format!("voltip/{APP_VERSION} ({}; server)", std::env::consts::OS),
+        voltip_core::usage::UsageOrigin::Serve,
+        |_| {},
+    )
+}
+
 /// Why this system cannot make HTTPS requests, when it cannot. Cloud recognition and clean-up (the
 /// built-in service too) verify the server's certificate with the system's own store, and a minimal
 /// system — a container image without ca-certificates — has none: every client then fails to
@@ -209,6 +235,7 @@ pub fn prepare(options: &ServeOptions, data_dir: &Path, wiring: Wiring) -> Resul
         segmenter,
         network,
         proxy_password,
+        metering: Some(server_metering(data_dir, &server_dir())),
     };
     let (source, mut notices) = FileSource::open(config)?;
     notices.extend(secrets_notice);

@@ -74,7 +74,7 @@ e2e-ipc: ## TypeScript drives two real Rust cores through the bridge harness ove
 	$(PNPM) --filter @voltip/shared run test:e2e
 
 .PHONY: web-coverage-gate
-web-coverage-gate: ## Vitest coverage thresholds (configured per package at 90%)
+web-coverage-gate: ## Web and phone coverage thresholds, 90% per package (vitest; jest for the RN app)
 	$(PNPM) -r run test:coverage
 
 .PHONY: relay

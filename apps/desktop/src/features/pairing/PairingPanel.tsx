@@ -8,6 +8,7 @@ import {
   pairingStateLabel,
   platformLabel,
   relayLabel,
+  relayTooOld,
 } from "@voltip/shared";
 import {
   Button,
@@ -44,6 +45,8 @@ export interface PairingPanelProps {
   onReject: () => void;
   /** `ok` is false when the clipboard refused or is unavailable; nothing was copied then. */
   onCopied?: (what: string, ok: boolean) => void;
+  /** The update, below the relay's minimum version (docs/pairing.md 「最低版本」). */
+  onUpdate?: () => void;
 }
 
 /** PAIRING panel: QR + six-digit code + countdown, then safety-code verification. */
@@ -61,6 +64,7 @@ export function PairingPanel({
   onConfirm,
   onReject,
   onCopied,
+  onUpdate,
 }: PairingPanelProps) {
   const { t, locale } = useI18n();
   const phase = pairing.state.state;
@@ -84,6 +88,10 @@ export function PairingPanel({
     onCopied?.(what, ok);
   };
   const relay = relayLabel(relayStatus, locale);
+  // Below the relay's minimum version the core refuses to pair (board 20): instead of 开始配对,
+  // why, and the update. A pairing already under way finishes as it would.
+  const tooOld = relayTooOld(relayStatus);
+  const blocked = tooOld !== undefined && (phase === "idle" || phase === "failed");
 
   return (
     <Panel
@@ -92,7 +100,28 @@ export function PairingPanel({
       className="min-h-[292px]"
       data-testid="pairing-panel"
       data-phase={phase}>
-      {phase === "idle" && (
+      {blocked && (
+        <div className="flex flex-col items-start gap-3 py-2" data-testid="pairing-too-old">
+          <LampText tone="warn">{t("pairing.tooOld.title")}</LampText>
+          <p className="text-[13px] leading-5 text-fg-muted">
+            {tooOld.min_version === undefined
+              ? t("pairing.tooOld.bodyAny")
+              : t("pairing.tooOld.body", { min: tooOld.min_version })}
+          </p>
+          {onUpdate !== undefined && (
+            <Button variant="primary" icon="download" onClick={onUpdate}>
+              {t("pairing.tooOld.update")}
+            </Button>
+          )}
+          <span className="mono text-[11px] text-fg-subtle">
+            {tooOld.min_version === undefined
+              ? t("pairing.tooOld.codeAny")
+              : t("pairing.tooOld.code", { min: tooOld.min_version })}
+          </span>
+        </div>
+      )}
+
+      {phase === "idle" && !blocked && (
         <div className="flex flex-col items-start gap-3 py-2">
           <p className="text-[13px] leading-5 text-fg-muted">
             {t("pairing.intro", { ttl: ttlSecs })}
@@ -226,20 +255,29 @@ export function PairingPanel({
             ) : (
               t("pairing.peerDoneAnon")
             )}{" "}
-            {t("pairing.verifyNote")}
+            {/* A phone that proved it scanned the QR code needs no click here (docs/pairing.md
+                「扫码配对只在手机上确认」): the core confirmed for this computer. */}
+            {pairing.scanned ? t("pairing.scanned") : t("pairing.verifyNote")}
           </div>
           <SafetyCodeView code={pairing.safety_code} />
           <div className="flex items-center gap-2">
-            <Button
-              variant="primary"
-              onClick={onConfirm}
-              disabled={pairing.local_confirmed}
-              icon="check">
-              {pairing.local_confirmed ? t("pairing.waitingPeer") : t("pairing.confirm")}
-            </Button>
+            {!pairing.scanned && (
+              <Button
+                variant="primary"
+                onClick={onConfirm}
+                disabled={pairing.local_confirmed}
+                icon="check">
+                {pairing.local_confirmed ? t("pairing.waitingPeer") : t("pairing.confirm")}
+              </Button>
+            )}
             <Button variant="ghost" onClick={onReject} className="text-danger">
               {t("pairing.reject")}
             </Button>
+            {pairing.scanned && !pairing.peer_confirmed && (
+              <LampText tone="accent" pulse>
+                {t("pairing.waitingPhone")}
+              </LampText>
+            )}
             {pairing.peer_confirmed && <LampText tone="ok">{t("pairing.peerConfirmed")}</LampText>}
           </div>
         </div>
@@ -261,7 +299,7 @@ export function PairingPanel({
         </div>
       )}
 
-      {(phase === "rejected" || phase === "failed") && (
+      {(phase === "rejected" || (phase === "failed" && !blocked)) && (
         <div className="flex flex-col items-start gap-3 py-2">
           <LampText tone="danger">
             {phase === "rejected"

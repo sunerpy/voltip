@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 hex.workspace = true
+hmac.workspace = true
 rand.workspace = true
 serde.workspace = true
 serde_bytes.workspace = true

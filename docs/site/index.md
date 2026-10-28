@@ -283,7 +283,7 @@ home:
     items:
       - icon: qr
         title: Pair once
-        body: Scan the QR code on the computer or enter its 6-digit code, then check that both screens show the same safety code.
+        body: Scan the QR code on the computer and confirm on the phone; with the 6-digit code, also check that both screens show the same safety code.
       - icon: mic
         title: Hold to talk on the phone
         body: The audio streams to the computer, compressed with Opus and encrypted end to end. The computer recognises it and inserts the text at its cursor.
@@ -301,7 +301,7 @@ home:
         src: /screens/phone-pair-en-light.webp
         dark: /screens/phone-pair-en-dark.webp
         width: 1482
-        height: 600
+        height: 597
         alt: "The Phone page on the computer: pairing with a QR code and a 6-digit code."
       front:
         src: /screens/phone-mic-en-light.webp

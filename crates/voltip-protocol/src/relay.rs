@@ -26,6 +26,11 @@ pub struct RelayLimits {
 /// Length of a rendezvous channel label in hex characters.
 pub const CHANNEL_HEX_LEN: usize = 64;
 
+/// A `hello.features` entry: the client shows [`RelayErrorCode::ClientTooOld`] with its
+/// `min_version` as a request to update (clients from 0.2.0 on). A relay refuses an older client
+/// in another way it already understands (docs/pairing.md 「最低版本」).
+pub const FEATURE_CLIENT_TOO_OLD: &str = "client_too_old";
+
 /// Validate a channel label: exactly 64 lower-case hex characters.
 pub fn validate_channel(channel: &str) -> Result<(), CodecError> {
     let ok = channel.len() == CHANNEL_HEX_LEN && channel.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
@@ -58,6 +63,9 @@ pub enum RelayErrorCode {
     SessionAlreadyActive,
     /// Frame could not be parsed.
     Malformed,
+    /// The client is older than the lowest version the relay serves; `min_version` names it. Sent
+    /// only to a client whose `hello` lists [`FEATURE_CLIENT_TOO_OLD`].
+    ClientTooOld,
 }
 
 /// Every frame the relay sends or receives.
@@ -68,8 +76,13 @@ pub enum RelayFrame {
     Hello {
         /// Protocol version.
         version: ProtocolVersion,
-        /// Client build string, for relay-side metrics only.
+        /// Client build string (`voltip/<version>`): the relay's minimum version and its statistics
+        /// read it.
         client_version: String,
+        /// What the client understands beyond the frames ([`FEATURE_CLIENT_TOO_OLD`]); clients
+        /// before 0.2.0 send none.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        features: Vec<String>,
     },
     /// Relay's answer to `hello`.
     HelloAck {
@@ -195,6 +208,9 @@ pub enum RelayFrame {
         /// The `attach.channel` when this refuses an `attach` (relays from 0.1.0 on).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         channel: Option<String>,
+        /// The lowest client version the relay serves, with `client_too_old`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        min_version: Option<String>,
     },
     /// Graceful close.
     Bye {
@@ -244,20 +260,44 @@ impl RelayFrame {
         Ok(serde_json::from_str(text)?)
     }
 
+    /// This build's `hello`: `client_version` and every feature it understands.
+    pub fn hello(client_version: impl Into<String>) -> Self {
+        Self::Hello { version: ProtocolVersion::CURRENT, client_version: client_version.into(), features: vec![FEATURE_CLIENT_TOO_OLD.to_owned()] }
+    }
+
     /// Convenience constructor for an error frame.
     pub fn error(code: RelayErrorCode) -> Self {
-        Self::Error { version: ProtocolVersion::CURRENT, code, retry_after_secs: None, channel: None }
+        Self::Error { version: ProtocolVersion::CURRENT, code, retry_after_secs: None, channel: None, min_version: None }
     }
 
     /// Convenience constructor for a rate-limit error.
     pub fn rate_limited(retry_after_secs: u32) -> Self {
-        Self::Error { version: ProtocolVersion::CURRENT, code: RelayErrorCode::RateLimited, retry_after_secs: Some(retry_after_secs), channel: None }
+        Self::Error {
+            version: ProtocolVersion::CURRENT,
+            code: RelayErrorCode::RateLimited,
+            retry_after_secs: Some(retry_after_secs),
+            channel: None,
+            min_version: None,
+        }
+    }
+
+    /// The refusal of a client older than `min_version` ([`RelayErrorCode::ClientTooOld`]).
+    pub fn client_too_old(min_version: impl Into<String>) -> Self {
+        Self::Error {
+            version: ProtocolVersion::CURRENT,
+            code: RelayErrorCode::ClientTooOld,
+            retry_after_secs: None,
+            channel: None,
+            min_version: Some(min_version.into()),
+        }
     }
 
     /// This frame refusing the `attach` to `channel` ([`RelayFrame::Error`] only).
     pub fn for_channel(self, channel: &str) -> Self {
         match self {
-            Self::Error { version, code, retry_after_secs, .. } => Self::Error { version, code, retry_after_secs, channel: Some(channel.to_owned()) },
+            Self::Error { version, code, retry_after_secs, min_version, .. } => {
+                Self::Error { version, code, retry_after_secs, channel: Some(channel.to_owned()), min_version }
+            }
             other => other,
         }
     }
@@ -297,7 +337,9 @@ mod tests {
     fn every_frame_roundtrips() {
         let sid = SessionId::random();
         let v = ProtocolVersion::CURRENT;
-        roundtrip(RelayFrame::Hello { version: v, client_version: "2.0.0".into() });
+        roundtrip(RelayFrame::Hello { version: v, client_version: "2.0.0".into(), features: Vec::new() });
+        roundtrip(RelayFrame::hello("voltip/0.1.10"));
+        roundtrip(RelayFrame::client_too_old("0.2.0"));
         roundtrip(RelayFrame::Attach { version: v, channel: "ab".repeat(32) });
         roundtrip(RelayFrame::Attached { version: v, session_id: sid, peer_online: false, channel: None });
         roundtrip(RelayFrame::Attached { version: v, session_id: sid, peer_online: true, channel: Some("ab".repeat(32)) });
@@ -340,6 +382,29 @@ mod tests {
         // Only an error names a channel this way.
         let bye = RelayFrame::Bye { version: ProtocolVersion::CURRENT };
         assert_eq!(bye.clone().for_channel(&ch), bye);
+    }
+
+    /// docs/pairing.md 「最低版本」: a client before 0.2.0 sends no `features` and reads a relay's
+    /// answers without the fields it does not know; a relay reads either `hello`; only a client
+    /// that lists the feature is ever sent `client_too_old`, which names the version it needs.
+    #[test]
+    fn the_minimum_version_fields_are_optional_both_ways() {
+        let older = r#"{"type":"hello","version":1,"client_version":"voltip/0.1.9"}"#;
+        assert_eq!(
+            RelayFrame::decode(older).unwrap(),
+            RelayFrame::Hello { version: ProtocolVersion::CURRENT, client_version: "voltip/0.1.9".into(), features: Vec::new() }
+        );
+        let text = RelayFrame::hello("voltip/0.1.10").encode().unwrap();
+        assert_eq!(text, r#"{"type":"hello","version":1,"client_version":"voltip/0.1.10","features":["client_too_old"]}"#);
+        let text = RelayFrame::client_too_old("0.2.0").encode().unwrap();
+        assert_eq!(text, r#"{"type":"error","version":1,"code":"client_too_old","min_version":"0.2.0"}"#);
+        assert!(!RelayFrame::error(RelayErrorCode::UnsupportedVersion).encode().unwrap().contains("min_version"));
+        // A refused attach keeps the version it carries.
+        let ch = "ab".repeat(32);
+        assert!(matches!(
+            RelayFrame::client_too_old("0.2.0").for_channel(&ch),
+            RelayFrame::Error { code: RelayErrorCode::ClientTooOld, min_version: Some(m), channel: Some(c), .. } if m == "0.2.0" && c == ch
+        ));
     }
 
     #[test]

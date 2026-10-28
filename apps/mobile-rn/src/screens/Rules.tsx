@@ -141,6 +141,7 @@ function RuleEditor({
           value={draft.name}
           autoFocus
           error={nameProblem !== undefined}
+          testID="rule-name"
           onChangeText={(name) => {
             update({ name });
           }}
@@ -157,8 +158,8 @@ function RuleEditor({
             update({ kind: kind === "regex" ? "regex" : "literal" });
           }}
           buttons={[
-            { value: "literal", label: t("rules.kind.literal") },
-            { value: "regex", label: t("rules.kind.regex") },
+            { value: "literal", label: t("rules.kind.literal"), testID: "rule-kind-literal" },
+            { value: "regex", label: t("rules.kind.regex"), testID: "rule-kind-regex" },
           ]}
         />
       </View>
@@ -166,6 +167,7 @@ function RuleEditor({
         mode="outlined"
         label={t("rules.editor.from")}
         value={draft.pattern}
+        testID="rule-pattern"
         autoCapitalize="none"
         autoCorrect={false}
         style={kit.mono}
@@ -178,6 +180,7 @@ function RuleEditor({
           mode="outlined"
           label={t("rules.editor.to")}
           value={draft.replacement}
+          testID="rule-replacement"
           autoCapitalize="none"
           autoCorrect={false}
           style={kit.mono}
@@ -191,12 +194,14 @@ function RuleEditor({
         <SwitchRow
           title={t("rules.editor.caseSensitive")}
           value={draft.case_sensitive}
+          testID="rule-case"
           onValueChange={(case_sensitive) => {
             update({ case_sensitive });
           }}
         />
       </Section>
       <Mono
+        testID="rule-status"
         style={{
           color: status === undefined ? theme.colors.onSurfaceVariant : theme.colors.error,
         }}>
@@ -211,6 +216,7 @@ function RuleEditor({
         mode="outlined"
         label={t("mobile.rules.test")}
         value={sample}
+        testID="rule-sample"
         multiline
         numberOfLines={2}
         placeholder={t("mobile.rules.testPlaceholder")}
@@ -240,6 +246,7 @@ function RuleEditor({
             mode="outlined"
             accessibilityLabel={t("rules.row.up", { name: rule.name })}
             disabled={index <= 0}
+            testID="rule-up"
             onPress={() => move(-1)}
           />
           <IconButton
@@ -247,6 +254,7 @@ function RuleEditor({
             mode="outlined"
             accessibilityLabel={t("rules.row.down", { name: rule.name })}
             disabled={index === rules.length - 1}
+            testID="rule-down"
             onPress={() => move(1)}
           />
           <Text variant="bodySmall" style={{ marginLeft: 8, color: theme.voltip.subtle }}>
@@ -259,6 +267,7 @@ function RuleEditor({
           icon="trash-can-outline"
           textColor={theme.colors.error}
           style={{ alignSelf: "flex-start" }}
+          testID="rule-delete"
           onPress={() => {
             shell.confirm({
               title: t("rules.confirm.deleteTitle", { name: rule.name }),
@@ -304,12 +313,14 @@ function ImportDialog({ onClose }: { onClose: () => void }) {
         label: t("rules.importDialog.import"),
         onPress: () => void submit(),
         disabled: text.trim().length === 0,
-      }}>
+      }}
+      testID="rules-import">
       <Text variant="bodyMedium">{t("rules.importDialog.body")}</Text>
       <TextInput
         mode="outlined"
         label={t("rules.importDialog.label")}
         value={text}
+        testID="rules-import-text"
         multiline
         numberOfLines={12}
         autoCapitalize="none"
@@ -326,15 +337,19 @@ function ImportDialog({ onClose }: { onClose: () => void }) {
           setMode(next === "replace" ? "replace" : "merge");
         }}
         buttons={[
-          { value: "merge", label: t("rules.importDialog.merge") },
-          { value: "replace", label: t("rules.importDialog.replace") },
+          { value: "merge", label: t("rules.importDialog.merge"), testID: "rules-import-merge" },
+          {
+            value: "replace",
+            label: t("rules.importDialog.replace"),
+            testID: "rules-import-replace",
+          },
         ]}
       />
       <Hint>
         {mode === "merge" ? t("rules.importDialog.mergeHelp") : t("rules.importDialog.replaceHelp")}
       </Hint>
       {error !== undefined && (
-        <Mono selectable style={{ color: theme.colors.error }}>
+        <Mono selectable style={{ color: theme.colors.error }} testID="rules-import-error">
           {error}
         </Mono>
       )}
@@ -361,15 +376,20 @@ function ExportDialog({ text, onClose }: { text: string; onClose: () => void }) 
     );
   };
   return (
-    <FullScreenDialog visible title={t("rules.exportDialog.title")} onClose={onClose}>
+    <FullScreenDialog
+      visible
+      title={t("rules.exportDialog.title")}
+      onClose={onClose}
+      testID="rules-export">
       <Text variant="bodyMedium">{t("rules.exportDialog.body")}</Text>
       <View style={{ flexDirection: "row", gap: 8 }}>
-        <Button mode="contained" icon="content-copy" onPress={copy}>
+        <Button mode="contained" icon="content-copy" onPress={copy} testID="rules-export-copy">
           {t("rules.exportDialog.copy")}
         </Button>
         <Button
           mode="outlined"
           icon="share-variant-outline"
+          testID="rules-export-share"
           onPress={() => void backend.invoke("phone_share_text", { text }).catch(fail)}>
           {t("mobile.rules.share")}
         </Button>
@@ -410,10 +430,18 @@ export function Rules() {
       <Page testID="phone-rules">
         <Lede>{t("mobile.rules.intro")}</Lede>
         <View style={{ flexDirection: "row", gap: 8 }}>
-          <Button mode="outlined" icon="tray-arrow-down" onPress={() => setImporting(true)}>
+          <Button
+            mode="outlined"
+            icon="tray-arrow-down"
+            onPress={() => setImporting(true)}
+            testID="rules-import-open">
             {t("rules.importToml")}
           </Button>
-          <Button mode="outlined" icon="tray-arrow-up" onPress={openExport}>
+          <Button
+            mode="outlined"
+            icon="tray-arrow-up"
+            onPress={openExport}
+            testID="rules-export-open">
             {t("rules.exportToml")}
           </Button>
         </View>
@@ -475,7 +503,7 @@ export function Rules() {
             </View>
           </Section>
         )}
-        <Mono style={{ paddingHorizontal: 4, paddingBottom: 72 }}>
+        <Mono style={{ paddingHorizontal: 4, paddingBottom: 72 }} testID="rules-footer">
           {t("rules.footer", { n: rules.length, limit: MAX_RULES })}
         </Mono>
       </Page>

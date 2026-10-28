@@ -11,9 +11,12 @@ async function createBackend(): Promise<Backend> {
   // `pnpm dev` in a browser: an in-memory core that auto-drives the phone side. `import.meta.env.DEV`
   // is a build-time constant, so a release build carries neither this branch nor the mock module.
   if (import.meta.env.DEV && !isTauri()) {
-    const { MOCK_ENGINE_BUILTIN, MockBackend, sampleDevices } = await import("@voltip/shared/mock");
+    const { MOCK_ENGINE_BUILTIN, MockBackend, sampleDevices, sampleUsage } =
+      await import("@voltip/shared/mock");
+    // `?usage=near` (ok, near, out, count, unknown) previews the built-in service's day in that state.
+    const usageState = new URLSearchParams(window.location.search).get("usage");
     return new MockBackend({
-      autoPeer: { joinAfterMs: 20_000, confirmAfterMs: 6000 },
+      autoPeer: { joinAfterMs: 20_000, confirmAfterMs: 6000, scanned: true },
       devices: sampleDevices(),
       // As in a release build: phones meet this computer on the built-in relay (docs/pairing.md
       // 「只走中继」).
@@ -23,6 +26,14 @@ async function createBackend(): Promise<Backend> {
         asr: { model: MOCK_ENGINE_BUILTIN.asr_model, key: true, preview: true },
         llm: { model: MOCK_ENGINE_BUILTIN.refine_model, key: true },
       },
+      usage: sampleUsage(
+        usageState === "near" ||
+          usageState === "out" ||
+          usageState === "count" ||
+          usageState === "unknown"
+          ? usageState
+          : "ok",
+      ),
     });
   }
   return new TauriBackend();

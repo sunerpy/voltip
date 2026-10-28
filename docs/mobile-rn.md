@@ -71,9 +71,10 @@ JS ◀──sendEvent("voltip://event")── Kotlin VoltipHost（PlatformHost�
       外壳并换上新的 host；`invoke(command, args)` 是异步方法，在 Kotlin 里是挂起函数（Expo 的 `Coroutine`
       异步函数直接调用），命令在外壳自己的 tokio 运行时上执行，返回 JSON 或与 Tauri 版相同的错误文本
       （`ShellError`，Kotlin 里的 `ShellException.message` 就是这段文本）；`reconnectRelay()` 是同步方法，
-      让中继连接立即检查一次（`docs/pairing.md`「重连」），`VoltipNativeModule` 在 Android 报告默认网络变化
-      （`ConnectivityManager.registerDefaultNetworkCallback` 的 `onAvailable` / `onLost`）和应用回到前台
-      （Expo 的 `OnActivityEntersForeground`）时调用，需要普通权限 `ACCESS_NETWORK_STATE`。
+      让中继连接立即检查一次（`docs/pairing.md`「重连」），`VoltipRuntime` 在 Android 报告默认网络变化
+      （`ConnectivityManager.registerDefaultNetworkCallback` 的 `onAvailable` / `onLost`）时、`VoltipNativeModule`
+      在应用回到前台（Expo 的 `OnActivityEntersForeground`）时调用，需要普通权限 `ACCESS_NETWORK_STATE`。
+      Kotlin 只调用一次 `start`：进程里的外壳由 `VoltipRuntime` 持有（§11）。
     - `PlatformHost`：由 Kotlin 的 `VoltipHost` 实现的外部 trait（事件、电平帧、剪贴板、分享、打开网址、安装来源），
       失败以 `HostError` 返回；Kotlin 抛出的其他异常经 `UnexpectedUniFFICallbackError` 变成同一个错误，不会 panic。
     - 绑定由 `scripts/build-android-rn.sh` 在编出 `.so` 之后用 `voltip-uniffi-bindgen` 从库里的元数据生成
@@ -228,7 +229,9 @@ scripts/build-android-rn.sh --unsigned  # 不签名：…_android_arm64-unsigned
   `packages/shared/src/fixtures/ipc/commands.json`）、查询返回能被 zod schema 接受的形状、外壳命令的固定
   回答、平台回调的参数。
 - JS：jest-expo + @testing-library/react-native，用 `@voltip/shared/mock` 的内存后端渲染各页面，覆盖导航、
-  按住说话的状态、配对流程、下拉选择、返回键。
+  按住说话的状态、配对流程、下拉选择、返回键。`pnpm --filter @voltip/mobile-rn run test:coverage`（`make verify`
+  的 web-coverage 一步和 CI 都跑它）要求行、分支、函数、语句覆盖率都不低于 90%，与其他前端包相同；只排除
+  `src/Root.tsx`（启动 Rust 外壳的原生胶水，测试环境里没有原生模块）。
 - 真机：AWS Device Farm（us-west-2），`scripts/devicefarm-rn.sh <apk> <设备池> <输出目录>`。自定义测试环境
   （`apps/mobile-rn/devicefarm/testspec.yml`）+ adb 驱动的 `acceptance.sh`（与 `.github/scripts/android-device-smoke.sh`
   同一思路），设备语言设为 zh_CN：安装、冷启动计时、首屏出现「按住说话」、授予麦克风后按住说话录 4 秒（设备
@@ -287,3 +290,28 @@ scripts/build-android-rn.sh --unsigned  # 不签名：…_android_arm64-unsigned
   补上应用内更新与 AAB；
 - 合并复制的 Rust 模块与 hooks；
 - `docs/site` 的手机端页面与截图重拍。
+
+## 11. 进程里的外壳与悬浮球（2026-10-28）
+
+悬浮球（`docs/dictation.md` §20.12）在应用的界面关掉之后也要能录音和识别，所以外壳不再属于 JavaScript 的原生模块，
+而属于进程。
+
+- **`VoltipRuntime`**（Kotlin `object`，`modules/voltip-native`）：持有进程唯一的 `VoltipShell` 和 `VoltipHost`，
+  `start(context)` 幂等（含 `KeyringLog.setLog` 与 `Keyring.initializeNdkContext`），谁先需要谁启动。`VoltipHost`
+  把每个事件和电平帧交给监听者列表（`CopyOnWriteArrayList`）：原生模块在 `start` 时把自己的 `sendEvent` 登记为监听者，
+  `OnDestroy` 时注销；JavaScript 重新加载时只换监听者，不换 host（`ffi.rs` 换 host 的路径留给测试）。
+  中继的网络回调和代理也在这里，与进程同生命周期。`fire(command)` 在进程级的协程作用域里发出不等答复的命令，
+  悬浮球关闭时发出的取消也能送到。`VoltipHost` 打开页面时用原生模块登记的当前 activity，没有就加
+  `FLAG_ACTIVITY_NEW_TASK`。
+- **`BubbleService`**：前台服务（`foregroundServiceType="microphone"`，`START_NOT_STICKY`），只由应用在前台时启动
+  （Android 不允许从后台启动的前台服务使用麦克风）：原生模块的 `bubbleConfigure` 保存选项后调用 `BubbleService.apply`，
+  开着且麦克风与「显示在其他应用上层」都已允许时启动，否则停止。服务在自己的协程作用域
+  （`SupervisorJob() + Dispatchers.IO`）里调用挂起的 `invoke`，`onDestroy` 时取消；悬浮窗是 `BubbleOverlay`，
+  界面在主线程更新。选项、位置、是否收进了边缘和文字存在 SharedPreferences（`BubblePrefs`）。
+- **原生模块的新函数**：`bubbleStatus()`、`bubbleConfigure(configJson)`（都返回 `BubbleStatus` 的 JSON）、
+  `bubbleOpenOverlaySettings()`、`bubbleOpenNotificationSettings()`。JavaScript 侧是 `src/backend/bubble.tsx` 的
+  `BubbleControl`，由 `Root.tsx` 交给 `<App bubble>`；测试换成假的实现，没有它时设置里不显示悬浮球。
+- **清单**：`SYSTEM_ALERT_WINDOW`、`FOREGROUND_SERVICE`、`FOREGROUND_SERVICE_MICROPHONE`、`POST_NOTIFICATIONS` 与
+  `BubbleService` 的声明在模块的 `AndroidManifest.xml`；`app.json` 列出这些权限，不再屏蔽 `SYSTEM_ALERT_WINDOW`。
+- **真机验证**：本机没有模拟器（没有 KVM）。用户 2026-10-28 在真机上试过最初的版本，没有问题；之后加的收进边缘和
+  「不复制」开关交给用户再验。厂商系统的后台限制见 `docs/dictation.md` §20.12。

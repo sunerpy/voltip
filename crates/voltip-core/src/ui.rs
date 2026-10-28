@@ -161,6 +161,9 @@ pub enum UiEvent {
         /// The notice; `None` once it is gone.
         notice: Option<RefineNotice>,
     },
+    /// The built-in service's usage and this device's record (docs/dictation.md §27), full
+    /// replacement.
+    Usage(crate::usage::UsageView),
     /// The answer to a paste from the history (`crate::paste`): the desktop shell waits for it; the
     /// webview reads the `paste_text` command's answer instead and ignores the event.
     PasteResult {
@@ -277,20 +280,39 @@ pub enum GuidePage {
     Privacy,
     /// AI 工具接入 (docs/site/recognition/mcp.md; docs/dictation.md §25).
     Mcp,
+    /// The built-in service's usage and daily limits (docs/site/recognition/cloud.md, its
+    /// 「内置服务的用量」 / "Built-in usage" section; docs/dictation.md §27).
+    Usage,
+    /// The phone's floating bubble and the background settings some phones need for it
+    /// (docs/site/phone/index.md, its 「悬浮球」 / "Floating bubble" section; docs/dictation.md §20.12).
+    Bubble,
 }
 
 impl GuidePage {
     /// The page in the language of `locale` (a BCP 47 tag such as `zh-CN` or `en`): Chinese for
-    /// `zh…`, English otherwise.
+    /// `zh…`, English otherwise. A section is the anchor the site gives its heading, which is the
+    /// heading's own words in each language; it is percent-encoded, since a URL with raw Chinese
+    /// characters is not one every opener takes (macOS before 14 refuses it).
     pub fn url(self, locale: &str) -> String {
-        let path = match self {
-            Self::Service => "recognition/service",
-            Self::Privacy => "privacy",
-            Self::Mcp => "recognition/mcp",
+        let (en, zh) = match self {
+            Self::Service => ("recognition/service", "recognition/service"),
+            Self::Privacy => ("privacy", "privacy"),
+            Self::Mcp => ("recognition/mcp", "recognition/mcp"),
+            Self::Usage => ("recognition/cloud#built-in-usage", "recognition/cloud#内置服务的用量"),
+            Self::Bubble => ("phone/#floating-bubble", "phone/#悬浮球"),
         };
-        let zh = locale.trim().to_ascii_lowercase().starts_with("zh");
-        format!("{GUIDE_SITE}/{}{path}", if zh { "zh/" } else { "" })
+        let (prefix, path) = if locale.trim().to_ascii_lowercase().starts_with("zh") { ("zh/", zh) } else { ("", en) };
+        let page = match path.split_once('#') {
+            Some((page, section)) => format!("{page}#{}", percent_encode(section)),
+            None => path.to_owned(),
+        };
+        format!("{GUIDE_SITE}/{prefix}{page}")
     }
+}
+
+/// `s` with every byte outside RFC 3986's unreserved set as `%XX`.
+fn percent_encode(s: &str) -> String {
+    s.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-._~".contains(&b) { char::from(b).to_string() } else { format!("%{b:02X}") }).collect()
 }
 
 /// A GPU the local engines can run on (docs/dictation.md §10.6).
@@ -519,6 +541,9 @@ pub struct UiState {
     /// §3.6); `None` when there is nothing to say.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refine_notice: Option<RefineNotice>,
+    /// The built-in service's usage today and this device's record (docs/dictation.md §27).
+    #[serde(default)]
+    pub usage: crate::usage::UsageView,
 }
 
 /// The built-in clean-up service turned a take's clean-up down for want of capacity
@@ -539,7 +564,13 @@ impl Default for UiState {
             settings: Settings::default(),
             secret_backend: String::new(),
             app_version: String::new(),
-            relay: RelayStatus { endpoint: None, source: crate::RelaySource::None, state: voltip_transport::ConnectionState::Disconnected, attempts: 0 },
+            relay: RelayStatus {
+                endpoint: None,
+                source: crate::RelaySource::None,
+                state: voltip_transport::ConnectionState::Disconnected,
+                attempts: 0,
+                last_failure: None,
+            },
             pairing: idle_snapshot(),
             devices: Vec::new(),
             hotkey: HotkeyStatus::default(),
@@ -565,6 +596,7 @@ impl Default for UiState {
             network: NetworkStatus::default(),
             mcp: crate::mcp::McpStatus::default(),
             refine_notice: None,
+            usage: crate::usage::UsageView::default(),
         }
     }
 }
@@ -581,6 +613,7 @@ fn idle_snapshot() -> Snapshot {
         peer: None,
         local_confirmed: false,
         peer_confirmed: false,
+        scanned: false,
     }
 }
 
@@ -679,6 +712,10 @@ impl UiState {
                 self.refine_notice = notice;
                 UiEvent::RefineNotice { notice }
             }
+            CoreEvent::Usage(usage) => {
+                self.usage = usage.clone();
+                UiEvent::Usage(usage)
+            }
             CoreEvent::Serve(status) => {
                 self.serve = status.clone();
                 UiEvent::Serve(status)
@@ -739,6 +776,17 @@ mod tests {
         assert_eq!(GuidePage::Mcp.url("zh-CN"), "https://voltip.firlab.app/zh/recognition/mcp");
         assert_eq!(GuidePage::Mcp.url("en"), "https://voltip.firlab.app/recognition/mcp");
         assert_eq!(serde_json::to_string(&GuidePage::Mcp).unwrap(), r#""mcp""#);
+        // The anchor is the Chinese heading 内置服务的用量, percent-encoded.
+        assert_eq!(
+            GuidePage::Usage.url("zh-CN"),
+            "https://voltip.firlab.app/zh/recognition/cloud#%E5%86%85%E7%BD%AE%E6%9C%8D%E5%8A%A1%E7%9A%84%E7%94%A8%E9%87%8F"
+        );
+        assert_eq!(GuidePage::Usage.url("en"), "https://voltip.firlab.app/recognition/cloud#built-in-usage");
+        assert_eq!(serde_json::to_string(&GuidePage::Usage).unwrap(), r#""usage""#);
+        // 悬浮球, percent-encoded.
+        assert_eq!(GuidePage::Bubble.url("zh-CN"), "https://voltip.firlab.app/zh/phone/#%E6%82%AC%E6%B5%AE%E7%90%83");
+        assert_eq!(GuidePage::Bubble.url("en"), "https://voltip.firlab.app/phone/#floating-bubble");
+        assert_eq!(serde_json::to_string(&GuidePage::Bubble).unwrap(), r#""bubble""#);
         assert_eq!(serde_json::to_string(&ProjectLink::Feedback).unwrap(), r#""feedback""#);
         assert_eq!(serde_json::from_str::<ProjectLink>(r#""source""#).unwrap(), ProjectLink::Source);
     }
@@ -769,6 +817,7 @@ mod tests {
             source: crate::RelaySource::User,
             state: voltip_transport::ConnectionState::Connected,
             attempts: 0,
+            last_failure: None,
         }));
         assert_eq!(st.relay.state, voltip_transport::ConnectionState::Connected);
         let renamed = DeviceIdentityPublic { name: "Studio".into(), ..id };

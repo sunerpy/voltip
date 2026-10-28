@@ -31,6 +31,8 @@ The phone cannot tell which app you are typing in, so scenes are not matched by 
 
 These settings apply to recordings the phone recognises itself. A recording sent to a computer follows the computer's settings.
 
+With the built-in service, the bottom of the **Hold to talk** card shows today's use, and **Settings** › **Usage** has both services in detail. The built-in service counts each device's use by day: recordings the phone recognises itself count toward the phone, recordings sent to a computer toward the computer; see [Built-in usage](/recognition/cloud#built-in-usage). Once today's built-in recognition is used up, **Hold to talk** is unavailable for the day: send the recording to a computer that is online instead, or choose another provider under **Speech models**.
+
 **Recent results** shows the newest three of what the phone transcribed and the takes it sent to a computer, each with its time and where it went: inserted on a computer, or transcribed on the phone. Open one to see its details and share it, or copy it with the button at its end. **History** at the bottom lists everything: search it, filter it by time or by star, and see how many takes you made today, this week, this month and in total, and the time they saved, takes sent to a computer included. Open an entry to read the polished text and the transcript, and to copy, share, star or delete it; a long recording can also be processed again with an AI preset, and its subtitles (SRT) or text (TXT) shared to another app as a file. **Settings** › **History** turns saving off, sets how many entries are kept, or clears them all. These results are kept on the phone; while it syncs with a paired computer, a copy of what the phone recognised itself goes to the computer, see [The computer's history and settings](#the-computer-s-history-and-settings).
 
 **Settings** › **Feedback** reports a problem or suggests an idea, with screenshots or screen recordings from the gallery; before anything is sent, the page lists everything that goes along. See [Privacy](/privacy).
@@ -39,17 +41,41 @@ These settings apply to recordings the phone recognises itself. A recording sent
 
 When a paired computer is online, **Where to transcribe** at the top of **Talk** is set to **Send to** and the computer's name, and the recording goes to the computer as described below; choose **Transcribe on the phone** to have the phone transcribe it instead. A recording keeps its route until it ends, even if a computer comes online or goes offline in the meantime.
 
+## Floating bubble
+
+The floating bubble is a talk button over other apps: in a chat or a notes app, hold it and speak, and the result is copied to the phone's clipboard; touch and hold the text field to paste it. The phone recognises the recording itself, as **Transcribe on the phone** on the **Talk** page does, with the phone's own speech model, AI polish and dictionary.
+
+To turn it on:
+
+1. Open **Settings** › **Floating bubble**.
+2. Allow the three permissions in turn: the microphone; **Display over other apps** (choose **Open settings** and turn it on for Voltip in the system settings); and notifications (while the bubble shows, a notification stays in the shade, from which you can close the bubble at any time).
+3. Turn on **Show floating bubble**.
+
+To use it:
+
+- **Hold to talk** (the default): hold the bubble and speak, release to finish; to cancel, move the finger well away from where it pressed before releasing, and the bubble turns red. Drag the bubble right away to move it; when released, it moves to the nearer side of the screen and keeps that place.
+- **Tap to start, tap to finish**: tap once to start recording and once more to finish; while recording, **Cancel** on the card discards it.
+- To keep the bubble out of the way, tuck it in at the side of the screen: drag it until your finger reaches the left or right side, and let go when half of the bubble slides off the screen; only a small handle stays. Tap the handle or pull it inward to bring the bubble back; drag the handle up or down to move it.
+- When the text is ready, the bubble shows *Copied · touch and hold a text field to paste* and the text for 5 seconds; **Talk again** records again. Turn on **Show “Don't copy”** to also get **Don't copy**, which clears the clipboard. With **Show the result** off, the bubble only shows a check mark for a moment.
+- **AI polish** is the same setting as on the **Talk** and AI models pages. With the built-in service, the bubble's recordings count toward this phone's [usage](/recognition/cloud#built-in-usage).
+
+The bubble keeps working after you close Voltip's screens; choose **Close** in its notification, or turn it off under **Settings** › **Floating bubble**, to stop it. Some phones (such as Xiaomi, OPPO and vivo) need Voltip allowed to start automatically or run in the background in the system settings, or the system may close the bubble; where that is depends on the phone, usually under the app management or battery settings.
+
 ## Pairing
 
 Pairing connects one phone and one computer, once:
 
 1. On the computer, open the **Phone** page and start pairing. It shows a QR code and a 6-digit code, valid for 120 seconds.
 2. On the phone, scan the QR code or enter the 6-digit code.
-3. Both screens show the same safety code. Check that they match, then confirm on both devices. If they do not match, reject the pairing.
+3. When you scan, the QR code has already checked both devices: press **Confirm and trust** on the phone, and there is nothing to do on the computer. When you enter the code, both screens show the same safety code. Check that they match, then confirm on both devices. If they do not match, reject the pairing.
 
-**Always-on pairing** on the computer keeps a pairing open for the next phone, renewing the QR code before it expires, until you turn it off. Every pairing still needs the safety code confirmed on the computer.
+A phone that scans the QR code pairs without a confirmation on the computer, so do not screenshot the pairing QR code or show it on a shared screen. A paired phone appears in the computer's device list, and you can forget a device you do not recognise at any time.
+
+**Always-on pairing** on the computer keeps a pairing open for the next phone, renewing the QR code before it expires, until you turn it off. A phone that scans still needs only its own confirmation; one that enters the code needs the safety code confirmed on the computer as well.
 
 The phone and the computer meet through a relay, the built-in one unless the computer is set to another, so pairing and the connection work on any network. Turning the relay off on the computer disconnects its phones. After a network drop, or a switch between Wi-Fi and mobile data, the two reconnect on their own, usually within seconds.
+
+The pairing page on the phone shows the phone's connection to the relay, which pairing needs first. When it cannot connect, the page says why the last attempt failed (for example, it timed out, or the relay's address could not be looked up) and offers the **Connection check**, so you know whether to look at the network or the proxy settings.
 
 ## Talking on the phone
 
@@ -81,7 +107,7 @@ A paired computer syncs its history and settings to the phone, where you can rea
 
 ## How the connection is protected
 
-- Pairing creates an encrypted connection and asks you to compare the safety code, so that nobody in between can pretend to be one of the devices.
+- Pairing creates an encrypted connection. When you scan, the QR code checks both devices: the phone knows it reached the computer on the screen, and the computer knows the phone read its QR code, so neither the relay nor someone who only knows the 6-digit code can pretend to be one of them. When you enter the code, you compare the safety code on both screens.
 - Afterwards, the devices connect through the relay, which forwards their traffic. Everything is encrypted end to end, so the relay cannot read audio or text.
 - Audio is compressed with Opus before it is sent.
 - **Forget device** removes a pairing on both sides when the other device is online. The two can be paired again straight away.

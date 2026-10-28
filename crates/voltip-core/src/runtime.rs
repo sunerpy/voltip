@@ -57,6 +57,7 @@ mod sync;
 mod take_codec;
 mod takes;
 mod texts;
+mod usage;
 
 /// Directory under the app data dir that holds the local model library.
 pub const MODELS_DIR_NAME: &str = "models";
@@ -162,6 +163,9 @@ pub struct CoreConfig {
     /// force on it, and the relay link uses it; the shell hands the same value to every client it
     /// builds (the engines, model downloads, feedback, update checks).
     pub network: Arc<voltip_net::Network>,
+    /// Asks the built-in service for this device's day (docs/dictation.md §27); `None`: the usage
+    /// shows what the service's answers report, and nothing is asked.
+    pub usage_probe: Option<Arc<dyn crate::usage::UsageProbe>>,
     /// Tests only.
     #[doc(hidden)]
     pub test_hooks: TestHooks,
@@ -237,6 +241,7 @@ impl CoreConfig {
             mirror_files: Arc::new(crate::sync::MirrorFiles::new(&data_dir_for_mirrors)),
             sync_stats: Arc::default(),
             network: voltip_net::Network::new(),
+            usage_probe: None,
             test_hooks: TestHooks::default(),
         }
     }
@@ -612,6 +617,10 @@ pub enum CoreCommand {
     RefreshNetwork,
     /// Close the built-in clean-up service's notice (docs/dictation.md §3.6); it stays away a day.
     RefineNoticeClose,
+    /// Ask the built-in service for this device's day now (docs/dictation.md §27).
+    UsageRefresh,
+    /// Close a usage notice for the rest of the day (docs/dictation.md §27).
+    UsageNoticeDismiss(crate::usage::UsageNotice),
     /// Stop the core.
     Shutdown,
 }
@@ -632,6 +641,7 @@ struct Inbox {
     listed_rx: mpsc::Receiver<listing::Listed>,
     mcp_rx: mpsc::Receiver<crate::mcp::McpInbound>,
     recover_rx: mpsc::Receiver<audio::Recovered>,
+    usage_rx: mpsc::Receiver<usage::UsageInbound>,
 }
 
 /// Events to the UI.
@@ -755,6 +765,9 @@ pub enum CoreEvent {
     Network(crate::ui::NetworkStatus),
     /// The built-in clean-up service's notice came (`Some`) or went (docs/dictation.md §3.6).
     RefineNotice(Option<crate::ui::RefineNotice>),
+    /// The built-in service's usage and this device's record (docs/dictation.md §27); on `Ready`
+    /// and after every change.
+    Usage(crate::usage::UsageView),
     /// Non-fatal error for the UI.
     Error(String),
 }
@@ -852,7 +865,9 @@ impl AppCore {
         let library = models.as_ref().map(|m| m.scan()).unwrap_or_default();
         let resolved = ResolvedEngines::resolve_with_models(&settings.engines, &user_secrets, &built_in, &library);
         let (levels_tx, _) = broadcast::channel(LEVELS_QUEUE);
-        let (mut dictation, dict_rx) = DictationEngine::new(ports, &resolved, levels_tx.clone());
+        // docs/dictation.md §27: every client is metered from the first take on.
+        let (usage, usage_rx) = usage::UsageRuntime::new(&config.data_dir, format!("{} ({})", config.client_version, std::env::consts::OS));
+        let (mut dictation, dict_rx) = DictationEngine::metered(ports, &resolved, levels_tx.clone(), Some(usage.metering.clone()));
         dictation.set_vocabulary(Arc::new(Vocabulary::compile(dictionary.entries(), rules.rules())));
         dictation.set_scenes(Arc::new(scenes.scenes().to_vec()));
         dictation.set_presets(Arc::new(presets.presets().to_vec()));
@@ -916,7 +931,7 @@ impl AppCore {
             evt: evt_tx,
             link_tx,
             relay: None,
-            relay_status: RelayStatus { endpoint: None, source: RelaySource::None, state: ConnectionState::Disconnected, attempts: 0 },
+            relay_status: RelayStatus { endpoint: None, source: RelaySource::None, state: ConnectionState::Disconnected, attempts: 0, last_failure: None },
             pairing: Pairing::None,
             pairing_link: None,
             pairing_session: None,
@@ -952,10 +967,11 @@ impl AppCore {
             proxy_password,
             network_status: crate::ui::NetworkStatus::default(),
             system_fingerprint: 0,
+            usage,
         };
         rt.system_fingerprint = rt.config.network.system_fingerprint();
         rt.connect_relay()?;
-        let inbox = Inbox { cmd_rx, link_rx, dict_rx, model_rx, act_rx, phone_rx, check_rx, process_rx, listed_rx, mcp_rx, recover_rx };
+        let inbox = Inbox { cmd_rx, link_rx, dict_rx, model_rx, act_rx, phone_rx, check_rx, process_rx, listed_rx, mcp_rx, recover_rx, usage_rx };
         Ok((rt, inbox, CoreHandle { cmd: cmd_tx, levels: levels_tx }, evt_rx))
     }
 }
@@ -1216,6 +1232,8 @@ struct Runtime {
     /// What following the system meant when the routes were last decided
     /// (`voltip_net::Network::system_fingerprint`).
     system_fingerprint: u64,
+    /// The built-in service's usage (docs/dictation.md §27).
+    usage: usage::UsageRuntime,
 }
 
 impl Runtime {
@@ -1279,13 +1297,15 @@ impl Runtime {
         }
         self.drop_link_state(LinkId::Relay);
         if !self.settings.relay_enabled {
-            self.relay_status = RelayStatus { endpoint: None, source: RelaySource::None, state: ConnectionState::Disconnected, attempts: 0 };
+            self.relay_status =
+                RelayStatus { endpoint: None, source: RelaySource::None, state: ConnectionState::Disconnected, attempts: 0, last_failure: None };
             self.emit(CoreEvent::Relay(self.relay_status.clone()));
             return Ok(());
         }
         let endpoint = RelayEndpoint::resolve(self.settings.relay_url.as_deref())?;
         let Some(endpoint) = endpoint else {
-            self.relay_status = RelayStatus { endpoint: None, source: RelaySource::None, state: ConnectionState::Disconnected, attempts: 0 };
+            self.relay_status =
+                RelayStatus { endpoint: None, source: RelaySource::None, state: ConnectionState::Disconnected, attempts: 0, last_failure: None };
             self.emit(CoreEvent::Relay(self.relay_status.clone()));
             return Ok(());
         };
@@ -1301,7 +1321,7 @@ impl Runtime {
         cfg.write_gate = self.config.test_hooks.relay_write_gate.clone();
         cfg.network = voltip_net::NetworkRef::new(&self.config.network);
         let link = self.spawn_link(LinkId::Relay, cfg);
-        self.relay_status = RelayStatus { endpoint: shown, source, state: ConnectionState::Connecting, attempts: 0 };
+        self.relay_status = RelayStatus { endpoint: shown, source, state: ConnectionState::Connecting, attempts: 0, last_failure: None };
         self.emit(CoreEvent::Relay(self.relay_status.clone()));
         self.relay = Some((link, endpoint));
         Ok(())
@@ -1334,6 +1354,7 @@ impl Runtime {
             mut listed_rx,
             mut mcp_rx,
             mut recover_rx,
+            mut usage_rx,
         } = inbox;
         self.emit(CoreEvent::Ready {
             identity: self.identity.public(),
@@ -1359,6 +1380,7 @@ impl Runtime {
         self.emit(CoreEvent::Serve(self.serve.status()));
         self.emit(CoreEvent::Mcp(self.mcp.status()));
         self.emit_network();
+        self.emit_usage();
         self.apply_serve().await;
         self.apply_mcp().await;
         let mut ticker = tokio::time::interval(self.config.tick);
@@ -1385,6 +1407,7 @@ impl Runtime {
                 Some(listed) = listed_rx.recv() => self.on_listed(listed),
                 Some(inbound) = mcp_rx.recv() => self.on_mcp(inbound),
                 Some(recovered) = recover_rx.recv() => self.on_recovered(recovered),
+                Some(inbound) = usage_rx.recv() => self.on_usage(inbound),
                 Ok(()) = quota_rx.changed() => self.emit(CoreEvent::Engines(self.engine_status())),
                 _ = ticker.tick() => self.tick().await,
             }
@@ -1466,6 +1489,8 @@ impl Runtime {
             CoreCommand::SetPairingAlwaysOn(enabled) => self.set_pairing_always_on(enabled).await,
             CoreCommand::ReconnectRelay => {
                 self.reconnect_relay("asked");
+                // Asked when the network changed or the app came back: the day may have moved on.
+                self.usage.probe_soon();
                 Ok(())
             }
             CoreCommand::PhoneTakeStop => self.phone_take_stop(),
@@ -1620,6 +1645,15 @@ impl Runtime {
             CoreCommand::RefreshNetwork => self.refresh_network(),
             CoreCommand::RefineNoticeClose => {
                 self.close_refine_notice();
+                Ok(())
+            }
+            CoreCommand::UsageRefresh => {
+                self.usage.probe_soon();
+                self.usage_tick();
+                Ok(())
+            }
+            CoreCommand::UsageNoticeDismiss(notice) => {
+                self.dismiss_usage_notice(notice);
                 Ok(())
             }
             CoreCommand::Shutdown => Ok(()),
@@ -2481,8 +2515,11 @@ impl Runtime {
         if self.relay_connected() {
             return Ok(());
         }
+        let too_old = self.relay_status.last_failure.as_ref().is_some_and(|f| f.kind == voltip_transport::FailureKind::TooOld);
         let why = match self.relay_status.source {
             RelaySource::None => "pairing: 配对需要中继，请先在设置中开启中继",
+            // docs/pairing.md 「最低版本」: only an update helps.
+            RelaySource::Builtin | RelaySource::User if too_old => "pairing: 此版本过低，请更新 Voltip 后再配对",
             RelaySource::Builtin | RelaySource::User => "pairing: 尚未连上中继，请检查网络后再试",
         };
         Err(CoreError::Invalid(why.into()))
@@ -2540,6 +2577,7 @@ impl Runtime {
                     peer: None,
                     local_confirmed: false,
                     peer_confirmed: false,
+                    scanned: false,
                 };
                 self.emit(CoreEvent::Pairing(snap));
                 Ok(())
@@ -2587,6 +2625,7 @@ impl Runtime {
             peer: None,
             local_confirmed: false,
             peer_confirmed: false,
+            scanned: false,
         };
         self.emit(CoreEvent::Pairing(snap));
         Ok(())
@@ -2852,8 +2891,18 @@ impl Runtime {
         }
         match ev {
             LinkEvent::Warning(w) => tracing::warn!(warning = %w, link = ?id, "link"),
+            LinkEvent::Failed(failure) => self.on_link_failed(id, failure),
             LinkEvent::State(change) => self.on_state(id, change).await,
             LinkEvent::Frame(frame) => self.on_frame(id, frame).await,
+        }
+    }
+
+    /// An attempt failed or the connection went down: why, for the status the link's next report
+    /// carries (`Reconnecting` follows at once). The build's own relay keeps only the kind of it.
+    fn on_link_failed(&mut self, id: LinkId, failure: voltip_transport::LinkFailure) {
+        tracing::warn!(kind = ?failure.kind, failure = %failure.detail, link = ?id, "link");
+        match id {
+            LinkId::Relay => self.relay_status.last_failure = Some(crate::RelayFailure::of(failure, self.relay_status.source, now_ms())),
         }
     }
 
@@ -2873,6 +2922,9 @@ impl Runtime {
                 };
                 self.relay_status.state = to;
                 self.relay_status.attempts = attempts;
+                if to.is_connected() {
+                    self.relay_status.last_failure = None;
+                }
                 self.emit(CoreEvent::Relay(self.relay_status.clone()));
                 if to.is_connected() {
                     self.attach_all(LinkId::Relay).await;
@@ -3299,6 +3351,7 @@ impl Runtime {
         }
         self.retry_attaches(now).await;
         self.sync_tick().await;
+        self.usage_tick();
         self.check_takes();
         self.check_texts();
         self.check_deadline();
@@ -3442,6 +3495,7 @@ mod tests {
             nonce: [9; 16],
             expires_at: u64::MAX,
             relay_hint: None,
+            secret: None,
         };
         assert!(refused(rt.join(JoinSpec::Ticket(lan_only.to_uri().unwrap())).await).contains("旧版本的局域网配对"));
         assert!(matches!(rt.pairing, Pairing::None));

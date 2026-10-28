@@ -393,3 +393,24 @@ fn the_binary_stops_cleanly_on_sigterm() {
     assert!(dir.path().join("serve/uploads").is_dir());
     assert_eq!(std::fs::read_dir(dir.path().join("serve/uploads")).unwrap().count(), 0);
 }
+
+/// docs/dictation.md §27: on the app's machine the server is the app's device to the built-in
+/// service — it reads the app's usage id and never writes the app's directory; without the app it
+/// keeps an id of its own, in its own directory, and keeps it.
+#[test]
+fn the_server_meters_as_the_apps_device_or_as_itself_and_never_writes_the_apps_directory() {
+    use voltip_core::usage::{DEVICE_HEADER, DEVICE_ID_FILE_NAME, device_id};
+    let (app, own) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let header = |m: &voltip_core::usage::Metering| m.headers().into_iter().find(|(name, _)| name == DEVICE_HEADER).unwrap().1;
+
+    let alone = voltip_server::server_metering(app.path(), own.path());
+    assert!(!app.path().join(DEVICE_ID_FILE_NAME).exists(), "the app's directory is only read");
+    let own_id = std::fs::read_to_string(own.path().join(DEVICE_ID_FILE_NAME)).unwrap();
+    assert_eq!(header(&alone), own_id.trim());
+    assert_eq!(header(&voltip_server::server_metering(app.path(), own.path())), own_id.trim(), "kept");
+
+    let app_id = device_id(app.path()).unwrap();
+    assert_eq!(header(&voltip_server::server_metering(app.path(), own.path())), app_id, "the app's device");
+    let client = voltip_server::server_metering(app.path(), own.path()).headers()[1].1.clone();
+    assert!(client.starts_with(&format!("voltip/{APP_VERSION} (")) && client.ends_with("; server)"), "{client}");
+}

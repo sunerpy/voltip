@@ -64,4 +64,4 @@ apps/server              无头服务端 voltip-server（Linux x64 tar.gz）：�
 
 - Rust 1.98 stable（`rust-toolchain.toml`），Tauri 2.11，React 19，Vite 7，Tailwind 4，Vitest 3。
 - 环境：debug 构建默认 `ws://127.0.0.1:47830/ws`；发行构建的 `wss://…/ws` 只在 GitHub secret `VOLTIP_RELAY_URL`（本机 `.env.build`）里，构建期注入，源码只有 dev 默认值与"未配置 = 关闭 Relay"。
-- 覆盖率门：Rust `cargo llvm-cov` 过滤行覆盖 ≥ 90%（排除 `main.rs`、平台 keychain 胶水、Tauri app crate）；TS `vitest --coverage` 行/分支/函数/语句 ≥ 90%（排除 `bootstrap.tsx`、`vite-env.d.ts`）。
+- 覆盖率门：Rust `cargo llvm-cov` 过滤行覆盖 ≥ 90%（排除 `main.rs`、平台 keychain 胶水、Tauri app crate）；TS `vitest --coverage` 行/分支/函数/语句 ≥ 90%（排除 `bootstrap.tsx`、`vite-env.d.ts`）；React Native 手机端 `jest --coverage` 同样四项 ≥ 90%（排除启动原生外壳的 `Root.tsx`）。

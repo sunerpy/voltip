@@ -41,8 +41,9 @@ make help                        # everything else
   bug): flush anything you write to stdout or stderr yourself, and never rely on an exit handler.
 - After changing a type that crosses the IPC bridge, regenerate the fixtures and commit them:
   `UPDATE_IPC_FIXTURES=1 cargo test -p voltip-tauri-bridge --test contract`.
-- Coverage floors: Rust 90 % of lines (`make coverage-gate`), each web package 90 %
-  (`make web-coverage-gate`). Codecov receives the reports but does not gate.
+- Coverage floors: Rust 90 % of lines (`make coverage-gate`), each web package and the React Native
+  app 90 % (`make web-coverage-gate`; the RN app runs jest, the others vitest). Codecov receives the
+  reports but does not gate.
 
 ## Architecture rules
 

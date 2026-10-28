@@ -71,10 +71,11 @@ use crate::history::{EditRecord, HistoryEntry, Outcome};
 use crate::hotkey::Modifier;
 use crate::models::ModelManager;
 use crate::presets::{CustomPreset, PresetId, TakePreset, resolve};
-use crate::providers::ServiceKind;
+use crate::providers::{ProviderId, ServiceKind};
 use crate::scenes::{AppRef, ContextSharing, LANGUAGE_AUTO, Scene, TakeContext, match_scene};
 use crate::script::normalized;
 use crate::settings::{RecordingSettings, RecordingSource};
+use crate::usage::{AsrCall, MeteredRefiner, MeteredTranscriber, Metering, UsageOrigin};
 use crate::vocabulary::{Vocabulary, VocabularyHits};
 
 /// Builds the network clients for a resolved configuration. Called at startup and again whenever
@@ -683,6 +684,9 @@ struct Take {
     retake: bool,
     /// The clients it runs with instead of the engine's (a 重新识别 on other models, §26.4).
     clients: Option<TakeClients>,
+    /// Where the take comes from, for the usage record (docs/dictation.md §27): this device, a
+    /// paired phone, a kept recording.
+    origin: UsageOrigin,
 }
 
 impl Take {
@@ -723,6 +727,7 @@ impl Take {
             kept: None,
             retake: false,
             clients: None,
+            origin: UsageOrigin::ThisDevice,
         }
     }
 
@@ -790,6 +795,9 @@ pub struct DictationEngine {
     /// Which models ran out of quota (docs/dictation.md §3.5): shared by every client built, so it
     /// outlives a configuration change.
     quota: QuotaLedger,
+    /// Who this device is to the built-in service and where the usage goes (docs/dictation.md
+    /// §27; set by the runtime): every client built is metered with it.
+    metering: Option<Metering>,
     /// Keep the recordings of the takes that start from now on in the audio cache
     /// (docs/dictation.md §26; set by the runtime).
     keep_audio: bool,
@@ -847,26 +855,61 @@ fn now_ms() -> u64 {
 /// behind a fallback chain when fallback models run — the factory builds each fallback model's
 /// client from the configuration as if that model were selected
 /// ([`ResolvedEngines::with_candidate`]). Every chain shares `quota`.
-/// The local speech service builds its clients the same way (docs/dictation.md §23).
-pub fn engine_clients(factory: &EngineFactory, engines: &ResolvedEngines, quota: &QuotaLedger) -> (Arc<dyn Transcriber>, Option<Arc<dyn Refiner>>) {
-    let (transcriber, refiner) = factory(engines);
-    let asr: Vec<&FallbackTarget> = engines.asr_fallback.targets().collect();
-    let transcriber = match &engines.asr_fallback.selected {
-        Some(selected) if !asr.is_empty() => {
-            let mut links = vec![Link { key: selected.clone(), port: transcriber }];
-            links.extend(asr.into_iter().map(|target| Link { key: target.key.clone(), port: factory(&engines.with_candidate(ServiceKind::Asr, target)).0 }));
-            Arc::new(FallbackTranscriber::new(links, quota.clone())) as Arc<dyn Transcriber>
+/// With `meter` (docs/dictation.md §27) the factory finds it in [`ResolvedEngines::metering`] (the
+/// built-in service's clients send its headers), and each client of a chain is wrapped as its own
+/// provider's ([`MeteredTranscriber`], [`MeteredRefiner`]): the model that answered is the one
+/// recorded. The local speech service builds its clients the same way (docs/dictation.md §23).
+pub fn engine_clients(
+    factory: &EngineFactory,
+    engines: &ResolvedEngines,
+    quota: &QuotaLedger,
+    meter: Option<&Metering>,
+) -> (Arc<dyn Transcriber>, Option<Arc<dyn Refiner>>) {
+    let metered;
+    let engines = match meter {
+        Some(meter) => {
+            let mut view = engines.clone();
+            view.metering = Some(meter.clone());
+            metered = view;
+            &metered
         }
-        _ => transcriber,
+        None => engines,
     };
+    let asr_port = |port: Arc<dyn Transcriber>, provider: ProviderId| -> Arc<dyn Transcriber> {
+        match meter {
+            Some(meter) => Arc::new(MeteredTranscriber::new(port, provider, meter.clone())),
+            None => port,
+        }
+    };
+    let llm_port = |port: Arc<dyn Refiner>, provider: ProviderId| -> Arc<dyn Refiner> {
+        match meter {
+            Some(meter) => Arc::new(MeteredRefiner::new(port, provider, meter.clone())),
+            None => port,
+        }
+    };
+    let (transcriber, refiner) = factory(engines);
+    let transcriber = asr_port(transcriber, engines.asr_provider);
+    let refiner = refiner.map(|port| llm_port(port, engines.llm_provider.unwrap_or_default()));
+    let asr: Vec<&FallbackTarget> = engines.asr_fallback.targets().collect();
+    let transcriber =
+        match &engines.asr_fallback.selected {
+            Some(selected) if !asr.is_empty() => {
+                let mut links = vec![Link { key: selected.clone(), port: transcriber }];
+                links.extend(asr.into_iter().map(|target| Link {
+                    key: target.key.clone(),
+                    port: asr_port(factory(&engines.with_candidate(ServiceKind::Asr, target)).0, target.provider),
+                }));
+                Arc::new(FallbackTranscriber::new(links, quota.clone())) as Arc<dyn Transcriber>
+            }
+            _ => transcriber,
+        };
     let llm: Vec<&FallbackTarget> = engines.refine_fallback.targets().collect();
     let refiner = match (refiner, &engines.refine_fallback.selected) {
         (Some(refiner), Some(selected)) if !llm.is_empty() => {
             let mut links = vec![Link { key: selected.clone(), port: refiner }];
-            links.extend(
-                llm.into_iter()
-                    .filter_map(|target| factory(&engines.with_candidate(ServiceKind::Llm, target)).1.map(|port| Link { key: target.key.clone(), port })),
-            );
+            links.extend(llm.into_iter().filter_map(|target| {
+                factory(&engines.with_candidate(ServiceKind::Llm, target)).1.map(|port| Link { key: target.key.clone(), port: llm_port(port, target.provider) })
+            }));
             Some(Arc::new(FallbackRefiner::new(links, quota.clone())) as Arc<dyn Refiner>)
         }
         (refiner, _) => refiner,
@@ -898,9 +941,20 @@ impl DictationEngine {
     /// Build the engine; `levels` receives every level frame while a capture runs. The returned
     /// receiver must be polled by the owner and fed back through [`DictationEngine::on_internal`].
     pub fn new(ports: DictationPorts, engines: &ResolvedEngines, levels: broadcast::Sender<LevelFrame>) -> (Self, mpsc::Receiver<Internal>) {
+        Self::metered(ports, engines, levels, None)
+    }
+
+    /// [`DictationEngine::new`] whose clients are metered with `metering` (docs/dictation.md §27),
+    /// from the first take on and after every configuration change.
+    pub fn metered(
+        ports: DictationPorts,
+        engines: &ResolvedEngines,
+        levels: broadcast::Sender<LevelFrame>,
+        metering: Option<Metering>,
+    ) -> (Self, mpsc::Receiver<Internal>) {
         let (tx, rx) = mpsc::channel(INTERNAL_QUEUE);
         let quota = QuotaLedger::default();
-        let (transcriber, refiner) = engine_clients(&ports.factory, engines, &quota);
+        let (transcriber, refiner) = engine_clients(&ports.factory, engines, &quota, metering.as_ref());
         let engine = Self {
             audio: ports.audio,
             transcriber,
@@ -936,6 +990,7 @@ impl DictationEngine {
             segmenter: ports.segmenter,
             recordings: None,
             quota,
+            metering,
             keep_audio: false,
             orphans: Vec::new(),
         };
@@ -978,7 +1033,7 @@ impl DictationEngine {
     /// docs/dictation.md §26.4): its recogniser and clean-up behind their fallback chains, on the
     /// engine's quota ledger; `refine` turns its clean-up on or off whatever its scene says.
     pub fn clients_for(&self, engines: &ResolvedEngines, refine: Option<bool>) -> TakeClients {
-        let (transcriber, refiner) = engine_clients(&self.factory, engines, &self.quota);
+        let (transcriber, refiner) = engine_clients(&self.factory, engines, &self.quota, self.metering.as_ref());
         TakeClients { transcriber, refiner, refine, asr_model: engines.asr_model.clone(), refine_model: engines.refine_model.clone() }
     }
 
@@ -1031,7 +1086,7 @@ impl DictationEngine {
     /// clients it started with; a live preview already running keeps its session; a run already
     /// started keeps its output mode.
     pub fn configure(&mut self, engines: &ResolvedEngines) {
-        let (transcriber, refiner) = engine_clients(&self.factory, engines, &self.quota);
+        let (transcriber, refiner) = engine_clients(&self.factory, engines, &self.quota, self.metering.as_ref());
         self.transcriber = transcriber;
         self.refiner = refiner;
         self.language = engines.language.clone();
@@ -1067,7 +1122,9 @@ impl DictationEngine {
         match self.live_source? {
             // The streaming modes take their text from the flush; a whole take decodes it itself.
             LiveSource::Cloud => Some(Arc::new(
-                RedecodeStreaming::new(self.transcriber.clone(), self.take.vocabulary.glossary().to_vec()).flushing(self.take.mode.is_streaming()),
+                RedecodeStreaming::new(self.transcriber.clone(), self.take.vocabulary.glossary().to_vec())
+                    .flushing(self.take.mode.is_streaming())
+                    .with_origin(self.take.origin.clone()),
             )),
             LiveSource::Stream => self.transcriber.streaming(self.take.vocabulary.glossary()),
             LiveSource::Local => self.streaming.clone(),
@@ -1128,14 +1185,20 @@ impl DictationEngine {
     /// session into `Failed`. Interrupts a terminal dwell; refused while a recording or a pipeline
     /// run is in progress.
     pub fn start(&mut self) -> Result<Vec<Effect>, DictationError> {
-        self.begin(TakeKind::Dictation, Vec::new(), None)
+        self.begin(TakeKind::Dictation, Vec::new(), None, UsageOrigin::ThisDevice)
     }
 
     /// A dictation take whose audio comes from `source` instead of the microphone — a paired
     /// phone's stream (docs/dictation.md §20). Everything else is an ordinary take: the scene of
     /// the application in front, the output mode, the pipeline, the delivery, the history.
     pub fn start_from(&mut self, source: Arc<dyn AudioSource>) -> Result<Vec<Effect>, DictationError> {
-        self.begin(TakeKind::Dictation, Vec::new(), Some(source))
+        self.start_from_origin(source, UsageOrigin::ThisDevice)
+    }
+
+    /// [`DictationEngine::start_from`] for a take from `origin` (a paired phone's, by its name),
+    /// which the usage record names (docs/dictation.md §27).
+    pub fn start_from_origin(&mut self, source: Arc<dyn AudioSource>, origin: UsageOrigin) -> Result<Vec<Effect>, DictationError> {
+        self.begin(TakeKind::Dictation, Vec::new(), Some(source), origin)
     }
 
     /// The microphone port (the phone streams its takes from it, docs/dictation.md §20).
@@ -1158,7 +1221,7 @@ impl DictationEngine {
     /// key-up ([`DictationEngine::selection_timing`]); a stop that finds it not done yet copies
     /// first. The output mode does not apply: an edit take is always a whole take.
     pub fn start_edit(&mut self, held: Vec<Modifier>) -> Result<Vec<Effect>, DictationError> {
-        self.begin(TakeKind::Edit, held, None)
+        self.begin(TakeKind::Edit, held, None, UsageOrigin::ThisDevice)
     }
 
     /// Recognise a kept recording again (docs/dictation.md §26): a dictation take without a
@@ -1185,6 +1248,7 @@ impl DictationEngine {
         self.take.kept = Some(retake.recording);
         self.take.retake = true;
         self.take.clients = retake.clients;
+        self.take.origin = UsageOrigin::Retake;
         self.status.context = None;
         self.status.preset = None;
         self.status.segments = None;
@@ -1309,7 +1373,7 @@ impl DictationEngine {
         });
     }
 
-    fn begin(&mut self, kind: TakeKind, held: Vec<Modifier>, source: Option<Arc<dyn AudioSource>>) -> Result<Vec<Effect>, DictationError> {
+    fn begin(&mut self, kind: TakeKind, held: Vec<Modifier>, source: Option<Arc<dyn AudioSource>>, origin: UsageOrigin) -> Result<Vec<Effect>, DictationError> {
         match self.status.phase {
             DictationPhase::Listening { .. } | DictationPhase::Processing { .. } => return Err(DictationError::Busy),
             _ => {}
@@ -1336,6 +1400,7 @@ impl DictationEngine {
         self.take = Take::with_presets(mode, self.vocabulary.clone(), self.scenes.clone(), (self.refine_preset, self.presets.clone()), self.context_sharing);
         let local = source.is_none();
         self.take.source = source;
+        self.take.origin = origin;
         self.status.context = None;
         self.status.preset = None;
         self.status.segments = None;
@@ -1613,6 +1678,7 @@ impl DictationEngine {
                 window_title: app.filter(|_| sharing.window_title).and_then(|a| a.title.clone()),
                 instruction: overrides.and_then(|o| o.prompt.clone()),
             },
+            origin: Some(self.take.origin.clone()),
         }
     }
 
@@ -2042,11 +2108,11 @@ impl DictationEngine {
         }
         let effects = self.stage(ProcessingStage::Transcribing);
         let (session, language, transcriber, tx) = (self.status.session, self.take_language(), self.take_transcriber(), self.internal.clone());
-        let (vocabulary, script) = (self.take.vocabulary.clone(), self.take_script());
+        let (vocabulary, script, call) = (self.take.vocabulary.clone(), self.take_script(), AsrCall::take(Some(self.take.origin.clone())));
         self.abort_pipeline();
         self.pipeline = Some(tokio::spawn(async move {
             let result = transcriber
-                .transcribe(&remainder.wav, language.as_deref(), vocabulary.glossary())
+                .transcribe_as(&remainder.wav, language.as_deref(), vocabulary.glossary(), &call)
                 .await
                 .map(|t| Transcript { text: normalized(script, &t.text), ..t });
             let _ = tx.send(Internal::Remainder { session, result }).await;
@@ -2605,6 +2671,7 @@ impl DictationEngine {
         let session = self.status.session;
         let (language, script, transcriber, tx) = (self.take_language(), self.take_script(), self.take_transcriber(), self.internal.clone());
         let glossary = self.take.vocabulary.glossary().to_vec();
+        let call = AsrCall::take(Some(self.take.origin.clone()));
         let Some(l) = self.take.long.as_mut() else { return Vec::new() };
         if !l.recognizing || l.in_flight.is_some() || !l.past_in_memory() {
             return self.long_progress();
@@ -2628,7 +2695,7 @@ impl DictationEngine {
             })
             .await;
             let result = match wav {
-                Ok(Ok(wav)) => long::recognize_segment(transcriber.as_ref(), &wav, language.as_deref(), &glossary, script).await,
+                Ok(Ok(wav)) => long::recognize_segment(transcriber.as_ref(), &wav, language.as_deref(), &glossary, script, &call).await,
                 Ok(Err(e)) => Err(DictationError::Audio(format!("the recording file could not be read: {e}"))),
                 Err(e) => Err(DictationError::Audio(format!("segment read task failed: {e}"))),
             };
@@ -3299,13 +3366,15 @@ async fn run_pipeline(job: PipelineJob) {
     let (raw_text, asr_ms, asr_model) = match input {
         // The recogniser's text in the chosen script first (docs/dictation.md §17); a streaming
         // final text (`Text`) was normalised by the live worker already, and its model came with it.
-        PipelineInput::Wav(wav) => match steps::recognize(transcriber.as_ref(), &wav, language.as_deref(), glossary, script).await {
-            Ok(r) => (r.text, r.asr_ms, r.model),
-            Err(e) => {
-                let _ = tx.send(Internal::Finished { session, result: Err(e) }).await;
-                return;
+        PipelineInput::Wav(wav) => {
+            match steps::recognize(transcriber.as_ref(), &wav, language.as_deref(), glossary, script, &AsrCall::take(hints.origin.clone())).await {
+                Ok(r) => (r.text, r.asr_ms, r.model),
+                Err(e) => {
+                    let _ = tx.send(Internal::Finished { session, result: Err(e) }).await;
+                    return;
+                }
             }
-        },
+        }
         PipelineInput::Text { raw_text, asr_ms } => (raw_text.trim().to_owned(), asr_ms, None),
     };
     if raw_text.is_empty() {
@@ -3399,7 +3468,8 @@ async fn run_edit(job: EditJob) {
         }
     };
     let glossary = vocabulary.glossary();
-    let (raw_text, asr_ms, asr_model) = match steps::recognize(transcriber.as_ref(), &wav, language.as_deref(), glossary, script).await {
+    let call = AsrCall::take(hints.origin.clone());
+    let (raw_text, asr_ms, asr_model) = match steps::recognize(transcriber.as_ref(), &wav, language.as_deref(), glossary, script, &call).await {
         Ok(r) => (r.text, r.asr_ms, r.model),
         Err(e) => return finish(Err(e)).await,
     };
@@ -6859,6 +6929,145 @@ mod tests {
         assert!(matches!(phase(&fx), DictationPhase::Done { text, .. } if text == "新客户端"), "{fx:?}");
         assert_eq!(record(&fx).unwrap().asr_model, "qwen3-asr-flash-2026-09-08", "the client's own receipt");
         assert_eq!((first.calls(), second.calls()), (0, 1));
+    }
+
+    // ---- usage (docs/dictation.md §27) --------------------------------------------------------
+
+    /// A metering whose notes the test reads.
+    fn usage_metering() -> (Metering, Arc<Mutex<Vec<crate::usage::UsageNote>>>) {
+        let notes = Arc::new(Mutex::new(Vec::new()));
+        let sink = notes.clone();
+        (Metering::new("6f1c2d3e-0000-4000-8000-000000000001", "voltip/test (linux)", UsageOrigin::ThisDevice, move |n| sink.lock().push(n)), notes)
+    }
+
+    fn used(notes: &Mutex<Vec<crate::usage::UsageNote>>) -> Vec<(ServiceKind, ProviderId, crate::usage::UsagePurpose)> {
+        notes
+            .lock()
+            .iter()
+            .filter_map(|n| match n {
+                crate::usage::UsageNote::Used(e) => Some((e.service, e.provider, e.purpose)),
+                crate::usage::UsageNote::Quota(_) => None,
+            })
+            .collect()
+    }
+
+    /// docs/dictation.md §27: every client of a chain is metered as its own provider's, so the
+    /// record names the one that answered; the factory gets the metering with every configuration
+    /// it builds (its built-in clients send the headers). Without a metering nothing is wrapped.
+    #[tokio::test]
+    async fn every_link_of_a_chain_is_metered_as_its_own_provider() {
+        let engines = resolved_fallback_with(
+            &TEST_BUILT_IN,
+            ProviderId::Builtin,
+            &["qwen-audio-3.1-asr-flash"],
+            &["qwen3.8-flash", "qwen3.8-plus"],
+            false,
+            OutputMode::WholeTake,
+        );
+        let (builtin, fallback) = (Arc::new(FakeTranscriber::quota()), Arc::new(FakeTranscriber::ok("候补模型识别的句子。")));
+        let refiner = Arc::new(FakeRefiner::ok("润色后。"));
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let factory: EngineFactory = {
+            let (seen, builtin, fallback, refiner) = (seen.clone(), builtin.clone(), fallback.clone(), refiner.clone());
+            Arc::new(move |e: &ResolvedEngines| {
+                seen.lock().push((e.asr_provider, e.metering.is_some()));
+                let t: Arc<dyn Transcriber> = if e.asr_model == crate::engines::DEFAULT_ASR_MODEL { builtin.clone() } else { fallback.clone() };
+                (t, Some(refiner.clone() as Arc<dyn Refiner>))
+            })
+        };
+        let (metering, notes) = usage_metering();
+        let (t, r) = engine_clients(&factory, &engines, &QuotaLedger::default(), Some(&metering));
+        let wav = wav::encode_pcm16(&[100; 1600], 16_000);
+        t.transcribe_as(&wav, None, &[], &AsrCall::take(None)).await.unwrap();
+        r.unwrap().refine("原文", &RefineHints::default()).await.unwrap();
+        assert_eq!(builtin.calls(), 1, "the built-in service was asked first");
+        assert_eq!(
+            used(&notes),
+            [
+                (ServiceKind::Asr, ProviderId::Aliyun, crate::usage::UsagePurpose::Take),
+                (ServiceKind::Llm, ProviderId::Aliyun, crate::usage::UsagePurpose::Refine)
+            ],
+            "the fallback that answered, not the selected built-in service"
+        );
+        assert!(!seen.lock().is_empty() && seen.lock().iter().all(|(_, metered)| *metered), "{:?}", seen.lock());
+        assert!(seen.lock().iter().any(|(p, _)| *p == ProviderId::Builtin) && seen.lock().iter().any(|(p, _)| *p == ProviderId::Aliyun));
+
+        seen.lock().clear();
+        let (plain, _) = engine_clients(&factory, &engines, &QuotaLedger::default(), None);
+        plain.transcribe(&wav, None, &[]).await.unwrap();
+        assert!(seen.lock().iter().all(|(_, metered)| !*metered));
+        assert_eq!(used(&notes).len(), 2, "nothing more recorded");
+    }
+
+    /// The engine meters its clients from the start, after a configuration change, and those of a
+    /// 重新识别 on other models (docs/dictation.md §26.4, §27).
+    #[tokio::test]
+    async fn the_engines_clients_are_metered_from_the_start_and_after_every_rebuild() {
+        let engines = resolved(false, None);
+        let (metering, notes) = usage_metering();
+        let (levels_tx, _levels) = broadcast::channel(8);
+        let ports = ports_with(Arc::new(FakeAudio::speech()), Arc::new(FakeTranscriber::ok("好")), None, Arc::new(FakeInjector::paste()));
+        let (mut engine, _rx) = DictationEngine::metered(ports, &engines, levels_tx, Some(metering));
+        let wav = wav::encode_pcm16(&[100; 1600], 16_000);
+        engine.transcriber().transcribe(&wav, None, &[]).await.unwrap();
+        engine.configure(&engines);
+        engine.transcriber().transcribe(&wav, None, &[]).await.unwrap();
+        engine.clients_for(&engines, None).transcriber.transcribe_as(&wav, None, &[], &AsrCall::take(Some(UsageOrigin::Retake))).await.unwrap();
+        assert_eq!(used(&notes).len(), 3);
+        assert!(matches!(notes.lock().last(), Some(crate::usage::UsageNote::Used(e)) if e.origin == UsageOrigin::Retake && e.amount == 100));
+    }
+
+    /// docs/dictation.md §27: a take's usage names where it came from — this device, a paired
+    /// phone by its name, a kept recording recognised again — for its recognition and its clean-up.
+    #[tokio::test(start_paused = true)]
+    async fn every_take_is_recorded_with_its_origin() {
+        let (metering, notes) = usage_metering();
+        let audio = Arc::new(FakeAudio::speech());
+        let transcriber = Arc::new(FakeTranscriber::ok(FAKE_TRANSCRIPT));
+        let refiner = Some(Arc::new(FakeRefiner::ok("你好，世界。")));
+        let injector = Arc::new(FakeInjector::paste());
+        let (levels_tx, levels) = broadcast::channel(64);
+        let ports = ports_with(audio.clone(), transcriber.clone(), refiner.clone(), injector.clone());
+        let (engine, rx) = DictationEngine::metered(ports, &resolved(true, None), levels_tx, Some(metering));
+        let mut r = Rig { engine, rx, audio, transcriber, refiner, injector, levels };
+
+        r.start_open().await;
+        r.engine.stop().unwrap();
+        assert!(matches!(phase(&r.run_to_terminal().await), DictationPhase::Done { .. }));
+        tokio::time::advance(DWELL).await;
+        r.drain().await;
+
+        let phone = UsageOrigin::Phone { name: "Pixel 9".into() };
+        r.engine.start_from_origin(Arc::new(FakeAudio::speech()), phone.clone()).unwrap();
+        r.phases_until(|p| matches!(p, DictationPhase::Listening { ready: true, .. })).await;
+        r.engine.stop().unwrap();
+        assert!(matches!(phase(&r.run_to_terminal().await), DictationPhase::Done { .. }));
+        tokio::time::advance(DWELL).await;
+        r.drain().await;
+
+        let wav = crate::dictation::fakes::speech_recording(1500).wav;
+        r.engine.retake(Retake { recording: Uuid::new_v4(), audio: RetakeAudio::Wav(wav), duration_ms: 1500, app: None, clients: None }).unwrap();
+        assert!(matches!(phase(&r.run_to_terminal().await), DictationPhase::Done { .. }));
+
+        let origins: Vec<_> = notes
+            .lock()
+            .iter()
+            .filter_map(|n| match n {
+                crate::usage::UsageNote::Used(e) => Some((e.service, e.origin.clone())),
+                crate::usage::UsageNote::Quota(_) => None,
+            })
+            .collect();
+        assert_eq!(
+            origins,
+            [
+                (ServiceKind::Asr, UsageOrigin::ThisDevice),
+                (ServiceKind::Llm, UsageOrigin::ThisDevice),
+                (ServiceKind::Asr, phone.clone()),
+                (ServiceKind::Llm, phone),
+                (ServiceKind::Asr, UsageOrigin::Retake),
+                (ServiceKind::Llm, UsageOrigin::Retake),
+            ]
+        );
     }
 
     // ---- the audio cache (docs/dictation.md §26) ----------------------------------------------

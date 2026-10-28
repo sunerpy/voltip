@@ -283,6 +283,40 @@ describe("Shell", () => {
     expect(screen.getByRole("heading", { name: "手机", level: 1 })).toBeInTheDocument();
   });
 
+  it("below the relay's minimum version the status card says so and leads to the update (docs/pairing.md 「最低版本」)", async () => {
+    const user = userEvent.setup();
+    const tooOld = {
+      state: "reconnecting" as const,
+      attempts: 1,
+      source: "builtin" as const,
+      last_failure: { kind: "too_old" as const, min_version: "0.2.0", at: 1 },
+    };
+    const backend = new MockBackend({ relay: tooOld });
+    const invoke = vi.spyOn(backend, "invoke");
+    const view = renderApp({ backend });
+    // The default state renders first; wait for the core's.
+    await waitFor(() => {
+      expect(screen.getByTestId("sidebar-status-card")).toHaveAttribute("data-state", "too_old");
+    });
+    const card = screen.getByTestId("sidebar-status-card");
+    expect(card).toHaveTextContent("中继 · 需要更新");
+    expect(card).toHaveTextContent("这个版本低于中继要求的 0.2.0");
+    expect(card.querySelector("[data-tone]")).toHaveAttribute("data-tone", "warn");
+    await user.click(within(card).getByRole("button", { name: "检查更新" }));
+    expect(invoke).toHaveBeenCalledWith("update_check");
+    expect(await screen.findByTestId("update-dialog")).toBeInTheDocument();
+    view.unmount();
+
+    // A newer version already found: the card names it.
+    renderApp({
+      backend: new MockBackend({
+        relay: tooOld,
+        update: { state: "available", version: "0.2.3", current: "0.1.10" },
+      }),
+    });
+    expect(await screen.findByRole("button", { name: "更新到 0.2.3" })).toBeInTheDocument();
+  });
+
   it("opens the command palette with Ctrl K, previews and applies a theme, and navigates", async () => {
     const user = userEvent.setup();
     const { backend } = renderApp();

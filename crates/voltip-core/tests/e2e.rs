@@ -268,6 +268,79 @@ async fn pair_by_ticket_then_reject_and_replay() {
     wait(&mut desk, |e| matches!(e, CoreEvent::Pairing(s) if matches!(s.state, PairingState::Failed { .. })).then_some(())).await;
 }
 
+/// regression (issue #193): the phone scanned the QR code and its user confirmed, nobody clicked
+/// on the computer, and the pairing ran out. A scanned ticket's proof now confirms for the
+/// computer, and the phone's confirmation alone finishes the pairing (docs/pairing.md
+/// 「扫码配对只在手机上确认」).
+#[tokio::test]
+async fn regression_a_phone_that_scanned_pairs_with_only_its_own_confirmation() {
+    let (url, _stop, _relay) = relay().await;
+    let mut desk = node("Mac Studio", Some(&url));
+    let mut phone = node("Pixel 10", Some(&url));
+    wait(&mut desk, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+    wait(&mut phone, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+    desk.handle.send(CoreCommand::StartPairing).await.unwrap();
+    let uri = wait_pairing(&mut desk, PairingState::WaitingForPeer).await.ticket_uri.unwrap();
+    phone.handle.send(CoreCommand::JoinWithTicket(uri)).await.unwrap();
+    let shown = wait(&mut desk, |e| match e {
+        CoreEvent::Pairing(s) if s.state == PairingState::AwaitingVerification && s.scanned => Some(s.clone()),
+        _ => None,
+    })
+    .await;
+    assert!(shown.local_confirmed && !shown.peer_confirmed, "the computer confirmed by itself: {shown:?}");
+    assert_eq!(shown.peer.as_ref().map(|p| p.name.as_str()), Some("Pixel 10"), "and names the phone");
+    let asked = wait(&mut phone, |e| match e {
+        CoreEvent::Pairing(s) if s.state == PairingState::AwaitingVerification && s.peer_confirmed => Some(s.clone()),
+        _ => None,
+    })
+    .await;
+    assert!(asked.scanned && !asked.local_confirmed, "{asked:?}");
+    assert_eq!(asked.peer.as_ref().map(|p| p.name.as_str()), Some("Mac Studio"));
+    // Only the phone's user confirms.
+    phone.handle.send(CoreCommand::ConfirmPairing).await.unwrap();
+    let on_desk = wait(&mut desk, |e| if let CoreEvent::Trusted(d) = e { Some(d.clone()) } else { None }).await;
+    let on_phone = wait(&mut phone, |e| if let CoreEvent::Trusted(d) = e { Some(d.clone()) } else { None }).await;
+    assert_eq!((on_desk.name.as_str(), on_phone.name.as_str()), ("Pixel 10", "Mac Studio"));
+    wait_online(&mut desk).await;
+    wait_online(&mut phone).await;
+}
+
+/// regression (issue #193): a confirmation changes no pairing state, and the cores used to emit
+/// a snapshot only on a state change, so neither screen ever showed who had confirmed: the
+/// phone's 确认 stayed enabled and nothing told its user to confirm on the computer too. With a
+/// typed code (which proves nothing) both users still confirm, and each sees it happen.
+#[tokio::test]
+async fn regression_each_confirmation_reaches_both_screens() {
+    let (url, _stop, _relay) = relay().await;
+    let mut desk = node("Desk", Some(&url));
+    let mut phone = node("Phone", Some(&url));
+    wait(&mut desk, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+    wait(&mut phone, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+    desk.handle.send(CoreCommand::StartPairing).await.unwrap();
+    let code = wait_pairing(&mut desk, PairingState::WaitingForPeer).await.code.unwrap();
+    phone.handle.send(CoreCommand::JoinWithCode(code)).await.unwrap();
+    let first = wait_pairing(&mut desk, PairingState::AwaitingVerification).await;
+    assert!(!first.scanned && !first.local_confirmed, "a typed code leaves the computer to its user: {first:?}");
+    wait_pairing(&mut phone, PairingState::AwaitingVerification).await;
+    phone.handle.send(CoreCommand::ConfirmPairing).await.unwrap();
+    let mine = wait(&mut phone, |e| match e {
+        CoreEvent::Pairing(s) if s.local_confirmed => Some(s.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(mine.state, PairingState::AwaitingVerification);
+    assert!(!mine.scanned && !mine.peer_confirmed, "{mine:?}");
+    let theirs = wait(&mut desk, |e| match e {
+        CoreEvent::Pairing(s) if s.peer_confirmed => Some(s.clone()),
+        _ => None,
+    })
+    .await;
+    assert!(!theirs.local_confirmed, "{theirs:?}");
+    desk.handle.send(CoreCommand::ConfirmPairing).await.unwrap();
+    wait(&mut desk, |e| matches!(e, CoreEvent::Trusted(_)).then_some(())).await;
+    wait(&mut phone, |e| matches!(e, CoreEvent::Trusted(_)).then_some(())).await;
+}
+
 #[tokio::test]
 async fn regression_relay_compromise_impostor_on_channel_is_flagged_not_trusted() {
     use futures_util::{SinkExt as _, StreamExt as _};
@@ -302,7 +375,11 @@ async fn regression_relay_compromise_impostor_on_channel_is_flagged_not_trusted(
     let desk_initiates = voltip_core::is_initiator(&desk_id.public_key, &phone_record.public_key);
     let channel = voltip_core::rendezvous_channel(&desk_id.public_key, &phone_record.public_key);
     let (mut ws, _) = tokio_tungstenite::connect_async(url.clone()).await.unwrap();
-    ws.send(Message::Text(RelayFrame::Hello { version: ProtocolVersion::CURRENT, client_version: "evil".into() }.encode().unwrap().into())).await.unwrap();
+    ws.send(Message::Text(
+        RelayFrame::Hello { version: ProtocolVersion::CURRENT, client_version: "evil".into(), features: Vec::new() }.encode().unwrap().into(),
+    ))
+    .await
+    .unwrap();
     let _ack = ws.next().await;
     ws.send(Message::Text(RelayFrame::Attach { version: ProtocolVersion::CURRENT, channel }.encode().unwrap().into())).await.unwrap();
     let mut hs = Handshake::new(if desk_initiates { Role::Responder } else { Role::Initiator }, &impostor, None).unwrap();
@@ -636,7 +713,11 @@ async fn regression_stalled_peer_handshake_times_out() {
     // A silent party attaches to the channel and never sends a byte.
     let channel = voltip_core::rendezvous_channel(&desk_id.public_key, &phone_record.public_key);
     let (mut ws, _) = tokio_tungstenite::connect_async(url.clone()).await.unwrap();
-    ws.send(Message::Text(RelayFrame::Hello { version: ProtocolVersion::CURRENT, client_version: "silent".into() }.encode().unwrap().into())).await.unwrap();
+    ws.send(Message::Text(
+        RelayFrame::Hello { version: ProtocolVersion::CURRENT, client_version: "silent".into(), features: Vec::new() }.encode().unwrap().into(),
+    ))
+    .await
+    .unwrap();
     let _ack = ws.next().await;
     ws.send(Message::Text(RelayFrame::Attach { version: ProtocolVersion::CURRENT, channel }.encode().unwrap().into())).await.unwrap();
     // If the desk initiates we see "connecting"; either way it must settle back to offline.
@@ -1259,4 +1340,180 @@ async fn reconnect_relay_checks_the_socket_at_once_after_the_network_changed() {
     tokio::time::timeout(Duration::from_secs(10), noticed).await.expect("the probe found the socket dead");
     both_back(&mut desk, &mut phone, &phone_on_desk, &desk_on_phone).await;
     texts_both_ways(&mut desk, &phone_on_desk, &mut phone, &desk_on_phone).await;
+}
+
+/// Write a relay policy file with a newer modification time than it had, whatever the file
+/// system's resolution.
+fn write_policy(path: &std::path::Path, text: &str) {
+    let before = std::fs::metadata(path).ok().and_then(|m| m.modified().ok());
+    std::fs::write(path, text).unwrap();
+    let file = std::fs::File::options().write(true).open(path).unwrap();
+    file.set_modified(before.map_or_else(std::time::SystemTime::now, |b| b + Duration::from_secs(1))).unwrap();
+}
+
+/// docs/pairing.md 「最低版本」: the relay raises its minimum while this device is connected. The
+/// relay status says `too_old` with the version to update to; once the minimum is lowered again,
+/// checking the relay (the app back in front) connects at once instead of after the long wait.
+#[tokio::test]
+async fn a_minimum_raised_on_the_relay_shows_in_the_status_with_the_version() {
+    let (url, _stop, handle) = relay().await;
+    let policy_dir = tempfile::tempdir().unwrap();
+    let policy = policy_dir.path().join("relay-policy.json");
+    handle.watch_policy(voltip_relay::PolicyFiles::new(&policy, None));
+    let settings = Settings { relay_url: Some(url), relay_enabled: true, ..Settings::default() };
+    let mut desk =
+        node_tuned(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "desk", &settings, |cfg| cfg.client_version = "voltip/0.1.10".into());
+    wait(&mut desk, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+
+    write_policy(&policy, r#"{"schema":1,"min_version":"0.2.0"}"#);
+    handle.reload_policy();
+    let failure = wait(&mut desk, |e| match e {
+        CoreEvent::Relay(r) if r.state == ConnectionState::Reconnecting => r.last_failure.clone(),
+        _ => None,
+    })
+    .await;
+    assert_eq!((failure.kind, failure.min_version.as_deref()), (voltip_core::FailureKind::TooOld, Some("0.2.0")), "{failure:?}");
+    assert_eq!(handle.stats_report().hours.iter().map(|h| h.too_old).sum::<u64>(), 1);
+    desk.handle.send(CoreCommand::StartPairing).await.unwrap();
+    wait(&mut desk, |e| matches!(e, CoreEvent::Error(m) if m.contains("版本过低")).then_some(())).await;
+
+    write_policy(&policy, r#"{"schema":1,"min_version":null}"#);
+    handle.reload_policy();
+    desk.handle.send(CoreCommand::ReconnectRelay).await.unwrap();
+    let cleared = wait(&mut desk, |e| match e {
+        CoreEvent::Relay(r) if r.state == ConnectionState::Connected => Some(r.last_failure.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(cleared, None);
+}
+
+/// The usage record's rows of `service` from `node`'s `usage.json` (docs/dictation.md §27), as
+/// `(origin as JSON, purpose, amount)`, summed over the days.
+fn usage_rows(node: &Node, service: &str) -> Vec<(serde_json::Value, String, u64)> {
+    let text = std::fs::read_to_string(node.dir_path.join(voltip_core::usage::LEDGER_FILE_NAME)).unwrap();
+    let file: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let mut rows: Vec<(serde_json::Value, String, u64)> = Vec::new();
+    for row in file["days"].as_array().unwrap().iter().flat_map(|d| d["rows"].as_array().unwrap()) {
+        if row["service"] != service {
+            continue;
+        }
+        let (origin, purpose, amount) = (row["origin"].clone(), row["purpose"].as_str().unwrap().to_owned(), row["amount"].as_u64().unwrap());
+        match rows.iter_mut().find(|(o, p, _)| *o == origin && *p == purpose) {
+            Some(r) => r.2 += amount,
+            None => rows.push((origin, purpose, amount)),
+        }
+    }
+    rows.sort_by(|a, b| a.0.to_string().cmp(&b.0.to_string()).then(a.1.cmp(&b.1)));
+    rows
+}
+
+/// Wait until `n` calls of `refiner` are held at its gate.
+async fn held(refiner: &voltip_core::dictation::fakes::FakeRefiner, n: usize) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    while refiner.waiting() < n {
+        assert!(tokio::time::Instant::now() < deadline, "{} of {n} clean-ups held after 15 s", refiner.waiting());
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+/// Regression guard (plan review 2026-10-27): the usage record names where each request came
+/// from per call, never from a shared "current take". While a phone's take on the computer is
+/// being cleaned up (a held clean-up keeps it there), the history's AI processing and a preset's
+/// 试一试 start alongside it, the three held at once; the phone's clean-up is recorded as the
+/// phone's, the other two as this computer's own.
+#[tokio::test]
+async fn regression_clean_ups_running_together_are_each_recorded_with_their_own_origin() {
+    use voltip_core::dictation::DictationPhase;
+    use voltip_core::dictation::fakes::{FakeAudio, FakeInjector, FakeRefiner, FakeTranscriber, ports_with};
+    let (url, _stop, _relay) = relay().await;
+    let mut settings = Settings { relay_url: Some(url.clone()), relay_enabled: true, ..Settings::default() };
+    settings.engines.asr_provider = voltip_core::ProviderId::Custom;
+    settings.engines.llm_provider = voltip_core::ProviderId::Custom;
+    settings.engines.refine_enabled = true;
+    settings.engines.providers.insert(
+        voltip_core::ProviderId::Custom,
+        voltip_core::ProviderSettings {
+            asr_url: Some("http://127.0.0.1:9/v1".into()),
+            asr_model: Some("fake".into()),
+            llm_url: Some("http://127.0.0.1:9/v1".into()),
+            llm_model: Some("fake-llm".into()),
+            ..Default::default()
+        },
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let dir_path = dir.path().to_path_buf();
+    SettingsStore::new(&dir_path).save(&settings).unwrap();
+    let mut cfg = CoreConfig::new(dir_path.clone());
+    cfg.default_device_name = "Studio".into();
+    cfg.tick = Duration::from_millis(50);
+    let refiner = Arc::new(FakeRefiner::held("润色后的文字。"));
+    let ports = ports_with(Arc::new(FakeAudio::speech()), Arc::new(FakeTranscriber::ok("原文")), Some(refiner.clone()), Arc::new(FakeInjector::paste()));
+    let store = Arc::new(MemorySecretStore::new());
+    let (handle, events) = AppCore::start_with(cfg, store.clone(), ports).unwrap();
+    let mut desk = Node { handle, events, _dir: dir, store, dir_path };
+    let mut phone = node_with(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Pixel 8", Some(&url));
+    wait(&mut desk, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+    wait(&mut phone, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+    let (_, desktop) = pair_by_code(&mut desk, &mut phone).await;
+    wait_online(&mut desk).await;
+    wait_online(&mut phone).await;
+
+    // A take of the computer's own: a history entry to process later.
+    refiner.release(1);
+    desk.handle.send(CoreCommand::DictationStart).await.unwrap();
+    wait(&mut desk, |e| matches!(e, CoreEvent::Dictation(s) if matches!(s.phase, DictationPhase::Listening { ready: true, .. })).then_some(())).await;
+    desk.handle.send(CoreCommand::DictationStop).await.unwrap();
+    wait(&mut desk, |e| matches!(e, CoreEvent::Dictation(s) if matches!(s.phase, DictationPhase::Done { .. })).then_some(())).await;
+    let entry = wait(&mut desk, |e| match e {
+        CoreEvent::History { recent, .. } => recent.first().map(|h| h.id),
+        _ => None,
+    })
+    .await;
+    wait(&mut desk, |e| matches!(e, CoreEvent::Dictation(s) if s.phase == DictationPhase::Idle).then_some(())).await;
+
+    // The phone's take, held in its clean-up while the other two start.
+    phone.handle.send(CoreCommand::PhoneTakeStart { to: desktop.public_key }).await.unwrap();
+    wait(&mut desk, |e| matches!(e, CoreEvent::Dictation(s) if matches!(s.phase, DictationPhase::Listening { ready: true, .. })).then_some(())).await;
+    phone.handle.send(CoreCommand::PhoneTakeStop).await.unwrap();
+    wait(&mut desk, |e| {
+        matches!(e, CoreEvent::Dictation(s) if matches!(s.phase, DictationPhase::Processing { stage: voltip_core::dictation::ProcessingStage::Refining, .. }))
+            .then_some(())
+    })
+    .await;
+    held(&refiner, 1).await;
+    desk.handle.send(CoreCommand::HistoryProcess { request_id: 1, id: entry, preset: voltip_core::presets::PresetId::default() }).await.unwrap();
+    desk.handle
+        .send(CoreCommand::PresetTry {
+            id: 2,
+            trial: voltip_core::presets::PresetTrial::Preset(voltip_core::presets::PresetId::default()),
+            text: "试一试这段文字".into(),
+        })
+        .await
+        .unwrap();
+    // The three clean-ups are out at once; then all three are answered.
+    held(&refiner, 3).await;
+    refiner.release(3);
+    let (mut take_done, mut processed, mut tried) = (false, false, false);
+    while !(take_done && processed && tried) {
+        let ev = tokio::time::timeout(Duration::from_secs(15), desk.events.recv()).await.expect("every request answered within 15 s").expect("core alive");
+        match ev {
+            CoreEvent::Dictation(s) if matches!(s.phase, DictationPhase::Done { .. }) => take_done = true,
+            CoreEvent::HistoryProcess { request_id: 1, state: voltip_core::history::process::ProcessState::Done { .. }, .. } => processed = true,
+            CoreEvent::PresetTry { id: 2, .. } => tried = true,
+            _ => {}
+        }
+    }
+    assert_eq!(refiner.calls(), 4);
+
+    let this = serde_json::json!({ "kind": "this_device" });
+    let pixel = serde_json::json!({ "kind": "phone", "name": "Pixel 8" });
+    assert_eq!(usage_rows(&desk, "llm"), [(pixel.clone(), "refine".to_owned(), 1), (this.clone(), "refine".to_owned(), 3)]);
+    let asr = usage_rows(&desk, "asr");
+    assert_eq!(asr.iter().map(|(o, p, _)| (o.clone(), p.clone())).collect::<Vec<_>>(), [(pixel, "take".to_owned()), (this, "take".to_owned())]);
+    assert!(asr.iter().all(|(_, _, ms)| *ms > 0), "each take's length: {asr:?}");
+    assert!(desk.dir_path.join(voltip_core::usage::DEVICE_ID_FILE_NAME).exists(), "the usage id was made");
+
+    phone.handle.send(CoreCommand::Shutdown).await.unwrap();
+    desk.handle.send(CoreCommand::Shutdown).await.unwrap();
 }

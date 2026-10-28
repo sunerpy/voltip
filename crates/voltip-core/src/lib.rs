@@ -31,6 +31,7 @@ pub mod serve;
 mod settings;
 pub mod sync;
 pub mod ui;
+pub mod usage;
 mod view;
 pub mod vocabulary;
 
@@ -69,11 +70,12 @@ pub use settings::{
     PhoneTalkMode, ProxyMode, ProxySettings, RecordingSettings, RecordingSource, SETTINGS_FILE_NAME, ServeSettings, Settings, SettingsStore, ThemeId,
     load_proxy_password, peek_proxy_password, proxy_error, proxy_error_text,
 };
-pub use view::{DeviceConnection, DeviceView, RelaySource, RelayStatus};
+pub use view::{DeviceConnection, DeviceView, RelayFailure, RelaySource, RelayStatus};
 pub use vocabulary::{
     DictionaryDraft, DictionaryEntry, EntrySource, ImportMode, PreviewDraft, ReplacementRule, RuleDraft, RuleKind, Vocabulary, VocabularyError, VocabularyHit,
     VocabularyHits, VocabularyPreview,
 };
+pub use voltip_transport::FailureKind;
 
 /// Errors surfaced to the UI as `CoreEvent::Error` or returned from command submission.
 #[derive(Debug, thiserror::Error)]

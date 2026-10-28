@@ -7431,6 +7431,7 @@ dependencies = [
  "voltip-core",
  "voltip-net",
  "voltip-refine",
+ "voltip-reply",
  "webpki-root-certs",
  "wiremock",
 ]
@@ -7481,6 +7482,7 @@ version = "0.0.0"
 dependencies = [
  "ciborium",
  "hex",
+ "hmac 0.13.0",
  "proptest",
  "rand 0.10.2",
  "serde",
@@ -7753,6 +7755,7 @@ dependencies = [
  "rand 0.10.2",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "tokio-tungstenite 0.30.0",
@@ -7848,6 +7851,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "tokio-tungstenite 0.30.0",

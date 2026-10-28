@@ -644,6 +644,16 @@
     "name": "refine_notice_close"
   },
   {
+    "args": null,
+    "name": "usage_refresh"
+  },
+  {
+    "args": {
+      "notice": "asr_near"
+    },
+    "name": "usage_notice_dismiss"
+  },
+  {
     "args": {
       "active": true
     },

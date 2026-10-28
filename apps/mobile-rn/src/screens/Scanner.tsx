@@ -86,6 +86,7 @@ export function Scanner() {
         accessibilityLabel={t("mobile.back")}
         style={{ position: "absolute", top: insets.top + 8, left: 8 }}
         onPress={close}
+        testID="scanner-close"
       />
     </View>
   );

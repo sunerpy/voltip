@@ -6,7 +6,7 @@
 
 | type | 方向 | 字段 | 说明 |
 |---|---|---|---|
-| `hello` | C→R | `client_version` | 连接后第一帧；不携带任何设备身份 |
+| `hello` | C→R | `client_version`, `features?` | 连接后第一帧；不携带任何设备身份。`features` 是客户端认识的新行为（0.2.0 起 `["client_too_old"]`），旧客户端不带，中继据此决定怎样拒绝过低的版本（`docs/pairing.md`「最低版本」） |
 | `hello_ack` | R→C | `relay_version`, `limits{code_attempts, session_ttl_secs}` | |
 | `create_session` | C→R | `ttl_secs?` | 电脑端创建配对会话 |
 | `session_created` | R→C | `session_id`, `code`, `expires_at` | `code` 为 6 位数字，只发给创建者 |
@@ -19,22 +19,25 @@
 | `attach` | C→R | `channel` (64 hex) | 已配对设备重逢：`channel = hex(SHA-256("voltip rendezvous v1" ‖ min(pubA,pubB) ‖ max(pubA,pubB)))`；一条连接可 attach 多个频道（每个可信设备一个） |
 | `attached` | R→C | `session_id`, `peer_online` | 频道绑定的会话 id（`forward` 用它）与对端是否在线 |
 | `peer_presence` | R→C | `session_id`, `online` | 频道对端上线 / 下线 |
-| `error` | R→C | `code`, `retry_after_secs?` | `invalid_code` / `session_expired` / `session_full` / `rate_limited` / `unsupported_version` / `not_joined` / `hello_required` / `session_already_active` / `invalid_channel` / `channel_full` / `malformed` |
+| `error` | R→C | `code`, `retry_after_secs?`, `channel?`, `min_version?` | `invalid_code` / `session_expired` / `session_full` / `rate_limited` / `unsupported_version` / `not_joined` / `hello_required` / `session_already_active` / `invalid_channel` / `channel_full` / `malformed` / `client_too_old`。`client_too_old` 只发给 `hello.features` 带它的客户端，带上 `min_version`（`x.y.z`），之后中继关闭连接；版本过低的旧客户端改收 `unsupported_version`（`docs/pairing.md`「最低版本」） |
 | `bye` | 双向 | | 优雅关闭 |
 
 Relay 永远看不到：Noise 握手之后的明文、静态公钥以外的身份信息、Safety Code。
+
+未知字段一律忽略：旧客户端读到 `error.min_version`、旧中继读到 `hello.features` 都照常解码（`the_minimum_version_fields_are_optional_both_ways`）。
 
 ## 2. 配对票据（二维码内容）
 
 ```
 voltip://pair?v=1&t=<base64url(CBOR PairingTicket)>
-PairingTicket { version:1, session_id, ephemeral_pub(32B, Noise e), nonce(16B), expires_at(unix s), relay_hint?: url }
+PairingTicket { version:1, session_id, ephemeral_pub(32B, Noise e), nonce(16B), expires_at(unix s), relay_hint?: url, secret?: 32B }
 ```
 
 - 票据一次性：`session_id` 在 Relay 与发起方内存里都只允许一次 `join`。
 - 0.1.0 之前的票据还带 `direct_hints`（发起方的局域网地址），解码时忽略；不带 `relay_hint` 的旧票据（发起方当时只在局域网主机上等待）会被拒绝（`docs/pairing.md`「只走中继」）。
 - 票据不含长期身份公钥、不含任何长期凭据；`ephemeral_pub` 与 Noise 握手第一条消息里的 `e` 必须一致，否则拒绝（防止 QR 被替换）。
-- 6 位短码只是 Relay 侧到 `session_id` 的查找键，本身不参与密钥派生；因此短码泄露只允许攻击者「加入会话」，仍要过 Noise 握手 + 用户核对 Safety Code。
+- `secret`（0.1.9 之后的版本写入）：每个会话新生成的 32 字节随机数，只在二维码（和「复制链接」）里，从不经过 Relay。手机用它证明读过二维码（下面的 `pair_proof`），电脑据此自行确认，扫码配对只需手机的用户确认（`docs/pairing.md`「扫码配对只在手机上确认」）。没有 `secret` 的票据（0.1.9 及以前的电脑）照旧两边确认。票据的 `Debug` 输出不含它。
+- 6 位短码只是 Relay 侧到 `session_id` 的查找键，本身不参与密钥派生；因此短码泄露只允许攻击者「加入会话」，仍要过 Noise 握手 + 用户核对 Safety Code。短码由 Relay 分配，证明不了手机看过屏幕，所以用短码加入时电脑仍要它的用户确认。
 
 ## 3. 端到端层（Relay 不可读）
 
@@ -45,9 +48,10 @@ PairingTicket { version:1, session_id, ephemeral_pub(32B, Noise e), nonce(16B), 
 - 双方取 `handshake_hash`（32 B）：
   - `fingerprint = hex(handshake_hash[0..8])` 显示为 `A7:C4:19:8E · 3D:F2:61:09`
   - `safety_code = 4 words`，每词取 `handshake_hash` 连续 11 bit 索引 2048 词表（BIP-39 英文词表）
-- 用户在两端确认一致 → `Trusted`；任何一端拒绝 → 发送 `pair_reject` 并销毁密钥。
+- 用户在两端确认一致 → `Trusted`（扫码时电脑核对手机的证明后自行确认，见下一条）；任何一端拒绝 → 发送 `pair_reject` 并销毁密钥。
+- 扫码加入、票据带 `secret` 时，手机握手完成后立即发 `pair_proof{proof, device}`：`proof = HMAC-SHA256(secret, "voltip/pairing-proof/v1" ‖ handshake_hash)`（`voltip_crypto::pairing_proof`）。电脑以常量时间核对，通过就自行发 `pair_confirm`，`Trusted` 只等手机的用户确认；不通过、重复或不该收到时配对失败。证明绑定这一次握手的 `handshake_hash`，在另一次握手里无效。
 
-传输：握手后 snow 进入 transport 模式，每帧 `ciphertext = noise.write_message(plaintext)`，nonce 由 Noise 计数器管理（单调递增、不重用）；`payload` 装进 `forward` 帧。内层明文是 `AppMessage`（同样带 `version`）：`pair_confirm{device}` / `pair_reject{reason}` / `ping{seq}` / `pong{seq}` / `text{body}` / `device_info_update{device}`，以及手机作为麦克风的 `take_start{take, sample_rate_hz}` / `take_audio{take, seq, pcm}` / `take_stop{take}` / `take_cancel{take}` / `take_status{take, state}`（语义与上限见 `docs/dictation.md` §20），以及 `unpair{}`：发送方马上要忘记接收方，接收方收到后也忘记发送方（不回发），界面提示是谁解除了配对。同步（`docs/dictation.md` §20.8）另有 `mirror_request{req, epoch?, since, profile?}` / `mirror_changed{head, generation}` / `mirror_revoke{generation}` / `phone_records_ack{ids}`（≤ 200 个）/ `bulk{seq, last, bytes}`（1..=48 KiB）/ `bulk_ack{received}`，以及 `device_info_update` 的可选 `mirror` 标志（电脑提供同步时为真，旧版不带）。`seal` 在密文会恰好是握手消息长度（32、96、64 字节）时，在 CBOR 之后补一个零字节，所以传输帧永远不与握手消息同长：应答方的加密通道收到 32 字节的载荷，就是发起方重新开始的握手（发起方在新通道上一直没解开对方的消息，见 `docs/pairing.md`）；`decode` 只读一个 CBOR 项，各版本照常读出补过的消息。0.1.0 之前的 `device_info_update` 还带 `direct_hints`（发送方的局域网地址），解码时忽略。
+传输：握手后 snow 进入 transport 模式，每帧 `ciphertext = noise.write_message(plaintext)`，nonce 由 Noise 计数器管理（单调递增、不重用）；`payload` 装进 `forward` 帧。内层明文是 `AppMessage`（同样带 `version`）：`pair_confirm{device}` / `pair_proof{proof, device}`（只在配对会话里，见上）/ `pair_reject{reason}` / `ping{seq}` / `pong{seq}` / `text{body}` / `device_info_update{device}`，以及手机作为麦克风的 `take_start{take, sample_rate_hz}` / `take_audio{take, seq, pcm}` / `take_stop{take}` / `take_cancel{take}` / `take_status{take, state}`（语义与上限见 `docs/dictation.md` §20），以及 `unpair{}`：发送方马上要忘记接收方，接收方收到后也忘记发送方（不回发），界面提示是谁解除了配对。同步（`docs/dictation.md` §20.8）另有 `mirror_request{req, epoch?, since, profile?}` / `mirror_changed{head, generation}` / `mirror_revoke{generation}` / `phone_records_ack{ids}`（≤ 200 个）/ `bulk{seq, last, bytes}`（1..=48 KiB）/ `bulk_ack{received}`，以及 `device_info_update` 的可选 `mirror` 标志（电脑提供同步时为真，旧版不带）。`seal` 在密文会恰好是握手消息长度（32、96、64 字节）时，在 CBOR 之后补一个零字节，所以传输帧永远不与握手消息同长：应答方的加密通道收到 32 字节的载荷，就是发起方重新开始的握手（发起方在新通道上一直没解开对方的消息，见 `docs/pairing.md`）；`decode` 只读一个 CBOR 项，各版本照常读出补过的消息。0.1.0 之前的 `device_info_update` 还带 `direct_hints`（发送方的局域网地址），解码时忽略。
 
 ## 4. 已信任设备的重连
 

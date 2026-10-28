@@ -14,6 +14,44 @@ use crate::presets::BUILTIN_OUTPUT_CAP;
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 /// Longest error body kept in [`RefineError::Server`].
 pub const MAX_ERROR_BODY_CHARS: usize = 200;
+/// The answer header in which the built-in service reports the device's usage and quota
+/// (docs/dictation.md §27).
+pub const QUOTA_HEADER: &str = "x-voltip-quota";
+/// The request header that says what a metered request is for: `refine` (the clean-up of a take)
+/// or `edit` (a voice edit's rewrite).
+pub const PURPOSE_HEADER: &str = "x-voltip-purpose";
+
+/// The built-in service's metering (docs/dictation.md §27): the headers every request carries
+/// (the device and the client), and who hears the usage report of an answer ([`QUOTA_HEADER`]),
+/// refusals included. Only the built-in service is metered; `Debug` names the headers only.
+#[derive(Clone)]
+pub struct Metering {
+    /// Sent with every request.
+    pub headers: Vec<(String, String)>,
+    /// Called with the [`QUOTA_HEADER`] of every answer that carries one.
+    pub on_report: Arc<dyn Fn(&str) + Send + Sync>,
+}
+
+impl PartialEq for Metering {
+    /// The same headers: a callback cannot be compared.
+    fn eq(&self, other: &Self) -> bool {
+        self.headers == other.headers
+    }
+}
+
+impl Eq for Metering {}
+
+impl fmt::Debug for Metering {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Metering").field("headers", &self.headers.iter().map(|(name, _)| name).collect::<Vec<_>>()).finish_non_exhaustive()
+    }
+}
+
+/// When the quota a report ([`QUOTA_HEADER`]) is about is reset: its `reset=` in Unix seconds, as
+/// milliseconds.
+pub(crate) fn report_reset_ms(report: &str) -> Option<u64> {
+    report.split(';').find_map(|part| part.trim().strip_prefix("reset="))?.trim().parse::<u64>().ok()?.checked_mul(1000)
+}
 
 /// Which OpenAI interface the service speaks (docs/dictation.md §3.7).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -85,6 +123,8 @@ pub struct RefineConfig {
     /// The proxy plan the requests follow (docs/dictation.md §24); the process's system-following
     /// network unless one is handed in.
     pub network: NetworkRef,
+    /// The built-in service's metering; `None` for every other service.
+    pub metering: Option<Metering>,
 }
 
 impl RefineConfig {
@@ -100,7 +140,14 @@ impl RefineConfig {
             api: RefineApi::ChatCompletions,
             reasoning_effort: None,
             network: NetworkRef::default(),
+            metering: None,
         }
+    }
+
+    /// Meter the requests ([`Metering`]).
+    pub fn with_metering(mut self, metering: Option<Metering>) -> Self {
+        self.metering = metering;
+        self
     }
 
     /// Go through `network`'s proxy plan.
@@ -158,6 +205,7 @@ impl fmt::Debug for RefineConfig {
             .field("api", &self.api)
             .field("reasoning_effort", &self.reasoning_effort)
             .field("network", &self.network)
+            .field("metering", &self.metering)
             .finish()
     }
 }

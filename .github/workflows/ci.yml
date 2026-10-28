@@ -290,6 +290,7 @@ jobs:
           path: |
             apps/desktop/coverage/lcov.info
             apps/mobile/coverage/lcov.info
+            apps/mobile-rn/coverage/lcov.info
             packages/shared/coverage/lcov.info
             packages/ui/coverage/lcov.info
             services/feedback/coverage/lcov.info
@@ -344,7 +345,7 @@ jobs:
       - name: Upload web coverage
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
-          files: ./apps/desktop/coverage/lcov.info,./apps/mobile/coverage/lcov.info,./packages/shared/coverage/lcov.info,./packages/ui/coverage/lcov.info,./services/feedback/coverage/lcov.info
+          files: ./apps/desktop/coverage/lcov.info,./apps/mobile/coverage/lcov.info,./apps/mobile-rn/coverage/lcov.info,./packages/shared/coverage/lcov.info,./packages/ui/coverage/lcov.info,./services/feedback/coverage/lcov.info
           flags: web
           disable_search: true
           fail_ci_if_error: ${{ env.CODECOV_TOKEN_SET == 'true' }}

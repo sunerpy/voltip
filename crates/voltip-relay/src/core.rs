@@ -4,10 +4,14 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 use std::time::{Duration, Instant};
 
-use voltip_protocol::relay::{DEFAULT_SESSION_TTL_SECS, MAX_SESSION_TTL_SECS, RelayErrorCode, RelayFrame, RelayLimits, validate_channel};
+use voltip_protocol::relay::{
+    DEFAULT_SESSION_TTL_SECS, FEATURE_CLIENT_TOO_OLD, MAX_SESSION_TTL_SECS, RelayErrorCode, RelayFrame, RelayLimits, validate_channel,
+};
 use voltip_protocol::{PairCode, ProtocolVersion, SessionId};
 
 use crate::limits::{RateLimiter, RateWindow};
+use crate::policy::{ClientVersion, RelayPolicy};
+use crate::stats::{Count, Gauges, StatsBook, StatsReport};
 
 /// Opaque connection identifier assigned by the I/O layer.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
@@ -88,6 +92,13 @@ pub enum Delivery {
 struct Connection {
     ip: IpAddr,
     greeted: bool,
+    /// The version its `hello` named, when it named one the relay can read.
+    version: Option<ClientVersion>,
+    /// Its `hello` listed `client_too_old`: below the minimum it is told so and disconnected.
+    gate_aware: bool,
+    /// An older client below the minimum: it may stay, but its pairing and `attach` requests are
+    /// refused with `unsupported_version` (docs/pairing.md 「最低版本」).
+    too_old: bool,
     failed_code_attempts: u32,
     /// Pairing session this connection created or joined.
     session: Option<SessionId>,
@@ -139,6 +150,10 @@ pub struct RelayCore {
     create_limiter: RateLimiter<IpAddr>,
     attach_limiter: RateLimiter<IpAddr>,
     forwarded: u64,
+    policy: RelayPolicy,
+    book: StatsBook,
+    /// Unix seconds, for the statistics' hours (tests turn it by hand).
+    wall: fn() -> u64,
 }
 
 impl std::fmt::Debug for RelayCore {
@@ -161,7 +176,67 @@ impl RelayCore {
             channels: HashMap::new(),
             channel_by_session: HashMap::new(),
             forwarded: 0,
+            policy: RelayPolicy::default(),
+            book: StatsBook::default(),
+            wall: unix_now,
         }
+    }
+
+    /// The same relay with `clock` as the statistics' wall clock (Unix seconds; tests).
+    pub fn with_wall_clock(mut self, clock: fn() -> u64) -> Self {
+        self.wall = clock;
+        self
+    }
+
+    /// The policy in force.
+    pub fn policy(&self) -> &RelayPolicy {
+        &self.policy
+    }
+
+    /// Put `policy` in force (docs/pairing.md 「最低版本」). A connection that knows
+    /// `client_too_old` and is now below the minimum is told so and closed, which ends its
+    /// sessions and channels; an older client keeps what it has until it goes and is refused
+    /// anything new; a lowered minimum lifts the refusal.
+    pub fn set_policy(&mut self, policy: RelayPolicy) -> Vec<Delivery> {
+        let mut out = Vec::new();
+        let now = (self.wall)();
+        if let Some(min) = policy.min_version {
+            for (id, c) in &mut self.conns {
+                if !c.greeted {
+                    continue;
+                }
+                let too_old = policy.is_too_old(c.version);
+                if too_old && c.gate_aware {
+                    out.push(Delivery::Send(*id, RelayFrame::client_too_old(min.to_string())));
+                    out.push(Delivery::Close(*id));
+                    self.book.count(Count::TooOld, now);
+                }
+                // Until its socket is gone, a connection being closed is refused like an older one.
+                c.too_old = too_old;
+            }
+        } else {
+            for c in self.conns.values_mut() {
+                c.too_old = false;
+            }
+        }
+        // A stable order for the I/O layer and the tests.
+        out.sort_by_key(|d| match d {
+            Delivery::Send(c, _) => (*c, 0),
+            Delivery::Close(c) => (*c, 1),
+        });
+        self.policy = policy;
+        out
+    }
+
+    /// The admin console's statistics (`GET /stats`).
+    pub fn stats_report(&self) -> StatsReport {
+        let gauges = Gauges {
+            connections: self.conns.len() as u64,
+            sessions: self.sessions.len() as u64,
+            channels: self.channels.len() as u64,
+            channels_paired: self.channels.values().filter(|ch| ch.members.len() >= 2).count() as u64,
+        };
+        self.book.report(gauges, (self.wall)())
     }
 
     /// Configuration in use.
@@ -176,7 +251,20 @@ impl RelayCore {
 
     /// A transport accepted a connection.
     pub fn on_connect(&mut self, conn: ConnId, ip: IpAddr) {
-        self.conns.insert(conn, Connection { ip, greeted: false, failed_code_attempts: 0, session: None, channel_sessions: Vec::new() });
+        self.conns.insert(
+            conn,
+            Connection {
+                ip,
+                greeted: false,
+                version: None,
+                gate_aware: false,
+                too_old: false,
+                failed_code_attempts: 0,
+                session: None,
+                channel_sessions: Vec::new(),
+            },
+        );
+        self.book.connections(self.conns.len(), (self.wall)());
     }
 
     /// A connection went away (any reason). Peers are told; sessions the connection created
@@ -244,15 +332,7 @@ impl RelayCore {
             return out;
         }
         match frame {
-            RelayFrame::Hello { .. } => {
-                if let Some(c) = self.conns.get_mut(&conn) {
-                    c.greeted = true;
-                }
-                out.push(Delivery::Send(
-                    conn,
-                    RelayFrame::HelloAck { version: ProtocolVersion::CURRENT, relay_version: self.config.relay_version.clone(), limits: self.config.limits() },
-                ));
-            }
+            RelayFrame::Hello { client_version, features, .. } => self.hello(conn, &client_version, &features, &mut out),
             RelayFrame::CreateSession { ttl_secs, .. } => self.create_session(conn, ttl_secs, now, &mut out),
             RelayFrame::JoinByCode { code, .. } => self.join(conn, JoinKey::Code(code), now, &mut out),
             RelayFrame::JoinBySession { session_id, .. } => self.join(conn, JoinKey::Session(session_id), now, &mut out),
@@ -275,7 +355,69 @@ impl RelayCore {
         out
     }
 
+    /// `hello`: the minimum version decides how the client is served (docs/pairing.md 「最低版本」).
+    fn hello(&mut self, conn: ConnId, client_version: &str, features: &[String], out: &mut Vec<Delivery>) {
+        let version = ClientVersion::of_client(client_version);
+        let gate_aware = features.iter().any(|f| f == FEATURE_CLIENT_TOO_OLD);
+        let too_old = self.policy.is_too_old(version);
+        let wall = (self.wall)();
+        self.book.hello(version, &self.policy, wall);
+        if too_old
+            && gate_aware
+            && let Some(min) = self.policy.min_version
+        {
+            tracing::info!(?conn, %client_version, %min, "client below the minimum version; refusing it");
+            self.book.count(Count::TooOld, wall);
+            out.push(Delivery::Send(conn, RelayFrame::client_too_old(min.to_string())));
+            out.push(Delivery::Close(conn));
+            return;
+        }
+        if let Some(c) = self.conns.get_mut(&conn) {
+            c.greeted = true;
+            c.version = version;
+            c.gate_aware = gate_aware;
+            c.too_old = too_old;
+        }
+        out.push(Delivery::Send(
+            conn,
+            RelayFrame::HelloAck { version: ProtocolVersion::CURRENT, relay_version: self.config.relay_version.clone(), limits: self.config.limits() },
+        ));
+    }
+
+    /// An older client below the minimum asked for something new: `unsupported_version`, which
+    /// its pairing screen shows as 「版本不兼容，请更新 Voltip」.
+    fn refuse_old(&mut self, conn: ConnId, channel: Option<&str>, out: &mut Vec<Delivery>) -> bool {
+        if !self.conns.get(&conn).is_some_and(|c| c.too_old) {
+            return false;
+        }
+        self.book.count(Count::OldRefused, (self.wall)());
+        let refusal = RelayFrame::error(RelayErrorCode::UnsupportedVersion);
+        out.push(Delivery::Send(
+            conn,
+            match channel {
+                Some(ch) => refusal.for_channel(ch),
+                None => refusal,
+            },
+        ));
+        true
+    }
+
+    fn rate_limited(&mut self, conn: ConnId, retry: Duration, channel: Option<&str>, out: &mut Vec<Delivery>) {
+        self.book.count(Count::RateLimited, (self.wall)());
+        let frame = RelayFrame::rate_limited(secs(retry));
+        out.push(Delivery::Send(
+            conn,
+            match channel {
+                Some(ch) => frame.for_channel(ch),
+                None => frame,
+            },
+        ));
+    }
+
     fn create_session(&mut self, conn: ConnId, ttl_secs: Option<u32>, now: Instant, out: &mut Vec<Delivery>) {
+        if self.refuse_old(conn, None, out) {
+            return;
+        }
         let Some(c) = self.conns.get(&conn) else { return };
         if c.session.is_some() {
             out.push(Delivery::Send(conn, RelayFrame::error(RelayErrorCode::SessionAlreadyActive)));
@@ -283,7 +425,7 @@ impl RelayCore {
         }
         let ip = c.ip;
         if let Err(retry) = self.create_limiter.check(ip, now) {
-            out.push(Delivery::Send(conn, RelayFrame::rate_limited(secs(retry))));
+            self.rate_limited(conn, retry, None, out);
             return;
         }
         let ttl = ttl_secs.map_or(self.config.session_ttl, |s| Duration::from_secs(u64::from(s))).min(self.config.max_session_ttl).max(Duration::from_secs(10));
@@ -297,6 +439,7 @@ impl RelayCore {
             c.session = Some(session_id);
         }
         tracing::info!(%session_id, ttl_secs = ttl.as_secs(), "pairing session created");
+        self.book.count(Count::SessionCreated, (self.wall)());
         out.push(Delivery::Send(conn, RelayFrame::SessionCreated { version: ProtocolVersion::CURRENT, session_id, code, expires_at: expires_at_unix }));
     }
 
@@ -320,6 +463,9 @@ impl RelayCore {
     }
 
     fn join(&mut self, conn: ConnId, key: JoinKey, now: Instant, out: &mut Vec<Delivery>) {
+        if self.refuse_old(conn, None, out) {
+            return;
+        }
         let Some(c) = self.conns.get(&conn) else { return };
         if c.session.is_some() {
             out.push(Delivery::Send(conn, RelayFrame::error(RelayErrorCode::SessionAlreadyActive)));
@@ -327,7 +473,7 @@ impl RelayCore {
         }
         let ip = c.ip;
         if let Err(retry) = self.join_limiter.check(ip, now) {
-            out.push(Delivery::Send(conn, RelayFrame::rate_limited(secs(retry))));
+            self.rate_limited(conn, retry, None, out);
             return;
         }
         let looked_up = match &key {
@@ -351,6 +497,7 @@ impl RelayCore {
             c.session = Some(session_id);
         }
         tracing::info!(%session_id, "peer joined pairing session");
+        self.book.count(Count::SessionJoined, (self.wall)());
         out.push(Delivery::Send(conn, RelayFrame::Joined { version: ProtocolVersion::CURRENT, session_id }));
         out.push(Delivery::Send(creator, RelayFrame::PeerJoined { version: ProtocolVersion::CURRENT, session_id }));
     }
@@ -413,6 +560,7 @@ impl RelayCore {
         match target {
             Some(peer) => {
                 self.forwarded += 1;
+                self.book.count(Count::Forward, (self.wall)());
                 out.push(Delivery::Send(peer, RelayFrame::Forward { version: ProtocolVersion::CURRENT, session_id, payload }));
             }
             None => out.push(Delivery::Send(conn, RelayFrame::error(RelayErrorCode::NotJoined))),
@@ -444,6 +592,9 @@ impl RelayCore {
             out.push(Delivery::Send(conn, RelayFrame::error(RelayErrorCode::InvalidChannel)));
             return;
         }
+        if self.refuse_old(conn, Some(&channel), out) {
+            return;
+        }
         let Some(c) = self.conns.get(&conn) else { return };
         if let Some(existing) = self.channels.get(&channel)
             && existing.members.contains(&conn)
@@ -453,7 +604,7 @@ impl RelayCore {
         }
         let ip = c.ip;
         if let Err(retry) = self.attach_limiter.check(ip, now) {
-            out.push(Delivery::Send(conn, RelayFrame::rate_limited(secs(retry)).for_channel(&channel)));
+            self.rate_limited(conn, retry, Some(&channel), out);
             return;
         }
         if self.channels.get(&channel).is_some_and(|ch| ch.members.len() >= 2) {
@@ -471,6 +622,7 @@ impl RelayCore {
         if let Some(c) = self.conns.get_mut(&conn) {
             c.channel_sessions.push(session_id);
         }
+        self.book.count(Count::Attach, (self.wall)());
         out.push(Delivery::Send(conn, RelayFrame::Attached { version: ProtocolVersion::CURRENT, session_id, peer_online, channel: Some(channel) }));
     }
 
@@ -492,6 +644,7 @@ impl RelayCore {
             self.sessions.iter().filter(|(_, s)| now >= s.expires_at).map(|(id, s)| (*id, s.creator, s.joiner)).collect();
         for (sid, creator, joiner) in expired {
             tracing::info!(session_id = %sid, "pairing session expired");
+            self.book.count(Count::SessionExpired, (self.wall)());
             for who in [Some(creator), joiner].into_iter().flatten() {
                 if self.conns.contains_key(&who) {
                     out.push(Delivery::Send(who, RelayFrame::error(RelayErrorCode::SessionExpired)));
@@ -531,7 +684,7 @@ mod tests {
     const C: ConnId = ConnId(3);
 
     fn hello() -> RelayFrame {
-        RelayFrame::Hello { version: ProtocolVersion::CURRENT, client_version: "test".into() }
+        RelayFrame::Hello { version: ProtocolVersion::CURRENT, client_version: "test".into(), features: Vec::new() }
     }
 
     fn relay() -> (RelayCore, Instant) {
@@ -869,6 +1022,149 @@ mod tests {
         ));
         // Unknown session id is a no-op.
         assert!(r.on_frame(A, RelayFrame::Leave { version: ProtocolVersion::CURRENT, session_id: SessionId::random() }, t0).is_empty());
+    }
+
+    fn hello_as(client_version: &str, aware: bool) -> RelayFrame {
+        if aware {
+            RelayFrame::hello(client_version)
+        } else {
+            RelayFrame::Hello { version: ProtocolVersion::CURRENT, client_version: client_version.into(), features: Vec::new() }
+        }
+    }
+
+    fn min(version: &str) -> RelayPolicy {
+        RelayPolicy { min_version: Some(version.parse().unwrap()), ..RelayPolicy::default() }
+    }
+
+    fn create() -> RelayFrame {
+        RelayFrame::CreateSession { version: ProtocolVersion::CURRENT, ttl_secs: None }
+    }
+
+    fn attach(channel: &str) -> RelayFrame {
+        RelayFrame::Attach { version: ProtocolVersion::CURRENT, channel: channel.into() }
+    }
+
+    /// docs/pairing.md 「最低版本」: a client that knows `client_too_old` and is below the minimum
+    /// is told the version it needs and closed; the minimum itself and anything above it, and a
+    /// version the relay cannot read, are served.
+    #[test]
+    fn a_client_below_the_minimum_that_knows_the_error_is_told_and_closed() {
+        let mut r = RelayCore::new(RelayConfig::default());
+        assert!(r.set_policy(min("0.1.10")).is_empty(), "nobody connected yet");
+        let t0 = Instant::now();
+        for (i, (client, served)) in [("voltip/0.1.9", false), ("voltip/0.1.10", true), ("voltip/0.2.0", true), ("test", true)].into_iter().enumerate() {
+            let conn = ConnId(10 + i as u64);
+            r.on_connect(conn, IP_A);
+            let out = r.on_frame(conn, hello_as(client, true), t0);
+            if served {
+                assert!(matches!(out[..], [Delivery::Send(c, RelayFrame::HelloAck { .. })] if c == conn), "{client}: {out:?}");
+            } else {
+                assert_eq!(out, vec![Delivery::Send(conn, RelayFrame::client_too_old("0.1.10")), Delivery::Close(conn)], "{client}");
+                // Closed before it was greeted: nothing more is served.
+                assert_eq!(err_code(&r.on_frame(conn, create(), t0)[0]), Some(RelayErrorCode::HelloRequired));
+            }
+        }
+        assert_eq!(r.policy(), &min("0.1.10"));
+    }
+
+    /// Regression guard (user decision 2026-10-27, 「拦配对和重连」): a client before 0.2.0 cannot
+    /// read `client_too_old`. Below the minimum it stays connected, and every pairing request and
+    /// `attach` is refused with the `unsupported_version` its pairing screen already explains.
+    #[test]
+    fn regression_an_older_client_below_the_minimum_may_stay_but_not_pair_or_reconnect() {
+        let mut r = RelayCore::new(RelayConfig::default());
+        r.set_policy(min("0.1.10"));
+        let t0 = Instant::now();
+        r.on_connect(A, IP_A);
+        r.on_connect(B, IP_B);
+        assert!(matches!(r.on_frame(A, hello_as("voltip/0.1.9", false), t0)[..], [Delivery::Send(A, RelayFrame::HelloAck { .. })]));
+        r.on_frame(B, hello_as("voltip/0.1.10", true), t0);
+        assert_eq!(r.on_frame(A, create(), t0), vec![Delivery::Send(A, RelayFrame::error(RelayErrorCode::UnsupportedVersion))]);
+        let (_, code, _) = created(&r.on_frame(B, create(), t0));
+        let join = RelayFrame::JoinByCode { version: ProtocolVersion::CURRENT, code };
+        assert_eq!(r.on_frame(A, join, t0), vec![Delivery::Send(A, RelayFrame::error(RelayErrorCode::UnsupportedVersion))]);
+        let ch = "ab".repeat(32);
+        assert_eq!(
+            r.on_frame(A, attach(&ch), t0),
+            vec![Delivery::Send(A, RelayFrame::error(RelayErrorCode::UnsupportedVersion).for_channel(&ch))],
+            "names its channel, which 0.1.9 does not ask again for"
+        );
+        assert_eq!(r.stats().sessions, 1, "the refusals changed nothing");
+        assert_eq!(r.stats_report().hours[0].old_refused, 3);
+    }
+
+    /// A minimum raised while devices are connected: the ones that know `client_too_old` are told
+    /// and closed, which ends their channels; an older client keeps the channel it is on until it
+    /// goes and gets nothing new; lowering the minimum lifts the refusal.
+    #[test]
+    fn raising_the_minimum_closes_aware_clients_and_keeps_what_older_ones_have() {
+        let mut r = RelayCore::new(RelayConfig::default());
+        let t0 = Instant::now();
+        let (aware, old, peer) = (A, B, C);
+        for (conn, client, is_aware) in [(aware, "voltip/0.1.10", true), (old, "voltip/0.1.9", false), (peer, "voltip/0.3.0", true)] {
+            r.on_connect(conn, IP_A);
+            r.on_frame(conn, hello_as(client, is_aware), t0);
+        }
+        let (kept, closed) = ("cd".repeat(32), "ef".repeat(32));
+        r.on_frame(old, attach(&kept), t0);
+        let Delivery::Send(_, RelayFrame::Attached { session_id: kept_sid, .. }) = r.on_frame(peer, attach(&kept), t0)[1].clone() else { panic!() };
+        r.on_frame(aware, attach(&closed), t0);
+        r.on_frame(peer, attach(&closed), t0);
+
+        let out = r.set_policy(min("0.2.0"));
+        assert_eq!(out, vec![Delivery::Send(aware, RelayFrame::client_too_old("0.2.0")), Delivery::Close(aware)]);
+        // The I/O layer closes the socket; the core then forgets the connection.
+        let out = r.on_disconnect(aware, t0);
+        assert!(matches!(&out[..], [Delivery::Send(p, RelayFrame::PeerPresence { online: false, .. })] if *p == peer), "{out:?}");
+        // The older client's channel still carries frames…
+        let out = r.on_frame(old, RelayFrame::forward(kept_sid, vec![1]), t0);
+        assert_eq!(out, vec![Delivery::Send(peer, RelayFrame::forward(kept_sid, vec![1]))]);
+        // …and anything new is refused.
+        assert_eq!(err_code(&r.on_frame(old, attach(&"aa".repeat(32)), t0)[0]), Some(RelayErrorCode::UnsupportedVersion));
+        assert_eq!(err_code(&r.on_frame(old, create(), t0)[0]), Some(RelayErrorCode::UnsupportedVersion));
+        // The minimum lowered again: nobody is closed, the older client is served again.
+        assert!(r.set_policy(RelayPolicy::default()).is_empty());
+        assert!(matches!(r.on_frame(old, create(), t0)[0], Delivery::Send(B, RelayFrame::SessionCreated { .. })));
+        assert_eq!(r.stats_report().hours[0].too_old, 1);
+    }
+
+    /// docs/pairing.md 「中继统计」: counts only, nothing that names a device.
+    #[test]
+    fn the_statistics_count_what_happened_and_name_no_device() {
+        fn clock() -> u64 {
+            1_761_552_000 + 120
+        }
+        let cfg = RelayConfig { create_rate: RateWindow::new(1, Duration::from_secs(60)), ..RelayConfig::default() };
+        let mut r = RelayCore::new(cfg).with_wall_clock(clock);
+        r.set_policy(RelayPolicy { known_versions: vec!["0.1.10".parse().unwrap()], ..RelayPolicy::default() });
+        let t0 = Instant::now();
+        r.on_connect(A, IP_A);
+        r.on_connect(B, IP_B);
+        r.on_frame(A, hello_as("voltip/0.1.10", true), t0);
+        r.on_frame(B, hello_as("voltip/0.1.8", false), t0);
+        let (sid, code, _) = created(&r.on_frame(A, create(), t0));
+        r.on_frame(B, RelayFrame::JoinByCode { version: ProtocolVersion::CURRENT, code }, t0);
+        r.on_frame(A, RelayFrame::forward(sid, vec![1]), t0);
+        r.on_connect(C, IP_A);
+        r.on_frame(C, hello(), t0);
+        assert_eq!(err_code(&r.on_frame(C, create(), t0)[0]), Some(RelayErrorCode::RateLimited));
+        let ch = "ab".repeat(32);
+        r.on_frame(A, attach(&ch), t0);
+        r.on_frame(B, attach(&ch), t0);
+        let report = r.stats_report();
+        assert_eq!((report.gauges.connections, report.gauges.sessions, report.gauges.channels, report.gauges.channels_paired), (3, 1, 1, 1));
+        let hour = &report.hours[0];
+        assert_eq!((hour.hour, hour.peak_connections, hour.hellos), (1_761_552_000, 3, 3));
+        assert_eq!(hour.versions, std::collections::BTreeMap::from([("0.1.10".to_owned(), 1), ("other".to_owned(), 2)]));
+        assert_eq!((hour.sessions_created, hour.sessions_joined, hour.forwarded, hour.rate_limited, hour.attaches), (1, 1, 1, 1, 2));
+        let json = serde_json::to_string(&report).unwrap();
+        for secret in [IP_A.to_string(), IP_B.to_string(), ch, sid.to_string()] {
+            assert!(!json.contains(&secret), "{secret} in {json}");
+        }
+        // Expired sessions are counted too: C's of 10 s and A's of the default 120 s.
+        r.on_frame(C, RelayFrame::CreateSession { version: ProtocolVersion::CURRENT, ttl_secs: Some(10) }, t0 + Duration::from_secs(61));
+        r.tick(t0 + Duration::from_secs(120));
+        assert_eq!(r.stats_report().hours[0].sessions_expired, 2);
     }
 
     #[test]

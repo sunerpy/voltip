@@ -169,7 +169,10 @@ export function BottomSheet({
               transform: [{ translateY }],
             },
           ]}>
-          <View {...pan.panHandlers} style={styles.head}>
+          <View
+            {...pan.panHandlers}
+            style={styles.head}
+            testID={testID === undefined ? undefined : `${testID}-handle`}>
             <View style={[styles.handle, { backgroundColor: theme.colors.onSurfaceVariant }]} />
             {title !== undefined && (
               <Text variant="titleMedium" accessibilityRole="header" style={styles.title}>

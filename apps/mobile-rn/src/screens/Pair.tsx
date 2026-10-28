@@ -1,18 +1,22 @@
 // 配对电脑 (docs/pairing.md), apps/mobile's PairDevice on native views: the QR code the computer
 // shows (the camera page), or its six-digit code; both meet the computer on the relay (docs/
-// pairing.md 「只走中继」). The safety code is compared on the next page.
-import { failureLabel } from "@voltip/shared";
+// pairing.md 「只走中继」). The safety code is compared on the next page. The relay link the pairing
+// needs is shown below it: its state, why it is not connected, and the self-check (issue #193).
+// Below the relay's minimum version the page leads to the update instead (docs/pairing.md
+// 「最低版本」).
+import { failureLabel, relayLabel, relayTooOld } from "@voltip/shared";
 import { useCameraPermissions } from "expo-camera";
 import { useState } from "react";
 import { View } from "react-native";
-import { ProgressBar, SegmentedButtons, Text, TextInput } from "react-native-paper";
+import { Icon, ProgressBar, SegmentedButtons, Text, TextInput } from "react-native-paper";
 
 import { useBackend, useUiState } from "../backend/BackendProvider";
 import { useI18n } from "../backend/i18n";
+import { ConnectivityCheck } from "../features/Devices";
 import { useRootNavigation } from "../routes";
 import { Button } from "../ui/Button";
 import { CodeInput } from "../ui/CodeInput";
-import { Lede, Notice, Page, Section, StateLine, useAppTheme } from "../ui/kit";
+import { Lede, Notice, Page, Section, StateLine, labelTone, useAppTheme } from "../ui/kit";
 
 type Method = "scan" | "code";
 
@@ -20,10 +24,107 @@ export function isPairingLink(value: string): boolean {
   return value.trim().startsWith("voltip://pair?");
 }
 
+/** The relay the pairing needs (docs/pairing.md 「只走中继」): its state, and while it is not
+ *  connected why the last attempt failed and the self-check. Issue #193: the page said only
+ *  「尚未连上中继」, and only once a code was entered. */
+function RelayLink() {
+  const theme = useAppTheme();
+  const { relay, connectivity } = useUiState();
+  const { t, locale } = useI18n();
+  const label = relayLabel(relay, locale);
+  const connected = relay.state === "connected";
+  const failure = relay.last_failure;
+  let why: string | undefined;
+  if (!connected && failure !== undefined) {
+    const reason = t(`relay.why.${failure.kind}`);
+    why = t("relay.lastFailure", {
+      reason:
+        failure.detail === undefined
+          ? reason
+          : t("mobile.pair.relayDetail", { reason, detail: failure.detail }),
+    });
+  }
+  return (
+    <>
+      <Section padded testID="pair-relay">
+        <StateLine tone={labelTone(label.tone)} testID="pair-relay-state">
+          {t("mobile.pair.relay", { state: label.text })}
+        </StateLine>
+        {why !== undefined && (
+          <Text
+            variant="bodySmall"
+            testID="pair-relay-failure"
+            style={{ color: theme.colors.error }}>
+            {why}
+          </Text>
+        )}
+        {!connected && (
+          <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+            {t("mobile.pair.relayHelp")}
+          </Text>
+        )}
+      </Section>
+      {!connected && <ConnectivityCheck status={connectivity} />}
+    </>
+  );
+}
+
+/** Below the relay's minimum version (board 20a): the version it needs, and the update. Google Play
+ *  updates what it installed; any other install checks for the release on 关于. */
+function TooOld({ minVersion }: { minVersion: string | undefined }) {
+  const theme = useAppTheme();
+  const { backend } = useBackend();
+  const { update, app_version: current } = useUiState();
+  const navigation = useRootNavigation();
+  const { t } = useI18n();
+  const store = update.state === "store";
+  return (
+    <Section padded testID="pair-too-old">
+      <View style={{ alignItems: "center", gap: 12, paddingVertical: 8 }}>
+        <View
+          style={{
+            width: 72,
+            height: 72,
+            borderRadius: 24,
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: theme.voltip.warningSoft,
+          }}>
+          <Icon source="download" size={36} color={theme.voltip.warning} />
+        </View>
+        <Text variant="titleMedium" style={{ textAlign: "center" }}>
+          {t("mobile.pair.tooOld.title")}
+        </Text>
+        <Text
+          variant="bodyMedium"
+          style={{ color: theme.colors.onSurfaceVariant, textAlign: "center" }}>
+          {minVersion === undefined
+            ? t("mobile.pair.tooOld.bodyAny", { current })
+            : t("mobile.pair.tooOld.body", { min: minVersion, current })}
+        </Text>
+        <Button
+          mode="contained"
+          icon={store ? "google-play" : "download"}
+          testID="pair-too-old-update"
+          onPress={() => {
+            if (store) {
+              void backend.invoke("update_install");
+              return;
+            }
+            void backend.invoke("update_check");
+            navigation.navigate("About");
+          }}>
+          {store ? t("mobile.pair.tooOld.store") : t("mobile.pair.tooOld.check")}
+        </Button>
+      </View>
+    </Section>
+  );
+}
+
 export function Pair() {
   const theme = useAppTheme();
   const { backend } = useBackend();
-  const { pairing } = useUiState();
+  const { pairing, relay } = useUiState();
   const navigation = useRootNavigation();
   const { t, locale } = useI18n();
   const [permission] = useCameraPermissions();
@@ -42,6 +143,8 @@ export function Pair() {
           : undefined;
   // A camera the user refused for good: the link from the computer, pasted, instead.
   const noCamera = permission !== null && !permission.granted && !permission.canAskAgain;
+  // The core refuses to pair below the relay's minimum; a pairing under way finishes as it would.
+  const tooOld = relayTooOld(relay);
 
   const joinCode = (digits: string) => {
     void backend.invoke("pairing_join_code", { code: digits });
@@ -53,6 +156,14 @@ export function Pair() {
     void backend.invoke("pairing_reset");
     setCode("");
   };
+
+  if (tooOld !== undefined && (phase === "idle" || phase === "failed")) {
+    return (
+      <Page testID="phone-pair">
+        <TooOld minVersion={tooOld.min_version} />
+      </Page>
+    );
+  }
 
   return (
     <Page testID="phone-pair">
@@ -93,6 +204,7 @@ export function Pair() {
               autoCapitalize="none"
               autoCorrect={false}
               error={link.length > 0 && !isPairingLink(link)}
+              testID="pair-link"
             />
             {link.length > 0 && !isPairingLink(link) && (
               <Text variant="bodySmall" style={{ color: theme.colors.error }}>
@@ -171,6 +283,7 @@ export function Pair() {
           {failed}
         </Notice>
       )}
+      <RelayLink />
     </Page>
   );
 }

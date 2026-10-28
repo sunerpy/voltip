@@ -19,6 +19,7 @@ use async_trait::async_trait;
 use voltip_asr::{AsrClient, AsrConfig, AudioUpload, DashscopeMode};
 use voltip_core::dictation::{DictationError, RefineHints, Refined, Refiner, ServiceProbe, Transcriber, Transcript};
 use voltip_core::providers::is_dashscope;
+use voltip_core::usage::{AUDIO_MS_HEADER, AsrCall, Metering, PURPOSE_HEADER, QuotaReport, UsageProbe};
 use voltip_core::{AsrProtocol, BuiltinPreset, ProbeError, ProbeFailure, ProviderId, RemoteService, ResolvedEngines, ServiceKind, TakePreset};
 
 use crate::dashscope::DashscopeTranscriber;
@@ -48,10 +49,35 @@ impl HttpTranscriber {
 impl Transcriber for HttpTranscriber {
     /// The glossary goes out as the OpenAI `prompt` field when there is one (docs/dictation.md §16.3).
     async fn transcribe(&self, wav: &[u8], language: Option<&str>, glossary: &[String]) -> Result<Transcript, DictationError> {
+        self.transcribe_as(wav, language, glossary, &AsrCall::default()).await
+    }
+
+    /// A metered client (the built-in service, docs/dictation.md §27) says what the request is for
+    /// and how long the take is; any other sends neither.
+    async fn transcribe_as(&self, wav: &[u8], language: Option<&str>, glossary: &[String], call: &AsrCall) -> Result<Transcript, DictationError> {
         let prompt = voltip_core::vocabulary::glossary_prompt(glossary);
-        let t = self.client.transcribe_with_prompt(wav, language, prompt.as_deref()).await.map_err(asr_error)?;
+        let headers = match self.client.config().metering {
+            Some(_) => vec![
+                (PURPOSE_HEADER, call.purpose.as_str().to_owned()),
+                (AUDIO_MS_HEADER, voltip_core::dictation::wav::duration_ms(wav).unwrap_or(0).to_string()),
+            ],
+            None => Vec::new(),
+        };
+        let t = self.client.transcribe_with_headers(wav, language, prompt.as_deref(), &headers).await.map_err(asr_error)?;
         Ok(Transcript { text: t.text, latency_ms: t.latency_ms, model: Some(t.model) })
     }
+}
+
+/// The recognition client's metering for the built-in service (docs/dictation.md §27).
+pub fn asr_metering(metering: &Metering) -> voltip_asr::Metering {
+    let reports = metering.clone();
+    voltip_asr::Metering { headers: metering.headers(), on_report: Arc::new(move |report| reports.report(report)) }
+}
+
+/// The clean-up client's metering for the built-in service (docs/dictation.md §27).
+pub fn refine_metering(metering: &Metering) -> voltip_refine::Metering {
+    let reports = metering.clone();
+    voltip_refine::Metering { headers: metering.headers(), on_report: Arc::new(move |report| reports.report(report)) }
 }
 
 /// Clean-up through [`voltip_refine::RefineClient`].
@@ -141,8 +167,8 @@ impl Refiner for HttpRefiner {
 /// The core's error for a failed recognition: a used-up quota keeps its kind, so a fallback model
 /// list moves on to its next model (docs/dictation.md §3.5); anything else is `Asr` with the reason.
 pub fn asr_error(error: voltip_asr::AsrError) -> DictationError {
-    if matches!(error, voltip_asr::AsrError::QuotaExhausted { .. }) {
-        return DictationError::QuotaExhausted { service: ServiceKind::Asr, detail: error.to_string() };
+    if let voltip_asr::AsrError::QuotaExhausted { retry_at_ms, .. } = &error {
+        return DictationError::QuotaExhausted { service: ServiceKind::Asr, retry_at_ms: *retry_at_ms, detail: error.to_string() };
     }
     DictationError::Asr(error.to_string())
 }
@@ -152,7 +178,9 @@ pub fn asr_error(error: voltip_asr::AsrError) -> DictationError {
 /// reason.
 pub fn refine_error(error: voltip_refine::RefineError) -> DictationError {
     match error {
-        voltip_refine::RefineError::QuotaExhausted { .. } => DictationError::QuotaExhausted { service: ServiceKind::Llm, detail: error.to_string() },
+        voltip_refine::RefineError::QuotaExhausted { retry_at_ms, .. } => {
+            DictationError::QuotaExhausted { service: ServiceKind::Llm, retry_at_ms, detail: error.to_string() }
+        }
         voltip_refine::RefineError::RateLimited { .. } => DictationError::RateLimited { service: ServiceKind::Llm, detail: error.to_string() },
         voltip_refine::RefineError::Overloaded { .. } => DictationError::Overloaded { service: ServiceKind::Llm, detail: error.to_string() },
         _ => DictationError::Refine(error.to_string()),
@@ -186,9 +214,10 @@ impl Refiner for Unconfigured {
 /// (rustls-platform-verifier); on Android that verifier needs a JNI context the app never hands it
 /// and panics on the first request, so there the requests trust Mozilla's root store, as
 /// voltip-asr, voltip-refine and the relay connection do.
-/// The requests follow `network`'s proxy plan (docs/dictation.md §24).
+/// The requests follow `network`'s proxy plan (docs/dictation.md §24), and the connect timeout is
+/// shared among a name's addresses ([`voltip_net::CONNECT_TIMEOUT`], issue #193).
 pub fn http_client_builder(network: &Arc<Network>) -> reqwest::ClientBuilder {
-    let builder = network.apply(reqwest::Client::builder());
+    let builder = network.apply(reqwest::Client::builder().connect_timeout(voltip_net::CONNECT_TIMEOUT));
     #[cfg(target_os = "android")]
     let builder = builder.tls_certs_only(mozilla_roots());
     builder
@@ -209,7 +238,11 @@ pub fn remote_transcriber(engines: &ResolvedEngines, network: &Arc<Network>) -> 
             Some(issue) => format!("识别服务未配置：{}", issue.message(ServiceKind::Asr)),
             None => "识别服务未配置".to_owned(),
         })),
-        Some(remote) => transcriber_with(AsrProtocol::of(&remote.url, &remote.model), remote, asr_upload(engines.asr_provider), network),
+        Some(remote) => {
+            // Only the built-in service is told who asks (docs/dictation.md §27).
+            let metering = engines.metering.as_ref().filter(|_| engines.asr_provider == ProviderId::Builtin).map(asr_metering);
+            transcriber_with(AsrProtocol::of(&remote.url, &remote.model), remote, asr_upload(engines.asr_provider), metering, network)
+        }
     }
 }
 
@@ -225,12 +258,24 @@ pub fn asr_upload(provider: ProviderId) -> AudioUpload {
 /// `/audio/transcriptions`, or one of Model Studio's; a Model Studio model dictation cannot use
 /// says so on use. Takes go up as WAV.
 pub fn transcriber_for(protocol: AsrProtocol, remote: &RemoteService, network: &Arc<Network>) -> Arc<dyn Transcriber> {
-    transcriber_with(protocol, remote, AudioUpload::Wav, network)
+    transcriber_with(protocol, remote, AudioUpload::Wav, None, network)
 }
 
-/// [`transcriber_for`] uploading takes as `upload` (Model Studio's protocols always send the WAV).
-fn transcriber_with(protocol: AsrProtocol, remote: &RemoteService, upload: AudioUpload, network: &Arc<Network>) -> Arc<dyn Transcriber> {
-    let config = AsrConfig::new(&remote.url, &remote.model).with_token(remote.key.clone()).with_timeout(ASR_TIMEOUT).with_upload(upload).with_network(network);
+/// [`transcriber_for`] uploading takes as `upload` (Model Studio's protocols always send the WAV),
+/// metered with `metering` (the built-in service).
+fn transcriber_with(
+    protocol: AsrProtocol,
+    remote: &RemoteService,
+    upload: AudioUpload,
+    metering: Option<voltip_asr::Metering>,
+    network: &Arc<Network>,
+) -> Arc<dyn Transcriber> {
+    let config = AsrConfig::new(&remote.url, &remote.model)
+        .with_token(remote.key.clone())
+        .with_timeout(ASR_TIMEOUT)
+        .with_upload(upload)
+        .with_metering(metering)
+        .with_network(network);
     let built = match protocol {
         AsrProtocol::OpenaiTranscriptions => HttpTranscriber::new(config).map(|t| Arc::new(t) as Arc<dyn Transcriber>),
         AsrProtocol::DashscopeChat => DashscopeTranscriber::new(config, DashscopeMode::Chat).map(|t| Arc::new(t) as Arc<dyn Transcriber>),
@@ -271,7 +316,10 @@ pub fn openai_compatible_base(base_url: &str) -> String {
 /// explains "润色未配置").
 pub fn refiner(engines: &ResolvedEngines, network: &Arc<Network>) -> Option<Arc<dyn Refiner>> {
     engines.refine.as_ref().map(|remote| {
-        let config = refine_config(remote, engines.llm_provider == Some(ProviderId::Builtin), network);
+        let builtin = engines.llm_provider == Some(ProviderId::Builtin);
+        // Only the built-in service is told who asks (docs/dictation.md §27).
+        let metering = engines.metering.as_ref().filter(|_| builtin).map(refine_metering);
+        let config = refine_config(remote, builtin, network).with_metering(metering);
         match HttpRefiner::new(config) {
             Ok(r) => Arc::new(r) as Arc<dyn Refiner>,
             Err(e) => {
@@ -314,6 +362,46 @@ fn reasoning_effort(effort: voltip_core::ReasoningEffort) -> voltip_refine::Reas
         E::Medium => voltip_refine::ReasoningEffort::Medium,
         E::High => voltip_refine::ReasoningEffort::High,
         E::Xhigh => voltip_refine::ReasoningEffort::Xhigh,
+    }
+}
+
+/// Deadline of one question about the built-in service's quota.
+pub const USAGE_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The built-in service's quota for this device over HTTP (docs/dictation.md §27):
+/// `GET {base}/voltip/quota`, `base` normalised to `…/v1` as the clients normalise it. What the
+/// service said, or the connection's error, is the failure; the host is never in it.
+#[derive(Clone, Debug)]
+pub struct HttpUsageProbe {
+    network: Arc<Network>,
+}
+
+impl HttpUsageProbe {
+    /// A probe whose requests follow `network`'s proxy plan (docs/dictation.md §24).
+    pub fn new(network: &Arc<Network>) -> Self {
+        Self { network: Arc::clone(network) }
+    }
+}
+
+#[async_trait]
+impl UsageProbe for HttpUsageProbe {
+    async fn quota(&self, base_url: &str, token: Option<&str>, headers: &[(String, String)]) -> Result<QuotaReport, String> {
+        let base = voltip_asr::normalize_base_url(base_url).map_err(|e| e.to_string())?;
+        let client = http_client_builder(&self.network).timeout(USAGE_PROBE_TIMEOUT).build().map_err(|e| e.to_string())?;
+        let mut request = client.get(format!("{base}/voltip/quota"));
+        for (name, value) in headers {
+            request = request.header(name.as_str(), value.as_str());
+        }
+        if let Some(token) = token {
+            request = request.bearer_auth(token);
+        }
+        let response = request.send().await.map_err(|e| e.without_url().to_string())?;
+        let status = response.status();
+        let body = response.text().await.map_err(|e| e.without_url().to_string())?;
+        if !status.is_success() {
+            return Err(format!("{status}: {}", voltip_reply::summary(&body)));
+        }
+        QuotaReport::parse_answer(&body)
     }
 }
 
@@ -377,6 +465,50 @@ mod tests {
         assert!(roots.len() > 100, "{} roots", roots.len());
         assert!(reqwest::Client::builder().tls_certs_only(roots).build().is_ok());
         assert!(http_client_builder(&net()).build().is_ok());
+    }
+
+    /// An address whose connection attempts go unanswered, as a network that blackholes it leaves
+    /// them: a listener with no room left in its queue (backlog 0, one connection already waiting)
+    /// drops the SYN of every further attempt on Linux and macOS; Windows resets them, one more
+    /// failed attempt to the client. Keep the returned pair alive while the address must be silent.
+    async fn silent_address() -> (std::net::SocketAddr, (tokio::net::TcpListener, tokio::net::TcpStream)) {
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let addr = socket.local_addr().unwrap();
+        let listener = socket.listen(0).unwrap();
+        let waiting = tokio::net::TcpStream::connect(addr).await.unwrap();
+        (addr, (listener, waiting))
+    }
+
+    /// A resolver that answers every name with the same addresses, in order.
+    struct Fixed(Vec<std::net::SocketAddr>);
+
+    impl reqwest::dns::Resolve for Fixed {
+        fn resolve(&self, _name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+            let addrs = self.0.clone();
+            Box::pin(async move { Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs) })
+        }
+    }
+
+    /// The silent address first, then `server` four times: hyper gives each address a fifth of
+    /// the connect timeout, so the silent one costs 2 s.
+    fn silent_then(silent: std::net::SocketAddr, server: std::net::SocketAddr) -> std::sync::Arc<Fixed> {
+        std::sync::Arc::new(Fixed(std::iter::once(silent).chain(std::iter::repeat_n(server, 4)).collect()))
+    }
+
+    /// Regression (issue #193): a name with an address that never answers held a request until
+    /// the system gave up on it; the shells' requests share the connect timeout among the
+    /// addresses, so the next one answers.
+    #[tokio::test]
+    async fn regression_an_address_that_never_answers_gives_way_to_the_next() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET")).respond_with(wiremock::ResponseTemplate::new(200).set_body_string("ok")).mount(&server).await;
+        let (silent, _hold) = silent_address().await;
+        let client = http_client_builder(&net()).no_proxy().dns_resolver(silent_then(silent, *server.address())).build().unwrap();
+        let answer = tokio::time::timeout(std::time::Duration::from_secs(30), client.get("http://updates.test/latest.json").send())
+            .await
+            .expect("the silent address held the request");
+        assert_eq!(answer.unwrap().text().await.unwrap(), "ok");
     }
 
     fn custom(asr_url: Option<&str>, llm_url: Option<&str>) -> ResolvedEngines {
@@ -458,16 +590,19 @@ mod tests {
         use voltip_refine::RefineError;
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
-        let asr = asr_error(AsrError::QuotaExhausted { code: "AllocationQuota.FreeTierOnly".into(), message: "free tier exhausted".into() });
-        assert!(matches!(&asr, DictationError::QuotaExhausted { service: ServiceKind::Asr, detail } if detail.contains("FreeTierOnly")), "{asr:?}");
+        let asr = asr_error(AsrError::QuotaExhausted { code: "AllocationQuota.FreeTierOnly".into(), message: "free tier exhausted".into(), retry_at_ms: None });
+        assert!(
+            matches!(&asr, DictationError::QuotaExhausted { service: ServiceKind::Asr, detail, retry_at_ms: None } if detail.contains("FreeTierOnly")),
+            "{asr:?}"
+        );
         assert!(asr.is_quota_exhausted());
         assert_eq!(
             asr_error(AsrError::Unauthorized { message: "Invalid API Key (invalid_api_key)".into() }),
             DictationError::Asr("ASR rejected the credentials: Invalid API Key (invalid_api_key)".into()),
             "the service's words reach the take's failure (§3.12)"
         );
-        let llm = refine_error(RefineError::QuotaExhausted { code: "insufficient_quota".into(), message: "m".into() });
-        assert!(matches!(&llm, DictationError::QuotaExhausted { service: ServiceKind::Llm, .. }), "{llm:?}");
+        let llm = refine_error(RefineError::QuotaExhausted { code: "insufficient_quota".into(), message: "m".into(), retry_at_ms: Some(9) });
+        assert!(matches!(&llm, DictationError::QuotaExhausted { service: ServiceKind::Llm, retry_at_ms: Some(9), .. }), "{llm:?}");
         assert_eq!(refine_error(RefineError::Timeout), DictationError::Refine("refine request timed out".into()));
         // docs/dictation.md §3.6: a clean-up's 429 keeps its kind (the interface says the service is
         // busy), and it is not a used-up quota: no fallback model is tried for it.
@@ -548,6 +683,109 @@ mod tests {
         for provider in ProviderId::ALL.into_iter().filter(|p| *p != ProviderId::Builtin) {
             assert_eq!(asr_upload(provider), AudioUpload::Wav, "{provider:?}");
         }
+    }
+
+    /// A metering whose notes the test reads.
+    fn test_metering() -> (Metering, Arc<std::sync::Mutex<Vec<voltip_core::usage::UsageNote>>>) {
+        let notes = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = notes.clone();
+        let metering = Metering::new("6f1c2d3e-0000-4000-8000-000000000001", "voltip/0.1.10 (linux)", voltip_core::usage::UsageOrigin::ThisDevice, move |n| {
+            sink.lock().unwrap().push(n);
+        });
+        (metering, notes)
+    }
+
+    /// docs/dictation.md §27: only the built-in service is told which device asks and what for, and
+    /// its answers' reports reach the metering; a service the user configured gets none of it, even
+    /// when the engines carry a metering.
+    #[tokio::test]
+    async fn only_the_built_in_service_is_told_who_asks() {
+        use voltip_core::usage::{CLIENT_HEADER, DEVICE_HEADER, UsageNote};
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let report = "mode=count; basis=device; day=2026-10-27; reset=1793116800; asr=95/-; refine=3/-";
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/audio/transcriptions"))
+            .respond_with(ResponseTemplate::new(200).insert_header("x-voltip-quota", report).set_body_string(r#"{"text":"你好"}"#))
+            .mount(&server)
+            .await;
+        let answer = serde_json::json!({ "model": "m", "choices": [{ "message": { "role": "assistant", "content": "好的。" }, "finish_reason": "stop" }] });
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).insert_header("x-voltip-quota", report).set_body_json(answer))
+            .mount(&server)
+            .await;
+        let url: &'static str = Box::leak(server.uri().into_boxed_str());
+        let (metering, notes) = test_metering();
+        let built_in = BuiltIn { asr_url: Some(url), asr_token: Some("app-token"), refine_url: Some(url), refine_api_key: Some("app-key"), ..BuiltIn::EMPTY };
+        let mut engines = ResolvedEngines::resolve(&EngineSettings::default(), &UserSecrets::default(), &built_in);
+        assert_eq!((engines.asr_provider, engines.llm_provider), (ProviderId::Builtin, Some(ProviderId::Builtin)));
+        engines.metering = Some(metering.clone());
+        let take = voltip_core::dictation::wav::encode_pcm16(&[100; 24_000], 16_000);
+        let transcriber = remote_transcriber(&engines, &net());
+        transcriber.transcribe_as(&take, Some("zh"), &[], &AsrCall::take(None)).await.unwrap();
+        transcriber.transcribe_as(&take, Some("zh"), &[], &AsrCall::preview(None)).await.unwrap();
+        refiner(&engines, &net()).unwrap().refine("原文", &RefineHints::default()).await.unwrap();
+        refiner(&engines, &net()).unwrap().edit("原文", "改短", &RefineHints::default()).await.unwrap();
+        let mut user = custom(Some(url), Some(url));
+        user.metering = Some(metering);
+        remote_transcriber(&user, &net()).transcribe_as(&take, Some("zh"), &[], &AsrCall::take(None)).await.unwrap();
+        refiner(&user, &net()).unwrap().refine("原文", &RefineHints::default()).await.unwrap();
+
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 6);
+        let header = |i: usize, name: &str| requests[i].headers.get(name).map(|v| v.to_str().unwrap().to_owned());
+        for i in 0..4 {
+            assert_eq!(header(i, DEVICE_HEADER).as_deref(), Some("6f1c2d3e-0000-4000-8000-000000000001"), "request {i}");
+            assert_eq!(header(i, CLIENT_HEADER).as_deref(), Some("voltip/0.1.10 (linux)"), "request {i}");
+        }
+        assert_eq!((header(0, PURPOSE_HEADER), header(0, AUDIO_MS_HEADER)), (Some("take".into()), Some("1500".into())));
+        assert_eq!((header(1, PURPOSE_HEADER), header(1, AUDIO_MS_HEADER)), (Some("preview".into()), Some("1500".into())));
+        assert_eq!((header(2, PURPOSE_HEADER), header(3, PURPOSE_HEADER)), (Some("refine".into()), Some("edit".into())));
+        assert_eq!(header(3, AUDIO_MS_HEADER), None, "a clean-up carries no audio length");
+        for i in 4..6 {
+            for name in [DEVICE_HEADER, CLIENT_HEADER, PURPOSE_HEADER, AUDIO_MS_HEADER] {
+                assert_eq!(header(i, name), None, "request {i} told the user's service {name}");
+            }
+        }
+        let reports = notes.lock().unwrap().iter().filter(|n| matches!(n, UsageNote::Quota(q) if q.asr.used_seconds == 95 && q.refine.used == 3)).count();
+        assert_eq!(reports, 4, "every built-in answer's report, none of the user's service: {:?}", notes.lock().unwrap());
+    }
+
+    /// docs/dictation.md §27: the quota is asked at `…/v1/voltip/quota` with the service's token and
+    /// the metering's headers; a refusal says what the service said, never its host.
+    #[tokio::test]
+    async fn the_usage_probe_asks_the_built_in_service_for_the_day() {
+        use voltip_core::usage::{DEVICE_HEADER, QuotaMode};
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        let body = serde_json::json!({
+            "schema": 1, "mode": "limit", "basis": "device", "day": "2026-10-27", "reset_at": 1_793_116_800_u64,
+            "asr": { "used_seconds": 600, "limit_seconds": 3600 }, "refine": { "used": 7, "limit": 100 }
+        });
+        Mock::given(method("GET"))
+            .and(path("/v1/voltip/quota"))
+            .and(header("authorization", "Bearer app-token"))
+            .and(header(DEVICE_HEADER, "6f1c2d3e-0000-4000-8000-000000000001"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&server)
+            .await;
+        let (metering, _) = test_metering();
+        let probe = HttpUsageProbe::new(&net());
+        let report = probe.quota(&server.uri(), Some("app-token"), &metering.headers()).await.unwrap();
+        assert_eq!((report.mode, report.asr.limit_seconds, report.refine.used, report.reset_at), (QuotaMode::Limit, Some(3600), 7, 1_793_116_800));
+
+        let refusing = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({ "error": { "message": "bad token" } })))
+            .mount(&refusing)
+            .await;
+        let err = probe.quota(&format!("{}/v1", refusing.uri()), None, &[]).await.unwrap_err();
+        assert!(err.contains("401") && err.contains("bad token") && !err.contains("127.0.0.1"), "{err}");
+        let err = probe.quota("not a url", None, &[]).await.unwrap_err();
+        assert!(!err.is_empty());
     }
 
     /// Regression (2026-10-04): a Model Studio clean-up runs without thinking, at the compatible

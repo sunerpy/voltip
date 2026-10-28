@@ -292,6 +292,35 @@ describe("Devices page", () => {
     expect(screen.getByTestId("pairing-panel")).toHaveAttribute("data-phase", "idle");
   });
 
+  it("regression: a phone that scanned the QR code needs no click here, and the panel says so (issue #193)", async () => {
+    // The phone's user confirmed, nobody clicked on the computer, and the pairing ran out.
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
+    const { backend } = mount({ devices: [] });
+    await user.click(await screen.findByRole("button", { name: /^开始配对/ }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    expect(screen.getByText(/扫到这个二维码的手机无需在这里确认即可配对/)).toBeInTheDocument();
+    act(() => {
+      backend.simulatePeerJoined(undefined, true);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    const panel = screen.getByTestId("pairing-panel");
+    expect(panel).toHaveAttribute("data-phase", "awaiting_verification");
+    expect(
+      within(panel).getByText(/已扫码。在手机上点「确认并信任」即完成配对/),
+    ).toBeInTheDocument();
+    expect(within(panel).queryByRole("button", { name: "确认配对" })).toBeNull();
+    expect(within(panel).getByText("等待手机确认…")).toBeInTheDocument();
+    expect(within(panel).getByRole("button", { name: "拒绝" })).toBeEnabled();
+    act(() => {
+      backend.simulatePeerConfirmed();
+    });
+    expect(panel).toHaveAttribute("data-phase", "trusted");
+  });
+
   it("regression: countdown reaching zero shows the expired state with a 重新生成 action that restarts", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
     mount({ devices: [] });
@@ -440,6 +469,41 @@ describe("Devices page", () => {
       ).toBe(false);
     });
     expect(await screen.findByText("已忘记 MacBook Pro")).toBeInTheDocument();
+  });
+
+  it("below the relay's minimum version the page says which version it needs and pairing waits for the update (docs/pairing.md 「最低版本」)", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
+    const { backend } = mount();
+    await screen.findByRole("table", { name: "已配对设备" });
+    expect(screen.queryByTestId("devices-too-old")).toBeNull();
+    const invoke = vi.spyOn(backend, "invoke");
+    act(() => {
+      backend.simulateRelay({
+        state: "reconnecting",
+        attempts: 1,
+        last_failure: { kind: "too_old", min_version: "0.2.0", at: 1 },
+      });
+    });
+    const banner = await screen.findByTestId("devices-too-old");
+    expect(banner).toHaveTextContent("需要更新才能连接手机");
+    expect(banner).toHaveTextContent("中继现在要求 Voltip 0.2.0 或更高版本，这台电脑是 0.0.1。");
+    const panel = screen.getByTestId("pairing-panel");
+    expect(within(panel).getByTestId("pairing-too-old")).toHaveTextContent("无法创建配对");
+    expect(panel).toHaveTextContent("错误代码：client_too_old · 最低 0.2.0");
+    expect(panel).toHaveTextContent("中继 · 需要更新");
+    expect(within(panel).queryByRole("button", { name: /^开始配对/ })).toBeNull();
+    await user.click(within(panel).getByRole("button", { name: "立即更新" }));
+    expect(invoke).toHaveBeenCalledWith("update_check");
+    expect(await screen.findByTestId("update-dialog")).toBeInTheDocument();
+
+    // The relay lowered its minimum: connected again, pairing is back.
+    act(() => {
+      backend.simulateRelay({ state: "connected", attempts: 0, last_failure: undefined });
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("devices-too-old")).toBeNull();
+    });
+    expect(screen.queryByTestId("pairing-too-old")).toBeNull();
   });
 
   it("regression: relay reconnecting shows a readout with the attempt count; the relay toggle drives settings", async () => {

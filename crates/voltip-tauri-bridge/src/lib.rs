@@ -535,6 +535,14 @@ pub enum UiCommand {
     NetworkRefresh,
     /// Close the built-in clean-up service's notice (docs/dictation.md §3.6).
     RefineNoticeClose,
+    /// Ask the built-in service for this device's usage now (docs/dictation.md §27); answered by a
+    /// `usage` event.
+    UsageRefresh,
+    /// Close a usage notice for the rest of the day (docs/dictation.md §27).
+    UsageNoticeDismiss {
+        /// `asr_near` | `asr_out` | `refine_near` | `refine_out`.
+        notice: voltip_core::usage::UsageNotice,
+    },
 }
 
 impl UiCommand {
@@ -673,6 +681,8 @@ impl UiCommand {
             }
             Self::NetworkRefresh => CoreCommand::RefreshNetwork,
             Self::RefineNoticeClose => CoreCommand::RefineNoticeClose,
+            Self::UsageRefresh => CoreCommand::UsageRefresh,
+            Self::UsageNoticeDismiss { notice } => CoreCommand::UsageNoticeDismiss(notice),
         })
     }
 }

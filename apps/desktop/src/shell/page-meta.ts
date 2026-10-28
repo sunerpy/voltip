@@ -259,6 +259,8 @@ export function pageMeta(
         title: t("page.title.devices"),
         readouts: devicesReadouts(state.devices, state.relay, i18n),
       };
+    case "usage":
+      return { title: t("page.title.usage"), readouts: [engineReadout(state.engines, i18n)] };
     case "speech":
       return {
         title: t("page.title.speech"),

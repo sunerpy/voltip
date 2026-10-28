@@ -116,14 +116,25 @@ fn to_verification(use_ticket: bool) -> (Initiator, Responder, FakeRelay, Now, P
     (a, b, relay, now, ticket)
 }
 
+/// The snapshot the actions put on screen last.
+fn shown(actions: &[Action]) -> Option<&voltip_pairing::Snapshot> {
+    actions.iter().rev().find_map(|a| if let Action::Emit(s) = a { Some(s.as_ref()) } else { None })
+}
+
+/// Both users confirm: a typed code, or a phone that sent no proof.
 fn complete(mut a: Initiator, mut b: Responder, now: Now) {
+    assert!(!a.snapshot(now).local_confirmed && !a.snapshot(now).scanned, "the computer waits for its user");
     let acts_a = a.step(Event::UserConfirm, now).unwrap();
     let to_b = peer_bytes(&acts_a);
     assert_eq!(to_b.len(), 1);
     assert!(a.snapshot(now).local_confirmed);
+    // regression (issue #193): a confirmation changes no state, and the screen still has to show
+    // it, or the phone's 确认 stays enabled and nothing says the computer must confirm too.
+    assert!(shown(&acts_a).is_some_and(|s| s.local_confirmed), "{acts_a:?}");
     let acts_b = b.step(Event::Peer(to_b[0].clone()), now).unwrap();
     assert!(b.snapshot(now).peer_confirmed);
-    assert!(acts_b.is_empty(), "peer confirm alone changes nothing visible in state; {acts_b:?}");
+    assert!(peer_bytes(&acts_b).is_empty());
+    assert!(shown(&acts_b).is_some_and(|s| s.peer_confirmed && s.state == PairingState::AwaitingVerification), "{acts_b:?}");
     let acts_b = b.step(Event::UserConfirm, now).unwrap();
     let to_a = peer_bytes(&acts_b);
     let trusted_b = acts_b.iter().find_map(|a| if let Action::Trusted(e) = a { Some(e) } else { None }).expect("responder trusted");
@@ -142,9 +153,97 @@ fn complete(mut a: Initiator, mut b: Responder, now: Now) {
     assert!(has_emit_state(&acts, PairingState::Idle));
 }
 
+/// regression (issue #193): the phone scanned, its user confirmed, nobody clicked on the computer,
+/// and the pairing ran out after 120 s. A scanned ticket's proof now confirms for the computer.
 #[test]
-fn full_flow_via_ticket() {
-    let (a, b, _, now, _) = to_verification(true);
+fn regression_a_scanned_ticket_needs_only_the_phones_confirmation() {
+    let (mut a, mut b, _, now, ticket) = to_verification(true);
+    assert!(ticket.secret.is_some(), "the QR code carries the secret");
+    let computer = a.snapshot(now);
+    assert!(computer.scanned && computer.local_confirmed, "the computer confirmed by itself: {computer:?}");
+    assert_eq!(computer.peer.as_ref().map(|p| p.name.as_str()), Some("Pixel 10"), "and knows which phone it is");
+    assert!(!computer.peer_confirmed);
+    let phone = b.snapshot(now);
+    assert!(phone.scanned && phone.peer_confirmed && !phone.local_confirmed, "{phone:?}");
+    assert_eq!(phone.peer.as_ref().map(|p| p.name.as_str()), Some("Surface-Laptop"));
+    let acts_b = b.step(Event::UserConfirm, now).unwrap();
+    let trusted_b = acts_b.iter().find_map(|x| if let Action::Trusted(e) = x { Some(e) } else { None }).expect("phone trusted");
+    assert_eq!(trusted_b.peer.name, "Surface-Laptop");
+    let acts_a = a.step(Event::Peer(peer_bytes(&acts_b)[0].clone()), now).unwrap();
+    let trusted_a = acts_a.iter().find_map(|x| if let Action::Trusted(e) = x { Some(e) } else { None }).expect("computer trusted");
+    assert_eq!(trusted_a.peer.name, "Pixel 10");
+    assert_eq!(trusted_a.safety_code, trusted_b.safety_code);
+    assert_eq!((a.state(), b.state()), (PairingState::Trusted, PairingState::Trusted));
+}
+
+/// Whoever knows the session but not the QR code (the relay, or someone who read the six digits)
+/// cannot prove it read the ticket: a proof under another secret fails the pairing, and the
+/// computer never confirms.
+#[test]
+fn a_proof_under_another_secret_fails_the_pairing() {
+    let now = now();
+    let relay = FakeRelay::new(now);
+    let mut a = Initiator::new(identity("A"), Timeouts::default(), Reachability::default());
+    a.step(Event::Start, now).unwrap();
+    a.step(Event::Relay(relay.session_created()), now).unwrap();
+    let mut ticket = a.ticket().unwrap().clone();
+    ticket.secret = Some([0x42; 32]);
+    let mut ledger = NonceLedger::default();
+    let mut b = Responder::new(identity("B"), Timeouts::default(), JoinMethod::Ticket(ticket), &mut ledger, now).unwrap();
+    b.step(Event::Start, now).unwrap();
+    b.step(Event::Relay(relay.joined()), now).unwrap();
+    let msg1 = peer_bytes(&a.step(Event::Relay(relay.peer_joined()), now).unwrap());
+    let (acts_a, _) = exchange(&mut a, &mut b, msg1, Vec::new(), now);
+    assert_eq!(a.state(), PairingState::Failed { reason: FailureReason::Handshake });
+    assert!(acts_a.iter().any(|x| matches!(x, Action::Close)));
+    assert!(!acts_a.iter().any(|x| matches!(x, Action::Trusted(_))));
+    assert!(!a.snapshot(now).local_confirmed && !a.snapshot(now).scanned);
+}
+
+/// A proof is good for one message of one handshake: the relay replaying it fails the pairing.
+#[test]
+fn a_replayed_proof_fails_the_pairing() {
+    let now = now();
+    let relay = FakeRelay::new(now);
+    let mut a = Initiator::new(identity("A"), Timeouts::default(), Reachability::default());
+    a.step(Event::Start, now).unwrap();
+    a.step(Event::Relay(relay.session_created()), now).unwrap();
+    let ticket = a.ticket().unwrap().clone();
+    let mut ledger = NonceLedger::default();
+    let mut b = Responder::new(identity("B"), Timeouts::default(), JoinMethod::Ticket(ticket), &mut ledger, now).unwrap();
+    b.step(Event::Start, now).unwrap();
+    b.step(Event::Relay(relay.joined()), now).unwrap();
+    // Message 1, 2 and 3 by hand, so the proof (the phone's first message after 3) can be copied.
+    let msg1 = peer_bytes(&a.step(Event::Relay(relay.peer_joined()), now).unwrap());
+    let msg2 = peer_bytes(&b.step(Event::Peer(msg1[0].clone()), now).unwrap());
+    let msg3 = peer_bytes(&a.step(Event::Peer(msg2[0].clone()), now).unwrap());
+    let proof = peer_bytes(&b.step(Event::Peer(msg3[0].clone()), now).unwrap());
+    assert_eq!(proof.len(), 1, "the phone proves right after the handshake");
+    a.step(Event::Peer(proof[0].clone()), now).unwrap();
+    assert!(a.snapshot(now).scanned);
+    a.step(Event::Peer(proof[0].clone()), now).unwrap();
+    assert_eq!(a.state(), PairingState::Failed { reason: FailureReason::Handshake });
+}
+
+/// A phone that sends no proof (a build up to 0.1.9, or a ticket from such a computer, which has
+/// no secret) pairs as before: both users confirm.
+#[test]
+fn without_a_proof_both_users_confirm() {
+    let now = now();
+    let relay = FakeRelay::new(now);
+    let mut a = Initiator::new(identity("Surface-Laptop"), Timeouts::default(), Reachability::default());
+    a.step(Event::Start, now).unwrap();
+    a.step(Event::Relay(relay.session_created()), now).unwrap();
+    let mut ticket = a.ticket().unwrap().clone();
+    ticket.secret = None;
+    let mut ledger = NonceLedger::default();
+    let mut b = Responder::new(identity("Pixel 10"), Timeouts::default(), JoinMethod::Ticket(ticket), &mut ledger, now).unwrap();
+    b.step(Event::Start, now).unwrap();
+    b.step(Event::Relay(relay.joined()), now).unwrap();
+    let msg1 = peer_bytes(&a.step(Event::Relay(relay.peer_joined()), now).unwrap());
+    exchange(&mut a, &mut b, msg1, Vec::new(), now);
+    assert_eq!((a.state(), b.state()), (PairingState::AwaitingVerification, PairingState::AwaitingVerification));
+    assert!(!b.snapshot(now).scanned, "nothing to prove");
     complete(a, b, now);
 }
 
@@ -173,7 +272,8 @@ fn initiator_reject_after_local_confirm_is_still_rejected() {
     let acts_a = a.step(Event::UserReject, now).unwrap();
     assert_eq!(a.state(), PairingState::Rejected);
     // Noise nonces are ordered: the confirm must be delivered before the reject.
-    assert!(b.step(Event::Peer(peer_bytes(&confirm)[0].clone()), now).unwrap().is_empty());
+    assert!(peer_bytes(&b.step(Event::Peer(peer_bytes(&confirm)[0].clone()), now).unwrap()).is_empty());
+    assert_eq!(b.state(), PairingState::AwaitingVerification);
     let acts_b = b.step(Event::Peer(peer_bytes(&acts_a)[0].clone()), now).unwrap();
     assert_eq!(b.state(), PairingState::Rejected);
     assert!(has_emit_state(&acts_b, PairingState::Rejected));
@@ -283,7 +383,8 @@ fn regression_unexpected_app_message_during_verification_is_protocol_failure() {
     let acts_a = a.step(Event::Peer(confirm), now).unwrap();
     assert!(a.snapshot(now).peer_confirmed);
     assert_eq!(a.snapshot(now).peer.as_ref().map(|p| p.name.as_str()), Some("Pixel 10"));
-    assert!(acts_a.is_empty());
+    assert!(peer_bytes(&acts_a).is_empty());
+    assert!(shown(&acts_a).is_some_and(|s| s.peer_confirmed), "the computer's screen shows the phone confirmed: {acts_a:?}");
 }
 
 #[test]

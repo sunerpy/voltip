@@ -75,16 +75,18 @@ export function Verify() {
         </Text>
       </Section>
       <Section title={t("mobile.verify.safetyCode")} padded>
+        {/* A scanned QR code: the computer confirms by itself (docs/pairing.md 「扫码配对只在手机上
+            确认」), so this phone's confirmation finishes the pairing. */}
         <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
-          {t("mobile.verify.note")}
+          {pairing.scanned ? t("mobile.verify.scannedNote") : t("mobile.verify.note")}
         </Text>
         {pairing.safety_code !== undefined && <SafetyCodeView code={pairing.safety_code} />}
-        {pairing.peer_confirmed && (
+        {pairing.peer_confirmed && !pairing.scanned && (
           <StateLine tone="ok">{t("mobile.verify.peerConfirmed")}</StateLine>
         )}
         {pairing.local_confirmed && !pairing.peer_confirmed && (
-          <StateLine tone="accent" pulse>
-            {t("mobile.verify.waiting")}
+          <StateLine tone="accent" pulse testID="verify-waiting">
+            {pairing.scanned ? t("mobile.verify.finishing") : t("mobile.verify.waiting")}
           </StateLine>
         )}
       </Section>
@@ -94,7 +96,11 @@ export function Verify() {
         testID="verify-confirm"
         disabled={pairing.local_confirmed}
         onPress={() => void backend.invoke("pairing_confirm")}>
-        {pairing.local_confirmed ? t("mobile.verify.waitingButton") : t("mobile.verify.confirm")}
+        {!pairing.local_confirmed
+          ? t("mobile.verify.confirm")
+          : pairing.scanned
+            ? t("mobile.verify.finishingButton")
+            : t("mobile.verify.waitingButton")}
       </Button>
       <Button
         mode="text"

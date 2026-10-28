@@ -5,10 +5,14 @@
 
 use serde::{Deserialize, Serialize};
 
-/// How long one probe may take (connect, `hello`, `hello_ack`).
-pub const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
-/// When the report goes out even if a ping is still unanswered.
+/// How long one probe may take (connect, `hello`, `hello_ack`): as long as the relay link's own
+/// attempts may (`LinkConfig::connect_timeout`), so a relay a slow network reaches in 4 s is
+/// reachable here too (issue #193: the reporter's computer took 2.5 s; this was 3 s).
+pub const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+/// When the report goes out even if a ping is still unanswered, once the probe is in.
 pub const CHECK_DEADLINE: std::time::Duration = std::time::Duration::from_secs(4);
+/// When the report goes out even if the probe has not answered either: it counts as timed out.
+pub const PROBE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(9);
 
 /// One probe's outcome.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,8 +29,11 @@ pub enum ProbeResult {
     Refused,
     /// Anything else (DNS, TLS, an endpoint that is not Voltip).
     Failed {
-        /// What went wrong.
+        /// What went wrong, in the transport's words; empty for the build's own relay.
         reason: String,
+        /// What kind of failure (`other` in reports of builds before it was recorded).
+        #[serde(default)]
+        kind: voltip_transport::FailureKind,
     },
 }
 
@@ -37,7 +44,7 @@ impl ProbeResult {
             Ok(took) => Self::Ok { ms: u32::try_from(took.as_millis()).unwrap_or(u32::MAX) },
             Err(voltip_transport::ProbeFailure::Timeout) => Self::Timeout,
             Err(voltip_transport::ProbeFailure::Refused) => Self::Refused,
-            Err(voltip_transport::ProbeFailure::Failed(reason)) => Self::Failed { reason },
+            Err(voltip_transport::ProbeFailure::Failed(failure)) => Self::Failed { reason: failure.detail, kind: failure.kind },
         }
     }
 }
@@ -92,7 +99,7 @@ pub struct ConnectivityStatus {
 /// too), so its failure keeps the kind and loses the reason.
 pub fn shown_relay_result(result: Option<ProbeResult>, builtin: bool) -> Option<ProbeResult> {
     match result {
-        Some(ProbeResult::Failed { .. }) if builtin => Some(ProbeResult::Failed { reason: String::new() }),
+        Some(ProbeResult::Failed { kind, .. }) if builtin => Some(ProbeResult::Failed { reason: String::new(), kind }),
         other => other,
     }
 }
@@ -106,7 +113,16 @@ mod tests {
         assert_eq!(ProbeResult::from_probe(Ok(std::time::Duration::from_millis(12))), ProbeResult::Ok { ms: 12 });
         assert_eq!(ProbeResult::from_probe(Err(voltip_transport::ProbeFailure::Timeout)), ProbeResult::Timeout);
         assert_eq!(ProbeResult::from_probe(Err(voltip_transport::ProbeFailure::Refused)), ProbeResult::Refused);
-        assert_eq!(ProbeResult::from_probe(Err(voltip_transport::ProbeFailure::Failed("tls".into()))), ProbeResult::Failed { reason: "tls".into() });
+        let tls = voltip_transport::LinkFailure { kind: voltip_transport::FailureKind::Tls, detail: "tls".into(), min_version: None };
+        assert_eq!(
+            ProbeResult::from_probe(Err(voltip_transport::ProbeFailure::Failed(tls))),
+            ProbeResult::Failed { reason: "tls".into(), kind: voltip_transport::FailureKind::Tls }
+        );
+        let failed = serde_json::to_string(&ProbeResult::Failed { reason: String::new(), kind: voltip_transport::FailureKind::NotRelay }).unwrap();
+        assert_eq!(failed, r#"{"result":"failed","reason":"","kind":"not_relay"}"#);
+        // A report from before the kind was recorded reads as `other`.
+        let old: ProbeResult = serde_json::from_str(r#"{"result":"failed","reason":"x"}"#).unwrap();
+        assert_eq!(old, ProbeResult::Failed { reason: "x".into(), kind: voltip_transport::FailureKind::Other });
         assert_eq!(serde_json::to_string(&ProbeResult::Ok { ms: 5 }).unwrap(), r#"{"result":"ok","ms":5}"#);
         assert_eq!(serde_json::to_string(&ProbeResult::Timeout).unwrap(), r#"{"result":"timeout"}"#);
     }
@@ -116,8 +132,13 @@ mod tests {
     /// the reason.
     #[test]
     fn regression_the_built_in_relays_failure_names_no_host() {
-        let failed = || Some(ProbeResult::Failed { reason: "Unable to connect to wss://relay.example.test/ws".into() });
-        assert_eq!(shown_relay_result(failed(), true), Some(ProbeResult::Failed { reason: String::new() }));
+        let failed =
+            || Some(ProbeResult::Failed { reason: "Unable to connect to wss://relay.example.test/ws".into(), kind: voltip_transport::FailureKind::Dns });
+        assert_eq!(
+            shown_relay_result(failed(), true),
+            Some(ProbeResult::Failed { reason: String::new(), kind: voltip_transport::FailureKind::Dns }),
+            "the kind stays"
+        );
         assert_eq!(shown_relay_result(failed(), false), failed());
         assert_eq!(shown_relay_result(Some(ProbeResult::Ok { ms: 3 }), true), Some(ProbeResult::Ok { ms: 3 }));
         assert_eq!(shown_relay_result(Some(ProbeResult::Timeout), true), Some(ProbeResult::Timeout));

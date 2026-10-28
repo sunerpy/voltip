@@ -36,7 +36,7 @@ pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
 /// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`, less the
 /// desktop-only commands (the local speech service's and the MCP service's, docs/dictation.md
 /// §23.6, §25) that `tests/ipc.rs` lists as `DESKTOP_ONLY`.
-pub const COMMANDS: [&str; 121] = [
+pub const COMMANDS: [&str; 123] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -145,6 +145,8 @@ pub const COMMANDS: [&str; 121] = [
     "settings_set_proxy",
     "network_refresh",
     "refine_notice_close",
+    "usage_refresh",
+    "usage_notice_dismiss",
     "recent_apps",
     "history_query",
     "history_entry",
@@ -172,6 +174,8 @@ pub fn production_config<R: Runtime>(app: &AppHandle<R>) -> CoreConfig {
     // The app version (tauri.conf.json → package.json); the Cargo version is static.
     config.client_version = format!("voltip/{}", app.package_info().version);
     config.app_version = app.package_info().version.to_string();
+    // docs/dictation.md §27: the usage card asks the built-in service for this device's day.
+    config.usage_probe = Some(Arc::new(voltip_cloud::HttpUsageProbe::new(&config.network)));
     // The phone is the microphone; a desktop records its takes, never the other way round.
     config.accepts_phone_takes = false;
     // The phone keeps no recordings: its interface offers no 重新识别 (docs/dictation.md §26).
@@ -1040,6 +1044,18 @@ fn refine_notice_close(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
     Ok(bridge.dispatch(UiCommand::RefineNoticeClose)?)
 }
 
+/// Ask the built-in service for this device's usage now (docs/dictation.md §27).
+#[tauri::command]
+fn usage_refresh(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::UsageRefresh)?)
+}
+
+/// Close a usage notice for the rest of the day (docs/dictation.md §27).
+#[tauri::command]
+fn usage_notice_dismiss(bridge: tauri::State<'_, Bridge>, notice: voltip_core::usage::UsageNotice) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::UsageNoticeDismiss { notice })?)
+}
+
 /// Query: every built-in preset's text, what 复制为自定义 starts from.
 #[tauri::command]
 fn presets_builtin() -> Vec<voltip_cloud::BuiltinPresetText> {
@@ -1298,6 +1314,8 @@ pub fn build_app<R: Runtime>(
             presets_try,
             presets_builtin,
             refine_notice_close,
+            usage_refresh,
+            usage_notice_dismiss,
             scenes_add,
             scenes_update,
             scenes_remove,

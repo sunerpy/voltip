@@ -6,6 +6,9 @@
 //! [`server::RelayHandle::serve`], a thin axum WebSocket adapter that also notices connections
 //! gone silent.
 //!
+//! [`policy`] reads the minimum client version from the policy files, and [`stats`] keeps the
+//! counts the admin console shows (`GET /stats`), with nothing that names a device.
+//!
 //! The relay never parses `forward.payload`. See `docs/threat-model.md`.
 
 #![forbid(unsafe_code)]
@@ -15,8 +18,12 @@
 mod core;
 pub mod forwarded;
 mod limits;
+pub mod policy;
 #[cfg(feature = "server")]
 pub mod server;
+pub mod stats;
 
 pub use core::{ConnId, Delivery, RelayConfig, RelayCore, RelayStats};
 pub use limits::{RateLimiter, RateWindow};
+pub use policy::{ClientVersion, PolicyFiles, RelayPolicy};
+pub use stats::StatsReport;

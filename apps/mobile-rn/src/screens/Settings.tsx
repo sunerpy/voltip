@@ -1,15 +1,20 @@
-// 设置, the third tab (apps/mobile's Settings): the phone's own recognition and clean-up, its
-// vocabulary, appearance, history and recording length, its network proxy, this device and its
-// pairings, and About. A take sent to a computer still follows the computer's settings.
+// 设置, the third tab (apps/mobile's Settings): the phone's own recognition and clean-up, the
+// built-in service's usage and the floating bubble, its vocabulary, appearance, history and
+// recording length, its network proxy, this device and its pairings, and About. A take sent to a
+// computer still follows the computer's settings.
+import { useFocusEffect } from "@react-navigation/native";
 import {
   type TFunction,
   formatCount,
   mirrorStateText,
   presetLabel,
   sceneLabel,
+  usageSummary,
 } from "@voltip/shared";
+import { useCallback, useState } from "react";
 
 import { useUiState } from "../backend/BackendProvider";
+import { type BubbleControl, useBubble } from "../backend/bubble";
 import { useI18n } from "../backend/i18n";
 import { useNow } from "../backend/useNow";
 import { type RootParams, useRootNavigation } from "../routes";
@@ -26,12 +31,35 @@ type Plain = {
   [K in keyof RootParams]: RootParams[K] extends undefined ? K : never;
 }[keyof RootParams];
 
+/** Whether the bubble shows, read again whenever 设置 comes into view. */
+function useBubbleRunning(control: BubbleControl | undefined): boolean {
+  const [running, setRunning] = useState(false);
+  useFocusEffect(
+    useCallback(() => {
+      if (control === undefined) return;
+      let alive = true;
+      control.status().then(
+        (status) => {
+          if (alive) setRunning(status.running);
+        },
+        () => undefined,
+      );
+      return () => {
+        alive = false;
+      };
+    }, [control]),
+  );
+  return running;
+}
+
 export function Settings() {
   const { t, locale } = useI18n();
   const navigation = useRootNavigation();
   const state = useUiState();
   const { engines, settings, presets, identity, devices, mirrors, app_version: version } = state;
   const now = useNow();
+  const bubble = useBubble();
+  const bubbleRunning = useBubbleRunning(bubble);
   const open = (to: Plain) => () => {
     (navigation.navigate as (screen: Plain) => void)(to);
   };
@@ -69,6 +97,28 @@ export function Settings() {
             onPress={open("Ai")}
             testID="settings-ai"
           />
+          {/* docs/dictation.md §27: this phone's day of the built-in service (board 16a). */}
+          {state.usage.builtin && (
+            <NavRow
+              icon="gauge"
+              title={t("mobile.title.usage")}
+              description={usageSummary(state.usage, now * 1000, locale)}
+              onPress={open("Usage")}
+              testID="settings-usage"
+            />
+          )}
+          {/* docs/dictation.md §20.12: the talk button over other apps. */}
+          {bubble !== undefined && (
+            <NavRow
+              icon="gesture-tap-button"
+              title={t("mobile.title.bubble")}
+              description={
+                bubbleRunning ? t("mobile.settings.bubbleOn") : t("mobile.settings.bubbleOff")
+              }
+              onPress={open("Bubble")}
+              testID="settings-bubble"
+            />
+          )}
         </Rows>
       </Section>
       <Section title={t("mobile.settings.vocabulary")}>

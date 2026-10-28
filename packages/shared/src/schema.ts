@@ -327,7 +327,7 @@ export const projectLinkSchema = z.enum(PROJECT_LINKS);
 export type ProjectLink = z.infer<typeof projectLinkSchema>;
 /** Pages of the user guide the shell opens (`voltip_core::ui::GuidePage`), in the language the
  *  webview names. */
-export const GUIDE_PAGES = ["service", "privacy", "mcp"] as const;
+export const GUIDE_PAGES = ["service", "privacy", "mcp", "usage", "bubble"] as const;
 export const guidePageSchema = z.enum(GUIDE_PAGES);
 export type GuidePage = z.infer<typeof guidePageSchema>;
 
@@ -820,6 +820,90 @@ export const refineNoticeSchema = z.object({
   at_ms: z.number().nonnegative(),
 });
 export type RefineNotice = z.infer<typeof refineNoticeSchema>;
+
+/** The built-in service's usage (docs/dictation.md §27, `voltip_core::usage`). */
+export const quotaModeSchema = z.enum(["count", "limit"]);
+export type QuotaMode = z.infer<typeof quotaModeSchema>;
+export const quotaBasisSchema = z.enum(["device", "ip"]);
+export type QuotaBasis = z.infer<typeof quotaBasisSchema>;
+
+/** The built-in service's account of this device's day (`QuotaReport`): seconds of recognised audio
+ *  and clean-ups, each with its limit (`null`: none, the counting period). */
+export const quotaReportSchema = z.object({
+  mode: quotaModeSchema,
+  basis: quotaBasisSchema,
+  /** `YYYY-MM-DD`, Beijing time. */
+  day: z.string(),
+  /** When the day's use starts again from zero, Unix seconds. */
+  reset_at: z.number().nonnegative(),
+  asr: z.object({
+    used_seconds: z.number().nonnegative(),
+    limit_seconds: z.number().nonnegative().nullable(),
+  }),
+  refine: z.object({ used: z.number().nonnegative(), limit: z.number().nonnegative().nullable() }),
+});
+export type QuotaReport = z.infer<typeof quotaReportSchema>;
+
+export const usagePurposeSchema = z.enum(["take", "preview", "refine", "edit"]);
+export type UsagePurpose = z.infer<typeof usagePurposeSchema>;
+
+/** Where a take came from (`UsageOrigin`). */
+export const usageOriginSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("this_device") }),
+  z.object({ kind: z.literal("phone"), name: z.string() }),
+  z.object({ kind: z.literal("retake") }),
+  z.object({ kind: z.literal("serve") }),
+]);
+export type UsageOrigin = z.infer<typeof usageOriginSchema>;
+
+export const usageNoticeSchema = z.enum(["asr_near", "asr_out", "refine_near", "refine_out"]);
+export type UsageNotice = z.infer<typeof usageNoticeSchema>;
+
+/** One provider's use of one model on this device (`ProviderUse`): seconds of audio, or requests. */
+export const providerUseSchema = z.object({
+  provider: providerIdSchema,
+  service: serviceKindSchema,
+  model: z.string().optional(),
+  amount: z.number().nonnegative(),
+});
+export type ProviderUse = z.infer<typeof providerUseSchema>;
+
+/** `UiState.usage`: the service's report of today and this device's record. */
+export const usageViewSchema = z.object({
+  /** The build carries the built-in service: the usage card and page are there. */
+  builtin: z.boolean().default(false),
+  quota: quotaReportSchema.optional(),
+  /** When `quota` was reported, Unix milliseconds. */
+  reported_at: z.number().nonnegative().optional(),
+  /** The service could not be asked for a minute: `quota` is the last known. */
+  unavailable: z.boolean().default(false),
+  /** The last 7 days, oldest first, today last (this device's built-in use). */
+  days: z
+    .array(
+      z.object({
+        day: z.string(),
+        asr_seconds: z.number().nonnegative(),
+        refine: z.number().nonnegative(),
+      }),
+    )
+    .default(() => []),
+  /** Today's built-in recognition by origin, most first. */
+  asr_origins: z
+    .array(z.object({ origin: usageOriginSchema, seconds: z.number().nonnegative() }))
+    .default(() => []),
+  /** Today's built-in clean-up by purpose. */
+  refine_purposes: z
+    .array(z.object({ purpose: usagePurposeSchema, count: z.number().nonnegative() }))
+    .default(() => []),
+  /** This month's other providers on this device: seconds of audio, or requests. */
+  others: z.array(providerUseSchema).default(() => []),
+  /** Today's other providers on this device (the usage card without the built-in service). */
+  others_today: z.array(providerUseSchema).default(() => []),
+  /** The notices closed today. */
+  dismissed: z.array(usageNoticeSchema).default(() => []),
+});
+export type UsageView = z.infer<typeof usageViewSchema>;
+export const emptyUsageView = (): UsageView => usageViewSchema.parse({});
 
 /** One sentence the streaming recogniser closed at an endpoint (`voltip_core::dictation::Segment`),
  *  with stream timestamps in milliseconds. */
@@ -1973,12 +2057,42 @@ export type DeviceIdentityPublic = z.infer<typeof deviceIdentityPublicSchema>;
 export const relaySourceSchema = z.enum(["none", "builtin", "user"]);
 export type RelaySource = z.infer<typeof relaySourceSchema>;
 
+/** What kind of failure a connection to the relay met (`voltip_transport::FailureKind`). */
+export const relayFailureKindSchema = z.enum([
+  "timeout",
+  "dns",
+  "refused",
+  "unreachable",
+  "tls",
+  "not_relay",
+  "proxy",
+  "version",
+  "too_old",
+  "lost",
+  "other",
+]);
+export type RelayFailureKind = z.infer<typeof relayFailureKindSchema>;
+
+/** Why the relay connection last failed (`voltip_core::RelayFailure`, issue #193). */
+export const relayFailureSchema = z.object({
+  kind: relayFailureKindSchema,
+  /** The transport's words: for a relay the user entered only (the build's own is never named). */
+  detail: z.string().optional(),
+  /** The lowest version the relay serves, with `too_old` (docs/pairing.md 「最低版本」). */
+  min_version: z.string().optional(),
+  /** Unix milliseconds. */
+  at: z.number(),
+});
+export type RelayFailure = z.infer<typeof relayFailureSchema>;
+
 export const relayStatusSchema = z.object({
   /** The relay the user entered; absent for the build's own relay (never named) and for none. */
   endpoint: z.string().optional(),
   source: relaySourceSchema.default("none"),
   state: connectionStateSchema,
   attempts: z.number().int().nonnegative(),
+  /** Why the last attempt failed or the connection went down; absent once connected. */
+  last_failure: relayFailureSchema.optional(),
 });
 export type RelayStatus = z.infer<typeof relayStatusSchema>;
 
@@ -2039,6 +2153,9 @@ export const snapshotSchema = z.object({
   peer: deviceInfoSchema.optional(),
   local_confirmed: z.boolean(),
   peer_confirmed: z.boolean(),
+  /** The phone proved it scanned the QR code (docs/pairing.md 「扫码配对只在手机上确认」): the
+   *  computer confirmed by itself, and only the phone's user confirms. */
+  scanned: z.boolean().default(false),
 });
 export type Snapshot = z.infer<typeof snapshotSchema>;
 
@@ -2435,7 +2552,12 @@ export const probeResultSchema = z.discriminatedUnion("result", [
   z.object({ result: z.literal("ok"), ms: z.number().int().nonnegative() }),
   z.object({ result: z.literal("timeout") }),
   z.object({ result: z.literal("refused") }),
-  z.object({ result: z.literal("failed"), reason: z.string() }),
+  z.object({
+    result: z.literal("failed"),
+    /** The transport's words; empty for the build's own relay. */
+    reason: z.string(),
+    kind: relayFailureKindSchema.default("other"),
+  }),
 ]);
 export type ProbeResult = z.infer<typeof probeResultSchema>;
 
@@ -2570,6 +2692,8 @@ export const uiStateSchema = z.object({
   /** The built-in clean-up service's notice (docs/dictation.md §3.6); absent when there is
    *  nothing to say. */
   refine_notice: refineNoticeSchema.optional(),
+  /** The built-in service's usage today and this device's record (docs/dictation.md §27). */
+  usage: usageViewSchema.default(emptyUsageView),
 });
 export type UiState = z.infer<typeof uiStateSchema>;
 
@@ -2655,6 +2779,8 @@ export const uiEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("phone_outbox"), too_large: z.array(z.string()) }),
   /** The built-in clean-up service's notice came or went (§3.6). */
   z.object({ type: z.literal("refine_notice"), notice: refineNoticeSchema.nullable() }),
+  /** The built-in service's usage and this device's record, whole (§27). */
+  usageViewSchema.extend({ type: z.literal("usage") }),
   /** What the local models can run on (§10.6), reported once by the desktop shell. */
   hardwareStatusSchema.extend({ type: z.literal("hardware") }),
   /** The core's answer to a paste from the history: the desktop shell waits for it, the webview
@@ -3040,6 +3166,10 @@ export interface CommandArgs {
   network_refresh: undefined;
   /** Close the built-in clean-up service's notice (§3.6); it stays away a day. */
   refine_notice_close: undefined;
+  /** Ask the built-in service for this device's usage now (§27); answered by a `usage` event. */
+  usage_refresh: undefined;
+  /** Close a usage notice for the rest of the day (§27). */
+  usage_notice_dismiss: { notice: UsageNotice };
   /** Query: the apps the history saw, newest first (`Backend.recentApps`, the scene editor). */
   recent_apps: undefined;
   /** Query (docs/dictation.md §4.4): a page of the history (`Backend.historyQuery`). */
@@ -3169,6 +3299,7 @@ export function idleSnapshot(): Snapshot {
     state: { state: "idle" },
     local_confirmed: false,
     peer_confirmed: false,
+    scanned: false,
   };
 }
 
@@ -3306,6 +3437,10 @@ export function applyEvent(state: UiState, event: UiEvent): UiState {
         return rest;
       }
       return { ...state, refine_notice: event.notice };
+    }
+    case "usage": {
+      const { type: _type, ...usage } = event;
+      return { ...state, usage };
     }
     case "trusted":
     case "unpaired":

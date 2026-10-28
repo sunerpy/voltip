@@ -52,6 +52,7 @@ import {
   backtestDraftSchema,
   vocabularyBacktestSchema,
   APP_LICENSE,
+  emptyUsageView,
 } from "./schema";
 import { MOCK_PUBLIC_KEYS, desktopIdentity, sampleDevices, sampleHistory } from "./mock-backend";
 import type { EngineStatus, HistoryEntry, UiState } from "./schema";
@@ -61,6 +62,7 @@ function baseState(): UiState {
     serve: { available: true, phase: "off" },
     network: { proxy_password: false },
     mcp: { available: true, phase: "off", clients: [], activity: [] },
+    usage: emptyUsageView(),
     sent_texts: [],
     mirrors: [],
     phone_outbox_too_large: [],

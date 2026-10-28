@@ -460,6 +460,7 @@ fn file_source(dir: &Path, transcriber: Arc<FakeTranscriber>) -> (FileSource, Ve
         segmenter: None,
         network: voltip_net::Network::new(),
         proxy_password: None,
+        metering: None,
     })
     .unwrap()
 }
@@ -505,6 +506,7 @@ fn an_unusable_settings_file_stops_the_server_and_a_broken_list_is_reported() {
         segmenter: None,
         network: voltip_net::Network::new(),
         proxy_password: None,
+        metering: None,
     })
     .unwrap_err();
     assert!(err.contains("settings.json 无法使用"), "{err}");
@@ -545,6 +547,7 @@ fn the_server_follows_the_proxy_setting_and_rebuilds_its_clients_on_a_new_route(
         segmenter: None,
         network: Arc::clone(&network),
         proxy_password: Some("s3cret".into()),
+        metering: None,
     };
     let (source, notices) = FileSource::open(config).unwrap();
     assert!(notices.is_empty(), "{notices:?}");
@@ -570,6 +573,53 @@ fn the_server_follows_the_proxy_setting_and_rebuilds_its_clients_on_a_new_route(
     std::fs::write(broken.path().join("settings.json"), serde_json::to_vec(&Settings { proxy: unusable, ..Settings::default() }).unwrap()).unwrap();
     let (_, notices) = file_source(broken.path(), Arc::new(FakeTranscriber::ok("x")));
     assert!(notices.iter().any(|n| n.starts_with("代理设置无法使用，已改为跟随系统")), "{notices:?}");
+}
+
+/// docs/dictation.md §27: the server's clients are metered with its metering — the factory sees
+/// it, so the built-in service is told who asks — and each answered take is the server's.
+#[tokio::test]
+async fn the_servers_takes_are_metered_as_the_servers() {
+    use crate::usage::{Metering, UsageNote, UsageOrigin, UsagePurpose};
+    let dir = tempfile::tempdir().unwrap();
+    let transcriber = Arc::new(FakeTranscriber::ok("你好"));
+    let seen = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let factory: crate::dictation::EngineFactory = {
+        let (transcriber, seen) = (transcriber.clone(), seen.clone());
+        Arc::new(move |engines: &ResolvedEngines| {
+            seen.lock().push(engines.metering.is_some());
+            (transcriber.clone() as Arc<dyn Transcriber>, None)
+        })
+    };
+    let notes = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let sink = notes.clone();
+    let metering = Metering::new("6f1c2d3e-0000-4000-8000-000000000001", "voltip/test (linux; server)", UsageOrigin::Serve, move |n| sink.lock().push(n));
+    let (source, _) = FileSource::open(FileSourceConfig {
+        data_dir: dir.path().to_path_buf(),
+        platform: Platform::Linux,
+        overrides: EngineOverrides::default(),
+        secrets: UserSecrets::default(),
+        built_in: BUILT_IN,
+        models: None,
+        factory,
+        segmenter: None,
+        network: voltip_net::Network::new(),
+        proxy_password: None,
+        metering: Some(metering),
+    })
+    .unwrap();
+    let service = Service::new(Arc::new(source), Defaults::default());
+    let out = service.transcribe(&pcm(dir.path(), &tone(3.0, 3000.0)), &request("voltip"), &CancelToken::new()).await.unwrap();
+    assert_eq!(out.raw_text, "你好");
+    assert!(!seen.lock().is_empty() && seen.lock().iter().all(|m| *m), "{:?}", seen.lock());
+    let used: Vec<_> = notes
+        .lock()
+        .iter()
+        .filter_map(|n| match n {
+            UsageNote::Used(e) => Some((e.provider, e.purpose, e.amount, e.origin.clone())),
+            UsageNote::Quota(_) => None,
+        })
+        .collect();
+    assert_eq!(used, [(crate::providers::ProviderId::Builtin, UsagePurpose::Take, 3000, UsageOrigin::Serve)]);
 }
 
 #[test]

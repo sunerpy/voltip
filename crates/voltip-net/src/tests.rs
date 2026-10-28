@@ -420,3 +420,110 @@ async fn local_http() -> SocketAddr {
     });
     addr
 }
+
+/// An address whose connection attempts go unanswered, as a network that blackholes an address
+/// leaves them: a listener with no room left in its queue (backlog 0, one connection already
+/// waiting) drops the SYN of every further attempt on Linux and macOS. Windows answers with a
+/// reset instead, which the code under test takes as one more failed attempt. Keep the returned
+/// pair alive for as long as the address must stay silent.
+async fn silent_address() -> (SocketAddr, (TcpListener, TcpStream)) {
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let addr = socket.local_addr().unwrap();
+    let listener = socket.listen(0).unwrap();
+    let waiting = TcpStream::connect(addr).await.unwrap();
+    (addr, (listener, waiting))
+}
+
+/// An address nothing listens on: bound without `listen`, so no other test's server takes it.
+fn refusing_address() -> (SocketAddr, tokio::net::TcpSocket) {
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    (socket.local_addr().unwrap(), socket)
+}
+
+/// Regression (issue #193): a phone in mainland China could not reach the relay, whose name had
+/// three addresses, one of them unreachable from there. The direct connection tried the addresses
+/// one after another inside a single deadline, and when the silent one came first it spent all of
+/// it there, attempt after attempt. Now the next address goes out after [`ATTEMPT_DELAY`] and the
+/// stream connects to it.
+#[tokio::test]
+async fn regression_a_name_whose_first_address_never_answers_still_connects() {
+    let (silent, _hold) = silent_address().await;
+    let target = echo().await;
+    let network = Network::with_plan(ProxyPlan::Off);
+    network.set_resolver(move |name, _| {
+        assert_eq!(name, "relay.test");
+        Ok(vec![silent, target])
+    });
+    let stream = network.connect(&url("wss://relay.test/ws"), Duration::from_secs(5)).await.unwrap();
+    assert_eq!(stream.peer_addr().unwrap(), target);
+    assert_eq!(round_trip(stream).await, "ping");
+}
+
+/// An attempt that fails starts the next address at once, without waiting out the delay; every
+/// address failing gives the last one's error; a name without addresses is an error of its own.
+#[tokio::test]
+async fn a_failed_address_hands_over_at_once_and_the_last_error_is_kept() {
+    let target = echo().await;
+    let (refused, _bound) = refusing_address();
+    let (also_refused, _also) = refusing_address();
+    // A delay the test would never outlast: only a failure can start the second attempt.
+    let patient = Duration::from_secs(600);
+    let stream = tokio::time::timeout(TIMEOUT, connect::race(vec![refused, target], patient, TcpStream::connect))
+        .await
+        .expect("a failed attempt waited for the delay")
+        .unwrap();
+    assert_eq!(stream.peer_addr().unwrap(), target);
+    let error = tokio::time::timeout(TIMEOUT, connect::race(vec![refused, also_refused], patient, TcpStream::connect)).await.unwrap().unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::ConnectionRefused, "{error}");
+    let none = connect::race(Vec::new(), patient, TcpStream::connect).await.unwrap_err();
+    assert_eq!(none.kind(), std::io::ErrorKind::NotFound);
+
+    let network = Network::with_plan(ProxyPlan::Off);
+    network.set_resolver(|_, _| Err(std::io::Error::other("no such name")));
+    let err = network.connect(&url("wss://relay.test/ws"), TIMEOUT).await.unwrap_err();
+    assert!(matches!(&err, ConnectError::Resolve(_)), "{err}");
+    network.set_resolver(|_, _| Ok(Vec::new()));
+    assert!(matches!(network.connect(&url("wss://relay.test/ws"), TIMEOUT).await, Err(ConnectError::Resolve(_))));
+}
+
+/// Every address keeps its attempt running while the next goes out: the slow first one still wins
+/// when it answers before the others.
+#[tokio::test]
+async fn an_attempt_keeps_running_after_the_next_address_starts() {
+    let target = echo().await;
+    let (silent, _hold) = silent_address().await;
+    let first = target;
+    let attempts = Arc::new(Mutex::new(Vec::new()));
+    let seen = Arc::clone(&attempts);
+    let stream = tokio::time::timeout(
+        TIMEOUT,
+        connect::race(vec![first, silent], Duration::from_millis(20), move |addr| {
+            seen.lock().push(addr);
+            async move {
+                if addr == first {
+                    // Slower than the delay: the silent address has been tried meanwhile.
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                }
+                TcpStream::connect(addr).await
+            }
+        }),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(stream.peer_addr().unwrap(), target);
+    assert_eq!(*attempts.lock(), [first, silent]);
+}
+
+/// The address families take turns, the first address's family first (RFC 8305 §4).
+#[test]
+fn the_address_families_take_turns() {
+    let v4 = |n: u8| SocketAddr::from(([192, 0, 2, n], 443));
+    let v6 = |n: u16| SocketAddr::from(([0x2001, 0xdb8, 0, 0, 0, 0, 0, n], 443));
+    assert_eq!(connect::interleave(vec![v6(1), v6(2), v6(3), v4(1), v4(2)]), [v6(1), v4(1), v6(2), v4(2), v6(3)]);
+    assert_eq!(connect::interleave(vec![v4(1), v4(2), v6(1), v6(2), v6(3)]), [v4(1), v6(1), v4(2), v6(2), v6(3)]);
+    assert_eq!(connect::interleave(vec![v4(3), v4(1)]), [v4(3), v4(1)], "one family keeps its order");
+    assert!(connect::interleave(Vec::new()).is_empty());
+}

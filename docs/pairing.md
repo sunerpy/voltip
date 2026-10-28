@@ -13,14 +13,15 @@ Idle → CreatingSession → WaitingForPeer → KeyExchange → AwaitingVerifica
 | CreatingSession | `Start` | `SessionCreated`, `Error` | 10 s → Failed(timeout) |
 | WaitingForPeer | 收到 `session_created`（拿到 code + ticket） | `PeerJoined`, `Tick`, `Cancel` | `expires_at` → Expired |
 | KeyExchange | 对端加入，开始 Noise XX | `HandshakeMessage`, `Tick` | 15 s → Failed(handshake_timeout) |
-| AwaitingVerification | 握手完成，拿到 safety code | `UserConfirm`, `UserReject`, `PeerConfirm`, `PeerReject`, `Tick` | 120 s → Expired |
-| Trusted | 双方都确认 | — | — |
+| AwaitingVerification | 握手完成，拿到 safety code | `UserConfirm`, `UserReject`, `PeerProof`（电脑）, `PeerConfirm`, `PeerReject`, `Tick` | 120 s → Expired |
+| Trusted | 双方都确认（扫码时电脑核对手机的证明后自行确认，见「扫码配对只在手机上确认」） | — | — |
 | Expired / Rejected / Failed | 终态；`Reset` 回 Idle | `Reset` | — |
 
 设计约束：
 - 状态机是 **sans-IO**：`step(event) -> Vec<Action>`，Action 包括 `SendRelay(frame)`、`SendPeer(bytes)`、`ShowSafetyCode`、`StoreTrusted`、`Emit(ui_event)`；所有网络/时间由调用方注入（`now: Instant`），因此可以在单测里穷举路径。
 - 一次性：`session_id`、`code`、`nonce` 在进入 `KeyExchange` 时从 `WaitingForPeer` 的可接受集合中移除；重复 `PeerJoined` → `Failed(replay)`。
 - 过期：`Tick(now)` 驱动；过期后收到任何对端消息一律忽略并回 `error{session_expired}`。
+- 界面看得到的变化都推送：状态变化，或状态不变而确认情况变化（本机确认、对方确认、收到证明）时，`step` 都返回 `Emit`。2026-10-27 前只在状态变化时推送，两个界面都看不到「已确认」：手机的「确认」点了也没有反应，也不提示还要在电脑上确认（issue #193）。
 - 从终态直接重来：`pairing_start`（电脑的「再配一台」「重新开始」、Ctrl R）和手机的加入遇到已结束的会话（Trusted / Expired / Rejected / Failed）时，核心先替它 `Reset`，不用界面先发 `pairing_reset`。
 
 ## 手机端（Responder）
@@ -30,11 +31,25 @@ Idle → Joining(code|ticket) → KeyExchange → AwaitingVerification → Trust
                          ↘ Failed(invalid_code|expired|rate_limited)
 ```
 
+## 扫码配对只在手机上确认（issue #193）
+
+用户 2026-10-27 决定：扫码配对只在手机上确认，电脑不用再点（「只在手机端确认即可，反正电脑端可以移除设备，只要保管好配对二维码和密钥即可」）。issue #193 的用户扫码后在手机上点了确认，没有在电脑上再点，两分钟后配对过期。
+
+- **二维码里的密钥**：票据多一个 `secret`，每个会话新生成的 32 字节随机数，只在电脑屏幕上的二维码和「复制链接」里，从不经过中继（`docs/protocol.md` §2）。
+- **证明**：手机握手完成后立即发 `pair_proof`：`HMAC-SHA256(secret, "voltip/pairing-proof/v1" ‖ handshake_hash)` 和本机的设备信息（`voltip_crypto::pairing_proof`）。电脑核对通过就自行确认（发 `pair_confirm`，`Snapshot.scanned` 为真），界面写明「已扫码，请在手机上确认」，只留「拒绝」；手机显示电脑的名字，点「确认并信任」即完成配对。证明不对、重复或不该收到时配对失败。证明绑定这一次握手，换一次握手就无效。
+- **为什么要证明**：会话号是中继分配的，握手第一条消息里的临时公钥也经过中继，所以只凭「有人加入了会话」，电脑分不清扫码的手机、中继本身和看到 6 位验证码的人；电脑若一律自行确认，这些人都能冒充手机配对，在电脑的光标处输入文字。只有读过二维码的设备才知道 `secret`。
+- **手机这边**：票据带着电脑的临时公钥，握手第一条消息必须与它一致，所以手机知道连上的就是屏幕上的那台电脑，不必再核对安全码。两边仍显示安全码，想核对可以核对。
+- **6 位验证码**：验证码由中继分配，证明不了手机看过屏幕，所以照旧两边核对安全码、两边确认。手机确认后写明「请在电脑上也点「确认配对」」。
+- **版本**：0.1.9 及以前的电脑生成的二维码没有 `secret`，新手机扫到后照旧两边确认；旧手机不认识 `secret`、不发证明，新电脑照旧等它的用户确认。
+- **代价**：二维码有效期内，看得到它的人（截图、拍照、共享屏幕）不经电脑确认就能配对。电脑的配对卡片写明这一点，提醒不要截图或在共享屏幕上展示；配对后设备出现在设备列表里，可以随时忘记。常开配对同样如此。
+
+回归测试：`crates/voltip-pairing/tests/flow.rs@regression_a_scanned_ticket_needs_only_the_phones_confirmation`、`a_proof_under_another_secret_fails_the_pairing`、`a_replayed_proof_fails_the_pairing`、`without_a_proof_both_users_confirm`；`crates/voltip-core/tests/e2e.rs@regression_a_phone_that_scanned_pairs_with_only_its_own_confirmation`、`regression_each_confirmation_reaches_both_screens`。
+
 ## 只走中继（0.1.0）
 
 用户 2026-10-10 决定：移除局域网连接，手机和电脑只经中继配对和连接。此前的 LAN 主机（`DirectHost`）、mDNS 局域网发现（「附近的电脑」、`Settings.lan_discovery`、Android 的组播锁）、直连拨号和票据里的局域网地址都已删除。
 
-- 配对只用二维码或 6 位验证码，会话在中继上；没有中继时，开始配对和加入配对都直接报原因（「配对需要中继，请先在设置中开启中继」或「尚未连上中继，请检查网络后再试」）。
+- 配对只用二维码或 6 位验证码，会话在中继上；没有中继时，开始配对和加入配对都直接报原因（「配对需要中继，请先在设置中开启中继」或「尚未连上中继，请检查网络后再试」）。手机的配对页显示中继连接的状态，没连上时写明上次失败的原因并提供「连接自检」（issue #193，2026-10-27 起；此前手机只在输入验证码或扫码后才说「尚未连上中继」）。
 - 旧版本留下的数据照常读取：票据和 `device_info_update` 里的 `direct_hints`、可信记录里的 `direct_hints` 和 `last_connection`、设置里的 `lan_discovery` 在读取时忽略，下次写入时去掉。旧版本电脑在没有中继时生成的二维码（票据不带中继地址）会被拒绝，并提示把电脑上的 Voltip 更新后重新显示二维码。
 - 界面不再区分「直连」和「经中继」：设备只显示在线、连接中、离线或身份已变化。
 - 代价：同一个 Wi-Fi 下的两台设备也经中继通信，多出一段到中继的往返延迟，并受中继线路波动的影响。下面「重连」一节的机制用来缩短断线后的恢复时间。
@@ -50,6 +65,8 @@ Idle → Joining(code|ticket) → KeyExchange → AwaitingVerification → Trust
   - 两端：点「连接自检」时。
 - **频道被占时重试 attach**：重连后的新连接要重新 attach 到与每台已配对设备的频道上。如果中继还留着本设备那条已死的旧连接，频道两个位置都被占，中继回 `channel_full`。此前客户端只记一条日志、不再重试，两台设备一直连不上，直到某一方的应用重启；2026-10-10 用户反馈的「配对后断开」最可能就是这个原因。现在中继的 attach 答复都带上频道名（`attached.channel`、`error.channel`，0.1.0 起），客户端据此找到对应的设备，`channel_full` 时每 4 秒重试一次（`CoreConfig::attach_retry`），`rate_limited` 时按中继给出的等待时间重试，直到成功或连接断开。旧中继的答复不带频道名时，`channel_full` 和 `invalid_channel` 按顺序对应最早发出的 attach。
 - **握手重试**：上一节的握手失败重试上限从 60 秒降到 30 秒。
+- **一个名字的多个地址**（issue #193，2026-10-27）：中继的域名解析出几个地址时，直连按 RFC 8305 的做法依次尝试：先连第一个，250 ms（`voltip_net::ATTEMPT_DELAY`）内没有连上或已经失败，就同时开始下一个，最先连上的那个胜出、其余放弃，整个过程仍受 8 秒连接时限约束。此前 `TcpStream::connect` 在同一个时限内逐个尝试，第一个地址不回应时 8 秒全耗在它上面，后面的地址轮不到，下一次重试多半还是先试它。2026-10-22 内置中继的负载均衡换了节点，其中一个地址从中国大陆连不上，大陆的手机先试到它时就一直「尚未连上中继」；2026-10-27 已把这个节点所在的可用区从负载均衡移除。
+- **失败原因**：每次连接失败或连接断开，链路先报告原因的类别（`LinkEvent::Failed`，`voltip_transport::FailureKind`：`timeout` 超时、`dns` 无法解析、`refused` 被拒绝、`unreachable` 网络不通、`tls` 加密握手失败、`not_relay` 不是 Voltip 中继、`proxy` 代理失败、`version` 版本不支持、`lost` 连接中断、`other`），再报告 `Reconnecting`。核心把它记在 `RelayStatus.last_failure`（类别、时间），连上后清除；用户自己填的中继同时带上原话（`detail`），内置中继的原话可能含有地址，只报类别。
 
 回归测试：`crates/voltip-core/tests/e2e.rs@regression_a_path_that_breaks_without_a_word_heals_on_its_own`（手机的路径无声中断，心跳发现、重连、频道被占、中继放掉旧连接、重试 attach 后两边恢复）、`reconnect_relay_checks_the_socket_at_once_after_the_network_changed`、`crates/voltip-transport/tests/link.rs@reconnect_now_cuts_a_backoff_short`、`reconnect_now_drops_a_socket_that_no_longer_answers`。
 
@@ -66,7 +83,7 @@ Idle → Joining(code|ticket) → KeyExchange → AwaitingVerification → Trust
 - 打开开关或开着启动时马上开一个会话；中继还没连上时等它连上再开。
 - 等待中的会话剩 10 秒时换成新的，界面上不会出现「已过期」，手机拿到的码至少还有 10 秒。
 - 一次配对结束（已信任、被拒绝、失败）后，结果在屏幕上停 4 秒，再开下一个会话；开不了（中继没有连上）就每 5 秒再试一次，不弹错误。
-- 每次配对照样要在电脑上核对安全码并确认：常开只是让窗口一直开着，不会自动信任谁。面板上没有「取消」，由开关关闭窗口。
+- 扫码的手机只需在手机上确认（「扫码配对只在手机上确认」），输入验证码的仍要在电脑上核对安全码并确认；常开只是让窗口一直开着。面板上没有「取消」，由开关关闭窗口。
 - 关掉开关时，还没人加入的会话随即关闭；已经有手机加入的配对照常走完。
 
 ## Relay 侧防护
@@ -75,6 +92,31 @@ Idle → Joining(code|ticket) → KeyExchange → AwaitingVerification → Trust
 - 「每 IP」指客户端的地址（`join` 20 次、`create_session` 10 次、`attach` 30 次，均为每分钟）。中继在反向代理后面时，每条连接的 TCP 对端都是代理，要用 `--trust-proxy` 让中继读代理转来的 `X-Forwarded-For`，否则所有用户共用一份额度（`docs/runbook.md`「中继部署」）。
 - 会话 TTL 默认 120 s，最大 300 s；成功 `join` 后短码立即从索引删除。
 - 所有计数与 TTL 都在 `voltip-relay::RelayState` 里，单测可直接推进时钟。
+
+## 最低版本（2026-10-27）
+
+用户 2026-10-27 要求在管理台设置最低客户端版本，过低的版本连接失败时提示升级；决定：认识新错误码的版本被直接告知，0.1.9 及以前的版本「拦配对和重连」（软拦截）。
+
+- **策略文件**（`voltip_relay::policy`）：`--policy /etc/voltip/relay-policy.json`（管理台的同步程序写，`docs/runbook.md`「中继部署」）和 `--policy-override /etc/voltip/relay-policy.override.json`（运维手写），内容 `{"schema":1,"min_version":"x.y.z"|null,"known_versions":["0.1.9",…]}`（`known_versions` 最多 64 个，统计用）。读取规则与内置服务网关的额度配置相同：覆盖文件存在且有效时整份使用；存在但无效时告警并忽略它；主文件有效就使用并记为「上一份有效配置」；主文件无效或缺失时沿用上一份有效配置；从来没有有效配置时不设最低版本。中继每 30 秒（`POLICY_CHECK`）比较两个文件的修改时间与存在与否，变了就重读；管理台保存后最多约 5.5 分钟生效（同步程序 5 分钟一轮）。
+- **版本**：`hello.client_version` 里的 `voltip/x.y.z`（或不带前缀的 `x.y.z`）；读不出版本的客户端照常服务。
+- **认识新错误码的版本**（0.2.0 起，`hello.features` 带 `client_too_old`，`docs/protocol.md`）低于最低版本时，中继回 `error{code: client_too_old, min_version}` 后关闭连接。
+- **旧版本**（0.1.9 及以前，不带 `features`）低于最低版本时照常收到 `hello_ack`，但 `create_session`、`join_by_code`、`join_by_session` 和 `attach` 一律回 `unsupported_version`（`attach` 的答复带上 `channel`）。旧界面配对时显示它已有的「版本不兼容，请更新 Voltip」；0.1.9 收到 attach 被拒后不再重试这个频道。
+- **策略提高时**：中继重新判断每条连接。认识新错误码、版本过低的连接收到 `client_too_old` 并被关闭，它的会话和频道随断开结束；旧版本连接已有的配对会话和 attach 保留到断开为止，新的一律拒绝。
+- **客户端**（`voltip_transport::link`）：hello 阶段或已连接后收到 `client_too_old` 都是一次失败，类别为 `too_old`（`FailureKind::TooOld`），带上最低版本；之后不按退避重连，而是等 30 分钟（`LinkConfig::too_old_retry`），`reconnect_now`（回到前台、网络变化、连接自检）可以提前重试。核心把它记进 `RelayStatus.last_failure`（`kind: too_old`、`min_version`）；这时开始配对被核心拒绝：「此版本过低，请更新 Voltip 后再配对」。
+- **界面**（Penpot「用量与额度」画板 20 / 20a）：电脑侧栏的状态卡片黄灯「中继 · 需要更新」，写明最低版本，按钮为「更新到 x」（有可用更新时，打开更新对话框）或「检查更新」；「手机」页顶部横幅，配对面板显示「无法创建配对」和错误代码。手机的配对页显示「需要更新 Voltip」卡片（Google Play 安装的写「前往 Google Play 更新」，否则走应用内更新），已配对设备行写「无法连接 · 需要更新这部手机」。
+
+回归测试：`crates/voltip-relay/src/core.rs@a_client_below_the_minimum_that_knows_the_error_is_told_and_closed`、`regression_an_older_client_below_the_minimum_may_stay_but_not_pair_or_reconnect`；`crates/voltip-relay/src/policy.rs@a_policy_parses_and_only_a_known_older_version_is_too_old`、`the_override_wins_while_valid_and_a_broken_main_file_keeps_the_last_valid_policy`；`crates/voltip-relay/tests/socket.rs@the_policy_file_turns_old_clients_away_and_stats_count_them`；`crates/voltip-transport/tests/link.rs@a_relay_that_requires_a_newer_version_makes_the_link_wait`、`a_minimum_raised_while_connected_turns_the_link_too_old`；`crates/voltip-core/tests/e2e.rs@a_minimum_raised_on_the_relay_shows_in_the_status_with_the_version`。
+
+## 中继统计（2026-10-27）
+
+管理台只看汇总的计数，不碰端到端加密的内容。
+
+- `GET /stats`（`voltip_relay::stats`）只在中继自己的监听地址上（`127.0.0.1:47830`），前面的 nginx 只转发 `/ws`，外面访问不到；管理台的同步程序在中继主机上读取。
+- 内容（`schema` 1）：此刻的连接数、配对会话数、有设备的频道数、两端都在的频道数；最近 48 小时按小时的计数：同时连接数的峰值、`hello` 数及各版本的数目、创建的配对会话、两端会合的会话、过期的会话、被按地址限流的请求、收到 `client_too_old` 的连接、被软拦截的旧版本请求、成功的 `attach`、转发的帧数。
+- 不含 IP、频道、会话号和验证码。版本只按策略里 `known_versions` 列出的已发布版本分别计数，其余记为 `other`；策略没有列出版本时，每小时最多分别记 32 个版本（`UNLISTED_VERSION_SLOTS`），内存有上限。
+- 统计按连接计数，不按设备：中继没有设备标识，也不该有。中继看不到用户是否确认了安全码（之后只转发密文），所以只统计「两端会合」（两端都加入了会话），不叫「配对成功」。
+
+回归测试：`crates/voltip-relay/src/stats.rs@counts_go_to_their_hour_and_48_hours_are_kept`、`regression_versions_are_named_only_from_the_policy_or_up_to_the_hours_slots`；`crates/voltip-relay/src/core.rs@the_statistics_count_what_happened_and_name_no_device`。
 
 ## 解除配对
 
@@ -108,7 +150,9 @@ Idle → Joining(code|ticket) → KeyExchange → AwaitingVerification → Trust
 
 设备页（电脑）和已配对设备屏（手机）上的「连接自检」按一次跑一轮，结果是那一刻实际测到的（`voltip_core::connectivity`，`connectivity_check` 命令 → `connectivity` 事件，`UiState.connectivity` 保留上一次的报告）：
 
-- **中继**：对配置的中继新建一条连接，走完 `hello` / `hello_ack` 再关掉，报告耗时，或者没有响应 / 拒绝连接 / 连接失败。内置中继连接失败时，原因里可能带着地址，所以只报类型、不带原因（地址是构建期的 secret，不进界面）。
+- **中继**：对配置的中继新建一条连接，走完 `hello` / `hello_ack` 再关掉，报告耗时，或者没有响应 / 拒绝连接 / 连接失败。内置中继连接失败时，原话里可能带着地址，所以只报失败的类别（上一节的 `FailureKind`，例如「无法解析中继地址」），不带原话（地址是构建期的 secret，不进界面）。
 - **每台已配对设备**：在线的，经它的加密通道发一次 `ping`，报告往返时间；不在线的报告离线。
 
-中继探测最多 3 秒；4 秒后没回应的 `ping` 按没有回应计入报告。自检同时让中继连接立即检查一次（上面的「立即检查」）。自检进行中再点一次会被拒绝。
+中继探测最多 8 秒，与中继连接本身的连接时限相同（2026-10-27 前是 3 秒，网络慢时会把连得上的中继报成没有响应；issue #193 的电脑测得 2.5 秒）。探测有了结果后，4 秒内没回应的 `ping` 按没有回应计入报告；探测本身最多等 9 秒，之后按没有响应计入。自检同时让中继连接立即检查一次（上面的「立即检查」）。自检进行中再点一次会被拒绝。手机还没有配对电脑时，自检在配对页上，中继没连上时显示。
+
+回归测试：`crates/voltip-net/src/tests.rs@regression_a_name_whose_first_address_never_answers_still_connects`、`crates/voltip-transport/tests/link.rs@regression_a_relay_whose_first_address_never_answers_is_reached_through_the_next`、`crates/voltip-core/tests/network.rs@regression_the_self_check_waits_for_a_slow_relay_as_long_as_the_link_does`、`apps/mobile-rn/src/App.test.tsx@regression: the pairing page says why the relay is not connected and runs the self-check (issue #193)`。

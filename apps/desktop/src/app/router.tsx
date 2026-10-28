@@ -47,7 +47,10 @@ export type Route =
   /** `compose`: open the editor on a new rule (the palette's 新建规则), then drop the flag. */
   | { name: "rules"; compose?: true }
   | { name: "devices" }
-  | { name: "speech" }
+  /** The built-in service's usage today (docs/dictation.md §27), from the sidebar's card. */
+  | { name: "usage" }
+  /** `section: "local"`: open the on-device models' drawer (a notice's 下载本机模型). */
+  | { name: "speech"; section?: "local" }
   /** `section`: scroll to that part of the page (the preset menus' 管理预设…). */
   | { name: "ai"; section?: "presets" }
   | { name: "feedback" }
@@ -82,13 +85,15 @@ export function parseRoute(path: string): Route {
       return params.get("new") === "1" ? { name: "rules", compose: true } : { name: "rules" };
     case "engines":
     case "speech":
-      return SPEECH_ROUTE;
+      return second === "local" ? { name: "speech", section: "local" } : SPEECH_ROUTE;
     case "ai":
       return second === "presets" ? { name: "ai", section: "presets" } : AI_ROUTE;
     case "feedback":
       return { name: "feedback" };
     case "devices":
       return { name: "devices" };
+    case "usage":
+      return { name: "usage" };
     case "settings":
       if (second === "engine" || second === "speech") return SPEECH_ROUTE;
       if (second === "refine" || second === "ai") return AI_ROUTE;
@@ -134,9 +139,11 @@ export function routePath(route: Route): string {
       return route.compose === true ? "/rules?new=1" : "/rules";
     case "ai":
       return route.section === undefined ? "/ai" : `/ai/${route.section}`;
+    case "speech":
+      return route.section === undefined ? "/speech" : `/speech/${route.section}`;
     case "dictionary":
     case "devices":
-    case "speech":
+    case "usage":
     case "feedback":
       return `/${route.name}`;
   }

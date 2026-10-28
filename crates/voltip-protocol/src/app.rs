@@ -188,6 +188,19 @@ pub enum AppMessage {
         /// Who is confirming.
         device: DeviceInfo,
     },
+    /// Sent by the joining side as soon as the handshake is done, when the ticket it scanned had a
+    /// secret: the proof that it read the QR code, so the side that showed it confirms by itself
+    /// (docs/pairing.md 「扫码配对只在手机上确认」). Only an initiator that put a secret in its
+    /// ticket receives one; builds up to 0.1.9 do not know it.
+    PairProof {
+        /// Protocol version.
+        version: ProtocolVersion,
+        /// `voltip_crypto::pairing_proof` of the ticket's secret over the handshake hash.
+        #[serde(with = "serde_bytes")]
+        proof: [u8; 32],
+        /// Who is joining, shown while its user confirms.
+        device: DeviceInfo,
+    },
     /// Sent by a side that rejected pairing; the channel is torn down afterwards.
     PairReject {
         /// Protocol version.
@@ -388,6 +401,7 @@ impl AppMessage {
     pub fn version(&self) -> ProtocolVersion {
         match self {
             Self::PairConfirm { version, .. }
+            | Self::PairProof { version, .. }
             | Self::PairReject { version, .. }
             | Self::Ping { version, .. }
             | Self::Pong { version, .. }
@@ -429,7 +443,7 @@ impl AppMessage {
         let msg: Self = ciborium::from_reader(bytes).map_err(|e| CodecError::Malformed(e.to_string()))?;
         msg.version().check()?;
         match &msg {
-            Self::PairConfirm { device, .. } => device.validate()?,
+            Self::PairConfirm { device, .. } | Self::PairProof { device, .. } => device.validate()?,
             Self::DeviceInfoUpdate { device, .. } => device.validate()?,
             Self::TakeStart { sample_rate_hz, .. } if *sample_rate_hz != TAKE_SAMPLE_RATE_HZ => {
                 return Err(CodecError::InvalidField { field: "sample_rate_hz", reason: format!("{sample_rate_hz} Hz, only {TAKE_SAMPLE_RATE_HZ}") });
@@ -529,6 +543,7 @@ mod tests {
         let v = ProtocolVersion::CURRENT;
         for m in [
             AppMessage::PairConfirm { version: v, device: device() },
+            AppMessage::PairProof { version: v, proof: [3; 32], device: device() },
             AppMessage::PairReject { version: v, reason: RejectReason::UserDeclined },
             AppMessage::ping(1),
             AppMessage::pong(1),

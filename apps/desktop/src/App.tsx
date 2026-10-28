@@ -24,6 +24,7 @@ import { AiModels, SpeechModels } from "./pages/Models";
 import { LIVE_STATE, BLANK_STATE, Overlay, isOverlayWindowState } from "./pages/Overlay";
 import { Rules } from "./pages/Rules";
 import { SettingsDialog } from "./pages/settings/SettingsDialog";
+import { Usage } from "./pages/Usage";
 import { Shell } from "./shell/Shell";
 
 /** The pill spec sheet and the single sample pills run on made-up values: `pnpm dev` only.
@@ -83,8 +84,11 @@ function Page({ route }: { route: Exclude<Route, { name: "settings" | "feedback"
       return <Rules compose={route.compose === true} />;
     case "devices":
       return <Devices />;
+    case "usage":
+      return <Usage />;
     case "speech":
-      return <SpeechModels />;
+      // A new section (a notice's 下载本机模型) opens its drawer even when the page is showing.
+      return <SpeechModels key={route.section ?? ""} section={route.section} />;
     case "ai":
       return <AiModels section={route.section} />;
     case "onboarding":

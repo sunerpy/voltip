@@ -30,15 +30,17 @@ pub struct Recognised {
 }
 
 /// Recognise `wav` with the take's `language` hint and the vocabulary's `glossary`, and bring the
-/// text to `script` (§17) before anything else touches it.
+/// text to `script` (§17) before anything else touches it; `call` says what for and where the take
+/// came from (the usage record, §27).
 pub async fn recognize(
     transcriber: &dyn Transcriber,
     wav: &[u8],
     language: Option<&str>,
     glossary: &[String],
     script: ChineseScript,
+    call: &crate::usage::AsrCall,
 ) -> Result<Recognised, DictationError> {
-    let t = transcriber.transcribe(wav, language, glossary).await?;
+    let t = transcriber.transcribe_as(wav, language, glossary, call).await?;
     Ok(Recognised { text: normalized(script, t.text.trim()), asr_ms: t.latency_ms, model: t.model })
 }
 
@@ -159,9 +161,9 @@ mod tests {
     async fn recognition_brings_the_text_to_the_script_before_anything_else() {
         let transcriber = FakeTranscriber::ok(" 這個測試 ");
         let wav = crate::dictation::wav::encode_pcm16(&[1000; 1600], 16_000);
-        let simplified = recognize(&transcriber, &wav, Some("zh"), &[], ChineseScript::Simplified).await.unwrap();
+        let simplified = recognize(&transcriber, &wav, Some("zh"), &[], ChineseScript::Simplified, &crate::usage::AsrCall::default()).await.unwrap();
         assert_eq!(simplified.text, "这个测试");
-        let as_is = recognize(&transcriber, &wav, None, &[], ChineseScript::AsIs).await.unwrap();
+        let as_is = recognize(&transcriber, &wav, None, &[], ChineseScript::AsIs, &crate::usage::AsrCall::default()).await.unwrap();
         assert_eq!(as_is.text, "這個測試");
     }
 

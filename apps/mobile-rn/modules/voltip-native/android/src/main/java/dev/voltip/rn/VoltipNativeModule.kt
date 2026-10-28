@@ -1,41 +1,45 @@
 package dev.voltip.rn
 
-import android.content.Context
-import android.net.ConnectivityManager
-import android.net.LinkProperties
-import android.net.Network
-import android.net.ProxyInfo
+import android.app.Activity
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import dev.voltip.rn.uniffi.ShellException
-import dev.voltip.rn.uniffi.VoltipShell
 import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.exception.Exceptions
 import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
-import io.crates.keyring.Keyring
-import io.crates.keyring.KeyringLog
-import java.io.File
+import org.json.JSONObject
 
 /**
  * `VoltipNative` in JavaScript (`modules/voltip-native/src`): `start()` brings the Rust shell up
- * once per process, `invoke(command, argsJson)` runs one of its commands, and the events
- * `onEvent` / `onChannel` carry the core's `UiEvent`s and the level meter's frames. The shell is
- * the UniFFI object [VoltipShell] (`apps/mobile-rn/rust/src/ffi.rs`); [VoltipHost] is its platform.
- * `systemAccent()` is the wallpaper's colour the system themes itself with (Android 12+), which
- * the app's colours follow while its appearance follows the system (docs/mobile-rn.md §5).
+ * once per process ([VoltipRuntime]), `invoke(command, argsJson)` runs one of its commands, and the
+ * events `onEvent` / `onChannel` carry the core's `UiEvent`s and the level meter's frames while the
+ * JavaScript runs. The shell is the UniFFI object [dev.voltip.rn.uniffi.VoltipShell]
+ * (`apps/mobile-rn/rust/src/ffi.rs`); [VoltipHost] is its platform. `systemAccent()` is the
+ * wallpaper's colour the system themes itself with (Android 12+), which the app's colours follow
+ * while its appearance follows the system (docs/mobile-rn.md §5). `bubble…` are the floating
+ * bubble's state and options ([BubbleService], docs/dictation.md §20.12).
  *
- * The phone's only link to its computers is the relay (docs/pairing.md 「只走中继」), and its socket
- * rarely survives a change of network or a long stay in the background: when Android reports
- * another network, or the app comes to the front, the shell checks it at once
- * ([VoltipShell.reconnectRelay]) instead of waiting for the heartbeat (docs/pairing.md 「重连」).
- * The same callback hands the shell the network's HTTP proxy, which following the system means on
- * the phone ([VoltipShell.setNetworkProxy], docs/dictation.md §24): Rust's clients cannot read it.
+ * When the app comes to the front the shell checks its relay socket at once
+ * ([dev.voltip.rn.uniffi.VoltipShell.reconnectRelay]) instead of waiting for the heartbeat
+ * (docs/pairing.md 「重连」); the network callback is [VoltipRuntime]'s.
  */
 class VoltipNativeModule : Module() {
-    @Volatile
-    private var shell: VoltipShell? = null
-    private var network: ConnectivityManager.NetworkCallback? = null
+    /** The activity in front while this module's JavaScript runs. */
+    private val front: () -> Activity? = { appContext.currentActivity }
+
+    private val listener = object : VoltipRuntime.Listener {
+        override fun onEvent(json: String) {
+            sendEvent("onEvent", mapOf("json" to json))
+        }
+
+        override fun onChannel(channel: ULong, json: String) {
+            sendEvent("onChannel", mapOf("id" to channel.toDouble(), "json" to json))
+        }
+    }
 
     override fun definition() = ModuleDefinition {
         Name("VoltipNative")
@@ -45,28 +49,24 @@ class VoltipNativeModule : Module() {
         /** `null` once the shell runs, or why it could not start. */
         AsyncFunction("start") {
             val context = appContext.reactContext?.applicationContext ?: throw Exceptions.ReactContextLost()
-            // Rust's tracing into logcat, then the Android context `ndk-context` hands the
-            // Keystore store and cpal (AAudio); both before the shell starts. Keyring.kt loads
-            // libvoltip_rn for these two JNI entries; UniFFI's bindings reach it through JNA.
-            KeyringLog.setLog(LOG_FILTER)
-            Keyring.initializeNdkContext(context)
-            val host = VoltipHost(context, { appContext.currentActivity }) { name, body -> sendEvent(name, body) }
-            val dataDir = File(context.filesDir, "voltip").apply { mkdirs() }.absolutePath
-            val version = context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "0.0.0"
+            VoltipRuntime.activity = front
             try {
-                // A second start (the JavaScript reloaded) hands back the running shell with this
-                // host in place of the old one.
-                shell = VoltipShell.start(dataDir, version, host)
-                watchNetwork(context)
+                // A second start (the JavaScript reloaded) hands back the running shell; this module
+                // takes the old one's place as the JavaScript's listener.
+                VoltipRuntime.start(context)
+                VoltipRuntime.addListener(listener)
                 null
             } catch (e: ShellException) {
                 e.message
             }
         }
 
-        OnActivityEntersForeground { shell?.reconnectRelay() }
+        OnActivityEntersForeground { VoltipRuntime.shell?.reconnectRelay() }
 
-        OnDestroy { unwatchNetwork() }
+        OnDestroy {
+            VoltipRuntime.removeListener(listener)
+            if (VoltipRuntime.activity === front) VoltipRuntime.activity = null
+        }
 
         /** `#rrggbb` of the system's accent (Material You), or `null` before Android 12. */
         Function("systemAccent") {
@@ -78,78 +78,51 @@ class VoltipNativeModule : Module() {
 
         /** The command's answer as JSON; a failure rejects with the shell's error text, as Tauri's invoke does. */
         AsyncFunction("invoke") Coroutine { command: String, args: String ->
-            val running = shell ?: throw CodedException(ERROR_CODE, "the shell is not running", null)
+            val running = VoltipRuntime.shell ?: throw CodedException(ERROR_CODE, "the shell is not running", null)
             try {
                 running.invoke(command, args)
             } catch (e: ShellException) {
                 throw CodedException(ERROR_CODE, e.message, e)
             }
         }
-    }
 
-    /**
-     * The default network came or went (another Wi-Fi, mobile data, none): check the relay socket.
-     * Its link properties (reported right after it comes, and whenever they change) carry its
-     * proxy, which goes to the shell.
-     */
-    @Synchronized
-    private fun watchNetwork(context: Context) {
-        if (network != null) return
-        val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val callback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) {
-                shell?.reconnectRelay()
-            }
-
-            override fun onLinkPropertiesChanged(network: Network, properties: LinkProperties) {
-                // A device-wide proxy (set by an administrator) wins over the network's own.
-                handProxy(manager.defaultProxy ?: properties.httpProxy)
-            }
-
-            override fun onLost(network: Network) {
-                shell?.reconnectRelay()
-            }
+        /** The bubble's state as JSON (`BubbleStatus`, src/backend/bubble.tsx). */
+        AsyncFunction("bubbleStatus") {
+            val context = appContext.reactContext?.applicationContext ?: throw Exceptions.ReactContextLost()
+            BubbleService.status(context).toString()
         }
-        try {
-            manager.registerDefaultNetworkCallback(callback)
-            network = callback
-        } catch (e: RuntimeException) {
-            // Too many callbacks registered, or no permission: the heartbeat still notices.
-            android.util.Log.w("VoltipNative", "network callback not registered: ${e.message}")
-        }
-    }
 
-    /**
-     * The network's HTTP proxy to the shell: its host, port and excluded hosts; none as an empty
-     * host. A proxy given only as a PAC file cannot be followed and counts as none.
-     */
-    private fun handProxy(proxy: ProxyInfo?) {
-        val host = proxy?.host
-        if (proxy == null || host.isNullOrBlank() || proxy.port !in 1..65535) {
-            if (proxy?.pacFileUrl?.let { it != android.net.Uri.EMPTY } == true) {
-                android.util.Log.w("VoltipNative", "the network's proxy is a PAC file; connections go direct")
-            }
-            shell?.setNetworkProxy("", 0u, "")
-            return
+        /**
+         * Save the bubble's options (`BubbleConfig` as JSON) and show or hide it. It shows once
+         * enabled with every permission granted; the app is in front while this runs, which Android
+         * requires of a foreground service that records.
+         */
+        AsyncFunction("bubbleConfigure") { config: String ->
+            val context = appContext.reactContext?.applicationContext ?: throw Exceptions.ReactContextLost()
+            val prefs = BubblePrefs(context)
+            prefs.save(JSONObject(config))
+            BubbleService.apply(context)
+            BubbleService.status(context).toString()
         }
-        shell?.setNetworkProxy(host, proxy.port.toUShort(), proxy.exclusionList.joinToString(","))
-    }
 
-    @Synchronized
-    private fun unwatchNetwork() {
-        val callback = network ?: return
-        val context = appContext.reactContext?.applicationContext ?: return
-        val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        try {
-            manager.unregisterNetworkCallback(callback)
-        } catch (_: IllegalArgumentException) {
-            // Not registered any more.
+        /** The system's 显示在其他应用上层 page for this app. */
+        AsyncFunction("bubbleOpenOverlaySettings") {
+            val context = appContext.reactContext?.applicationContext ?: throw Exceptions.ReactContextLost()
+            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
+            val front = appContext.currentActivity
+            if (front != null) front.startActivity(intent) else context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         }
-        network = null
+
+        /** The system's notification settings for this app (a permission refused for good). */
+        AsyncFunction("bubbleOpenNotificationSettings") {
+            val context = appContext.reactContext?.applicationContext ?: throw Exceptions.ReactContextLost()
+            val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+            val front = appContext.currentActivity
+            if (front != null) front.startActivity(intent) else context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
     }
 
     private companion object {
-        const val LOG_FILTER = "info,voltip_core=debug,voltip_rn=debug"
         const val ERROR_CODE = "ERR_VOLTIP"
     }
 }

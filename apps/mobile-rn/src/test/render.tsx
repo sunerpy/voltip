@@ -4,6 +4,7 @@ import { fireEvent, render, screen } from "@testing-library/react-native";
 import { MockBackend, type MockBackendOptions } from "@voltip/shared/mock";
 
 import { App } from "../App";
+import type { BubbleControl } from "../backend/bubble";
 
 export const METRICS = {
   frame: { x: 0, y: 0, width: 412, height: 915 },
@@ -22,17 +23,20 @@ export async function renderApp({
   mock,
   language = "zh-CN",
   accent = null,
+  bubble,
 }: {
   backend?: MockBackend;
   mock?: MockBackendOptions;
   language?: string;
   /** The wallpaper's colour the system would hand over (Android 12+). */
   accent?: string | null;
+  /** The floating bubble's native side; none by default, as on a build without it. */
+  bubble?: BubbleControl;
 } = {}) {
   const core = backend ?? new MockBackend({ role: "phone", ...mock });
   backends.add(core);
   const view = await render(
-    <App backend={core} language={language} metrics={METRICS} accent={accent} />,
+    <App backend={core} language={language} metrics={METRICS} accent={accent} bubble={bubble} />,
   );
   return { ...view, backend: core };
 }
@@ -40,4 +44,34 @@ export async function renderApp({
 /** Open a tab from the dock. */
 export async function openTab(tab: "talk" | "history" | "settings") {
   await fireEvent.press(await screen.findByTestId(`tab-${tab}`));
+}
+
+/** The `i`th of `list`: a test fails here, naming the item, rather than on `undefined` later. */
+export function nth<T>(list: readonly T[], i: number): T {
+  const item = list[i];
+  if (item === undefined) throw new Error(`no item ${String(i)} of ${String(list.length)}`);
+  return item;
+}
+
+/** `backend`'s commands `names` answered at once and acted on by nothing, every other one as the
+ *  mock does it: the test reports what the core would, so a state it asserts cannot move on by
+ *  itself on a slow machine. `mockRestore` on the returned spy undoes it. */
+export function hold(backend: MockBackend, ...names: readonly string[]) {
+  const original = backend.invoke.bind(backend);
+  return jest
+    .spyOn(backend, "invoke")
+    .mockImplementation((name, ...args) =>
+      names.includes(name) ? Promise.resolve() : original(name, ...args),
+    );
+}
+
+/** The request id of the last `name` command `spy` (from `hold`) saw; a test fails here without
+ *  one. */
+export function requestIdOf(spy: ReturnType<typeof hold>, name: string): number {
+  const call = spy.mock.calls.reduce<(typeof spy.mock.calls)[number] | undefined>(
+    (last, each) => (each[0] === name ? each : last),
+    undefined,
+  );
+  if (call === undefined) throw new Error(`no ${name}`);
+  return (call[1] as { requestId: number }).requestId;
 }

@@ -69,7 +69,9 @@ scp target/x86_64-unknown-linux-musl/release/voltip-relay <host>:/usr/local/bin/
 
 一种部署方式：
 
-- systemd `voltip-relay.service`：`ExecStart=/usr/local/bin/voltip-relay --bind 127.0.0.1:47830 --trust-proxy 127.0.0.1`，`Environment=VOLTIP_RELAY_JSON_LOGS=1`，`DynamicUser=yes`，`Restart=always`；`journalctl -u voltip-relay -f` 看 `pairing session created / peer joined` 等结构化日志。
+- systemd `voltip-relay.service`：`ExecStart=/usr/local/bin/voltip-relay --bind 127.0.0.1:47830 --trust-proxy 127.0.0.1 --policy /etc/voltip/relay-policy.json --policy-override /etc/voltip/relay-policy.override.json`，`Environment=VOLTIP_RELAY_JSON_LOGS=1`，`DynamicUser=yes`，`Restart=always`；`journalctl -u voltip-relay -f` 看 `pairing session created / peer joined` 等结构化日志。
+- 最低版本（`docs/pairing.md`「最低版本」）：`/etc/voltip/relay-policy.json` 由管理台的同步程序写，`relay-policy.override.json` 由运维手写，存在且有效时整份优先。两个文件都要让中继的运行用户读到（内容不是秘密）：当前部署中继以 `voltip` 用户运行（`User=voltip`），`/etc/voltip` 为 `root:voltip 0750`，策略文件为 `root:voltip 0640`（同步程序的默认权限）；用上面的 `DynamicUser=yes` 时，目录要 0755、文件要 0644。读不到时中继记一条告警，沿用上一份有效策略，从没读到过就不设最低版本。同目录的同步配置 `admin-sync.env` 为 `root 0600`。中继每 30 秒检查一次两个文件。紧急放开：写入 `{"schema":1,"min_version":null}` 到覆盖文件，30 秒内生效；删掉覆盖文件即回到同步来的策略。坏文件不会替换上一份有效策略，启动日志和告警写明读到了哪一份。
+- 统计：`curl http://127.0.0.1:47830/stats`（`docs/pairing.md`「中继统计」）。只在中继主机上访问，nginx 不要转发 `/stats`。
 - 中继在反向代理后面时必须给出 `--trust-proxy <代理的地址或网段>`（可以写多个或用逗号分隔，环境变量 `VOLTIP_RELAY_TRUST_PROXY`）。中继按客户端 IP 限流（`docs/pairing.md`「Relay 侧防护」），代理后面每条连接的 TCP 对端都是代理自己，不给这个参数时所有用户共用一份额度（2026-10-12 发现线上就是这样）。中继只读这些对端发来的 `X-Forwarded-For`，从右往左跳过可信代理，取第一个其他地址，规则与 nginx 的 `real_ip_recursive on` 相同；其他对端发来的这个头一律忽略，客户端伪造不了。启动日志 `relay listening … trusted_proxies=[…]` 列出生效的代理；直接对外监听时（例如 `deploy/relay/Dockerfile`）不要给。
 - 放在负载均衡器后面时（当前做法，见上文「当前部署」），TLS 在负载均衡器上，nginx 只做 `/ws` 的升级转发，负载均衡器空闲超时不低于 3600 s；nginx 要先用 `set_real_ip_from` 与 `real_ip_header X-Forwarded-For` 还原客户端地址，`$remote_addr` 才是客户端。单独一台主机时：
 - nginx vhost `<relay-host>`（Let's Encrypt，acme.sh）：`location /ws` 走 `proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "upgrade"; proxy_set_header X-Forwarded-For $remote_addr; proxy_read_timeout 3600s;` 到 `127.0.0.1:47830`；`location /healthz` 直通。中继只监听回环，外网只见 443。
@@ -82,6 +84,15 @@ VOLTIP_LIVE_RELAY_URL=wss://<relay-host>/ws cargo test -p voltip-core --test e2e
 该测试未设置变量时自动跳过，离线套件保持封闭。2026-09-25 对一台线上中继实测：TLS + WebSocket 升级 + 会合 + 配对 + 双向消息 0.8 s，nginx 记录两条 `GET /ws … 101`；2026-10-08 迁到负载均衡器后面再测一次通过（3.0 s，客户端在国内）。同一天发现并修复：`voltip-transport` 的 rustls 没有绑定加密 provider，不链接 reqwest 的二进制（移动端、core 测试）拨 `wss://` 会 panic（`crates/voltip-transport/src/endpoint.rs@regression_wss_dial_has_exactly_one_crypto_provider`）。
 
 Relay 无状态（内存里只有活动会话 / 频道），可水平扩展前提是同一对设备落在同一实例（按 `channel` / `session_id` 做粘性路由）。
+
+## 内置服务的额度与管理台
+
+- 内置服务的网关按设备计数每天的识别秒数和润色次数（`docs/dictation.md` §27）。网关配置、计数脚本 `quota.js`、管理台和同步程序在私有仓库 `sunerpy/voltip-admin`（`gateway/`、`site/`、`sync/`、`relay/`），部署细节与主机写在那里的 README，不进这个仓库。
+- 额度配置：网关主机的 `quota.json`（同步程序写）与 `quota.override.json`（运维手写，存在且有效时整份优先），`{"schema":1,"mode":"count"|"limit","device":{"asr_seconds":3600,"refine":100},"ip":{"asr_seconds":3600,"refine":100}}`；读取与失败规则与中继的策略文件相同。`count` 是统计期，只计数不拦截；`limit` 在用完时回 429（`insufficient_quota`）。
+- 统计期切到限量：在管理台「内置服务」里切换，确认近 7 天每台设备用量的分布（中位数、90%、99%、达到上限的占比）后保存。同步程序 5 分钟一轮，网关下一个请求就用新配置；客户端在下一个答复的 `X-Voltip-Quota` 里看到新的上限。
+- 回滚：管理台「恢复上一个设置」；管理台不可用时，在网关主机写 `quota.override.json`（例如 `"mode":"count"`），删掉即回到同步来的配置。
+- 计数在 njs 的共享内存里，网关容器重启后当天的计数清零；需要重启网关时尽量在北京时间 0 点前后。
+- 管理台只在 Cloudflare Access 之后（`docs/threat-model.md`）；同步程序用 Access 的 service token，放在中继主机的 `/etc/voltip/admin-sync.env`（`root 0600`）。
 
 ## 发布
 
@@ -163,7 +174,8 @@ Relay 无状态（内存里只有活动会话 / 频道），可水平扩展前�
   - 丢失：GitHub 上的 APK 再也无法用同一签名发布，已安装的用户只能卸载后重装（配对随之丢失）；Play 上的应用可以在 Play Console 申请重置上传密钥，Play 继续用它保存的密钥签名。所以密钥库必须另存一份。
   - 泄露：轮换要用 APK 签名方案 v3 的密钥轮换（`apksigner rotate`）和 Play Console 的应用签名密钥升级，届时单独设计；Android 8.x 不支持 v3 轮换，这些设备只能重装。
 - 还没进工作流的：上传 Google Play；macOS 包没有公证（见 `docs/roadmap.md`）。
-- Google Play 数据安全表单（上架时填写）：2026-10-02 起，电脑把历史记录与设置同步到已配对的手机，手机把单独识别的记录副本上传到电脑（`docs/dictation.md` §20.8）。这些内容只在用户自己的设备之间传输，经端到端加密，中继只转发密文、无法读取，保存在应用私有存储中；项目不接收也无法读取。填表时按 Play 当时的规则判断是否属于「收集」或「分享」，并写明加密传输、用户可在电脑上按手机关闭、可以删除。手机单独识别时发往内置服务的录音与文字照旧申报（§20.7）。
+- Google Play 数据安全表单（上架时填写）：2026-10-02 起，电脑把历史记录与设置同步到已配对的手机，手机把单独识别的记录副本上传到电脑（`docs/dictation.md` §20.8）。这些内容只在用户自己的设备之间传输，经端到端加密，中继只转发密文、无法读取，保存在应用私有存储中；项目不接收也无法读取。填表时按 Play 当时的规则判断是否属于「收集」或「分享」，并写明加密传输、用户可在电脑上按手机关闭、可以删除。手机单独识别时发往内置服务的录音与文字照旧申报（§20.7）。内置服务的请求带一个随机的设备号（`usage-id`，`docs/dictation.md` §27），只用于按设备计每天的用量，按「设备或其他 ID」申报为应用功能所需、不用于广告。
+- Google Play 的前台服务声明（2026-10-28 起需要）：悬浮球用麦克风类型的前台服务（`docs/dictation.md` §20.12）。面向 Android 14 及以上的应用要在 Play 管理中心的「应用内容 › 前台服务权限」里说明用途（用户在其他应用中通过悬浮球说话，录音在用户按住或点击时进行，通知栏可随时关闭），并附一段演示视频（开启悬浮球、在另一个应用里按住说话、粘贴结果、从通知关闭）；`SYSTEM_ALERT_WINDOW` 是用户在系统设置里授予的特殊权限。由用户在提交新版本前完成。
 
 ## 文档站
 

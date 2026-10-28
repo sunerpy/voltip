@@ -36,7 +36,7 @@ use voltip_core::{
     RelaySource, RelayStatus, ReplacementRule, ResolvedEngines, RuleDraft, RuleKind, Scene, SceneDraft, SceneMatch, SceneOverrides, SceneRef, Segment,
     ServiceKind, Settings, SoloKey, TakeContext, TakeKind, ThemeId, UserSecrets, VocabularyHit, VocabularyHits,
 };
-use voltip_core::{EntryOrigin, OriginKind};
+use voltip_core::{EntryOrigin, FailureKind, OriginKind, RelayFailure};
 use voltip_crypto::{PublicKey, SafetyCode};
 use voltip_identity::{DeviceIdentityPublic, TrustedDevice};
 use voltip_pairing::{FailureReason, PairingState, Snapshot};
@@ -141,7 +141,7 @@ fn connectivity_report() -> ConnectivityReport {
 
 /// A self-check whose relay probe did not get through, one way after the other.
 fn failed_connectivity_reports() -> Vec<ConnectivityReport> {
-    [ProbeResult::Timeout, ProbeResult::Refused, ProbeResult::Failed { reason: "tls handshake eof".into() }]
+    [ProbeResult::Timeout, ProbeResult::Refused, ProbeResult::Failed { reason: "tls handshake eof".into(), kind: FailureKind::Tls }]
         .into_iter()
         .map(|result| ConnectivityReport { checked_at: AT_MS, relay: RelayCheck { configured: true, result: Some(result) }, peers: Vec::new() })
         .chain([ConnectivityReport { checked_at: AT_MS, relay: RelayCheck { configured: false, result: None }, peers: Vec::new() }])
@@ -227,9 +227,12 @@ fn idle_snapshot() -> Snapshot {
         peer: None,
         local_confirmed: false,
         peer_confirmed: false,
+        scanned: false,
     }
 }
 
+/// The computer after the phone proved it scanned the QR code: it confirmed by itself and waits
+/// for the phone's user (docs/pairing.md 「扫码配对只在手机上确认」).
 fn verification_snapshot() -> Snapshot {
     Snapshot {
         state: PairingState::AwaitingVerification,
@@ -242,6 +245,7 @@ fn verification_snapshot() -> Snapshot {
         peer: Some(DeviceInfo { device_id: uuid::<DeviceId>(PHONE_DEVICE_ID), name: "Pixel 10".into(), platform: Platform::Android }),
         local_confirmed: true,
         peer_confirmed: false,
+        scanned: true,
     }
 }
 
@@ -1002,7 +1006,13 @@ fn full_state() -> UiState {
         identity: Some(desktop_identity()),
         settings: settings(),
         secret_backend: "memory".into(),
-        relay: RelayStatus { endpoint: Some(RELAY_URL.into()), source: RelaySource::User, state: ConnectionState::Connected, attempts: RELAY_ATTEMPTS },
+        relay: RelayStatus {
+            endpoint: Some(RELAY_URL.into()),
+            source: RelaySource::User,
+            state: ConnectionState::Connected,
+            attempts: RELAY_ATTEMPTS,
+            last_failure: None,
+        },
         pairing: verification_snapshot(),
         devices: devices(),
         hotkey: HotkeyStatus {
@@ -1069,6 +1079,49 @@ fn full_state() -> UiState {
         mcp: mcp_status(),
         // docs/dictation.md §3.6: the built-in clean-up service turned a take down.
         refine_notice: Some(RefineNotice { failure: RefineFailure::RateLimited, at_ms: 1_727_400_000_000 }),
+        // docs/dictation.md §27: the built-in service's day and this device's record.
+        usage: usage_view(),
+    }
+}
+
+/// The built-in service in its limit phase, this device's last days, and every part of today's
+/// record (docs/dictation.md §27).
+fn usage_view() -> voltip_core::usage::UsageView {
+    use voltip_core::usage::{
+        AsrQuota, LedgerView, OriginUse, ProviderUse, PurposeUse, QuotaBasis, QuotaMode, QuotaReport, RefineQuota, UsageDayView, UsageNotice, UsageOrigin,
+        UsagePurpose, UsageView,
+    };
+    UsageView {
+        builtin: true,
+        quota: Some(QuotaReport {
+            mode: QuotaMode::Limit,
+            basis: QuotaBasis::Device,
+            day: "2026-10-27".into(),
+            reset_at: 1_793_116_800,
+            asr: AsrQuota { used_seconds: 1_380, limit_seconds: Some(3_600) },
+            refine: RefineQuota { used: 72, limit: Some(100) },
+        }),
+        reported_at: Some(1_793_080_000_000),
+        unavailable: false,
+        record: LedgerView {
+            days: vec![
+                UsageDayView { day: "2026-10-26".into(), asr_seconds: 2_400, refine: 88 },
+                UsageDayView { day: "2026-10-27".into(), asr_seconds: 1_380, refine: 72 },
+            ],
+            asr_origins: vec![
+                OriginUse { origin: UsageOrigin::ThisDevice, seconds: 1_080 },
+                OriginUse { origin: UsageOrigin::Phone { name: "Pixel 8".into() }, seconds: 300 },
+                OriginUse { origin: UsageOrigin::Retake, seconds: 0 },
+                OriginUse { origin: UsageOrigin::Serve, seconds: 0 },
+            ],
+            refine_purposes: vec![PurposeUse { purpose: UsagePurpose::Refine, count: 60 }, PurposeUse { purpose: UsagePurpose::Edit, count: 12 }],
+            others: vec![
+                ProviderUse { provider: ProviderId::Local, service: ServiceKind::Asr, model: Some("qwen3-asr-0.6b".into()), amount: 7_800 },
+                ProviderUse { provider: ProviderId::Openai, service: ServiceKind::Llm, model: None, amount: 3 },
+            ],
+            others_today: vec![ProviderUse { provider: ProviderId::Local, service: ServiceKind::Asr, model: Some("qwen3-asr-0.6b".into()), amount: 420 }],
+            dismissed: vec![UsageNotice::AsrNear],
+        },
     }
 }
 
@@ -1123,10 +1176,11 @@ fn event_tag(event: &UiEvent) -> &'static str {
         UiEvent::Mirrors { .. } => "mirrors",
         UiEvent::PhoneOutbox { .. } => "phone_outbox",
         UiEvent::RefineNotice { .. } => "refine_notice",
+        UiEvent::Usage(_) => "usage",
     }
 }
 
-const ALL_EVENT_TAGS: [&str; 30] = [
+const ALL_EVENT_TAGS: [&str; 31] = [
     "state",
     "identity",
     "settings",
@@ -1157,6 +1211,7 @@ const ALL_EVENT_TAGS: [&str; 30] = [
     "refine_notice",
     "network",
     "mcp",
+    "usage",
 ];
 
 /// The computer's settings as a phone shows them (docs/dictation.md §20.8): every `Option` set.
@@ -1276,6 +1331,9 @@ fn all_events() -> Vec<UiEvent> {
         UiEvent::PhoneOutbox { too_large: vec![uuid(HISTORY_ID)] },
         UiEvent::RefineNotice { notice: Some(RefineNotice { failure: RefineFailure::Quota, at_ms: 1_727_400_000_000 }) },
         UiEvent::RefineNotice { notice: None },
+        UiEvent::Usage(usage_view()),
+        // A build without the built-in service: nothing reported, nothing recorded.
+        UiEvent::Usage(voltip_core::usage::UsageView::default()),
         UiEvent::Identity(desktop_identity()),
         UiEvent::Settings(settings()),
         UiEvent::Relay(RelayStatus {
@@ -1283,9 +1341,19 @@ fn all_events() -> Vec<UiEvent> {
             source: RelaySource::User,
             state: ConnectionState::Reconnecting,
             attempts: RELAY_ATTEMPTS,
+            // A relay the user typed in keeps the transport's words; the build's own only its kind.
+            last_failure: Some(RelayFailure { kind: FailureKind::Timeout, detail: Some("connect timed out after 8s".into()), min_version: None, at: AT_MS }),
         }),
         // The build's own relay: connected, and never named.
-        UiEvent::Relay(RelayStatus { endpoint: None, source: RelaySource::Builtin, state: ConnectionState::Connected, attempts: 0 }),
+        UiEvent::Relay(RelayStatus { endpoint: None, source: RelaySource::Builtin, state: ConnectionState::Connected, attempts: 0, last_failure: None }),
+        // Below the build's own relay's minimum: the version to update to, still without the host.
+        UiEvent::Relay(RelayStatus {
+            endpoint: None,
+            source: RelaySource::Builtin,
+            state: ConnectionState::Reconnecting,
+            attempts: 1,
+            last_failure: Some(RelayFailure { kind: FailureKind::TooOld, detail: None, min_version: Some("0.2.0".into()), at: AT_MS }),
+        }),
         UiEvent::Pairing(verification_snapshot()),
         UiEvent::Pairing(Snapshot { state: PairingState::Failed { reason: FailureReason::Relay { code: RelayErrorCode::SessionExpired } }, ..idle_snapshot() }),
         UiEvent::Pairing(Snapshot { state: PairingState::Failed { reason: FailureReason::Timeout }, ..idle_snapshot() }),
@@ -2073,6 +2141,8 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::SettingsSetProxy { .. } => "SettingsSetProxy",
         UiCommand::NetworkRefresh => "NetworkRefresh",
         UiCommand::RefineNoticeClose => "RefineNoticeClose",
+        UiCommand::UsageRefresh => "UsageRefresh",
+        UiCommand::UsageNoticeDismiss { .. } => "UsageNoticeDismiss",
     }
 }
 
@@ -2244,6 +2314,9 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         ("network_refresh", Value::Null, "NetworkRefresh"),
         // docs/dictation.md §3.6.
         ("refine_notice_close", Value::Null, "RefineNoticeClose"),
+        // docs/dictation.md §27.
+        ("usage_refresh", Value::Null, "UsageRefresh"),
+        ("usage_notice_dismiss", json!({ "notice": "asr_near" }), "UsageNoticeDismiss"),
     ]
 }
 
@@ -2879,6 +2952,7 @@ fn regression_no_fixture_names_the_builtin_host() {
         }
     }
     let builtin_relay: Value =
-        serde_json::to_value(RelayStatus { endpoint: None, source: RelaySource::Builtin, state: ConnectionState::Connected, attempts: 0 }).unwrap();
+        serde_json::to_value(RelayStatus { endpoint: None, source: RelaySource::Builtin, state: ConnectionState::Connected, attempts: 0, last_failure: None })
+            .unwrap();
     assert!(builtin_relay.get("endpoint").is_none());
 }

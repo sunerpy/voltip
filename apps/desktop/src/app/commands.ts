@@ -146,6 +146,20 @@ export function buildCommands(deps: CommandDeps): CommandItem[] {
         navigate({ name: "devices" });
       },
     },
+    // docs/dictation.md §27: in a build with the built-in service.
+    ...(state.usage.builtin
+      ? [
+          {
+            id: "nav-usage",
+            group: t("commands.group.nav"),
+            label: t("commands.openUsage"),
+            icon: "gauge" as const,
+            run: () => {
+              navigate({ name: "usage" });
+            },
+          },
+        ]
+      : []),
     {
       id: "nav-feedback",
       group: t("commands.group.nav"),

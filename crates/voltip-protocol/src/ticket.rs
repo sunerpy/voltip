@@ -1,7 +1,8 @@
 //! The one-time pairing ticket carried by the QR code.
 //!
 //! `voltip://pair?v=1&t=<base64url(CBOR PairingTicket)>` — CBOR keeps the QR small; base64url
-//! keeps it URL-safe. The ticket never contains long-term identity keys or credentials.
+//! keeps it URL-safe. The ticket never contains long-term identity keys or credentials; its one
+//! secret is [`PairingTicket::secret`], good for this session only.
 
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
@@ -18,9 +19,11 @@ pub const MAX_TICKET_CHARS: usize = 600;
 pub const NONCE_LEN: usize = 16;
 /// Size of an X25519 public key.
 pub const PUBLIC_KEY_LEN: usize = 32;
+/// Size of the ticket's secret.
+pub const SECRET_LEN: usize = 32;
 
 /// What the phone learns by scanning the QR code.
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PairingTicket {
     /// Protocol version.
     pub version: ProtocolVersion,
@@ -38,8 +41,27 @@ pub struct PairingTicket {
     /// Relay the initiator is waiting on, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relay_hint: Option<url::Url>,
+    /// Random bytes only the QR code carries: they never pass through the relay. The joining side
+    /// proves with them that it read this ticket (`app::AppMessage::PairProof`), and the initiator
+    /// then confirms by itself (docs/pairing.md 「扫码配对只在手机上确认」). Builds up to 0.1.9 write
+    /// none, and their initiator needs its user's confirmation.
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "serde_bytes")]
+    pub secret: Option<[u8; SECRET_LEN]>,
     // Builds before 0.1.0 also wrote `direct_hints`, the initiator's LAN addresses: they are
     // ignored on decode (docs/pairing.md 「只走中继」).
+}
+
+/// The secret stays out of logs.
+impl std::fmt::Debug for PairingTicket {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PairingTicket")
+            .field("version", &self.version)
+            .field("session_id", &self.session_id)
+            .field("expires_at", &self.expires_at)
+            .field("relay_hint", &self.relay_hint)
+            .field("secret", &self.secret.map(|_| "<redacted>"))
+            .finish_non_exhaustive()
+    }
 }
 
 impl PairingTicket {
@@ -100,6 +122,7 @@ mod tests {
             nonce: [9; NONCE_LEN],
             expires_at: 1_800_000_120,
             relay_hint: Some(url::Url::parse("wss://relay.example/ws").unwrap()),
+            secret: Some([5; SECRET_LEN]),
         }
     }
 
@@ -160,7 +183,8 @@ mod tests {
 
     #[test]
     fn ticket_never_carries_identity_material() {
-        // Structural guarantee: the CBOR map has exactly these keys and nothing else.
+        // Structural guarantee: the CBOR map has exactly these keys and nothing else; `secret` is
+        // this session's, not the device's.
         let t = sample();
         let mut cbor = Vec::new();
         ciborium::into_writer(&t, &mut cbor).unwrap();
@@ -169,7 +193,27 @@ mod tests {
             ciborium::Value::Map(m) => m.into_iter().map(|(k, _)| k.into_text().unwrap()).collect(),
             other => panic!("expected map, got {other:?}"),
         };
-        assert_eq!(keys, ["version", "session_id", "ephemeral_pub", "nonce", "expires_at", "relay_hint"]);
+        assert_eq!(keys, ["version", "session_id", "ephemeral_pub", "nonce", "expires_at", "relay_hint", "secret"]);
+    }
+
+    /// A ticket from a build up to 0.1.9 has no secret: it decodes, and the phone then knows the
+    /// computer needs its user's confirmation (docs/pairing.md).
+    #[test]
+    fn a_ticket_without_a_secret_still_decodes() {
+        let mut t = sample();
+        t.secret = None;
+        let uri = t.to_uri().unwrap();
+        assert_eq!(PairingTicket::from_uri(&uri).unwrap(), t);
+        assert!(uri.len() < sample().to_uri().unwrap().len(), "the field is left out when absent");
+    }
+
+    #[test]
+    fn the_secret_stays_out_of_debug_output() {
+        let t = sample();
+        let shown = format!("{t:?}");
+        assert!(shown.contains("<redacted>"), "{shown}");
+        assert!(!shown.contains("[5, 5"), "{shown}");
+        assert!(shown.contains(&t.session_id.to_string()), "{shown}");
     }
 
     /// A ticket from a build before 0.1.0 carries the initiator's LAN addresses as well

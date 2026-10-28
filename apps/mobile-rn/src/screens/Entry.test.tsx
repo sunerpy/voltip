@@ -9,13 +9,14 @@ import { DeviceEventEmitter } from "react-native";
 import {
   type DictionaryEntry,
   type HistoryEntry,
+  type ProcessState,
   type ReplacementRule,
   wordPieces,
 } from "@voltip/shared";
 import { MockBackend } from "@voltip/shared/mock";
 
 import { wordUnits } from "../features/QuickFix";
-import { openTab, renderApp } from "../test/render";
+import { hold, openTab, renderApp, requestIdOf } from "../test/render";
 
 /** The board's sample take (Penpot 「快速纠错」 12): two wordings the polish fixed, one it kept. */
 const RAW =
@@ -552,6 +553,207 @@ describe("a take whose polish failed", () => {
       screen.getByText("服务繁忙：This model is currently experiencing high demand."),
     ).toBeOnTheScreen();
     expect(screen.queryByText(/refine service/)).toBeNull();
+  });
+});
+
+/** The app on `backend`, at the first entry of 记录 (or where its row leads). */
+async function openOn(backend: MockBackend) {
+  await renderApp({ backend });
+  await openTab("history");
+  const [first] = await screen.findAllByTestId("phone-history-row");
+  if (first === undefined) throw new Error("no row");
+  await fireEvent.press(first);
+}
+
+const chars = (text: string) => Array.from(text).length;
+
+// 记录详情 itself: the texts, the facts, copy, share, star and delete, and the long entry's tools.
+describe("the entry page", () => {
+  const PROCESSED = "要点：流式识别的延迟降低了一半。";
+
+  it("shows the polished, original and processed texts with their facts; copies, shares and stars", async () => {
+    const entry = take(1, RAW, TEXT, {
+      processed: { text: PROCESSED, preset: { id: "notes", name: "要点纪要" }, at_ms: T },
+      preset: { id: "proofread", name: "校对" },
+      scene: { id: "s-chat", name: "chat", builtin: "chat" },
+    });
+    const { backend } = await openEntry({ history: [entry] });
+    const text = () => screen.getByTestId("phone-entry-text");
+    expect(text()).toHaveTextContent(TEXT);
+    expect(screen.getByTestId("entry-outcome")).toHaveTextContent("已插入 · 粘贴");
+    await fireEvent.press(screen.getByText("原文"));
+    expect(text()).toHaveTextContent(RAW);
+    await fireEvent.press(screen.getByText("处理后"));
+    expect(text()).toHaveTextContent(PROCESSED);
+    expect(screen.getByText("由「要点纪要」处理 · 原文保留")).toBeOnTheScreen();
+    for (const fact of ["Qwen/Qwen3-ASR-1.7B", "校对", "即时聊天", "总计 1,186 ms"]) {
+      expect(screen.getByText(fact)).toBeOnTheScreen();
+    }
+
+    // What is copied and shared is the view on screen.
+    await fireEvent.press(screen.getByText("复制"));
+    expect(await screen.findByText(`已复制到剪贴板 · ${chars(PROCESSED)} 字`)).toBeOnTheScreen();
+    expect(backend.phoneClipboard).toBe(PROCESSED);
+    await fireEvent.press(screen.getByText("分享"));
+    await waitFor(() => {
+      expect(backend.shared).toEqual([PROCESSED]);
+    });
+    await fireEvent.press(screen.getByText("收藏"));
+    expect(await screen.findByText("取消收藏")).toBeOnTheScreen();
+    expect((await backend.historyEntry(entry.id))?.starred).toBe(true);
+    await fireEvent.press(screen.getByText("取消收藏"));
+    expect(await screen.findByText("收藏")).toBeOnTheScreen();
+    expect((await backend.historyEntry(entry.id))?.starred).toBe(false);
+  });
+
+  it("deletes after asking and goes back to 记录; says why a copy, a share, a star or a deletion did not go through", async () => {
+    const { backend, invoke } = await openEntry();
+    const paste = jest.spyOn(backend, "pasteText");
+    paste.mockResolvedValueOnce({ kind: "failed", reason: "invalid" });
+    await fireEvent.press(screen.getByText("复制"));
+    expect(await screen.findByText("复制失败")).toBeOnTheScreen();
+    paste.mockRejectedValueOnce(new Error("剪贴板不可用"));
+    await fireEvent.press(screen.getByText("复制"));
+    await waitFor(() => {
+      expect(paste).toHaveBeenCalledTimes(2);
+    });
+    expect(await screen.findByText("复制失败")).toBeOnTheScreen();
+    paste.mockRestore();
+    // One reason for each refusal below, so each toast replaces the last.
+    const refuse = () => invoke.mockRejectedValueOnce(new Error("核心没有响应"));
+    refuse();
+    await fireEvent.press(screen.getByText("分享"));
+    expect(await screen.findByText(/核心没有响应/)).toBeOnTheScreen();
+    refuse();
+    await fireEvent.press(screen.getByText("收藏"));
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("history_star", { id: SAMPLE.id, starred: true });
+    });
+    expect(screen.getByText("收藏")).toBeOnTheScreen();
+
+    await fireEvent.press(screen.getByText("删除"));
+    expect(await screen.findByText("删除这条记录？")).toBeOnTheScreen();
+    expect(
+      screen.getByText(new RegExp(`${TEXT.slice(0, 40)}…。此操作无法撤销。$`)),
+    ).toBeOnTheScreen();
+    refuse();
+    await fireEvent.press(screen.getByTestId("shell-confirm"));
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("history_delete", { id: SAMPLE.id });
+    });
+    expect(screen.getByTestId("phone-entry")).toBeOnTheScreen();
+    await fireEvent.press(screen.getByText("删除"));
+    await fireEvent.press(await screen.findByTestId("shell-confirm"));
+    expect(await screen.findByTestId("phone-history")).toBeOnTheScreen();
+    await waitFor(() => {
+      expect(screen.getAllByTestId("phone-history-row")).toHaveLength(OTHERS.length);
+    });
+  });
+
+  it("processes a long entry with a chosen preset, cancels a run, and shares it as subtitles or text", async () => {
+    const long = take(1, RAW, RAW, {
+      refined: false,
+      refine_ms: undefined,
+      duration_ms: 180_000,
+      segments: [{ text: "下午用维他命测了千问三的流式识别。", start_ms: 0, end_ms: 4000 }],
+    });
+    const { backend } = await openEntry({ history: [long] });
+    // The core's answers are the test's: each step stays on the screen until the next one.
+    const invoke = hold(backend, "history_process", "history_process_cancel");
+    const answer = async (state: ProcessState) => {
+      const requestId = requestIdOf(invoke, "history_process");
+      await act(async () => {
+        backend.publish({
+          type: "history_process",
+          request_id: requestId,
+          id: long.id,
+          state,
+        });
+        await Promise.resolve();
+      });
+    };
+    const tools = within(screen.getByTestId("phone-entry-long"));
+    expect(tools.queryByText("导出文本时使用处理后文本。")).toBeNull();
+    await fireEvent.press(tools.getByLabelText("预设"));
+    await fireEvent.press(await screen.findByRole("radio", { name: "要点纪要" }));
+    await fireEvent.press(tools.getByText("开始处理"));
+    expect(invoke).toHaveBeenCalledWith("history_process", {
+      requestId: expect.any(Number),
+      id: long.id,
+      preset: "notes",
+    });
+    await answer({ state: "running", done: 1, total: 2 });
+    expect(tools.getByText("已处理 1/2 部分")).toBeOnTheScreen();
+    await answer({
+      state: "done",
+      processed: { text: "要点：流式识别。", preset: { id: "notes", name: "要点纪要" }, at_ms: T },
+    });
+    expect(await tools.findByText("重新处理")).toBeOnTheScreen();
+    expect(tools.getByText("导出文本时使用处理后文本。")).toBeOnTheScreen();
+
+    await fireEvent.press(tools.getByText("重新处理"));
+    await fireEvent.press(await tools.findByText("取消"));
+    expect(invoke).toHaveBeenCalledWith("history_process_cancel", {
+      requestId: expect.any(Number),
+    });
+    await answer({ state: "cancelled" });
+    expect(await tools.findByText("已取消，未保存结果。")).toBeOnTheScreen();
+
+    await fireEvent.press(tools.getByText("分享字幕（SRT）"));
+    await fireEvent.press(tools.getByText("分享文本（TXT）"));
+    await waitFor(() => {
+      expect(backend.exports.map((e) => e.format)).toEqual(["srt", "txt"]);
+    });
+    expect(backend.exports[0]?.fileName).toMatch(/^Voltip \d{4}-\d{2}-\d{2} \d{2}\.\d{2}$/);
+  });
+
+  it("says why a long entry could not be processed or shared, and offers no subtitles without segments", async () => {
+    const long = take(1, RAW, RAW, { refined: false, refine_ms: undefined, duration_ms: 180_000 });
+    const backend = new MockBackend({ role: "phone", now: () => T, history: [long], builtIn: {} });
+    await openOn(backend);
+    const tools = within(await screen.findByTestId("phone-entry-long"));
+    expect(tools.getByText("分享字幕（SRT）")).toBeDisabled();
+    await fireEvent.press(tools.getByText("开始处理"));
+    expect(
+      await tools.findByText("处理失败：尚未配置 AI 润色服务，无法用预设处理"),
+    ).toBeOnTheScreen();
+    jest
+      .spyOn(backend, "historyExport")
+      .mockResolvedValueOnce({ kind: "failed", code: "write", detail: "磁盘已满" });
+    await fireEvent.press(tools.getByText("分享文本（TXT）"));
+    expect(await screen.findByText("文件未能保存：磁盘已满")).toBeOnTheScreen();
+  });
+
+  it("a take sent to a computer names it and leaves the details to the computer; one too large to upload says so", async () => {
+    const sent = take(1, "会议改到三点", "会议改到三点。", {
+      origin: { kind: "sent", device: "Studio" },
+    });
+    const { backend } = await openEntry({ history: [sent] });
+    expect(screen.getByText("发送到 Studio")).toBeOnTheScreen();
+    expect(screen.getByText("识别和润色的详细信息保存在电脑的记录中。")).toBeOnTheScreen();
+    expect(screen.queryByText("识别模型")).toBeNull();
+    expect(screen.queryByText("这条记录太大，没有上传到电脑。")).toBeNull();
+    await act(async () => {
+      backend.simulateTooLarge([sent.id]);
+      await Promise.resolve();
+    });
+    expect(await screen.findByText("这条记录太大，没有上传到电脑。")).toBeOnTheScreen();
+  });
+
+  it("an entry deleted elsewhere shows as gone", async () => {
+    const { backend } = await openEntry();
+    await act(async () => {
+      await backend.invoke("history_delete", { id: SAMPLE.id });
+    });
+    expect(await screen.findByText("这条记录已删除。")).toBeOnTheScreen();
+    expect(screen.getByText("这条记录已被删除或清空。")).toBeOnTheScreen();
+  });
+
+  it("an entry the core cannot read shows as gone", async () => {
+    const backend = new MockBackend({ role: "phone", now: () => T, history: [SAMPLE] });
+    jest.spyOn(backend, "historyEntry").mockRejectedValue(new Error("读不出来"));
+    await openOn(backend);
+    expect(await screen.findByText("这条记录已删除。")).toBeOnTheScreen();
   });
 });
 

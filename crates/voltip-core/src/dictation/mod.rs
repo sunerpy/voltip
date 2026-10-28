@@ -586,7 +586,7 @@ mod tests {
         use crate::providers::ServiceKind::Llm;
         assert_eq!(RefineFailure::of(&DictationError::RateLimited { service: Llm, detail: "429".into() }), RefineFailure::RateLimited);
         assert_eq!(RefineFailure::of(&DictationError::Overloaded { service: Llm, detail: "503".into() }), RefineFailure::RateLimited, "a busy service");
-        assert_eq!(RefineFailure::of(&DictationError::QuotaExhausted { service: Llm, detail: "x".into() }), RefineFailure::Quota);
+        assert_eq!(RefineFailure::of(&DictationError::QuotaExhausted { service: Llm, detail: "x".into(), retry_at_ms: None }), RefineFailure::Quota);
         assert_eq!(RefineFailure::of(&DictationError::Refine("timed out".into())), RefineFailure::Failed);
         let wire = [
             (RefineFailure::RateLimited, "rate_limited", true),
@@ -621,8 +621,16 @@ mod tests {
             (DictationError::Selection("no copy tool".into()), FailureCode::Selection, "selection"),
             (DictationError::EditUnavailable("no key".into()), FailureCode::EditUnavailable, "edit_unavailable"),
             (DictationError::EditInTerminal, FailureCode::EditInTerminal, "edit_in_terminal"),
-            (DictationError::QuotaExhausted { service: crate::providers::ServiceKind::Asr, detail: "x".into() }, FailureCode::Quota, "quota"),
-            (DictationError::QuotaExhausted { service: crate::providers::ServiceKind::Llm, detail: "x".into() }, FailureCode::Quota, "quota"),
+            (
+                DictationError::QuotaExhausted { service: crate::providers::ServiceKind::Asr, detail: "x".into(), retry_at_ms: None },
+                FailureCode::Quota,
+                "quota",
+            ),
+            (
+                DictationError::QuotaExhausted { service: crate::providers::ServiceKind::Llm, detail: "x".into(), retry_at_ms: None },
+                FailureCode::Quota,
+                "quota",
+            ),
             (DictationError::RateLimited { service: crate::providers::ServiceKind::Asr, detail: "x".into() }, FailureCode::Asr, "asr"),
             (DictationError::RateLimited { service: crate::providers::ServiceKind::Llm, detail: "x".into() }, FailureCode::Refine, "refine"),
             (DictationError::Overloaded { service: crate::providers::ServiceKind::Asr, detail: "x".into() }, FailureCode::Asr, "asr"),

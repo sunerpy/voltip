@@ -12,6 +12,7 @@ import {
   emptyEngineStatus,
   emptyHotkeyStatus,
   emptyMcpStatus,
+  emptyUsageView,
   idleDictation,
   idleUpdate,
 } from "@voltip/shared";
@@ -79,7 +80,12 @@ export const EMPTY: UiState = {
   secret_backend: "",
   app_version: "",
   relay: { state: "disconnected", attempts: 0, source: "none" },
-  pairing: { state: { state: "idle" }, local_confirmed: false, peer_confirmed: false },
+  pairing: {
+    state: { state: "idle" },
+    local_confirmed: false,
+    peer_confirmed: false,
+    scanned: false,
+  },
   devices: [],
   hotkey: emptyHotkeyStatus(),
   dictation: idleDictation(),
@@ -102,6 +108,7 @@ export const EMPTY: UiState = {
   serve: { available: false, phase: "off" },
   network: { proxy_password: false },
   mcp: emptyMcpStatus(),
+  usage: emptyUsageView(),
 };
 
 export function useBackend(): BackendContextValue {

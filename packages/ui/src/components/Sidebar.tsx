@@ -61,6 +61,10 @@ export interface SidebarProps {
   controls?: ReactNode;
   /** A card over the footer (the relay and the phones); the rail leaves it out. */
   status?: ReactNode;
+  /** Between the status card and the footer, in both layouts (today's usage, docs/dictation.md
+   *  §27); it follows `collapsed` itself. The panel is a size container named `sidebar`, so the
+   *  card can show a shorter form when the window is low. */
+  usage?: ReactNode;
   /** The square buttons at the bottom (feedback, the theme menu, settings), drawn with
    *  {@link SidebarButton} so they follow `collapsed`. */
   footer?: ReactNode;
@@ -196,6 +200,7 @@ export function Sidebar({
   collapsed = false,
   controls,
   status,
+  usage,
   footer,
   floating = false,
   brand = "Voltip",
@@ -214,7 +219,7 @@ export function Sidebar({
       // hold the rail open wider than it is.
       style={{ width, minWidth: width, maxWidth: width }}
       className={cx(
-        "flex h-full shrink-0 flex-col rounded-panel border border-sidebar-edge bg-sidebar pb-3",
+        "flex h-full shrink-0 flex-col rounded-panel border border-sidebar-edge bg-sidebar pb-3 [container-name:sidebar] [container-type:size]",
         collapsed ? "px-2" : "px-3",
         floating ? "shadow-win glass-blur" : "shadow-sidebar",
         className,
@@ -299,6 +304,7 @@ export function Sidebar({
           {status}
         </div>
       )}
+      {usage !== undefined && <div data-testid="sidebar-usage">{usage}</div>}
       {footer !== undefined && (
         <div
           data-testid="sidebar-footer"

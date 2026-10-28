@@ -16,7 +16,7 @@ import type { Backend, EventListener, FrameListener, Unsubscribe } from "./backe
 import { type SampleHistoryRow, historyEntries } from "./fixtures/history";
 import builtinPresetTexts from "./fixtures/ipc/presets-builtin.json";
 import builtinSceneRows from "./fixtures/ipc/scenes-builtin.json";
-import { joinLiveText, livePreviewText } from "./labels";
+import { joinLiveText, livePreviewText, relayTooOld } from "./labels";
 import {
   type BuiltInService,
   type ListedModels,
@@ -96,7 +96,9 @@ import {
   type UiEvent,
   type UiState,
   type UpdateStatus,
+  type UsageView,
   type ConnectivityReport,
+  type ProbeResult,
   type HotkeyCapabilities,
   type HotkeyStatus,
   SOLO_KEYS,
@@ -110,6 +112,7 @@ import {
   emptyEngineStatus,
   emptyHotkeyStatus,
   emptyModelsLocation,
+  emptyUsageView,
   HISTORY_LIMIT,
   HISTORY_MIN_KEEP,
   MIN_SERVE_PORT,
@@ -231,6 +234,9 @@ export interface MockPeer {
   /** Milliseconds after joining until the simulated phone confirms the safety code. */
   confirmAfterMs: number;
   info?: DeviceInfo;
+  /** The simulated phone scanned the QR code: the computer confirms by itself
+   *  (docs/pairing.md 「扫码配对只在手机上确认」). */
+  scanned?: boolean;
 }
 
 export interface MockBackendOptions {
@@ -272,6 +278,9 @@ export interface MockBackendOptions {
   probeModels?: Partial<Record<ProviderId, readonly string[]>> | false;
   /** Initial updater status (`disabled` for a build without an update source, `failed`, …). */
   update?: UpdateStatus;
+  /** The built-in service's usage and this device's record (docs/dictation.md §27); nothing
+   *  reported yet unless given. */
+  usage?: Partial<UsageView>;
   /** Install state per catalogue id (`{ "sense-voice-small": { kind: "installed", … } }`); every
    *  model starts `not_installed` otherwise. */
   models?: Partial<Record<string, ModelInstallState>>;
@@ -655,6 +664,8 @@ export const MOCK_ALWAYS_ON_RENEW_SECS = 10;
 export const MOCK_ALWAYS_ON_PAUSE_MS = 4000;
 /** The core's refusal on a phone. */
 export const ALWAYS_ON_DESKTOP_ONLY = "pairing: 常开配对只在电脑上可用";
+/** The core's refusal below the relay's minimum version (`runtime.rs` `require_relay`). */
+export const PAIRING_TOO_OLD = "pairing: 此版本过低，请更新 Voltip 后再配对";
 
 /** How long the preview's desktop takes to insert a phone's text (docs/dictation.md §20.6). */
 export const MOCK_TEXT_MS = 200;
@@ -1176,6 +1187,11 @@ export class MockBackend implements Backend {
       serve: options.serve ?? this.serveStatusFor(settings.serve),
       network: { ...(options.network ?? { proxy_password: false }) },
       mcp: options.mcp ?? this.mcpStatusFor(settings.mcp),
+      usage: {
+        ...emptyUsageView(),
+        builtin: this.builtIn.asr !== undefined || this.builtIn.llm !== undefined,
+        ...structuredClone(options.usage ?? {}),
+      },
     };
     this.proxyPassword = options.network?.proxy_password === true ? "saved" : undefined;
     for (const m of options.mirrors ?? []) this.mirrors.set(m.view.desktop, structuredClone(m));
@@ -1597,12 +1613,15 @@ export class MockBackend implements Backend {
     [K in MutationCommand]: (args: CommandArgs[K] | undefined) => void;
   } = {
     pairing_start: () => {
+      if (this.refuseTooOld()) return;
       this.startPairing();
     },
     pairing_join_code: (args) => {
+      if (this.refuseTooOld()) return;
       this.joinWithCode(required(args).code);
     },
     pairing_join_ticket: (args) => {
+      if (this.refuseTooOld()) return;
       this.joinWithTicket(required(args).uri);
     },
     settings_set_pairing_always_on: (args) => {
@@ -2581,6 +2600,17 @@ export class MockBackend implements Backend {
       if (this.state.refine_notice !== undefined)
         this.emit({ type: "refine_notice", notice: null });
     },
+    // docs/dictation.md §27: the preview's service answers at once with what it has.
+    usage_refresh: () => {
+      this.emit({ type: "usage", ...this.state.usage });
+    },
+    usage_notice_dismiss: (args) => {
+      const { notice } = required(args);
+      const dismissed = this.state.usage.dismissed.includes(notice)
+        ? this.state.usage.dismissed
+        : [...this.state.usage.dismissed, notice];
+      this.emit({ type: "usage", ...this.state.usage, dismissed });
+    },
     settings_set_proxy: (args) => {
       const { mode, server, username, noProxy, password } = required(args);
       const checked = checkProxySettings({ mode, server, username, no_proxy: noProxy });
@@ -3069,17 +3099,26 @@ export class MockBackend implements Backend {
 
   // ---- remote-side simulation ------------------------------------------------------------------
 
-  /** The other device joined the session: Noise XX runs, then both sides see the safety code. */
-  simulatePeerJoined(peer: DeviceInfo = this.role === "phone" ? desktopPeer() : phonePeer()) {
+  /** The other device joined the session: Noise XX runs, then both sides see the safety code.
+   *  `scanned`: the phone read the computer's QR code and proved it, so the computer confirms by
+   *  itself (docs/pairing.md 「扫码配对只在手机上确认」); otherwise both users confirm. */
+  simulatePeerJoined(
+    peer: DeviceInfo = this.role === "phone" ? desktopPeer() : phonePeer(),
+    scanned = false,
+  ) {
     const phase = this.state.pairing.state.state;
     if (phase !== "waiting_for_peer" && phase !== "creating_session") return;
     this.stopCountdown();
     this.emitPairing({ state: { state: "key_exchange" } });
     this.later(KEY_EXCHANGE_MS, () => {
+      // The computer's side is the one that confirms by itself.
+      const computer = this.role === "phone" ? { peer_confirmed: true } : { local_confirmed: true };
       this.emitPairing({
         state: { state: "awaiting_verification" },
         safety_code: this.safetyCode(),
         peer,
+        scanned,
+        ...(scanned ? computer : {}),
       });
       if (this.autoPeer) {
         this.later(this.autoPeer.confirmAfterMs, () => {
@@ -3109,6 +3148,11 @@ export class MockBackend implements Backend {
   simulateQuotaExhausted(kind: ServiceKind, retryAtMs: number) {
     this.quotaOut.set(kind, retryAtMs);
     this.emit({ type: "engines", ...this.resolveEngines(this.state.settings.engines) });
+  }
+
+  /** The built-in service reports another day (docs/dictation.md §27). */
+  simulateUsage(patch: Partial<UsageView>) {
+    this.emit({ type: "usage", ...this.state.usage, ...structuredClone(patch) });
   }
 
   simulateRelay(patch: Partial<RelayStatus>) {
@@ -4120,7 +4164,18 @@ export class MockBackend implements Backend {
     };
   }
 
-  /** A self-check against the mock's own state: the relay answers when its link is up, and an
+  /** The probe of a relay that is not connected: how its last attempt failed, the build's own
+   *  relay without the words (as the core reports it). */
+  private mockProbeFailure(): ProbeResult {
+    const failure = this.state.relay.last_failure;
+    if (failure === undefined || failure.kind === "timeout") return { result: "timeout" };
+    if (failure.kind === "refused") return { result: "refused" };
+    const reason = this.state.relay.source === "user" ? (failure.detail ?? "") : "";
+    return { result: "failed", reason, kind: failure.kind };
+  }
+
+  /** A self-check against the mock's own state: the relay answers when its link is up, fails
+   *  the way its last attempt did when it is not (`simulateRelay` with a `last_failure`), and an
    *  online device has a round trip. */
   private connectivityReport(): ConnectivityReport {
     const relayUp = this.state.relay.state === "connected";
@@ -4131,7 +4186,7 @@ export class MockBackend implements Backend {
         ...(this.state.relay.source === "none"
           ? {}
           : {
-              result: relayUp ? { result: "ok" as const, ms: 48 } : { result: "timeout" as const },
+              result: relayUp ? { result: "ok" as const, ms: 48 } : this.mockProbeFailure(),
             }),
       },
       peers: this.state.devices.map((d) => {
@@ -4737,6 +4792,13 @@ export class MockBackend implements Backend {
 
   // ---- internals ---------------------------------------------------------------------------------
 
+  /** Below the relay's minimum version the core refuses any pairing (docs/pairing.md 「最低版本」). */
+  private refuseTooOld(): boolean {
+    if (relayTooOld(this.state.relay) === undefined) return false;
+    this.emit({ type: "error", message: PAIRING_TOO_OLD });
+    return true;
+  }
+
   private startPairing() {
     this.clearTimers();
     this.emitPairing({
@@ -4760,7 +4822,7 @@ export class MockBackend implements Backend {
       if (this.autoPeer) {
         const peer = this.autoPeer;
         this.later(peer.joinAfterMs, () => {
-          this.simulatePeerJoined(peer.info);
+          this.simulatePeerJoined(peer.info, peer.scanned ?? false);
         });
       }
     });
@@ -4782,7 +4844,8 @@ export class MockBackend implements Backend {
       });
       return;
     }
-    this.joinSession();
+    // The relay hands out the six digits, so they prove nothing: both users confirm.
+    this.joinSession(false);
   }
 
   private joinWithTicket(uri: string) {
@@ -4796,17 +4859,17 @@ export class MockBackend implements Backend {
       this.finish({ state: "failed", reason: { kind: "protocol" } });
       return;
     }
-    this.joinSession();
+    this.joinSession(true);
   }
 
-  private joinSession() {
+  private joinSession(scanned: boolean) {
     this.clearTimers();
     this.emitPairing({
       ...idleSnapshot(),
       state: { state: "creating_session" },
     });
     this.later(CREATE_SESSION_MS, () => {
-      this.simulatePeerJoined();
+      this.simulatePeerJoined(undefined, scanned);
       if (this.autoPeer) {
         const peer = this.autoPeer;
         this.later(KEY_EXCHANGE_MS + peer.confirmAfterMs, () => {
@@ -5091,6 +5154,67 @@ export function sampleDevices(now = Math.floor(Date.now() / 1000)): DeviceView[]
     },
     { device: laptop, connection: { state: "offline" } },
   ];
+}
+
+/** The built-in service's states the previews show (docs/dictation.md §27; Penpot 「用量与额度」
+ *  board 11): under 80 %, from 80 % on, at the limit, the counting period, unknown. */
+export type SampleUsageState = "ok" | "near" | "out" | "count" | "unknown";
+
+/** A week of built-in use on this computer and today's report in `state`, for demos and screenshots:
+ *  recognition in minutes and clean-ups, against 60 minutes and 100 a day. */
+export function sampleUsage(
+  state: SampleUsageState = "ok",
+  nowMs = Date.now(),
+): Partial<UsageView> {
+  const dayMs = 86_400_000;
+  const beijing = 8 * 3_600_000;
+  const todayIndex = Math.floor((nowMs + beijing) / dayMs);
+  const resetAt = ((todayIndex + 1) * dayMs - beijing) / 1000;
+  const used = { ok: [23, 41], near: [52, 86], out: [60, 100], count: [23, 41], unknown: [23, 41] }[
+    state
+  ];
+  const [asrMin = 0, refine = 0] = used;
+  const week = [
+    [6, 18],
+    [19, 47],
+    [14, 33],
+    [60, 100],
+    [27, 61],
+    [3, 9],
+  ];
+  const days = [...week, [asrMin, refine]].map(([m = 0, r = 0], i) => {
+    const date = new Date((todayIndex - 6 + i) * dayMs);
+    return { day: date.toISOString().slice(0, 10), asr_seconds: m * 60, refine: r };
+  });
+  return {
+    builtin: true,
+    quota: {
+      mode: state === "count" ? "count" : "limit",
+      basis: "device",
+      day: days[6]?.day ?? "",
+      reset_at: resetAt,
+      asr: { used_seconds: asrMin * 60, limit_seconds: state === "count" ? null : 3600 },
+      refine: { used: refine, limit: state === "count" ? null : 100 },
+    },
+    reported_at: nowMs - 60_000,
+    unavailable: state === "unknown",
+    days,
+    asr_origins: [
+      { origin: { kind: "this_device" }, seconds: Math.max(0, asrMin - 5) * 60 },
+      { origin: { kind: "phone", name: "Pixel 8" }, seconds: Math.min(asrMin, 5) * 60 },
+    ],
+    refine_purposes: [
+      { purpose: "refine", count: Math.round(refine * 0.88) },
+      { purpose: "edit", count: refine - Math.round(refine * 0.88) },
+    ],
+    others: [
+      { provider: "local", service: "asr", model: "qwen3-asr-0.6b", amount: 7800 },
+      { provider: "aliyun", service: "asr", model: "paraformer-realtime-v2", amount: 2280 },
+      { provider: "groq", service: "llm", model: "qwen/qwen3.8-27b", amount: 312 },
+    ],
+    others_today: [{ provider: "local", service: "asr", model: "qwen3-asr-0.6b", amount: 420 }],
+    dismissed: [],
+  };
 }
 
 /** Local midnight of the day containing `ms`. */

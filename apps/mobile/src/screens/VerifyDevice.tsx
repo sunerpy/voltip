@@ -54,14 +54,18 @@ export function VerifyDevice() {
         </div>
       </Panel>
       <Panel eyebrow={t("mobile.verify.safetyCode")} bodyClassName="flex flex-col gap-4">
-        <p className="text-[13px] leading-5 text-fg-muted">{t("mobile.verify.note")}</p>
+        {/* A scanned QR code: the computer confirms by itself (docs/pairing.md 「扫码配对只在手机上
+            确认」), so this phone's confirmation finishes the pairing. */}
+        <p className="text-[13px] leading-5 text-fg-muted">
+          {pairing.scanned ? t("mobile.verify.scannedNote") : t("mobile.verify.note")}
+        </p>
         {pairing.safety_code && <SafetyCodeView code={pairing.safety_code} size="sm" />}
-        {pairing.peer_confirmed && (
+        {pairing.peer_confirmed && !pairing.scanned && (
           <LampText tone="ok">{t("mobile.verify.peerConfirmed")}</LampText>
         )}
         {pairing.local_confirmed && !pairing.peer_confirmed && (
           <LampText tone="accent" pulse>
-            {t("mobile.verify.waiting")}
+            {pairing.scanned ? t("mobile.verify.finishing") : t("mobile.verify.waiting")}
           </LampText>
         )}
       </Panel>
@@ -72,7 +76,11 @@ export function VerifyDevice() {
           icon="check"
           disabled={pairing.local_confirmed}
           onClick={() => void backend.invoke("pairing_confirm")}>
-          {pairing.local_confirmed ? t("mobile.verify.waitingButton") : t("mobile.verify.confirm")}
+          {!pairing.local_confirmed
+            ? t("mobile.verify.confirm")
+            : pairing.scanned
+              ? t("mobile.verify.finishingButton")
+              : t("mobile.verify.waitingButton")}
         </Button>
         <Button
           variant="text-danger"

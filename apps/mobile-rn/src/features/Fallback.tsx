@@ -166,6 +166,7 @@ function AddFallback({
           setProblem(undefined);
         }}
         options={candidates.map((p) => ({ value: p.id, label: t(`engines.provider.${p.id}`) }))}
+        testID={`fallback-${kind}-provider`}
       />
       {builtinChoice ? (
         <SelectField
@@ -176,6 +177,7 @@ function AddFallback({
             setProblem(undefined);
           }}
           options={choices.map((m) => ({ value: m, label: m }))}
+          testID={`fallback-${kind}-builtin-model`}
         />
       ) : builtin ? (
         <TextInput
@@ -183,6 +185,7 @@ function AddFallback({
           label={t("engines.fallback.model")}
           value={service.model}
           editable={false}
+          testID={`fallback-${kind}-builtin-fixed`}
         />
       ) : (
         <>
@@ -210,6 +213,7 @@ function AddFallback({
                 setTyped(text);
                 setProblem(undefined);
               }}
+              testID={`fallback-${kind}-custom`}
             />
           )}
         </>

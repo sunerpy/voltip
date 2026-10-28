@@ -30,6 +30,10 @@ Android only installs an update signed like the version you have. When this site
 
 Voltip 0.0.50 does not check for updates, and its **About** page has no **Updates** section. Google Play updates a copy it installed; for a copy from a GitHub release, download `Voltip_<version>_android_arm64.apk` from the new release and open it: it installs over the old version. Voltip 0.0.49 and earlier find the new version with **Check for updates** as above.
 
+### When the relay asks for an update
+
+The relay between phones and computers may ask for a newer Voltip. When a version is too old, the relay status in the computer's sidebar shows **Update needed** with the version required, and its button updates to the new version or checks for updates; the phone's pairing page shows **Update Voltip**, and paired computers read *Cannot connect · update this phone*. Until the update, pairing is not possible and paired devices cannot reconnect; dictation is not affected. Open Voltip again after the update and everything resumes. Versions 0.1.9 and earlier say that the version is not compatible and ask for an update when you pair.
+
 ### If a check fails
 
 The text after **Update failed** names the cause, for example that the connection timed out, was refused or could not be secured. Voltip gives up when a connection to the update server takes longer than 15 seconds to open, or when the server sends nothing for 30 seconds.

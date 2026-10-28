@@ -55,6 +55,8 @@ pub fn phone_config(data_dir: PathBuf, app_version: &str) -> CoreConfig {
     config.default_device_name = format!("{} 手机", platform_label());
     config.client_version = format!("voltip/{app_version}");
     config.app_version = app_version.to_owned();
+    // docs/dictation.md §27: the usage card asks the built-in service for this device's day.
+    config.usage_probe = Some(Arc::new(voltip_cloud::HttpUsageProbe::new(&config.network)));
     // The phone is the microphone; a desktop records its takes, never the other way round.
     config.accepts_phone_takes = false;
     // The phone keeps no recordings: its interface offers no 重新识别 (docs/dictation.md §26).

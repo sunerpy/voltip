@@ -75,7 +75,12 @@ function SceneEditor({ scene, onClose }: { scene?: Scene | undefined; onClose: (
     try {
       if (scene === undefined) await backend.invoke("scenes_add", { scene: payload });
       else await backend.invoke("scenes_update", { id: scene.id, scene: payload });
-      shell.toast(t("sceneEditor.saved", { name: payload.name }));
+      // A built-in scene's stored name is its category (`chat`): it is shown by its label.
+      shell.toast(
+        t("sceneEditor.saved", {
+          name: builtin && scene !== undefined ? sceneLabel(scene, locale) : payload.name,
+        }),
+      );
       onClose();
     } catch (e) {
       setSaveError(errorText(e));
@@ -131,6 +136,7 @@ function SceneEditor({ scene, onClose }: { scene?: Scene | undefined; onClose: (
             placeholder={t("sceneEditor.namePlaceholder")}
             error={nameProblem !== undefined}
             autoFocus
+            testID="scene-name"
             onChangeText={(name) => {
               update({ name });
             }}
@@ -144,6 +150,7 @@ function SceneEditor({ scene, onClose }: { scene?: Scene | undefined; onClose: (
         value={draft.refine}
         options={sceneRefineChoices(t)}
         onChange={(refine) => update({ refine })}
+        testID="scene-refine"
       />
       <SelectField
         label={t("sceneEditor.preset")}
@@ -157,12 +164,14 @@ function SceneEditor({ scene, onClose }: { scene?: Scene | undefined; onClose: (
         value={draft.language}
         options={sceneLanguageChoices(draft.language, t)}
         onChange={(language) => update({ language })}
+        testID="scene-language"
       />
       <SelectField
         label={t("sceneEditor.script")}
         value={draft.script}
         options={sceneScriptChoices(t)}
         onChange={(script) => update({ script })}
+        testID="scene-script"
       />
       <View style={{ gap: 4 }}>
         <TextInput
@@ -172,6 +181,7 @@ function SceneEditor({ scene, onClose }: { scene?: Scene | undefined; onClose: (
           multiline
           numberOfLines={4}
           error={problems.prompt !== undefined}
+          testID="scene-prompt"
           onChangeText={(prompt) => {
             update({ prompt });
           }}
@@ -198,7 +208,11 @@ function SceneEditor({ scene, onClose }: { scene?: Scene | undefined; onClose: (
           {t("sceneEditor.restore")}
         </Button>
       )}
-      {saveError !== undefined && <Hint tone="danger">{saveError}</Hint>}
+      {saveError !== undefined && (
+        <Hint tone="danger" testID="scene-save-error">
+          {saveError}
+        </Hint>
+      )}
     </FullScreenDialog>
   );
 }
@@ -396,6 +410,7 @@ export function Scenes() {
           </Dialog.ScrollArea>
           <Dialog.Actions>
             <Button
+              testID="scene-terms-close"
               onPress={() => {
                 setViewing(undefined);
               }}>
