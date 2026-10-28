@@ -69,13 +69,16 @@ screen_w=1080
 # a rail at the left (docs/mobile-rn.md §5), and only a node on the rail is under it.
 # Each field is matched on its own, so `^…$` anchors a whole label.
 find_node() {
-  python3 - "$out/ui.xml" "$1" "$screen_h" <<'PY'
+  python3 - "$out/ui.xml" "$1" "$screen_h" "$screen_w" <<'PY'
 import re, sys, xml.etree.ElementTree as ET
 try:
     nodes = list(ET.parse(sys.argv[1]).getroot().iter("node"))
 except Exception:
     sys.exit(1)
-pattern, height = re.compile(sys.argv[2]), int(sys.argv[3])
+pattern, height, width = re.compile(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
+# The bottom 140 px of a portrait screen belong to the navigation bar; on its side a phone has the
+# bar at the side or only the gesture handle below (a page's button there is 965 of 1080 px).
+margin = 140 if height > width else 60
 def box(n):
     m = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", n.get("bounds", ""))
     return tuple(map(int, m.groups())) if m else None
@@ -98,7 +101,7 @@ for n in nodes:
             continue
         if not rail and y >= dock[1]:
             continue
-    if 80 < y < height - (16 if tab else 140) and x2 > x1 and y2 > y1:
+    if 80 < y < height - (16 if tab else margin) and x2 > x1 and y2 > y1:
         print(x, y)
         sys.exit(0)
 sys.exit(1)
