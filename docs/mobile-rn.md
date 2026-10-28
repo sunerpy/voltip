@@ -192,7 +192,10 @@ JS ◀──sendEvent("voltip://event")── Kotlin VoltipHost（PlatformHost�
     `GmsBarcodeScanningDelegateActivity` 在它的库清单里锁了竖屏，`plugins/display.js` 用 `tools:remove="android:screenOrientation"`
     去掉。清单里也没有 `resizeableActivity="false"` 与 `min/maxAspectRatio`（`check-android-package.sh` 检查，§6）。
   - 页面（`ui/kit.tsx` 的 `Page`）左右加上安全区（横屏时的刘海与导航栏），内容放在最宽 720 dp 的居中一列里（`PAGE_MAX_WIDTH`）；
-    浮动底栏最宽 480 dp、居中（`DOCK_MAX_WIDTH`）；底部面板最宽 640 dp、居中，左右让出安全区，高度不超过屏幕高减去顶部安全区和 8 dp，横屏时
+    浮动底栏最宽 480 dp、居中（`DOCK_MAX_WIDTH`）；手机横屏（窗口宽大于高且高不足 480 dp，`ui/rail.ts` 的 `isRailWindow`）时
+    标签栏改为屏幕左侧的竖向导航栏（宽 72 dp，距左侧安全区 16 dp，在状态栏与底部安全区之间居中），页面从它右侧开始
+    （`besideRail`），提示条贴近底部：底栏占去横屏手机约四分之一的高度，2026-10-28 在 Device Farm 的 Pixel 9 横屏上
+    挡住了说话页的按住说话按钮；平板与展开的折叠屏横屏高于 480 dp，仍用底栏。底部面板最宽 640 dp、居中，左右让出安全区，高度不超过屏幕高减去顶部安全区和 8 dp，横屏时
     标题不会顶进状态栏；扫码页的关闭按钮让出左侧安全区。`src/ui/wide.test.tsx` 4 条用 `Dimensions.set` 模拟平板与横屏。
   - 悬浮球按左右停靠（窗口的 `gravity` 是 `START` 或 `END`），旋转或换尺寸时 `BubbleService.onConfigurationChanged` 让
     `BubbleOverlay.refresh` 把纵向位置收回屏幕内，所以转屏后仍贴在原来那一边。

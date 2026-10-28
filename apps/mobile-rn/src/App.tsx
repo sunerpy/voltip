@@ -13,7 +13,7 @@ import { type Backend, type UiEvent, coreMessageText, resolveLocale } from "@vol
 import { getLocales } from "expo-localization";
 import { StatusBar } from "expo-status-bar";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef } from "react";
-import { ActivityIndicator, View, useColorScheme } from "react-native";
+import { ActivityIndicator, View, useColorScheme, useWindowDimensions } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { PaperProvider, Text } from "react-native-paper";
 import {
@@ -26,11 +26,12 @@ import {
 import { BackendProvider, useBackend, useUiState } from "./backend/BackendProvider";
 import { type BubbleControl, BubbleProvider, useBubbleSync } from "./backend/bubble";
 import { I18nProvider, useT } from "./backend/i18n";
-import { RootNavigator, aboveDock } from "./navigation";
+import { DOCK_GAP, RootNavigator, aboveDock } from "./navigation";
 import type { RootParams } from "./routes";
 import { ShellProvider, useShell } from "./shell";
 import { type AppTheme, appTheme, themeId, themeSeed } from "./theme/themes";
 import { Logo } from "./ui/Logo";
+import { isRailWindow } from "./ui/rail";
 
 export const navigation = createNavigationContainerRef<RootParams>();
 
@@ -163,8 +164,13 @@ function Shell({
   theme: AppTheme;
 }) {
   const insets = useSafeAreaInsets();
+  const window = useWindowDimensions();
+  // The snackbar clears the tab dock; beside the rail of a phone on its side, the bottom inset.
+  const bottomInset = isRailWindow(window.width, window.height)
+    ? insets.bottom + DOCK_GAP
+    : aboveDock(insets.bottom);
   return (
-    <ShellProvider bottomInset={aboveDock(insets.bottom)}>
+    <ShellProvider bottomInset={bottomInset}>
       <BubbleSync />
       <NavigationContainer ref={navigation} theme={navigationTheme(theme)}>
         <Gate register={register} />

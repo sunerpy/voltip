@@ -14,7 +14,7 @@ Every [release](https://github.com/sunerpy/voltip/releases) carries the app as `
 
 From 0.0.50 the app's screens use Android's own controls. Install it over an earlier version to update; the pairing, settings and history stay. See [Install](/guide/install#android).
 
-The app turns with the device, in portrait and in landscape. On a tablet or an unfolded foldable phone, its pages keep a comfortable reading width in the middle of the screen.
+The app turns with the device, in portrait and in landscape. On a phone in landscape, the tabs move to the left side of the screen. On a tablet or an unfolded foldable phone, its pages keep a comfortable reading width in the middle of the screen.
 
 In the app, the system back gesture or back button goes up one level. From **History** and **Settings** it goes to **Talk**, and two backs in a row on **Talk** leave the app. An open dialog closes first.
 

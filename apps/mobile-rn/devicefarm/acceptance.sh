@@ -65,7 +65,8 @@ screen_w=1080
 # page: a tap there lands on the dock (2026-10-13: 历史记录 under the dock opened the 记录 tab).
 # The tabs themselves only need to be on the screen: the dock keeps clear of the navigation bar
 # itself, and in landscape it sits lower than the 140 px kept free below a page's own controls
-# (2026-10-28, a Pixel 9: the dock's middle at 960 of 1080 px).
+# (2026-10-28, a Pixel 9: the dock's middle at 960 of 1080 px). On a phone on its side the tabs are
+# a rail at the left (docs/mobile-rn.md §5), and only a node on the rail is under it.
 # Each field is matched on its own, so `^…$` anchors a whole label.
 find_node() {
   python3 - "$out/ui.xml" "$1" "$screen_h" <<'PY'
@@ -79,6 +80,9 @@ def box(n):
     m = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", n.get("bounds", ""))
     return tuple(map(int, m.groups())) if m else None
 dock = next((box(n) for n in nodes if n.get("resource-id") == "tab-dock"), None)
+# A phone on its side has the tabs in a rail at the left (taller than wide): only what lies on it
+# is under it.
+rail = dock is not None and dock[3] - dock[1] > dock[2] - dock[0]
 for n in nodes:
     fields = (n.get("text"), n.get("content-desc"), n.get("resource-id"))
     if not any(f and pattern.search(f) for f in fields):
@@ -89,8 +93,11 @@ for n in nodes:
     x1, y1, x2, y2 = b
     x, y = (x1 + x2) // 2, (y1 + y2) // 2
     tab = (n.get("resource-id") or "").startswith("tab-")
-    if dock is not None and not tab and y >= dock[1]:
-        continue
+    if dock is not None and not tab:
+        if rail and dock[0] <= x <= dock[2] and dock[1] <= y <= dock[3]:
+            continue
+        if not rail and y >= dock[1]:
+            continue
     if 80 < y < height - (16 if tab else 140) and x2 > x1 and y2 > y1:
         print(x, y)
         sys.exit(0)

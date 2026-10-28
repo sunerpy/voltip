@@ -15,7 +15,7 @@ import {
 } from "@react-navigation/native-stack";
 import type { MessageKey } from "@voltip/shared";
 import { type ComponentType, useContext } from "react";
-import { StyleSheet, View } from "react-native";
+import { StyleSheet, View, useWindowDimensions } from "react-native";
 import { Appbar, Icon, Text, TouchableRipple } from "react-native-paper";
 
 import { useT } from "./backend/i18n";
@@ -44,6 +44,7 @@ import { Usage } from "./screens/Usage";
 import { Verify } from "./screens/Verify";
 import { type RootParams, type TabParams } from "./routes";
 import { cardShadow, useAppTheme } from "./ui/kit";
+import { RAIL_GAP, RAIL_WIDTH, isRailWindow } from "./ui/rail";
 
 const Stack = createNativeStackNavigator<RootParams>();
 const Tab = createBottomTabNavigator<TabParams>();
@@ -97,32 +98,47 @@ export function aboveDock(inset: number): number {
 /** The tabs' dock (board 03): a pill floating over the page, 24 dp from the sides (and their
  *  insets) and clear of the system's bottom inset, at most [DOCK_MAX_WIDTH] wide and centred, the
  *  chosen tab on a pill of the accent's soft tone. It tells the pages how tall it is, so their ends
- *  scroll clear of it. */
+ *  scroll clear of it. On a phone on its side it is a rail at the left instead ([isRailWindow]),
+ *  as tall as its tabs and centred between the status bar and the bottom inset; the pages keep
+ *  clear of it at the side ([besideRail]) and it reports no height. */
 function TabDock({ state, descriptors, navigation, insets }: BottomTabBarProps) {
   const theme = useAppTheme();
   const t = useT();
   const reportHeight = useContext(BottomTabBarHeightCallbackContext);
+  const window = useWindowDimensions();
+  const rail = isRailWindow(window.width, window.height);
   return (
     <View
       pointerEvents="box-none"
       onLayout={(e) => {
-        reportHeight?.(e.nativeEvent.layout.height);
+        reportHeight?.(rail ? 0 : e.nativeEvent.layout.height);
       }}
-      style={[
-        styles.dockWrap,
-        {
-          paddingBottom: dockBottom(insets.bottom),
-          paddingTop: DOCK_GAP,
-          paddingLeft: 24 + insets.left,
-          paddingRight: 24 + insets.right,
-        },
-      ]}>
+      style={
+        rail
+          ? [
+              styles.railWrap,
+              {
+                paddingLeft: insets.left + RAIL_GAP,
+                paddingTop: insets.top,
+                paddingBottom: insets.bottom,
+              },
+            ]
+          : [
+              styles.dockWrap,
+              {
+                paddingBottom: dockBottom(insets.bottom),
+                paddingTop: DOCK_GAP,
+                paddingLeft: 24 + insets.left,
+                paddingRight: 24 + insets.right,
+              },
+            ]
+      }>
       <View
         testID="tab-dock"
         accessibilityRole="tablist"
         accessibilityLabel={t("mobile.tab.label")}
         style={[
-          styles.dock,
+          rail ? styles.rail : styles.dock,
           { backgroundColor: theme.voltip.dock, borderColor: theme.voltip.dockEdge },
           theme.voltip.glass ? cardShadow(theme, 16, 40, 0.16) : styles.dockFlat,
         ]}>
@@ -132,7 +148,7 @@ function TabDock({ state, descriptors, navigation, insets }: BottomTabBarProps) 
           const label = typeof options?.title === "string" ? options.title : route.name;
           const color = focused ? theme.colors.primary : theme.voltip.subtle;
           return (
-            <View key={route.key} style={styles.tabCell}>
+            <View key={route.key} style={rail ? styles.railCell : styles.tabCell}>
               <TouchableRipple
                 testID={`tab-${route.name.toLowerCase()}`}
                 accessibilityRole="tab"
@@ -151,7 +167,10 @@ function TabDock({ state, descriptors, navigation, insets }: BottomTabBarProps) 
                     target: state.key,
                   });
                 }}
-                style={[styles.tab, focused && { backgroundColor: theme.colors.primaryContainer }]}>
+                style={[
+                  rail ? styles.railTab : styles.tab,
+                  focused && { backgroundColor: theme.colors.primaryContainer },
+                ]}>
                 <View style={styles.tabInner}>
                   {options?.tabBarIcon?.({ focused, color, size: 22 })}
                   <Text style={[styles.tabLabel, { color }]} numberOfLines={1}>
@@ -215,9 +234,20 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
   },
+  railWrap: { position: "absolute", left: 0, top: 0, bottom: 0, justifyContent: "center" },
+  rail: {
+    width: RAIL_WIDTH,
+    borderRadius: RAIL_WIDTH / 2,
+    borderWidth: 1,
+    paddingVertical: 8,
+    alignItems: "center",
+    gap: 4,
+  },
   dockFlat: { elevation: 3 },
   tabCell: { flex: 1, alignItems: "center" },
   tab: { width: 82, height: 52, borderRadius: 26, justifyContent: "center" },
+  railCell: { alignItems: "center" },
+  railTab: { width: 60, height: 56, borderRadius: 28, justifyContent: "center" },
   tabInner: { alignItems: "center", gap: 2 },
   tabLabel: { fontSize: 11, lineHeight: 15, fontWeight: "500" },
 });
