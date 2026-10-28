@@ -29,6 +29,8 @@ export interface BubbleStatus {
   mode: BubbleMode;
   /** The result shows beside the bubble once copied. */
   showResult: boolean;
+  /** The result's card has 不复制 too (off unless asked for, 2026-10-28). */
+  showDiscard: boolean;
 }
 
 /** The texts the bubble and its notification show (`mobile.bubble.native`). */
@@ -55,6 +57,8 @@ export const BUBBLE_STRING_KEYS = [
   "quota",
   "holdHint",
   "microphone",
+  "expand",
+  "stow",
 ] as const;
 export type BubbleStringKey = (typeof BUBBLE_STRING_KEYS)[number];
 
@@ -62,6 +66,7 @@ export interface BubbleConfig {
   enabled: boolean;
   mode: BubbleMode;
   showResult: boolean;
+  showDiscard: boolean;
   strings: BubbleStrings;
 }
 
@@ -103,6 +108,8 @@ export function bubbleStrings(t: TFunction): BubbleStrings {
     quota: s("quota"),
     holdHint: s("holdHint"),
     microphone: s("microphone"),
+    expand: s("expand"),
+    stow: s("stow"),
   };
 }
 
@@ -131,6 +138,7 @@ export function parseBubbleStatus(json: string): BubbleStatus {
     },
     mode: value["mode"] === "tap" ? "tap" : "hold",
     showResult: flag(value, "showResult"),
+    showDiscard: flag(value, "showDiscard"),
   };
 }
 
@@ -173,6 +181,7 @@ export function useBubbleSync() {
           enabled: true,
           mode: status.mode,
           showResult: status.showResult,
+          showDiscard: status.showDiscard,
           strings: bubbleStrings(t),
         });
       })

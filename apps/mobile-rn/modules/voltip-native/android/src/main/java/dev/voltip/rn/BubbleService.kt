@@ -184,6 +184,7 @@ class BubbleService : Service() {
                 .put("permissions", permissions)
                 .put("mode", prefs.mode)
                 .put("showResult", prefs.showResult)
+                .put("showDiscard", prefs.showDiscard)
         }
     }
 }

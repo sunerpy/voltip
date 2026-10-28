@@ -1,9 +1,10 @@
 // 设置 › 悬浮球 (docs/dictation.md §20.12; Penpot 「用量与额度」 boards 18a/18b): a talk button over
 // other apps whose result goes onto the clipboard. Until the microphone, 显示在其他应用上层 and the
-// notification are granted, the page lists them with the way to each; then how to talk, whether
-// the take is polished (the same switch as 说话 and AI 模型) and whether the result shows beside the
-// bubble. The page reads the state again whenever it comes back into view: a permission is
-// granted in the system's settings, outside the app.
+// notification are granted, the page lists them with the way to each; then how to talk (and how to
+// tuck the bubble into the edge), whether the take is polished (the same switch as 说话 and AI 模型),
+// whether the result shows beside the bubble and whether 不复制 shows with it. The page reads the
+// state again whenever it comes back into view: a permission is granted in the system's settings,
+// outside the app.
 import { useFocusEffect } from "@react-navigation/native";
 import { usageInline } from "@voltip/shared";
 import { useCallback, useEffect, useState } from "react";
@@ -133,6 +134,7 @@ function BubblePage({ control }: { control: BubbleControl }) {
         enabled: status.enabled,
         mode: status.mode,
         showResult: status.showResult,
+        showDiscard: status.showDiscard,
         ...change,
         strings: bubbleStrings(t),
       })
@@ -208,7 +210,10 @@ function BubblePage({ control }: { control: BubbleControl }) {
       )}
       {ready && (
         <>
-          <Section title={t("mobile.bubble.mode")} padded>
+          <Section
+            title={t("mobile.bubble.mode")}
+            padded
+            footer={<Hint testID="bubble-stow-hint">{t("mobile.bubble.stowHint")}</Hint>}>
             <Segmented<BubbleMode>
               testID="bubble-mode"
               label={t("mobile.bubble.mode")}
@@ -243,6 +248,20 @@ function BubblePage({ control }: { control: BubbleControl }) {
                   save({ showResult });
                 }}
                 testID="bubble-show-result"
+              />
+              <SwitchRow
+                title={t("mobile.bubble.showDiscard")}
+                description={
+                  status.showResult
+                    ? t("mobile.bubble.showDiscardBody")
+                    : t("mobile.bubble.showDiscardNeeds")
+                }
+                value={status.showDiscard}
+                disabled={!status.showResult}
+                onValueChange={(showDiscard) => {
+                  save({ showDiscard });
+                }}
+                testID="bubble-show-discard"
               />
             </Rows>
           </Section>

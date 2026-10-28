@@ -229,6 +229,7 @@ function fakeBubble(initial: Partial<BubbleStatus> = {}) {
     permissions: { microphone: true, overlay: false, notifications: false },
     mode: "hold",
     showResult: true,
+    showDiscard: false,
     ...initial,
   };
   const ready = () =>
@@ -244,6 +245,7 @@ function fakeBubble(initial: Partial<BubbleStatus> = {}) {
         enabled: config.enabled,
         mode: config.mode,
         showResult: config.showResult,
+        showDiscard: config.showDiscard,
         running: config.enabled && ready(),
       };
       return Promise.resolve(status);
@@ -306,11 +308,21 @@ describe("设置 › 悬浮球 (boards 18a/18b)", () => {
       expect(screen.getByTestId("bubble-toggle")).toBeChecked();
     });
     const config = bubble.configure.mock.calls[0]?.[0];
-    expect(config).toMatchObject({ enabled: true, mode: "hold", showResult: true });
+    expect(config).toMatchObject({
+      enabled: true,
+      mode: "hold",
+      showResult: true,
+      showDiscard: false,
+    });
     expect(config?.strings.copied).toBe("已复制 · 长按输入框粘贴");
+    expect(config?.strings.expand).toBe("展开悬浮球");
     expect(config?.strings.failed).toBe("未完成：{message}");
     expect(config?.strings.bodyHold).toBe("按住悬浮球说话，识别结果复制到剪贴板");
     expect(screen.getByTestId("bubble-toggle")).toHaveTextContent(/已开启 · 通知栏中可随时关闭/);
+    // How to tuck it into the edge, under how to talk.
+    expect(screen.getByTestId("bubble-stow-hint")).toHaveTextContent(
+      "将悬浮球拖出屏幕边缘后松开，可收起为一个小把手；轻点把手或将它向内拉即可恢复。",
+    );
     await fireEvent.press(screen.getByTestId("bubble-mode-tap"));
     await waitFor(() => {
       expect(bubble.configure).toHaveBeenLastCalledWith(
@@ -336,6 +348,39 @@ describe("设置 › 悬浮球 (boards 18a/18b)", () => {
     expect(guide).toHaveBeenCalledWith("bubble", "zh-CN");
   });
 
+  it("shows 不复制 beside the result only when asked, and only while the result shows", async () => {
+    const bubble = fakeBubble({
+      enabled: true,
+      running: true,
+      permissions: { microphone: true, overlay: true, notifications: true },
+    });
+    await renderApp({ bubble });
+    await openBubble();
+    const discard = await screen.findByTestId("bubble-show-discard");
+    expect(discard).not.toBeChecked();
+    expect(discard).toHaveTextContent(/显示「不复制」按钮在识别结果旁显示，点一下清空剪贴板/);
+    await fireEvent.press(discard);
+    await waitFor(() => {
+      expect(bubble.configure).toHaveBeenLastCalledWith(
+        expect.objectContaining({ enabled: true, showResult: true, showDiscard: true }),
+      );
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("bubble-show-discard")).toBeChecked();
+    });
+    // Without the result there is no card for it: the switch waits for 显示识别结果.
+    await fireEvent.press(screen.getByTestId("bubble-show-result"));
+    await waitFor(() => {
+      expect(screen.getByTestId("bubble-show-discard")).toBeDisabled();
+    });
+    expect(bubble.configure).toHaveBeenLastCalledWith(
+      expect.objectContaining({ showResult: false, showDiscard: true }),
+    );
+    expect(screen.getByTestId("bubble-show-discard")).toHaveTextContent(
+      /打开「显示识别结果」后可用/,
+    );
+  });
+
   it("says so when the system did not let it start", async () => {
     const bubble = fakeBubble({
       permissions: { microphone: true, overlay: true, notifications: true },
@@ -347,6 +392,7 @@ describe("设置 › 悬浮球 (boards 18a/18b)", () => {
         permissions: { microphone: true, overlay: true, notifications: true },
         mode: config.mode,
         showResult: config.showResult,
+        showDiscard: config.showDiscard,
       }),
     );
     await renderApp({ bubble });
@@ -359,6 +405,7 @@ describe("设置 › 悬浮球 (boards 18a/18b)", () => {
     const bubble = fakeBubble({
       enabled: true,
       mode: "tap",
+      showDiscard: true,
       permissions: { microphone: true, overlay: true, notifications: true },
     });
     await renderApp({ bubble, language: "en", mock: { settings: { locale: "system" } } });
@@ -366,7 +413,8 @@ describe("设置 › 悬浮球 (boards 18a/18b)", () => {
       expect(bubble.configure).toHaveBeenCalledTimes(1);
     });
     const config = bubble.configure.mock.calls[0]?.[0];
-    expect(config).toMatchObject({ enabled: true, mode: "tap" });
+    expect(config).toMatchObject({ enabled: true, mode: "tap", showDiscard: true });
+    expect(config?.strings.stow).toBe("Tuck in at the side of the screen");
     expect(config?.strings.bodyTap).toBe(
       "Tap the bubble to talk; the result is copied to the clipboard",
     );

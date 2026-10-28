@@ -305,11 +305,11 @@ scripts/build-android-rn.sh --unsigned  # 不签名：…_android_arm64-unsigned
   （Android 不允许从后台启动的前台服务使用麦克风）：原生模块的 `bubbleConfigure` 保存选项后调用 `BubbleService.apply`，
   开着且麦克风与「显示在其他应用上层」都已允许时启动，否则停止。服务在自己的协程作用域
   （`SupervisorJob() + Dispatchers.IO`）里调用挂起的 `invoke`，`onDestroy` 时取消；悬浮窗是 `BubbleOverlay`，
-  界面在主线程更新。选项、位置和文字存在 SharedPreferences（`BubblePrefs`）。
+  界面在主线程更新。选项、位置、是否收进了边缘和文字存在 SharedPreferences（`BubblePrefs`）。
 - **原生模块的新函数**：`bubbleStatus()`、`bubbleConfigure(configJson)`（都返回 `BubbleStatus` 的 JSON）、
   `bubbleOpenOverlaySettings()`、`bubbleOpenNotificationSettings()`。JavaScript 侧是 `src/backend/bubble.tsx` 的
   `BubbleControl`，由 `Root.tsx` 交给 `<App bubble>`；测试换成假的实现，没有它时设置里不显示悬浮球。
 - **清单**：`SYSTEM_ALERT_WINDOW`、`FOREGROUND_SERVICE`、`FOREGROUND_SERVICE_MICROPHONE`、`POST_NOTIFICATIONS` 与
   `BubbleService` 的声明在模块的 `AndroidManifest.xml`；`app.json` 列出这些权限，不再屏蔽 `SYSTEM_ALERT_WINDOW`。
-- **未验证**：本机没有模拟器（没有 KVM），悬浮球没有在真机上跑过，交给用户验收；厂商系统的后台限制见
-  `docs/dictation.md` §20.12。
+- **真机验证**：本机没有模拟器（没有 KVM）。用户 2026-10-28 在真机上试过最初的版本，没有问题；之后加的收进边缘和
+  「不复制」开关交给用户再验。厂商系统的后台限制见 `docs/dictation.md` §20.12。

@@ -10,6 +10,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -30,10 +31,12 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
 import dev.voltip.rn.uniffi.ShellException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.json.JSONObject
+import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
@@ -43,15 +46,20 @@ import kotlin.math.roundToInt
  * The floating bubble itself (docs/dictation.md §20.12; Penpot 「用量与额度」 boards 17a–17d): a round
  * talk button docked at an edge of the screen over other apps, and beside it a card for the take
  * it started: the recording with its level and time, the recognition, the copied result with
- * 再说一次 and 不复制 (shown [RESULT_MS]), or why it did not finish. Its takes are the phone's own
- * (`dictation_start`), recognised as the 说话 tab's are and copied to the clipboard by the shell's
- * injector; the card follows the core's dictation events for the take the bubble started, and
- * the bubble waits while a take started elsewhere runs.
+ * 再说一次 (and 不复制 when the user asked for it; shown [RESULT_MS]), or why it did not finish. Its
+ * takes are the phone's own (`dictation_start`), recognised as the 说话 tab's are and copied to the
+ * clipboard by the shell's injector; the card follows the core's dictation events for the take the
+ * bubble started, and the bubble waits while a take started elsewhere runs.
  *
  * Holding (`mode` hold): a press that stays put for [HOLD_DELAY_MS] starts the take, releasing
  * finishes it, and a release [cancelDistance] away from the press cancels it; a press that moves
  * first drags the bubble, which docks at the nearer edge when let go. Tapping (`mode` tap): a tap
  * starts, the next finishes, the card's 取消 discards. The texts are the app's (`BubblePrefs`).
+ *
+ * Tucked away (2026-10-28): a drag let go with the finger within [EDGE_ZONE_DP] of an edge tucks
+ * the bubble into that edge, where only a small handle shows; on the way the bubble sinks half into
+ * the edge, faded, so the release is announced. A tap on the handle, or a pull inward, brings the
+ * bubble back; dragged up or down, the handle moves along its edge.
  */
 @SuppressLint("ClickableViewAccessibility", "SetTextI18n")
 internal class BubbleOverlay(
@@ -72,6 +80,10 @@ internal class BubbleOverlay(
     private val bubbleFace = GradientDrawable()
     private val icon = ImageView(context)
     private val card = LinearLayout(context)
+    /** What shows of a tucked-away bubble: a tab on the edge, in a larger touch area. */
+    private val handle = FrameLayout(context)
+    private val handleTab = FrameLayout(context)
+    private val handleFace = GradientDrawable()
     private val params = WindowManager.LayoutParams(
         WindowManager.LayoutParams.WRAP_CONTENT,
         WindowManager.LayoutParams.WRAP_CONTENT,
@@ -102,12 +114,25 @@ internal class BubbleOverlay(
     /** The edge the bubble is docked at, and the one its card was last arranged for. */
     private var dockRight = true
     private var arrangedRight: Boolean? = null
+    /** Tucked into [dockRight]'s edge: only [handle] shows. */
+    private var stowed = false
+    /** Let go now, the drag going on tucks the bubble into [stowRight]'s edge. */
+    private var stowArmed = false
+    private var stowRight = true
+    /** The screen reader's action that tucks the bubble away. */
+    private var stowAction: Int? = null
 
     private var downX = 0f
     private var downY = 0f
     private var dragging = false
     private var dragOffsetX = 0f
     private var dragOffsetY = 0f
+    private var handleDownX = 0f
+    private var handleDownY = 0f
+    private var handleStartY = 0
+    private var handleMoved = false
+    /** The handle's drag goes up or down its edge, not out of it. */
+    private var handleAlong = false
     private val press = Runnable { startTake(tap = false, held = true) }
     /** The recording's time, counted on its card in place: the card is rebuilt only when what it
      *  says changes, so a finger on 取消 never loses the chip under it. */
@@ -126,9 +151,18 @@ internal class BubbleOverlay(
         buildViews()
         val (right, y) = prefs.dock
         dockRight = right
+        stowed = prefs.stowed
         params.gravity = Gravity.TOP or if (right) Gravity.END else Gravity.START
-        params.x = EDGE_MARGIN_DP.let(::dp)
-        params.y = (y * screenHeight()).roundToInt().coerceIn(0, max(0, screenHeight() - dp(BUBBLE_DP)))
+        val top = (y * screenHeight()).roundToInt().coerceIn(0, max(0, screenHeight() - dp(BUBBLE_DP)))
+        if (stowed) {
+            padForHandle()
+            params.x = 0
+            params.y = handleTop(top)
+        } else {
+            padForBubble()
+            params.x = dp(EDGE_MARGIN_DP)
+            params.y = top
+        }
         try {
             windows.addView(root, params)
             shown = true
@@ -144,6 +178,10 @@ internal class BubbleOverlay(
     fun refresh() {
         main.post {
             bubble.contentDescription = prefs.string("label", "")
+            handle.contentDescription = prefs.string("expand", "")
+            offerStow()
+            // Another screen size: the window stays on the screen.
+            params.y = params.y.coerceIn(0, max(0, screenHeight() - dp(if (stowed) HANDLE_H_DP else BUBBLE_DP)))
             render()
         }
     }
@@ -152,6 +190,7 @@ internal class BubbleOverlay(
     fun close() {
         VoltipRuntime.removeListener(this)
         main.removeCallbacksAndMessages(null)
+        bubble.animate().cancel()
         if (own) invoke("dictation_cancel")
         stopMeter()
         if (shown) {
@@ -403,12 +442,15 @@ internal class BubbleOverlay(
                     main.removeCallbacks(press)
                     beginDrag(e)
                 }
-                if (dragging) dragTo(e)
+                if (dragging) {
+                    dragTo(e)
+                    armStow(e.rawX)
+                }
             }
             MotionEvent.ACTION_UP -> {
                 main.removeCallbacks(press)
                 when {
-                    dragging -> dock()
+                    dragging -> if (stowArmed) stow(stowRight) else dock()
                     holding -> if (slidAway) cancelTake() else stopTake()
                     else -> tapped()
                 }
@@ -456,6 +498,7 @@ internal class BubbleOverlay(
     /** Let go: to the nearer edge, where it stays (also across starts). The card moves to the
      *  inner side once this touch is over. */
     private fun dock() {
+        disarmStow()
         val right = params.x + dp(BUBBLE_DP) / 2 > screenWidth() / 2
         dockRight = right
         params.gravity = Gravity.TOP or if (right) Gravity.END else Gravity.START
@@ -464,6 +507,139 @@ internal class BubbleOverlay(
         prefs.dock = Pair(right, params.y.toFloat() / max(1, screenHeight()))
         main.post { render() }
     }
+
+    /** While dragged: with the finger within [EDGE_ZONE_DP] of an edge the bubble sinks half into
+     *  it, faded, with a tick, and letting go there tucks it away. Not while its own take runs. */
+    private fun armStow(fingerX: Float) {
+        val zone = dp(EDGE_ZONE_DP)
+        val side = when {
+            own -> null
+            fingerX <= zone -> false
+            fingerX >= screenWidth() - zone -> true
+            else -> null
+        }
+        if ((side != null) == stowArmed && (side == null || side == stowRight)) return
+        stowArmed = side != null
+        if (side != null) stowRight = side
+        bubble.translationX = when {
+            !stowArmed -> 0f
+            stowRight -> tuckOffset()
+            else -> -tuckOffset()
+        }
+        if (stowArmed) bubble.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+        render()
+    }
+
+    private fun disarmStow() {
+        stowArmed = false
+        bubble.translationX = 0f
+    }
+
+    /** How far the bubble moves to sink half into the edge beside it; the window's bound, at the
+     *  edge, cuts it off there. */
+    private fun tuckOffset(): Float = dp(BUBBLE_DP) / 2f + dp(PAD_H_DP)
+
+    /** Into the edge `right` says: the handle where the bubble was, its middle level with the
+     *  bubble's (also across starts). The window changes once this touch is over. */
+    private fun stow(right: Boolean) {
+        disarmStow()
+        val top = params.y.coerceIn(0, max(0, screenHeight() - dp(BUBBLE_DP)))
+        stowed = true
+        dockRight = right
+        prefs.dock = Pair(right, top.toFloat() / max(1, screenHeight()))
+        prefs.stowed = true
+        main.post {
+            padForHandle()
+            params.gravity = Gravity.TOP or if (right) Gravity.END else Gravity.START
+            params.x = 0
+            params.y = handleTop(top)
+            render()
+        }
+    }
+
+    /** Out of the edge again, level with the handle, sliding out as it comes. */
+    private fun unstow() {
+        if (!stowed) return
+        val top = bubbleTop(params.y)
+        stowed = false
+        prefs.stowed = false
+        prefs.dock = Pair(dockRight, top.toFloat() / max(1, screenHeight()))
+        padForBubble()
+        params.gravity = Gravity.TOP or if (dockRight) Gravity.END else Gravity.START
+        params.x = dp(EDGE_MARGIN_DP)
+        params.y = top
+        render()
+        bubble.translationX = if (dockRight) tuckOffset() else -tuckOffset()
+        bubble.animate().translationX(0f).setDuration(SLIDE_MS).start()
+    }
+
+    /** The handle: a tap, or a pull inward past [PULL_DP], brings the bubble back; dragged up or
+     *  down it moves along its edge. Once the bubble is back the rest of the touch is ignored. */
+    private val handleTouch = View.OnTouchListener { view, e ->
+        if (!stowed) return@OnTouchListener true
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                handleDownX = e.rawX
+                handleDownY = e.rawY
+                handleStartY = params.y
+                handleMoved = false
+                handleAlong = false
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val dx = e.rawX - handleDownX
+                val dy = e.rawY - handleDownY
+                if (!handleMoved && hypot(dx, dy) > touchSlop) {
+                    handleMoved = true
+                    handleAlong = abs(dy) > abs(dx)
+                }
+                when {
+                    !handleMoved -> Unit
+                    handleAlong -> {
+                        params.y = (handleStartY + dy).roundToInt().coerceIn(0, max(0, screenHeight() - dp(HANDLE_H_DP)))
+                        update()
+                    }
+                    (if (dockRight) -dx else dx) >= dp(PULL_DP) -> unstow()
+                }
+            }
+            MotionEvent.ACTION_UP -> when {
+                !handleMoved -> view.performClick()
+                handleAlong -> keepHandle()
+            }
+            MotionEvent.ACTION_CANCEL -> if (handleMoved && handleAlong) keepHandle()
+        }
+        true
+    }
+
+    /** The handle moved along its edge: the bubble comes back there (also across starts). */
+    private fun keepHandle() {
+        prefs.dock = Pair(dockRight, bubbleTop(params.y).toFloat() / max(1, screenHeight()))
+    }
+
+    /** Screen readers tuck the bubble away with an action of its own; the handle's click brings
+     *  it back. */
+    private fun offerStow() {
+        stowAction?.let { ViewCompat.removeAccessibilityAction(bubble, it) }
+        stowAction = ViewCompat.addAccessibilityAction(bubble, prefs.string("stow", "")) { _, _ ->
+            if (own || stowed) {
+                false
+            } else {
+                stow(dockRight)
+                true
+            }
+        }
+    }
+
+    private fun padForBubble() = root.setPadding(dp(PAD_H_DP), dp(PAD_V_DP), dp(PAD_H_DP), dp(PAD_V_DP))
+
+    private fun padForHandle() = root.setPadding(0, 0, 0, 0)
+
+    /** The handle's window top for a bubble window at [top]: its middle level with the bubble's. */
+    private fun handleTop(top: Int): Int =
+        (top + dp(PAD_V_DP) + (dp(BUBBLE_DP) - dp(HANDLE_H_DP)) / 2).coerceIn(0, max(0, screenHeight() - dp(HANDLE_H_DP)))
+
+    /** The bubble window's top for a handle at [top]. */
+    private fun bubbleTop(top: Int): Int =
+        (top - dp(PAD_V_DP) - (dp(BUBBLE_DP) - dp(HANDLE_H_DP)) / 2).coerceIn(0, max(0, screenHeight() - dp(BUBBLE_DP)))
 
     // ---- views ----
 
@@ -476,7 +652,8 @@ internal class BubbleOverlay(
         root.orientation = LinearLayout.HORIZONTAL
         root.gravity = Gravity.CENTER_VERTICAL
         root.clipChildren = false
-        root.setPadding(dp(4), dp(8), dp(4), dp(8))
+        // The bubble sinks into the edge through the padding (armStow).
+        root.clipToPadding = false
 
         bubbleFace.shape = GradientDrawable.OVAL
         bubble.background = bubbleFace
@@ -494,6 +671,30 @@ internal class BubbleOverlay(
             setColor(CARD)
         }
         card.elevation = dp(4).toFloat()
+
+        handleFace.setColor(IDLE)
+        handleFace.setStroke(dp(1), HANDLE_EDGE)
+        handleTab.background = handleFace
+        handleTab.addView(
+            View(context).apply {
+                background = GradientDrawable().apply {
+                    cornerRadius = dp(1).toFloat()
+                    setColor(MUTED)
+                }
+            },
+            FrameLayout.LayoutParams(dp(2), dp(18), Gravity.CENTER),
+        )
+        handle.isClickable = true
+        handle.contentDescription = prefs.string("expand", "")
+        handle.setOnTouchListener(handleTouch)
+        handle.setOnClickListener { unstow() }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // Out of the way of the system's back gesture, which starts at the same edge.
+            handle.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+                v.systemGestureExclusionRects = listOf(Rect(0, 0, v.width, v.height))
+            }
+        }
+        offerStow()
     }
 
     /** The card on the inner side of the bubble. The bubble is never taken out of the window
@@ -514,15 +715,35 @@ internal class BubbleOverlay(
             root.addView(bubble, bubbleParams)
             root.addView(card, cardParams)
         }
+        // The handle on the edge itself, rounded on the inner side.
+        root.addView(handle, LinearLayout.LayoutParams(dp(HANDLE_W_DP), dp(HANDLE_H_DP)))
+        handle.removeAllViews()
+        handle.addView(
+            handleTab,
+            FrameLayout.LayoutParams(dp(HANDLE_TAB_W_DP), dp(HANDLE_TAB_H_DP), Gravity.CENTER_VERTICAL or if (dockRight) Gravity.END else Gravity.START),
+        )
+        val r = dp(HANDLE_TAB_W_DP / 2).toFloat()
+        handleFace.cornerRadii = if (dockRight) floatArrayOf(r, r, 0f, 0f, 0f, 0f, r, r) else floatArrayOf(0f, 0f, r, r, r, r, 0f, 0f)
     }
 
     /** Lay the bubble and its card out for the current state. */
     private fun render() {
         if (!shown) return
         arrange()
+        if (stowed) {
+            cardKey = null
+            card.visibility = View.GONE
+            bubble.visibility = View.GONE
+            handle.visibility = View.VISIBLE
+            handleTab.alpha = if (elsewhere) 0.5f else 0.92f
+            update()
+            return
+        }
+        handle.visibility = View.GONE
+        bubble.visibility = View.VISIBLE
         val showCard = phase != Phase.IDLE && !dragging && !(phase == Phase.RESULT && !prefs.showResult)
         if (showCard) {
-            val key = listOf(phase, slidAway, tapTake, stage, message, resultText, screenWidth()).joinToString("|")
+            val key = listOf(phase, slidAway, tapTake, stage, message, resultText, prefs.showDiscard, screenWidth()).joinToString("|")
             if (key != cardKey) {
                 fillCard()
                 cardKey = key
@@ -546,7 +767,12 @@ internal class BubbleOverlay(
                 else -> R.drawable.voltip_bubble_mic
             },
         )
-        bubble.alpha = if (elsewhere && !own) 0.45f else if (active || phase != Phase.IDLE) 1f else 0.9f
+        bubble.alpha = when {
+            stowArmed -> 0.6f
+            elsewhere && !own -> 0.45f
+            active || phase != Phase.IDLE -> 1f
+            else -> 0.9f
+        }
         update()
     }
 
@@ -614,13 +840,10 @@ internal class BubbleOverlay(
                         setPadding(0, dp(8), 0, 0)
                     },
                 )
+                val actions = mutableListOf<Pair<String, () -> Unit>>(prefs.string("again", "") to { startTake(tap = true, held = false) })
+                if (prefs.showDiscard) actions += prefs.string("discard", "") to { discard() }
                 card.addView(
-                    chips(
-                        listOf(
-                            prefs.string("again", "") to { startTake(tap = true, held = false) },
-                            prefs.string("discard", "") to { discard() },
-                        ),
-                    ),
+                    chips(actions),
                     LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) },
                 )
             }
@@ -745,6 +968,19 @@ internal class BubbleOverlay(
         private const val WAVE_BARS = 24
         private const val BUBBLE_DP = 56
         private const val EDGE_MARGIN_DP = 8
+        /** The window's padding around the bubble, room for its shadow. */
+        private const val PAD_H_DP = 4
+        private const val PAD_V_DP = 8
+        /** A drag let go with the finger this close to an edge tucks the bubble into it. */
+        const val EDGE_ZONE_DP = 24
+        /** A pull on the handle this far inward brings the bubble back. */
+        private const val PULL_DP = 16
+        /** The handle's touch area, and the tab that shows of it. */
+        private const val HANDLE_W_DP = 32
+        private const val HANDLE_H_DP = 80
+        private const val HANDLE_TAB_W_DP = 12
+        private const val HANDLE_TAB_H_DP = 56
+        private const val SLIDE_MS = 180L
         private const val CARD_MAX_DP = 300
         private val IDLE = Color.parseColor("#262A35")
         private val ACCENT = Color.parseColor("#1F6FEB")
@@ -755,6 +991,7 @@ internal class BubbleOverlay(
         private val CHIP = Color.parseColor("#3A404D")
         private val MUTED = Color.parseColor("#B6BCC8")
         private val FAINT = Color.parseColor("#5F6675")
+        private val HANDLE_EDGE = Color.parseColor("#33FFFFFF")
         /** A core message's machine prefix (`asr: `), as `coreMessageText` drops it. */
         private val MACHINE_PREFIX = Regex("^[a-z][a-z_]*(?:\\.[a-z_]+)*(?: [a-z]+)?: ")
         private const val TAG = "VoltipBubble"

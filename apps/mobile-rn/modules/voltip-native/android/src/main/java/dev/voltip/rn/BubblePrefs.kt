@@ -5,9 +5,10 @@ import org.json.JSONObject
 
 /**
  * The floating bubble's options (docs/dictation.md §20.12), kept in the app's SharedPreferences:
- * whether the user switched it on, how to talk, whether the result shows, where on the screen it
- * sits, and the texts it shows in the app's language (the app hands them over from its
- * dictionaries with every change, `BubbleConfig.strings` in src/backend/bubble.tsx).
+ * whether the user switched it on, how to talk, whether the result shows and with 不复制, where on
+ * the screen it sits and whether it is tucked into the edge, and the texts it shows in the app's
+ * language (the app hands them over from its dictionaries with every change, `BubbleConfig.strings`
+ * in src/backend/bubble.tsx).
  */
 class BubblePrefs(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences(NAME, Context.MODE_PRIVATE)
@@ -22,6 +23,18 @@ class BubblePrefs(context: Context) {
     val showResult: Boolean
         get() = prefs.getBoolean(KEY_SHOW_RESULT, true)
 
+    /** The result's card has 不复制 too (off unless the user asks for it, 2026-10-28). */
+    val showDiscard: Boolean
+        get() = prefs.getBoolean(KEY_SHOW_DISCARD, false)
+
+    /** Tucked into its edge: only the handle shows. Cleared when the bubble is switched off, so
+     *  switching it on shows the bubble itself. */
+    var stowed: Boolean
+        get() = prefs.getBoolean(KEY_STOWED, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_STOWED, value).apply()
+        }
+
     /** The bubble's edge (left or right) and its height on the screen (0…1), where it was let go. */
     var dock: Pair<Boolean, Float>
         get() = Pair(prefs.getBoolean(KEY_DOCK_RIGHT, true), prefs.getFloat(KEY_DOCK_Y, 0.62f))
@@ -33,12 +46,15 @@ class BubblePrefs(context: Context) {
     fun string(key: String, fallback: String): String =
         prefs.getString(STRING_PREFIX + key, null)?.takeIf { it.isNotEmpty() } ?: fallback
 
-    /** Save a `BubbleConfig`: `enabled`, `mode`, `showResult`, `strings`. */
+    /** Save a `BubbleConfig`: `enabled`, `mode`, `showResult`, `showDiscard`, `strings`. */
     fun save(config: JSONObject) {
         val edit = prefs.edit()
-        edit.putBoolean(KEY_ENABLED, config.optBoolean("enabled", false))
+        val enabled = config.optBoolean("enabled", false)
+        edit.putBoolean(KEY_ENABLED, enabled)
+        if (!enabled) edit.putBoolean(KEY_STOWED, false)
         edit.putString(KEY_MODE, if (config.optString("mode") == MODE_TAP) MODE_TAP else MODE_HOLD)
         edit.putBoolean(KEY_SHOW_RESULT, config.optBoolean("showResult", true))
+        edit.putBoolean(KEY_SHOW_DISCARD, config.optBoolean("showDiscard", false))
         config.optJSONObject("strings")?.let { strings ->
             for (key in strings.keys()) edit.putString(STRING_PREFIX + key, strings.optString(key))
         }
@@ -47,7 +63,7 @@ class BubblePrefs(context: Context) {
 
     /** Switched off from the notification's 关闭: it stays off until the user switches it on. */
     fun disable() {
-        prefs.edit().putBoolean(KEY_ENABLED, false).apply()
+        prefs.edit().putBoolean(KEY_ENABLED, false).putBoolean(KEY_STOWED, false).apply()
     }
 
     companion object {
@@ -57,6 +73,8 @@ class BubblePrefs(context: Context) {
         private const val KEY_ENABLED = "enabled"
         private const val KEY_MODE = "mode"
         private const val KEY_SHOW_RESULT = "show_result"
+        private const val KEY_SHOW_DISCARD = "show_discard"
+        private const val KEY_STOWED = "stowed"
         private const val KEY_DOCK_RIGHT = "dock_right"
         private const val KEY_DOCK_Y = "dock_y"
         private const val STRING_PREFIX = "s."
