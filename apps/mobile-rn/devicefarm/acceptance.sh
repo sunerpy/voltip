@@ -60,9 +60,26 @@ screen_h=2400
 screen_w=1080
 density=420
 dp() { echo $(($1 * density / 160)); }
+# Where the status bar ends on the screen as it is now: its window's frame (portrait and landscape
+# differ), or 48 dp when the window is not found.
+status_bottom() {
+  local bottom
+  bottom=$(adb shell dumpsys window windows 2>/dev/null | tr -d '\r' | python3 -c '
+import re, sys
+for block in re.split(r"\n(?=  Window #)", sys.stdin.read()):
+    if "StatusBar" not in block.split("\n", 1)[0]:
+        continue
+    m = re.search(r"\b(?:mFrame|frame)=\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]", block)
+    if m:
+        print(m.group(4))
+        break
+')
+  echo "${bottom:-$(dp 48)}"
+}
+top_px=$(dp 48)
 
 # The centre of the first node whose text, content-desc or resource-id (the app's testID) matches
-# the regular expression $1 and that lies on the screen (between the status bar, 56 dp at most, and
+# the regular expression $1 and that lies on the screen (between the status bar, [status_bottom], and
 # the navigation bar) and, unless it is one of the tabs, above the tab dock that floats over the
 # page: a tap there lands on the dock (2026-10-13: 历史记录 under the dock opened the 记录 tab).
 # The tabs themselves only need to be on the screen: the dock keeps clear of the navigation bar
@@ -71,16 +88,16 @@ dp() { echo $(($1 * density / 160)); }
 # a rail at the left (docs/mobile-rn.md §5), and only a node on the rail is under it.
 # Each field is matched on its own, so `^…$` anchors a whole label.
 find_node() {
-  python3 - "$out/ui.xml" "$1" "$screen_h" "$screen_w" "$(dp 56)" <<'PY'
+  python3 - "$out/ui.xml" "$1" "$screen_h" "$screen_w" "$top_px" <<'PY'
 import re, sys, xml.etree.ElementTree as ET
 try:
     nodes = list(ET.parse(sys.argv[1]).getroot().iter("node"))
 except Exception:
     sys.exit(1)
 pattern, height, width = re.compile(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
-# Below the status bar: a tap above 56 dp may land on it (2026-10-28, a Pixel 9: 悬浮球's row at
+# Below the status bar: a tap on it does not reach the app (2026-10-28, a Pixel 9: 悬浮球's row at
 # 126 px, under the status bar, did not open).
-top = max(80, int(sys.argv[5]))
+top = int(sys.argv[5]) + 8
 # The bottom 140 px of a portrait screen belong to the navigation bar; on its side a phone has the
 # bar at the side or only the gesture handle below (a page's button there is 965 of 1080 px).
 margin = 140 if height > width else 60
@@ -245,6 +262,8 @@ screen_h=${size#*x}
 density=$(adb shell wm density | tr -d '\r' | sed -n 's/.*: *\([0-9][0-9]*\).*/\1/p' | tail -1)
 measure density "${density:-unknown}"
 density=${density:-420}
+top_px=$(status_bottom)
+measure status_bar_px "$top_px"
 
 step "INSTALLED"
 if adb shell pm list packages | grep -q "package:$PKG\$"; then
@@ -578,6 +597,7 @@ turn() {
   adb shell settings put system user_rotation "$1"
   if [ "$1" = 1 ] || [ "$1" = 3 ]; then screen_w=$phys_h screen_h=$phys_w; else screen_w=$phys_w screen_h=$phys_h; fi
   sleep 2 # the rotation's animation and the app's new layout
+  top_px=$(status_bottom)
 }
 
 step "UPDATE AND CAMERA"
@@ -699,6 +719,7 @@ if [ "$smallest_dp" -lt 600 ]; then
   adb shell wm density 420
   screen_w=1840 screen_h=2208 density_before=$density density=420
   sleep 3 # the new configuration reaches the app
+  top_px=$(status_bottom)
   if wait_text '按住说话|Hold to talk' 20; then measure unfolded_talk ok; else measure unfolded_talk missing; fi
   shot 47-unfolded-talk
   page 48-unfolded-settings '^tab-settings$' '^phone-settings$'
@@ -706,6 +727,7 @@ if [ "$smallest_dp" -lt 600 ]; then
   restore_display
   screen_w=$phys_w screen_h=$phys_h density=$density_before
   sleep 3
+  top_px=$(status_bottom)
   if wait_text '按住说话|Hold to talk' 20 && running; then measure folded_again ok; else measure folded_again missing; fi
   shot 49-folded-again
 else
