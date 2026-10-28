@@ -441,11 +441,10 @@ if tap_text '^rules-export-open$' && wait_text '^rules-export-share$' 10 && tap_
     if ! in_front && running; then share_sheet=ok; break; fi
   done
   shot 12b2-share-sheet
-  back
-  wait_text '^rules-export-share$' 10 || true
-  back
 fi
 measure share_sheet "$share_sheet"
+# Back past the chooser and the export dialog to the rules page (its own export button), then to 设置.
+back_until '^rules-export-open$' 3 || true
 back
 page 12c-scenes '^场景$|^Scenes$' '新建场景|New scene|内置|Built-in'
 back
@@ -562,6 +561,40 @@ step "TURNED"
 turn 1
 if wait_text '按住说话|Hold to talk' 20; then measure turned_talk ok; else measure turned_talk missing; fi
 shot 40-turned-talk
+# A take in landscape runs its course as in portrait: a result, or a reason (the room is silent).
+# The talk card can sit below the fold of a short landscape page; the page scrolls by a swipe at a
+# sixth of its width, clear of the hold-to-talk button in the middle (a swipe over it is a take).
+side_scroll() {
+  local x=$((screen_w / 6)) from=$((screen_h * 7 / 10)) to=$((screen_h * 3 / 10))
+  [ "$1" = up ] && { from=$((screen_h * 3 / 10)); to=$((screen_h * 7 / 10)); }
+  adb shell input swipe "$x" "$from" "$x" "$to" 400
+  sleep 1 # the fling settles
+}
+settle || true
+held=no scrolled=0
+for way in here down down; do
+  if [ "$way" = down ]; then side_scroll down; scrolled=$((scrolled + 1)); fi
+  if dump && xy=$(find_node '^phone-mic-hold$'); then
+    read -r x y <<<"$xy"
+    n=$(phases | wc -l)
+    adb shell input swipe "$x" "$y" "$x" "$y" 4000
+    measure turned_take "$(take_outcome 40b-turned-take "$n")"
+    held=yes
+    break
+  fi
+done
+[ "$held" = yes ] || measure turned_take missing
+shot 40c-turned-take
+for ((i = 0; i < scrolled; i++)); do side_scroll up; done
+page 40d-turned-device "$TALK" '^指纹$|^Fingerprint$'
+page 40e-turned-pair '^配对电脑$|^Pair a computer$' '扫码|Scan'
+if tap_text '^输入 6 位验证码$|^Enter 6-digit code$' && wait_text '电脑上显示的 6 位验证码|shown on the computer' 10; then
+  measure turned_pair_code ok
+else
+  measure turned_pair_code missing
+fi
+shot 40f-turned-pair-code
+back_until "$TALK" 4 || true
 page 41-turned-history '^tab-history$' '^今天$|^Today$'
 page 42-turned-settings '^tab-settings$' '语音模型|Speech models'
 page 43-turned-speech '^语音模型$|^Speech models$' '内置服务|Built-in service'
@@ -580,6 +613,15 @@ else
   measure turned_dropdown missing
 fi
 shot 46-turned-dropdown
+back
+back
+page 46b-turned-dictionary '^个人词典$|^Dictionary$' '新建词条|New entry'
+if tap_text '新建词条|New entry' && wait_text '正确写法|Right spelling' 10; then
+  measure turned_editor ok
+else
+  measure turned_editor missing
+fi
+shot 46c-turned-editor
 back
 back
 if tap_text '^tab-talk$' && wait_text "$TALK" 10; then measure turned_back_to_talk ok; else measure turned_back_to_talk missing; fi

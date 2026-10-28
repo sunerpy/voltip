@@ -43,7 +43,8 @@ fetch() {
       11-dictionary=ok editor=ok 12b-rules=ok 12c-scenes=ok 12d-history-settings=ok \
       12e-feedback=ok 12f-about=ok follow_system=ok back_to_talk=ok 13-device=ok 14-pair=ok pair_code=ok talk_again=ok back_once_stays=ok \
       back_twice_leaves=ok share_sheet=ok update_check=ok scanner=ok turned_talk=ok 41-turned-history=ok 42-turned-settings=ok \
-      43-turned-speech=ok turned_sheet=ok 45-turned-recording=ok turned_dropdown=ok turned_back_to_talk=ok \
+      40d-turned-device=ok 40e-turned-pair=ok turned_pair_code=ok 43-turned-speech=ok turned_sheet=ok \
+      45-turned-recording=ok turned_dropdown=ok 46b-turned-dictionary=ok turned_editor=ok turned_back_to_talk=ok \
       turned_stays_up=yes bubble_on=ok auto_stow_option=ok paste_service=connected bubble_shown=ok paste_off=ok \
       auto_stow=ok hold_keeps_bubble=ok bubble_turns=ok bubble_stays_up=yes r8_errors=none fatal=none; do
       grep -qx "$want" "$summary" || { echo "devicefarm-rn: $device: expected $want" >&2; verdict=1; }
@@ -54,7 +55,7 @@ fetch() {
       grep -qE "^$unfolded=(ok|tablet)$" "$summary" || { echo "devicefarm-rn: $device: expected $unfolded=ok" >&2; verdict=1; }
     done
     # The bubble's takes ran their course: a result, or a reason (the room may be silent).
-    for take in bubble_take_paste_on bubble_take_paste_off bubble_take_held; do
+    for take in turned_take bubble_take_paste_on bubble_take_paste_off bubble_take_held; do
       grep -qE "^$take=(done|failed:.+)$" "$summary" || { echo "devicefarm-rn: $device: $take did not finish" >&2; verdict=1; }
     done
   done < <(df list-jobs --arn "$run_arn" --query 'jobs[].[arn,device.name]' --output text)
