@@ -6,6 +6,7 @@
 //! collects the facts the OS hands out. Each `#[cfg]` branch answers with the same wire types, so
 //! the webview and `tests/ipc.rs` see one contract on Linux, macOS and Windows.
 
+pub mod focus;
 #[cfg(target_os = "linux")]
 pub mod linux;
 #[cfg(target_os = "macos")]

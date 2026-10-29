@@ -36,6 +36,8 @@ pub const BLANK_STATE: &str = "blank";
 pub const LIVE_STATE: &str = "live";
 /// Delay between painting `blank` and hiding the window: long enough for one webview frame.
 pub const HIDE_AFTER_BLANK: Duration = Duration::from_millis(80);
+/// The pill's flash after 复制上一条结果 (docs/dictation.md §28): `已复制上一条结果`, between takes.
+pub const COPIED_STATE: &str = "copied";
 /// Debug-build knob: `=1` draws the pill window opaque. X11 without a compositor (Xvfb smoke
 /// tests) renders an RGBA window as a black rectangle, so the headless run cannot prove the pill
 /// paints unless transparency is off. Release builds ignore it.
@@ -168,14 +170,59 @@ pub fn apply_phase<R: Runtime>(app: &AppHandle<R>, phase: &DictationPhase, place
     }
 }
 
-/// Show the prewarmed live window (re-anchored for `placement`) without changing its route or
-/// pushing a state.
+/// Show the prewarmed live window (re-anchored for `placement`) without changing its route; a
+/// window that last showed a fixed state (the [`COPIED_STATE`] flash) is told to follow the take
+/// again.
 pub fn show_live<R: Runtime>(app: &AppHandle<R>, placement: OverlayPlacement) -> tauri::Result<()> {
     prewarm(app)?;
     let Some(window) = app.get_webview_window(OVERLAY_LABEL) else { return Ok(()) };
     let Some((x, y)) = anchor(app, placement) else { return Ok(()) };
     window.set_position(tauri::LogicalPosition::new(x, y))?;
+    let was_live = app.try_state::<OverlaySlot>().is_none_or(|s| s.current() == LIVE_STATE);
     remember(app, LIVE_STATE);
+    if !was_live {
+        window.emit_to(OVERLAY_LABEL, OVERLAY_EVENT, OverlayState { state: LIVE_STATE })?;
+    }
+    if !window.is_visible().unwrap_or(false) {
+        window.show()?;
+        window.set_always_on_top(true)?;
+    }
+    Ok(())
+}
+
+/// Whether 复制上一条结果 may flash the pill now (docs/dictation.md §28): only between takes — a
+/// take under way or a finished one still on screen keeps the pill — and never with the pill off.
+pub fn copied_flash_wanted(phase: &DictationPhase, placement: OverlayPlacement) -> bool {
+    placement != OverlayPlacement::Off && *phase == DictationPhase::Idle
+}
+
+/// Show `已复制上一条结果` for `voltip_core::dictation::DWELL`, then hide the pill, unless a take
+/// has taken it over by then.
+pub fn flash_copied<R: Runtime>(app: &AppHandle<R>, phase: &DictationPhase, placement: OverlayPlacement) {
+    if !copied_flash_wanted(phase, placement) {
+        return;
+    }
+    if let Err(e) = show_fixed(app, COPIED_STATE, placement) {
+        tracing::warn!(error = %e, "overlay flash failed");
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(voltip_core::dictation::DWELL).await;
+        if app.try_state::<OverlaySlot>().is_some_and(|slot| slot.current() == COPIED_STATE) {
+            hide(&app);
+        }
+    });
+}
+
+/// Show the window with the fixed `state`, re-anchored for `placement`.
+fn show_fixed<R: Runtime>(app: &AppHandle<R>, state: &'static str, placement: OverlayPlacement) -> tauri::Result<()> {
+    prewarm(app)?;
+    let Some(window) = app.get_webview_window(OVERLAY_LABEL) else { return Ok(()) };
+    let Some((x, y)) = anchor(app, placement) else { return Ok(()) };
+    window.set_position(tauri::LogicalPosition::new(x, y))?;
+    remember(app, state);
+    window.emit_to(OVERLAY_LABEL, OVERLAY_EVENT, OverlayState { state })?;
     if !window.is_visible().unwrap_or(false) {
         window.show()?;
         window.set_always_on_top(true)?;
@@ -250,6 +297,17 @@ fn anchor<R: Runtime>(app: &AppHandle<R>, placement: OverlayPlacement) -> Option
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// docs/dictation.md §28: 复制上一条结果 flashes the pill only between takes, never over a take
+    /// under way or a card still on screen, and never with the pill off.
+    #[test]
+    fn the_copied_flash_shows_only_between_takes() {
+        assert!(copied_flash_wanted(&DictationPhase::Idle, OverlayPlacement::Bottom));
+        assert!(copied_flash_wanted(&DictationPhase::Idle, OverlayPlacement::Top));
+        assert!(!copied_flash_wanted(&DictationPhase::Idle, OverlayPlacement::Off));
+        assert!(!copied_flash_wanted(&DictationPhase::Listening { started_at: 1, ready: true, live: None, locked: false }, OverlayPlacement::Bottom));
+        assert!(!copied_flash_wanted(&DictationPhase::CANCELLED, OverlayPlacement::Bottom), "a finished take is still on screen");
+    }
 
     /// Settings › 外观 › 悬浮胶囊 (2026-09-27): the saved placement decides where the shell puts
     /// the pill window, and `off` shows none (it used to live in the webview's localStorage only).

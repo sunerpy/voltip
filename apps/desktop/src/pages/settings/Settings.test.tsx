@@ -425,6 +425,46 @@ describe("Settings · 听写 · 剪贴板与窗口切换 (docs/dictation.md sect
   });
 });
 
+describe("Settings · 听写 · 插入确认与结果卡片 (docs/dictation.md section 28)", () => {
+  it("检查文字是否写入 and 识别结果卡片常驻 are on by default, say what they do, and write settings_set_engines with the rest unchanged", async () => {
+    const user = userEvent.setup();
+    const { backend } = renderApp({ path: "/settings/dictation" });
+    const dialog = await screen.findByRole("dialog", { name: "设置" });
+    const pane = within(dialog).getByTestId("dictation-pane");
+    const check = within(pane).getByRole("switch", { name: "检查文字是否写入" });
+    const stay = within(pane).getByRole("switch", { name: "识别结果卡片常驻" });
+    expect(check).toHaveAttribute("aria-checked", "true");
+    expect(stay).toHaveAttribute("aria-checked", "true");
+    expect(
+      within(pane).getByText("只在本机比较输入框前后的变化，不保存、不上传"),
+    ).toBeInTheDocument();
+    expect(within(pane).getByText(/结果卡片一直留到你关闭或下一次听写/)).toBeInTheDocument();
+    await user.click(check);
+    await waitFor(() => {
+      expect(backend.peek().settings.engines).toEqual({
+        ...defaultEngineSettings(),
+        insert_check: false,
+      });
+    });
+    await user.click(stay);
+    await waitFor(() => {
+      expect(backend.peek().settings.engines).toEqual({
+        ...defaultEngineSettings(),
+        insert_check: false,
+        result_cards_stay: false,
+      });
+    });
+    expect(within(pane).getByRole("switch", { name: "检查文字是否写入" })).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+    expect(within(pane).getByRole("switch", { name: "识别结果卡片常驻" })).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+  });
+});
+
 describe("Settings · 听写 · 最长录音时长 (docs/dictation.md section 22)", () => {
   it("lists 1 minute to 2 hours, shows the saved length and writes settings_set_recording with the rest unchanged", async () => {
     const user = userEvent.setup();
@@ -858,6 +898,68 @@ describe("Settings · 热键", () => {
     expect(dictation).toHaveAttribute("data-recording", "false");
     await user.keyboard("{Escape}");
     expect(edit).toHaveAttribute("data-recording", "false");
+  });
+
+  it("docs/dictation.md section 28: 复制上一条结果 has its own recorder, none by default, and refuses the other two chords", async () => {
+    const user = userEvent.setup();
+    const { backend } = renderApp({ path: "/settings/hotkey" });
+    const copyLast = await screen.findByTestId("copy-last-hotkey-recorder");
+    const dictation = screen.getByTestId("hotkey-recorder");
+    expect(screen.getByText("复制上一条结果")).toBeInTheDocument();
+    expect(screen.getByText(/把最近一次结果放到剪贴板/)).toBeInTheDocument();
+    expect(screen.getByTestId("copy-last-hotkey-status")).toHaveTextContent("未设置");
+    expect(screen.queryByRole("button", { name: "清除 · 复制上一条结果" })).toBeNull();
+    // One recorder at a time.
+    await user.click(screen.getByRole("button", { name: "重新录制" }));
+    expect(dictation).toHaveAttribute("data-recording", "true");
+    await user.click(screen.getByRole("button", { name: "录制 · 复制上一条结果" }));
+    expect(dictation).toHaveAttribute("data-recording", "false");
+    expect(copyLast).toHaveAttribute("data-recording", "true");
+    await user.keyboard("{Control>}{Shift>}{v>}");
+    await user.keyboard("{/v}{/Shift}{/Control}");
+    await waitFor(() => {
+      expect(backend.peek().settings.copy_last_hotkey).toBe("Ctrl+Shift+V");
+    });
+    expect(backend.peek().hotkey.copy_last_registered).toBe("Ctrl+Shift+V");
+    expect(screen.getByTestId("copy-last-hotkey-status")).toHaveTextContent(
+      "已保存 · 快捷键已生效",
+    );
+    expect(within(copyLast).getByText("V")).toBeInTheDocument();
+    // The dictation chord is refused with the core's reason; the chord stays.
+    await user.click(screen.getByRole("button", { name: "重新录制 · 复制上一条结果" }));
+    await user.keyboard("{Control>}{Alt>}{ >}{/ }{/Alt}{/Control}");
+    await waitFor(() => {
+      expect(
+        backend.log.some(
+          (e) =>
+            e.type === "error" && e.message === "copy_last_hotkey: Ctrl+Alt+Space 已用作听写快捷键",
+        ),
+      ).toBe(true);
+    });
+    expect(backend.peek().settings.copy_last_hotkey).toBe("Ctrl+Shift+V");
+    // The shell could not register it: the row says so and the banner offers a new chord.
+    act(() => {
+      backend.publish({
+        type: "hotkey",
+        registered: DEFAULT_HOTKEY,
+        copy_last_error: "Ctrl+Shift+V 注册失败：HotKey already registered",
+        pressed: false,
+        capturing: false,
+        backend: "global-shortcut · Windows · RegisterHotKey",
+      });
+    });
+    expect(await screen.findByText(/Ctrl\+Shift\+V 注册失败/)).toBeInTheDocument();
+    expect(screen.getByTestId("copy-last-hotkey-status")).toHaveTextContent("已保存 · 未能生效");
+    await user.click(screen.getByRole("button", { name: "更换快捷键" }));
+    expect(copyLast).toHaveAttribute("data-recording", "true");
+    await user.keyboard("{Escape}");
+    expect(copyLast).toHaveAttribute("data-recording", "false");
+    // Cleared: none again.
+    await user.click(screen.getByRole("button", { name: "清除 · 复制上一条结果" }));
+    await waitFor(() => {
+      expect(backend.peek().settings).not.toHaveProperty("copy_last_hotkey");
+    });
+    expect(screen.getByTestId("copy-last-hotkey-status")).toHaveTextContent("未设置");
   });
 
   it("regression: without a refine key the edit row says it needs the AI refine service (section 19)", async () => {

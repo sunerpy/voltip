@@ -87,6 +87,8 @@ voltip-inject.workspace = true
 voltip-platform = { path = "../../../crates/voltip-platform" }
 # The lone-key trigger's low-level input hooks (docs/dictation.md §13.1).
 voltip-hooks = { path = "../../../crates/voltip-hooks" }
+# The insert check's readers of the focused control (docs/dictation.md §28).
+voltip-focus = { path = "../../../crates/voltip-focus" }
 voltip-refine.workspace = true
 # The local speech service's HTTP layer (docs/dictation.md §23.6).
 voltip-serve.workspace = true

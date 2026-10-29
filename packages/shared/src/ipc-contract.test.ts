@@ -132,6 +132,7 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   settings_set_theme: null,
   settings_set_hotkey: null,
   settings_set_edit_hotkey: null,
+  settings_set_copy_last_hotkey: null,
   settings_set_solo_key: null,
   settings_set_microphone: null,
   settings_set_recording: null,
@@ -141,6 +142,7 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   dictation_start: null,
   dictation_stop: null,
   dictation_cancel: null,
+  dictation_dismiss: null,
   settings_set_engines: null,
   provider_key_set: null,
   engines_quota_reset: null,
@@ -244,6 +246,7 @@ const argSchemas = {
   }),
   settings_set_hotkey: z.object({ hotkey: z.string() }),
   settings_set_edit_hotkey: z.object({ hotkey: z.string().nullable() }).strict(),
+  settings_set_copy_last_hotkey: z.object({ hotkey: z.string().nullable() }).strict(),
   settings_set_solo_key: z.object({ key: soloKeySchema.nullable() }).strict(),
   settings_set_microphone: z.object({ device: z.string().nullable() }).strict(),
   settings_set_recording: z.object({ recording: recordingSettingsSchema.strict() }).strict(),
@@ -373,6 +376,7 @@ const argSchemas = {
   mcp_copy_setup: z.object({ client: mcpSetupClientSchema }).strict(),
   mcp_undo: z.object({ id: z.string() }).strict(),
   usage_notice_dismiss: z.object({ notice: usageNoticeSchema }).strict(),
+  dictation_dismiss: z.object({ session: z.number().int().nonnegative() }).strict(),
 } satisfies {
   [C in MutationCommand as CommandArgs[C] extends undefined ? never : C]: z.ZodType<CommandArgs[C]>;
 };
@@ -406,6 +410,8 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
       if (args !== null)
         throw new Error(`${name} takes no args, fixture has ${JSON.stringify(args)}`);
       return backend.invoke(name);
+    case "dictation_dismiss":
+      return backend.invoke(name, argSchemas.dictation_dismiss.parse(args));
     case "pairing_join_code":
       return backend.invoke(name, argSchemas.pairing_join_code.parse(args));
     case "pairing_join_ticket":
@@ -439,6 +445,8 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
       return backend.invoke(name, argSchemas.settings_set_hotkey.parse(args));
     case "settings_set_edit_hotkey":
       return backend.invoke(name, argSchemas.settings_set_edit_hotkey.parse(args));
+    case "settings_set_copy_last_hotkey":
+      return backend.invoke(name, argSchemas.settings_set_copy_last_hotkey.parse(args));
     case "settings_set_solo_key":
       return backend.invoke(name, argSchemas.settings_set_solo_key.parse(args));
     case "settings_set_microphone":
@@ -589,6 +597,8 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       extra_recording_ms: 150,
       edit_hotkey: "Ctrl+Alt+E",
       solo_key: "right_ctrl",
+      // docs/dictation.md §28: a 复制上一条结果 chord, none by default.
+      copy_last_hotkey: "Ctrl+Shift+V",
       pairing_always_on: true,
       context_sharing: { app_name: false, window_title: true },
       history: { enabled: true, keep: 200 },
@@ -669,6 +679,8 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     // so the raw fixture carries the keys — the defaults in the schema are for older cores only.
     expect(OUTPUT_MODES).toContain(engines.output_mode);
     expect(typeof engines.vad_trim).toBe("boolean");
+    // docs/dictation.md §28: both switches off in the fixture, so Rust sends them (it omits `true`).
+    expect([engines.insert_check, engines.result_cards_stay]).toEqual([false, false]);
     expect(OUTPUT_MODES).toContain(parsed.engines.effective_output_mode);
     expect(ACTIVATIONS).toContain(parsed.settings.activation);
     const rawSettings = z
@@ -795,11 +807,31 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     expect(done.find((p) => p.live_error !== undefined)?.live_error).toBe(
       "open: asr: 实时识别模型未下载：实时预览",
     );
+    // docs/dictation.md §28: the insert check rides on `done` (absent when none ran); an unknown
+    // value is refused.
+    expect(done.map((p) => p.check)).toEqual([
+      "written",
+      undefined,
+      "not_written",
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    const notWritten = events.find((raw) => JSON.stringify(raw).includes('"check":"not_written"'));
+    expect(uiEventSchema.safeParse(mutate(notWritten, ["phase", "check"], "maybe")).success).toBe(
+      false,
+    );
     // `cancelled.injected_chars`: 0 for every other mode, the pasted count under live_inject.
     const cancelled = dictation.flatMap((p) => (p.phase === "cancelled" ? [p.injected_chars] : []));
     expect(cancelled).toEqual([0, 21]);
     // History rows carry the same three fields.
     const rows = parsed.flatMap((e) => (e.type === "history" ? e.recent : []));
+    // …and the insert check on an inserted outcome (§28).
+    expect(
+      rows.flatMap((r) =>
+        r.outcome.kind === "inserted" && r.outcome.check !== undefined ? [r.outcome.check] : [],
+      ),
+    ).toEqual(expect.arrayContaining(["unconfirmed", "not_written"]));
     const live = rows.find((r) => r.mode === "live_inject");
     expect(live?.segments).toHaveLength(2);
     expect(live?.live_error).toBe("live tap overrun: the decoder fell behind the microphone");

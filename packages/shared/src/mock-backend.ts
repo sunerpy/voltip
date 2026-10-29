@@ -49,6 +49,7 @@ import {
   type DictionaryEntry,
   type EntrySource,
   type ImportMode,
+  type InsertCheck,
   type PreviewDraft,
   type RefineFailure,
   type ReplacementRule,
@@ -306,6 +307,9 @@ export interface MockBackendOptions {
   /** What a valid `pasteText` ends with while no take runs (`setPasteOutcome` changes it);
    *  defaults to `pasted`. */
   pasteOutcome?: PasteOutcome;
+  /** What a paste take's insert check finds (docs/dictation.md §28; `setInsertCheck` changes it);
+   *  absent = no check runs, as on a host without a focus reader. */
+  insertCheck?: InsertCheck;
   /** Only this code joins successfully (phone role); any well-formed code otherwise. */
   expectedCode?: string;
   /** What the desktop shell reports about the machine (docs/dictation.md §10.6); defaults to
@@ -1015,6 +1019,17 @@ export class MockBackend implements Backend {
    *  again; the status carries both until it is idle. */
   private takeRecording: string | undefined;
   private takeRetake = false;
+  /** docs/dictation.md §28: the shell shows result cards (the desktop's pill; the phone has none). */
+  private readonly resultCards: boolean;
+  /** The result card that stays (§28), with the dwell it had for 识别结果卡片常驻 switched off. */
+  private pinned: { ms: number; session: number } | undefined;
+  /** What the next paste take's insert check finds (§28); `undefined` = no check. */
+  private insertCheck: InsertCheck | undefined;
+  /** Every text the result card's 复制 and 粘贴 handed on, in order (tests). */
+  readonly overlayCopies: string[] = [];
+  readonly overlayPastes: string[] = [];
+  /** How often the result card's 打开历史 ran (tests). */
+  historyOpens = 0;
   private meters = new Set<ReturnType<typeof setInterval>>();
   private permissions: PermissionReport | (() => PermissionReport);
   private readonly preflight: InjectPreflight;
@@ -1122,6 +1137,8 @@ export class MockBackend implements Backend {
     this.permissions = options.permissions ?? mockPermissions(host);
     this.preflight = options.injectPreflight ?? uncheckedPreflight(host);
     this.pasteOutcome = options.pasteOutcome ?? { kind: "pasted" };
+    this.resultCards = this.role !== "phone";
+    this.insertCheck = options.insertCheck;
     // The phone's own history starts empty: it holds the takes it recognises itself (§20.7); the
     // samples are a computer's dictations.
     this.history = options.history ?? (this.role === "phone" ? [] : sampleHistory(this.now()));
@@ -1152,6 +1169,9 @@ export class MockBackend implements Backend {
         registered: options.settings?.hotkey ?? DEFAULT_HOTKEY,
         ...(settings.edit_hotkey === null ? {} : { edit_registered: settings.edit_hotkey }),
         ...(this.role === "phone" ? {} : mockSoloStatus(settings.solo_key)),
+        ...(this.role === "phone" || settings.copy_last_hotkey == null
+          ? {}
+          : { copy_last_registered: settings.copy_last_hotkey }),
         backend: MOCK_HOTKEY_BACKEND,
         ...(this.role === "phone" ? {} : { capabilities: { ...MOCK_HOTKEY_CAPABILITIES } }),
       },
@@ -1612,6 +1632,31 @@ export class MockBackend implements Backend {
     this.pasteOutcome = outcome;
   }
 
+  /** `overlay_copy` (docs/dictation.md §28): the card's text onto the (fake) clipboard. */
+  overlayCopy(text: string): Promise<void> {
+    if (this.role === "phone") return Promise.reject(new Error("overlay_copy: 手机没有悬浮窗"));
+    this.overlayCopies.push(text);
+    return Promise.resolve();
+  }
+
+  /** `overlay_paste` (§28): the refusals of `pasteText`, then the seeded outcome. */
+  overlayPaste(text: string): Promise<PasteOutcome> {
+    if (text.trim().length === 0 || Array.from(text).length > MAX_PASTE_TEXT_CHARS) {
+      return pasteFailed("invalid");
+    }
+    if (this.role === "phone") return pasteFailed("unsupported");
+    const phase = this.state.dictation.phase.phase;
+    if (phase === "listening" || phase === "processing") return pasteFailed("busy");
+    this.overlayPastes.push(text);
+    return Promise.resolve(structuredClone(this.pasteOutcome));
+  }
+
+  /** `open_history` (§28): the shell would bring the main window up on the history page. */
+  openHistory(): Promise<void> {
+    this.historyOpens += 1;
+    return Promise.resolve();
+  }
+
   /** `presets_builtin`: the built-in presets' texts (the phone has its own presets since
    *  2026-10-01, user decision). */
   async presetsBuiltin(): Promise<BuiltinPresetText[]> {
@@ -1762,6 +1807,14 @@ export class MockBackend implements Backend {
         });
         return;
       }
+      const copyLast = this.state.settings.copy_last_hotkey;
+      if (copyLast != null && mockSameChord(hotkey, copyLast)) {
+        this.emit({
+          type: "error",
+          message: `hotkey: ${hotkey} 已用作「复制上一条结果」的快捷键`,
+        });
+        return;
+      }
       this.emit({ type: "settings", ...this.state.settings, hotkey });
       this.emit({ type: "hotkey", ...this.hotkeyStatus(false) });
     },
@@ -1837,11 +1890,50 @@ export class MockBackend implements Backend {
           });
           return;
         }
+        const copyLast = this.state.settings.copy_last_hotkey;
+        if (copyLast != null && mockSameChord(hotkey, copyLast)) {
+          this.emit({
+            type: "error",
+            message: `edit_hotkey: ${hotkey} 已用作「复制上一条结果」的快捷键`,
+          });
+          return;
+        }
       }
       this.emit({
         type: "settings",
         ...this.state.settings,
         edit_hotkey: hotkey,
+      });
+      this.emit({ type: "hotkey", ...this.hotkeyStatus(false) });
+    },
+    settings_set_copy_last_hotkey: (args) => {
+      // Mirrors `SetCopyLastHotkey` (docs/dictation.md §28): validated like the dictation chord,
+      // never the dictation's or the voice edit's; `null` assigns none.
+      const { hotkey } = required(args);
+      if (hotkey !== null) {
+        const problem = mockChordProblem(hotkey);
+        if (problem !== undefined) {
+          this.emit({ type: "error", message: `hotkey: ${hotkey} ${problem}` });
+          return;
+        }
+        if (mockSameChord(hotkey, this.state.settings.hotkey)) {
+          this.emit({ type: "error", message: `copy_last_hotkey: ${hotkey} 已用作听写快捷键` });
+          return;
+        }
+        const edit = this.state.settings.edit_hotkey;
+        if (edit !== null && mockSameChord(hotkey, edit)) {
+          this.emit({
+            type: "error",
+            message: `copy_last_hotkey: ${hotkey} 已用作「编辑选中文本」的快捷键`,
+          });
+          return;
+        }
+      }
+      const { copy_last_hotkey: _old, ...rest } = this.state.settings;
+      this.emit({
+        type: "settings",
+        ...rest,
+        ...(hotkey === null ? {} : { copy_last_hotkey: hotkey }),
       });
       this.emit({ type: "hotkey", ...this.hotkeyStatus(false) });
     },
@@ -2022,6 +2114,17 @@ export class MockBackend implements Backend {
     dictation_cancel: () => {
       this.cancelDictation();
     },
+    dictation_dismiss: (args) => {
+      // Mirrors `DictationDismiss` (docs/dictation.md §28): that take's finished card goes at
+      // once; a take under way, or the card of a later take, is not touched.
+      const { session } = required(args);
+      if (session !== this.state.dictation.session) return;
+      const phase = this.state.dictation.phase.phase;
+      if (phase !== "done" && phase !== "failed" && phase !== "cancelled") return;
+      this.clearDictationTimers();
+      this.pinned = undefined;
+      this.emitPhase({ phase: "idle" });
+    },
     settings_set_engines: (args) => {
       const { engines } = required(args);
       // Mirrors `SetEngines`: an unknown local model id is refused, nothing changes.
@@ -2050,6 +2153,12 @@ export class MockBackend implements Backend {
       this.emit({ type: "settings", ...settings });
       this.emit({ type: "engines", ...this.resolveEngines(settings.engines) });
       this.emit({ type: "models", models: this.modelsFor(settings.engines) });
+      // §28: 识别结果卡片常驻 switched off, a card that stays leaves after its usual time from now.
+      if (!settings.engines.result_cards_stay && this.pinned !== undefined) {
+        const { ms, session } = this.pinned;
+        this.pinned = undefined;
+        this.dwell(ms, session);
+      }
     },
     model_download: (args) => {
       this.downloadModel(required(args).id);
@@ -4019,6 +4128,7 @@ export class MockBackend implements Backend {
     this.clearDictationTimers();
     this.clearLiveTimers();
     this.clearExtraStop();
+    this.pinned = undefined;
     const session = this.state.dictation.session + 1;
     this.takeKind = "dictation";
     this.takeMode = "whole_take";
@@ -4162,10 +4272,11 @@ export class MockBackend implements Backend {
   /** What the desktop shell reports after (re)registering both chords: the dictation chord, and the
    *  edit chord while it is on; nothing while the recorder holds the keyboard. */
   private hotkeyStatus(capturing: boolean): HotkeyStatus {
-    const { hotkey, edit_hotkey, solo_key } = this.state.settings;
+    const { hotkey, edit_hotkey, solo_key, copy_last_hotkey } = this.state.settings;
     return {
       ...(capturing ? {} : { registered: hotkey }),
       ...(capturing || edit_hotkey === null ? {} : { edit_registered: edit_hotkey }),
+      ...(capturing || copy_last_hotkey == null ? {} : { copy_last_registered: copy_last_hotkey }),
       ...(capturing ? {} : mockSoloStatus(solo_key)),
       pressed: false,
       capturing,
@@ -4223,6 +4334,7 @@ export class MockBackend implements Backend {
    *  fresh `started_at`; with `live_preview_ready` the streaming partials follow (§11). */
   private startDictation(kind: TakeKind) {
     this.clearDictationTimers();
+    this.pinned = undefined;
     this.clearLiveTimers();
     this.clearExtraStop();
     const session = this.state.dictation.session + 1;
@@ -4558,6 +4670,12 @@ export class MockBackend implements Backend {
         return;
       }
       const hits = { corrections: corrected.hits, rules: ruled.hits };
+      // §28: only a paste that was delivered is checked, never a copy or `live_inject`.
+      const check =
+        via === "paste" && mode !== "live_inject" && this.state.settings.engines.insert_check
+          ? this.insertCheck
+          : undefined;
+      const checked = check === undefined ? {} : { check };
       const failedOver = liveError ?? modeError;
       const extra = {
         ...(polished ? { refine_ms: MOCK_REFINE_MS } : {}),
@@ -4579,6 +4697,7 @@ export class MockBackend implements Backend {
           ? {}
           : { refine_failure: refineFailure, refine_error: MOCK_REFINE_FAILED }),
         ...(switched ? { clipboard_code: "target_changed" as const } : {}),
+        ...checked,
       };
       const entry: HistoryEntry = {
         id: this.uuid(),
@@ -4599,7 +4718,7 @@ export class MockBackend implements Backend {
         asr_ms: asrMs,
         outcome: switched
           ? { kind: "clipboard", reason: MOCK_WINDOW_CHANGED, code: "target_changed" }
-          : { kind: "inserted", via },
+          : { kind: "inserted", via, ...checked },
         starred: false,
         mode,
         ...extra,
@@ -4613,7 +4732,12 @@ export class MockBackend implements Backend {
       this.settleRecording({ kind: "recognized", entry: entry.id });
       if (this.role === "phone") this.phoneClipboard = text;
       this.emitPhase(done);
-      this.dwell(switched ? MOCK_DICTATION_FAILED_DWELL_MS : MOCK_DICTATION_DWELL_MS, session);
+      const card = switched || check === "not_written";
+      this.dwellOrPin(
+        card ? MOCK_DICTATION_FAILED_DWELL_MS : MOCK_DICTATION_DWELL_MS,
+        session,
+        card,
+      );
     };
     this.laterDictation(asrMs, () => {
       if (this.state.dictation.session !== session) return;
@@ -4693,6 +4817,12 @@ export class MockBackend implements Backend {
           if (this.state.dictation.session !== session) return;
           const via = engines.inject === "clipboard_only" ? "clipboard" : "paste";
           const text = MOCK_EDIT_TEXT;
+          // §28: a rewrite equal to the selection cannot be told from no paste; it is not checked.
+          const check =
+            via === "paste" && this.state.settings.engines.insert_check && text !== selection
+              ? this.insertCheck
+              : undefined;
+          const checked = check === undefined ? {} : { check };
           const entry: HistoryEntry = {
             id: this.uuid(),
             at_ms: this.now(),
@@ -4704,7 +4834,7 @@ export class MockBackend implements Backend {
             duration_ms: durationMs,
             asr_ms: MOCK_ASR_MS,
             refine_ms: MOCK_REFINE_MS,
-            outcome: { kind: "inserted", via },
+            outcome: { kind: "inserted", via, ...checked },
             starred: false,
             mode: "whole_take",
             ...(instruction.hits.length > 0
@@ -4727,8 +4857,14 @@ export class MockBackend implements Backend {
             asr_ms: MOCK_ASR_MS,
             refine_ms: MOCK_REFINE_MS,
             mode: "whole_take",
+            ...checked,
           });
-          this.dwell(MOCK_DICTATION_DWELL_MS, session);
+          const card = check === "not_written";
+          this.dwellOrPin(
+            card ? MOCK_DICTATION_FAILED_DWELL_MS : MOCK_DICTATION_DWELL_MS,
+            session,
+            card,
+          );
         });
       });
     });
@@ -4768,10 +4904,29 @@ export class MockBackend implements Backend {
     );
     if (text === undefined)
       this.settleRecording({ kind: "failed", code: code ?? "unknown", message });
-    this.dwell(
+    // §28: a failure with text, or without text but with its recording kept, is a card.
+    const card = text !== undefined || (this.takeRecording !== undefined && code !== "no_speech");
+    this.dwellOrPin(
       text === undefined ? MOCK_DICTATION_DWELL_MS : MOCK_DICTATION_FAILED_DWELL_MS,
       session,
+      card,
     );
+  }
+
+  /** What the next paste take's insert check finds (docs/dictation.md §28); `undefined` = none runs. */
+  setInsertCheck(check: InsertCheck | undefined): void {
+    this.insertCheck = check;
+  }
+
+  /** A terminal state's dwell, or none for a result card the shell shows while 识别结果卡片常驻 is
+   *  on (docs/dictation.md §28): it stays until `dictation_dismiss` or the next take. */
+  private dwellOrPin(ms: number, session: number, card: boolean) {
+    if (card && this.resultCards && this.state.settings.engines.result_cards_stay) {
+      this.pinned = { ms, session };
+      return;
+    }
+    this.pinned = undefined;
+    this.dwell(ms, session);
   }
 
   private dwell(ms: number, session: number) {

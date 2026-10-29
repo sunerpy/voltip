@@ -65,7 +65,7 @@ const READOUTS: Partial<Record<PillState, string>> = {
   processing: "0.9 s",
 };
 
-/** The pill spec sheet: the eight pill states, live caption, toasts, fallback card and failure causes. A
+/** The pill spec sheet: the eight pill states, live caption, a result card, toasts, fallback card and failure causes. A
  *  component showcase over sample values: copying and navigation are real, the locked pill's
  *  结束收音 is the real `dictation_stop`, and the demo toasts' undo buttons do nothing. */
 export default function OverlaySheet({ state }: OverlaySheetProps) {
@@ -164,6 +164,26 @@ export default function OverlaySheet({ state }: OverlaySheetProps) {
             </div>
           </div>
           <span className="mono text-[11px] text-fg-subtle">{t("overlay.expanded")}</span>
+        </div>
+      </div>
+
+      {/* docs/dictation.md §28: the result card a paste the field never received leaves on screen,
+          as the overlay draws it; its buttons do nothing here. docs/site's overlay-card captures
+          are cut from this tile (`data-testid="overlay-card"`, docs/site/README.md). */}
+      <Eyebrow>{t("insertCheck.sheet")}</Eyebrow>
+      <div
+        className="flex h-[100px] items-center justify-center rounded-14 bg-desktop p-3"
+        data-testid="overlay-card">
+        <div data-theme={pillTheme} className="contents">
+          <Pill
+            state="error"
+            label={t("insertCheck.notWritten")}
+            actions={[
+              { label: t("insertCheck.card.paste"), primary: true, onClick: () => undefined },
+              { label: t("insertCheck.card.copy"), onClick: () => undefined },
+            ]}
+            onDismiss={() => undefined}
+          />
         </div>
       </div>
 

@@ -14,6 +14,7 @@ pub mod dictation;
 pub mod engines;
 pub mod history;
 pub mod hotkey;
+pub mod last_result;
 mod list_file;
 pub mod mcp;
 pub mod models;

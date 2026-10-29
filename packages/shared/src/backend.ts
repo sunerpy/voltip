@@ -123,6 +123,14 @@ export interface Backend {
   /** 「粘贴到上一个窗口」 (`paste_text`): paste `text` into the window the user came from, or copy
    *  it; resolves with what became of it (a refusal is an outcome, not a rejection). */
   pasteText(text: string): Promise<PasteOutcome>;
+  /** The result card's 复制 (`overlay_copy`, docs/dictation.md §28): `text` onto the native
+   *  clipboard; rejects when it cannot be written. */
+  overlayCopy(text: string): Promise<void>;
+  /** The result card's 粘贴 (`overlay_paste`, §28): `text` into the window in front of Voltip, or
+   *  copied; resolves with what became of it, as `pasteText` does. */
+  overlayPaste(text: string): Promise<PasteOutcome>;
+  /** The result card's 打开历史 (`open_history`, §28): the main window comes up on the history page. */
+  openHistory(): Promise<void>;
   /** Open the vendor's API-key page (`site`'s, for a vendor with several, docs/dictation.md
    *  §3.2), or with `page: "quota"` its page of free quota and usage, in the browser
    *  (`provider_console_open`); the shell only opens catalogue URLs, so the webview names the

@@ -8,7 +8,7 @@ The Voltip program, `voltip-desktop` (`voltip-desktop.exe` on Windows), accepts 
 
 ## Controlling the running app
 
-These options are passed to the Voltip that is already running. Without a running Voltip, `--quit` exits at once and the others start the program normally.
+These options are passed to the Voltip that is already running. Without a running Voltip, `--quit` and `--copy-last` exit at once and the others start the program normally.
 
 | Option | Effect |
 | --- | --- |
@@ -17,8 +17,9 @@ These options are passed to the Voltip that is already running. Without a runnin
 | `--cancel` | Cancels the current recording or result |
 | `--start-hidden` | Starts without showing the main window, with the tray and the shortcut only |
 | `--quit` | Quits the running Voltip, as **Quit Voltip** in the tray menu does |
+| `--copy-last` | Puts the latest result on the clipboard, as **Copy Last Result** in the tray menu does |
 
-On Linux with Wayland, bind system shortcuts to `--toggle`, `--edit-toggle` and `--cancel`; see [Shortcuts and recording modes](/dictation/shortcuts#linux-with-wayland).
+On Linux with Wayland, bind system shortcuts to `--toggle`, `--edit-toggle`, `--cancel` and `--copy-last`; see [Shortcuts and recording modes](/dictation/shortcuts#linux-with-wayland).
 
 ## Without a window
 

@@ -834,10 +834,14 @@ export function hotkeyMethodText(backend: string): string {
   return shown.length > 0 ? shown.join(" · ") : backend;
 }
 
-/** History row outcome: `已插入 · 粘贴`, `仅剪贴板 · <reason>`, `失败 · <reason>`. */
+/** History row outcome: `已插入 · 粘贴`, `仅剪贴板 · <reason>`, `失败 · <reason>`; a paste the
+ *  field never received is `没有写进去` (docs/dictation.md §28). */
 export function outcomeLabel(outcome: HistoryOutcome, locale: Locale = DEFAULT_LOCALE): Labelled {
   switch (outcome.kind) {
     case "inserted":
+      if (outcome.check === "not_written") {
+        return { text: translate(locale, "insertCheck.notWritten"), tone: "warn" };
+      }
       return {
         text: translate(locale, "outcome.inserted", { via: viaLabel(outcome.via, locale) }),
         tone: "ok",
@@ -851,6 +855,18 @@ export function outcomeLabel(outcome: HistoryOutcome, locale: Locale = DEFAULT_L
         tone: "danger",
       };
   }
+}
+
+/** The outcome in an entry's details: the row's label, and for a paste the insert check could not
+ *  confirm (docs/dictation.md §28) `· 未确认是否写入` — it counts as inserted everywhere else. */
+export function outcomeDetailText(
+  outcome: HistoryOutcome,
+  locale: Locale = DEFAULT_LOCALE,
+): string {
+  const label = outcomeLabel(outcome, locale).text;
+  return outcome.kind === "inserted" && outcome.check === "unconfirmed"
+    ? `${label} · ${translate(locale, "insertCheck.unconfirmed")}`
+    : label;
 }
 
 /** `{ set: true, source: "builtin" }` → `已内置`; user → `已设置`; none → `未设置`. */

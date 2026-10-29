@@ -53,12 +53,14 @@ use uuid::Uuid;
 
 use super::archive::{self, ArchiveReport, ArchiveWriter, KeptLong};
 use super::fallback::{FallbackRefiner, FallbackTranscriber, Link, QuotaLedger};
+use super::insert_check::Expected;
 use super::long::{self, EnergySegmenter};
 use super::ports::{
-    AudioSource, Capture, CaptureOptions, ClipboardCode, DWELL, DWELL_WITH_TEXT, DictationError, ForegroundApp, ForegroundProbe, GateCancel, InjectNote,
-    Injection, Injector, InsertGate, InsertSession, Inserted, LIVE_CHUNK_SAMPLES, LevelFrame, LivePcm, MAX_EDIT_SELECTION_CHARS, MAX_RECORDING, MIN_RECORDING,
-    PARTIAL_THROTTLE, PCM_SAMPLE_RATE_HZ, PcmStream, Recording, RefineContext, RefineHints, Refiner, Segment, Segmenter, SegmenterFactory, SelectionTiming,
-    ServiceProbe, StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber, Transcriber, Transcript, Via, max_recording,
+    AudioSource, CONFIRM_WITHIN, Capture, CaptureOptions, ClipboardCode, DWELL, DWELL_WITH_TEXT, DictationError, FocusReader, FocusWatch, ForegroundApp,
+    ForegroundProbe, GateCancel, InjectNote, Injection, Injector, InsertCheck, InsertGate, InsertSession, Inserted, LIVE_CHUNK_SAMPLES, LevelFrame, LivePcm,
+    MAX_EDIT_SELECTION_CHARS, MAX_RECORDING, MIN_RECORDING, PARTIAL_THROTTLE, PCM_SAMPLE_RATE_HZ, PcmStream, Recording, RefineContext, RefineHints, Refiner,
+    Segment, Segmenter, SegmenterFactory, SelectionTiming, ServiceProbe, Settled, StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber,
+    Transcriber, Transcript, UnconfirmedWhy, Via, max_recording,
 };
 use super::redecode::RedecodeStreaming;
 use super::{
@@ -376,6 +378,8 @@ pub struct PipelineOutcome {
     pub vocabulary: VocabularyHits,
     /// Injection outcome.
     pub injection: Result<Injection, DictationError>,
+    /// What the insert check found after the paste (docs/dictation.md §28); `None` when none ran.
+    pub check: Option<InsertCheck>,
     /// A voice edit's instruction and selection (docs/dictation.md §19); `None` for dictation.
     /// Boxed: two strings would make every `Internal` notification this much larger.
     pub edit: Option<Box<EditRecord>>,
@@ -796,6 +800,15 @@ pub struct DictationEngine {
     switched_window: SwitchedWindow,
     /// `EngineSettings.inject` of the last configuration.
     inject_mode: InjectMode,
+    /// `EngineSettings.insert_check` of the last configuration (docs/dictation.md §28).
+    insert_check: bool,
+    /// The shell shows result cards (docs/dictation.md §28; set by the runtime).
+    result_cards: bool,
+    /// `EngineSettings.result_cards_stay` of the last configuration (§28).
+    result_cards_stay: bool,
+    /// The dwell of the result card on screen while it stays (§28): armed when the setting is
+    /// switched off; `None` when no card stays.
+    pinned: Option<Duration>,
     levels: broadcast::Sender<LevelFrame>,
     internal: mpsc::Sender<Internal>,
     status: DictationStatus,
@@ -1011,6 +1024,10 @@ impl DictationEngine {
             output_mode: engines.output_mode,
             switched_window: engines.switched_window,
             inject_mode: engines.inject,
+            insert_check: engines.insert_check,
+            result_cards: false,
+            result_cards_stay: engines.result_cards_stay,
+            pinned: None,
             levels,
             internal: tx,
             status: DictationStatus::default(),
@@ -1128,6 +1145,50 @@ impl DictationEngine {
         self.keep_audio = keep;
     }
 
+    /// Whether the shell shows result cards (docs/dictation.md §28; `CoreConfig.result_cards`): the
+    /// desktop does; the phone and the local speech service have no card to show, and their
+    /// terminal states go after their dwell whatever the settings say.
+    pub fn set_result_cards(&mut self, on: bool) {
+        self.result_cards = on;
+    }
+
+    /// `DictationDismiss` (docs/dictation.md §28): the card's 关闭, or its 粘贴 that went in, for the
+    /// take `session` — that take's terminal state to `Idle` now (the recording it named
+    /// forgotten). Any other take stays as it is: one started meanwhile, or finished since, is not
+    /// dismissed by a click on the card it replaced, nor by that card's paste answering late.
+    pub fn dismiss(&mut self, session: u64) -> Vec<Effect> {
+        if session != self.status.session {
+            tracing::debug!(session, current = self.status.session, "a dismiss for an earlier take; the current one stays");
+            return Vec::new();
+        }
+        self.dismiss_now()
+    }
+
+    /// The terminal state to `Idle` now, whichever take it is (Esc on a finished take); any other
+    /// phase stays as it is.
+    fn dismiss_now(&mut self) -> Vec<Effect> {
+        if !self.status.phase.is_terminal() {
+            return Vec::new();
+        }
+        self.disarm();
+        self.pinned = None;
+        vec![self.set_phase(DictationPhase::Idle)]
+    }
+
+    /// The terminal states that are result cards (docs/dictation.md §28, D11): 没有写进去, 窗口已切换,
+    /// a failure that kept its text, and a failure without text (but speech) whose recording is kept.
+    fn is_card(&self, phase: &DictationPhase) -> bool {
+        match phase {
+            DictationPhase::Done { check, clipboard_code, .. } => {
+                *check == Some(InsertCheck::NotWritten) || *clipboard_code == Some(ClipboardCode::TargetChanged)
+            }
+            DictationPhase::Failed { text: Some(_), .. } => true,
+            // No speech is no card (the table of §28), even with its recording kept.
+            DictationPhase::Failed { text: None, code, .. } => *code != FailureCode::NoSpeech && self.status.recording.is_some(),
+            DictationPhase::Idle | DictationPhase::Listening { .. } | DictationPhase::Processing { .. } | DictationPhase::Cancelled { .. } => false,
+        }
+    }
+
     /// Rebuild the clients for a changed configuration. A pipeline already running keeps the
     /// clients it started with; a live preview already running keeps its session; a run already
     /// started keeps its output mode.
@@ -1146,6 +1207,15 @@ impl DictationEngine {
         self.output_mode = engines.output_mode;
         self.switched_window = engines.switched_window;
         self.inject_mode = engines.inject;
+        self.insert_check = engines.insert_check;
+        self.result_cards_stay = engines.result_cards_stay;
+        // docs/dictation.md §28: switched off while a card stays, it goes after its dwell from now.
+        if !self.result_cards_stay
+            && let Some(dwell) = self.pinned.take()
+            && self.status.phase.is_terminal()
+        {
+            self.arm(dwell, |session| Internal::DwellOver { session });
+        }
         self.warm_streaming();
         self.warm_transcriber();
     }
@@ -1282,6 +1352,7 @@ impl DictationEngine {
             return Err(DictationError::Busy);
         }
         self.disarm();
+        self.pinned = None;
         self.abort_pipeline();
         self.status.session += 1;
         self.status.kind = TakeKind::Dictation;
@@ -1427,6 +1498,7 @@ impl DictationEngine {
             _ => {}
         }
         self.disarm();
+        self.pinned = None;
         self.abort_pipeline();
         self.status.session += 1;
         self.status.kind = kind;
@@ -1674,7 +1746,9 @@ impl DictationEngine {
     fn delivery(&mut self) -> Delivery {
         let gate = InsertGate::new();
         self.take.gate = Some(gate.clone());
-        Delivery { injector: self.injector.clone(), gate, target: self.target() }
+        // docs/dictation.md §28: a take that only copies has no paste to check.
+        let check = (self.insert_check && self.take.inject_mode == InjectMode::Paste).then(|| self.injector.focus_reader()).flatten();
+        Delivery { injector: self.injector.clone(), gate, target: self.target(), check, probe: self.probe.clone() }
     }
 
     fn take_language(&self) -> Option<String> {
@@ -1855,10 +1929,7 @@ impl DictationEngine {
                 let cancelled = self.cancel_live_inject();
                 Ok(self.terminal(cancelled, DWELL))
             }
-            DictationPhase::Done { .. } | DictationPhase::Failed { .. } | DictationPhase::Cancelled { .. } => {
-                self.disarm();
-                Ok(vec![self.set_phase(DictationPhase::Idle)])
-            }
+            DictationPhase::Done { .. } | DictationPhase::Failed { .. } | DictationPhase::Cancelled { .. } => Ok(self.dismiss_now()),
         }
     }
 
@@ -2464,6 +2535,8 @@ impl DictationEngine {
             refine_model: None,
             vocabulary,
             injection,
+            // docs/dictation.md §28: the user watches live_inject's sentences arrive; no check.
+            check: None,
             edit: None,
         };
         self.finish_with(outcome, undelivered)
@@ -3135,8 +3208,21 @@ impl DictationEngine {
 
     /// Enter `Done` (or `Failed` with `undelivered` when the injection failed) and record the run.
     fn finish_with(&mut self, outcome: PipelineOutcome, undelivered: Option<String>) -> Vec<Effect> {
-        let PipelineOutcome { raw_text, text, refined, asr_ms, asr_model, refine_ms, refine_error, refine_failure, refine_model, vocabulary, injection, edit } =
-            outcome;
+        let PipelineOutcome {
+            raw_text,
+            text,
+            refined,
+            asr_ms,
+            asr_model,
+            refine_ms,
+            refine_error,
+            refine_failure,
+            refine_model,
+            vocabulary,
+            injection,
+            check,
+            edit,
+        } = outcome;
         // The entry is what became of a kept recording (docs/dictation.md §26), whether the text
         // reached the application or not: the take's end must not report it unrecognised.
         let kept = self.take.kept.take();
@@ -3183,14 +3269,18 @@ impl DictationEngine {
         match injection {
             Ok(Injection { via, note }) => {
                 let clipboard_code = note.as_ref().filter(|_| via == Via::Clipboard).map(|n| n.code);
+                // §28: only a paste is checked.
+                let check = check.filter(|_| via == Via::Paste);
                 entry.outcome = match (via, note) {
-                    (Via::Paste, _) => Outcome::Inserted { via: Via::Paste },
+                    (Via::Paste, _) => Outcome::Inserted { via: Via::Paste, check },
                     (Via::Clipboard, Some(note)) => Outcome::clipboard(note),
-                    (Via::Clipboard, None) => Outcome::Inserted { via: Via::Clipboard },
+                    (Via::Clipboard, None) => Outcome::Inserted { via: Via::Clipboard, check: None },
                 };
-                // §14.3: the window changed and the text waits on the clipboard; the pill says so a
-                // little longer, like a failure that kept its text.
-                let dwell = if clipboard_code == Some(ClipboardCode::TargetChanged) { DWELL_WITH_TEXT } else { DWELL };
+                // §14.3: the window changed and the text waits on the clipboard; §28: the text did
+                // not reach the field. The pill says so a little longer, like a failure that kept
+                // its text (or until it is closed, `terminal`).
+                let dwell =
+                    if clipboard_code == Some(ClipboardCode::TargetChanged) || check == Some(InsertCheck::NotWritten) { DWELL_WITH_TEXT } else { DWELL };
                 let phase = DictationPhase::Done {
                     chars: text.chars().count(),
                     text,
@@ -3206,6 +3296,7 @@ impl DictationEngine {
                     segments,
                     live_error,
                     clipboard_code,
+                    check,
                 };
                 let mut effects = self.terminal(phase, dwell);
                 effects.push(Effect::Record(entry));
@@ -3236,7 +3327,15 @@ impl DictationEngine {
         self.discard_long(&phase);
         self.status.segments = None;
         self.disarm();
-        self.arm(dwell, |session| Internal::DwellOver { session });
+        // docs/dictation.md §28: a result card stays until it is closed or the next take starts,
+        // when the shell shows cards and 识别结果卡片常驻 is on; the dwell is kept for the moment
+        // the setting is switched off.
+        if self.result_cards && self.is_card(&phase) && self.result_cards_stay {
+            self.pinned = Some(dwell);
+        } else {
+            self.pinned = None;
+            self.arm(dwell, |session| Internal::DwellOver { session });
+        }
         let unrecognised = self.take.kept.take().map(|recording| Effect::Kept { recording, status: unrecognised(&phase) });
         let mut effects = vec![self.set_phase(phase)];
         effects.extend(unrecognised);
@@ -3591,18 +3690,25 @@ fn probe_now(probe: &Arc<dyn ForegroundProbe>, deadline: Duration) -> Option<For
 }
 
 /// How a take's text goes out (docs/dictation.md §14.3): through one insert session of the
-/// injector, behind the take's gate, to the window the take started in.
+/// injector, behind the take's gate, to the window the take started in; a paste is then checked
+/// with the injector's focus reader (§28) when the check is on.
 #[derive(Clone)]
 struct Delivery {
     injector: Arc<dyn Injector>,
     gate: InsertGate,
     target: Target,
+    /// The insert check's reader; `None` when the check is off or the shell has none.
+    check: Option<Arc<dyn FocusReader>>,
+    /// The foreground probe, to name the window a paste goes to when the take does not wait for
+    /// its own (`switched_window = paste_here`, docs/dictation.md §28.2).
+    probe: Option<Arc<dyn ForegroundProbe>>,
 }
 
 /// What became of a take's text on its blocking thread.
 enum Insertion {
-    /// It went out (pasted, or copied when the window changed), or the delivery failed.
-    Done(Result<Injection, DictationError>),
+    /// It went out (pasted, or copied when the window changed), or the delivery failed; `check` is
+    /// what the insert check found after a paste (docs/dictation.md §28).
+    Done { injection: Result<Injection, DictationError>, check: Option<InsertCheck> },
     /// The take was cancelled before anything went out.
     Cancelled,
 }
@@ -3612,6 +3718,17 @@ impl Delivery {
     /// open → pasted; the window changed → copied (`target_changed`); cancelled → nothing, and
     /// the session puts the clipboard back. Blocking.
     fn insert(&self, text: &str) -> Insertion {
+        // docs/dictation.md §28.2: the focused field is read before the clipboard is touched, and
+        // judged by the application the paste goes to. Without one the check cannot tell a
+        // terminal or a remote desktop from an ordinary window, so it reads nothing.
+        let watch = self.check.as_ref().map(|reader| {
+            let app = self.paste_app();
+            let watch = match &app {
+                Some(app) => reader.watch(app, &Expected::of(text)),
+                None => Err(UnconfirmedWhy::UnknownApp),
+            };
+            (app, watch)
+        });
         let mut session = Arc::clone(&self.injector).begin_insert();
         let switched = std::cell::Cell::new(false);
         let may_deliver = || {
@@ -3625,7 +3742,9 @@ impl Delivery {
             Ok(Inserted::Delivered(injection)) => {
                 self.gate.delivered();
                 session.finish();
-                Insertion::Done(Ok(injection))
+                // Only a paste reached a field: a clipboard fallback has nothing to check.
+                let check = watch.filter(|_| injection.via == Via::Paste).map(|(app, watch)| self.settle(app.as_ref(), watch));
+                Insertion::Done { injection: Ok(injection), check }
             }
             Ok(Inserted::Cancelled) if switched.get() => {
                 session.finish();
@@ -3638,9 +3757,44 @@ impl Delivery {
             Err(e) => {
                 self.gate.delivered();
                 session.finish();
-                Insertion::Done(Err(e))
+                Insertion::Done { injection: Err(e), check: None }
             }
         }
+    }
+
+    /// This delivery without the insert check.
+    fn unchecked(self) -> Self {
+        Self { check: None, ..self }
+    }
+
+    /// The application a paste goes to, by which the check knows a terminal or a remote desktop
+    /// (docs/dictation.md §28.2): the take's own when the paste waits for it to be in front
+    /// ([`Target::still_there`]), else the one in front right now. `None` when no probe names one
+    /// (a pure Wayland session, a probe that does not answer).
+    fn paste_app(&self) -> Option<ForegroundApp> {
+        if let Some(expected) = &self.target.expected {
+            return Some(expected.clone());
+        }
+        let probe = self.probe.as_ref()?;
+        probe_now(probe, probe.deadline()).and_then(ForegroundApp::sanitized)
+    }
+
+    /// Settle the check of a paste into `app` that went out (docs/dictation.md §28) and log the
+    /// verdict, the time it took and the application — never the text. Blocking, for at most
+    /// [`CONFIRM_WITHIN`] after the reads.
+    fn settle(&self, app: Option<&ForegroundApp>, watch: Result<Box<dyn FocusWatch>, UnconfirmedWhy>) -> InsertCheck {
+        let started = Instant::now();
+        let settled = match watch {
+            Ok(watch) => watch.settle(CONFIRM_WITHIN),
+            Err(why) => Settled::unconfirmed(why),
+        };
+        let app = app.map_or("-", |a| a.app_id.as_str());
+        let after_ms = started.elapsed().as_millis();
+        match settled.why {
+            Some(why) => tracing::info!("insert check: {} after {after_ms} ms app={app} why={why:?}", settled.check.as_str()),
+            None => tracing::info!("insert check: {} after {after_ms} ms app={app}", settled.check.as_str()),
+        }
+        settled.check
     }
 
     /// The text on the clipboard only, once the gate lets it out; `note` says why. Blocking.
@@ -3650,14 +3804,14 @@ impl Delivery {
         }
         let out = self.injector.copy(text).map(|()| Injection { via: Via::Clipboard, note });
         self.gate.delivered();
-        Insertion::Done(out)
+        Insertion::Done { injection: out, check: None }
     }
 
     /// `run` on a blocking thread; a task that failed is a failed delivery.
     async fn on_blocking(self, run: impl FnOnce(&Self) -> Insertion + Send + 'static) -> Insertion {
         match tokio::task::spawn_blocking(move || run(&self)).await {
             Ok(insertion) => insertion,
-            Err(e) => Insertion::Done(Err(DictationError::Inject(format!("injector task failed: {e}")))),
+            Err(e) => Insertion::Done { injection: Err(DictationError::Inject(format!("injector task failed: {e}"))), check: None },
         }
     }
 }
@@ -3728,7 +3882,7 @@ async fn run_pipeline(job: PipelineJob) {
             }
         })
         .await;
-    let Insertion::Done(injection) = insertion else {
+    let Insertion::Done { injection, check } = insertion else {
         // Cancelled before anything went out (docs/dictation.md §14.3): the engine has moved on.
         tracing::debug!(session, "the cancel came before the text went out");
         return;
@@ -3745,6 +3899,7 @@ async fn run_pipeline(job: PipelineJob) {
         refine_model,
         vocabulary: hits,
         injection,
+        check,
         edit: None,
     };
     let _ = tx.send(Internal::Finished { session, result: Ok(outcome) }).await;
@@ -3806,7 +3961,9 @@ async fn run_edit(job: EditJob) {
     let _ = tx.send(Internal::Stage { session, stage: ProcessingStage::Inserting }).await;
     let text = out.text;
     let to_inject = text.clone();
-    let Insertion::Done(injection) = delivery.on_blocking(move |d| d.insert(&to_inject)).await else {
+    // docs/dictation.md §28: a rewrite equal to the selection leaves the field as it was either way.
+    let delivery = if Expected::of(&text).whole() == Expected::of(&selection).whole() { delivery.unchecked() } else { delivery };
+    let Insertion::Done { injection, check } = delivery.on_blocking(move |d| d.insert(&to_inject)).await else {
         tracing::debug!(session, "the cancel came before the rewrite went out");
         return;
     };
@@ -3823,6 +3980,7 @@ async fn run_edit(job: EditJob) {
         // The dictionary corrected the instruction; the rules never run on an edit.
         vocabulary: VocabularyHits { corrections: corrected.hits, rules: Vec::new() },
         injection,
+        check,
         edit: Some(Box::new(EditRecord { instruction, selection })),
     };
     finish(Ok(outcome)).await;
@@ -4068,6 +4226,7 @@ mod tests {
                 segments,
                 live_error,
                 clipboard_code,
+                check: None,
             } => {
                 assert_eq!(text, "你好，世界。");
                 assert_eq!(*clipboard_code, None, "a paste names no clipboard reason");
@@ -4090,7 +4249,7 @@ mod tests {
         assert!(entry.segments.is_none() && entry.live_error.is_none());
         assert_eq!(entry.text, "你好，世界。");
         assert_eq!(entry.raw_text, FAKE_TRANSCRIPT);
-        assert_eq!(entry.outcome, Outcome::Inserted { via: Via::Paste });
+        assert_eq!(entry.outcome, Outcome::Inserted { via: Via::Paste, check: None });
         assert_eq!(entry.refine_model.as_deref(), Some(FAKE_REFINE_MODEL));
         assert_eq!(entry.asr_model, crate::engines::DEFAULT_ASR_MODEL);
         assert!(!entry.starred && entry.refined && entry.at_ms > 0);
@@ -4315,7 +4474,7 @@ mod tests {
         r.start_open().await;
         r.engine.stop().unwrap();
         let fx = r.run_to_terminal().await;
-        assert_eq!(record(&fx).unwrap().outcome, Outcome::Inserted { via: Via::Clipboard });
+        assert_eq!(record(&fx).unwrap().outcome, Outcome::Inserted { via: Via::Clipboard, check: None });
     }
 
     #[tokio::test(start_paused = true)]
@@ -4437,6 +4596,7 @@ mod tests {
                 refine_model: None,
                 vocabulary: VocabularyHits::default(),
                 injection: Ok(Injection { via: Via::Paste, note: None }),
+                check: None,
                 edit: None,
             }),
         };
@@ -5227,7 +5387,7 @@ mod tests {
         assert_eq!(entry.mode, OutputMode::StreamingFinal);
         assert_eq!(entry.raw_text, "你好，世界。今天天气");
         assert_eq!(entry.segments.as_ref().map(Vec::len), Some(2));
-        assert_eq!(entry.outcome, Outcome::Inserted { via: Via::Paste });
+        assert_eq!(entry.outcome, Outcome::Inserted { via: Via::Paste, check: None });
         // Refinement off: the joined text is injected as is.
         let mut r =
             rig_mode(FakeAudio::speech(), FakeTranscriber::ok("x"), None, FakeInjector::paste(), Arc::new(FakeStreaming::script()), OutputMode::StreamingFinal);
@@ -5317,7 +5477,7 @@ mod tests {
         assert_eq!(streaming.finishes(), 1);
         let entry = record(&fx).unwrap();
         assert_eq!((entry.mode, entry.refined, entry.segments.as_ref().map(Vec::len)), (OutputMode::LiveInject, false, Some(3)));
-        assert_eq!(entry.outcome, Outcome::Inserted { via: Via::Paste });
+        assert_eq!(entry.outcome, Outcome::Inserted { via: Via::Paste, check: None });
         // CJK sentences take no separator.
         let mut r =
             rig_mode(FakeAudio::speech(), FakeTranscriber::ok("x"), None, FakeInjector::paste(), Arc::new(FakeStreaming::script()), OutputMode::LiveInject);
@@ -5405,7 +5565,7 @@ mod tests {
         let fx = r.run_to_terminal().await;
         assert!(matches!(phase(&fx), DictationPhase::Done { via: Via::Paste, text, .. } if text == "Hello world. How are you. Fine"), "{fx:?}");
         assert_eq!(r.injector.injected(), ["Hello world. ", "Hello world. How are you. Fine "].map(String::from));
-        assert_eq!(record(&fx).unwrap().outcome, Outcome::Inserted { via: Via::Paste });
+        assert_eq!(record(&fx).unwrap().outcome, Outcome::Inserted { via: Via::Paste, check: None });
         // An injection error works the same way; when the final write fails too the run is `Failed`
         // with the undelivered text, and what was pasted before stays pasted.
         let mut r =
@@ -6063,7 +6223,7 @@ mod tests {
         assert!(entry.refined && entry.refine_model.as_deref() == Some(FAKE_REFINE_MODEL));
         assert_eq!(entry.preset, None, "an edit runs its instruction, not a preset (§21)");
         assert_eq!(r.engine.status().preset, None);
-        assert_eq!(entry.outcome, Outcome::Inserted { via: Via::Paste });
+        assert_eq!(entry.outcome, Outcome::Inserted { via: Via::Paste, check: None });
         assert_eq!(
             entry.vocabulary,
             Some(VocabularyHits { corrections: vec![crate::vocabulary::VocabularyHit { id: fix.id, count: 1 }], rules: Vec::new() }),
@@ -7558,7 +7718,7 @@ mod tests {
         assert!(r.injector.injected().is_empty(), "never pasted");
         assert_eq!(r.injector.clipboard_copies(), vec!["你好，世界。".to_owned()]);
         let entry = record(&fx).expect("a new entry");
-        assert_eq!(entry.outcome, Outcome::Inserted { via: Via::Clipboard });
+        assert_eq!(entry.outcome, Outcome::Inserted { via: Via::Clipboard, check: None });
         assert_eq!(entry.duration_ms, 2400);
         assert_eq!(entry.app, Some(slack()));
         assert_eq!(kept_statuses(&fx), vec![(id, KeptStatus::Recognized { entry: entry.id })]);
@@ -7798,7 +7958,7 @@ mod tests {
         r.engine.stop().unwrap();
         let fx = r.run_to_terminal().await;
         assert!(matches!(phase(&fx), DictationPhase::Done { via: Via::Clipboard, clipboard_code: None, .. }), "{fx:?}");
-        assert!(matches!(&record(&fx).unwrap().outcome, Outcome::Inserted { via: Via::Clipboard }), "{fx:?}");
+        assert!(matches!(&record(&fx).unwrap().outcome, Outcome::Inserted { via: Via::Clipboard, check: None }), "{fx:?}");
         assert_eq!(r.injector.events(), [InsertEvent::Begin, InsertEvent::Piece(FAKE_TRANSCRIPT.into()), InsertEvent::Finish]);
         assert!(r.injector.clipboard_copies().is_empty(), "no second copy for a changed window");
 
@@ -7922,5 +8082,477 @@ mod tests {
         assert!(matches!(phase(&fx), DictationPhase::Done { via: Via::Clipboard, clipboard_code: Some(ClipboardCode::TargetChanged), .. }), "{fx:?}");
         assert!(r.injector.injected().is_empty());
         assert_eq!(r.injector.clipboard_copies(), vec![FAKE_TRANSCRIPT.to_owned()]);
+    }
+
+    // ---------------- the insert check and the result cards (docs/dictation.md §28) ----------------
+
+    use crate::dictation::fakes::{FakeFocusReader, FocusCalls, caret_reading, selection_reading};
+    use crate::dictation::insert_check::{Expected, Sample};
+    use crate::dictation::{CONFIRM_WITHIN, InsertCheck, UnconfirmedWhy};
+
+    /// Engine settings with refinement off (the pasted text is the transcript), edited by `edit`.
+    fn engines_with(edit: impl FnOnce(&mut EngineSettings)) -> ResolvedEngines {
+        let mut settings = EngineSettings { refine_enabled: false, ..EngineSettings::default() };
+        edit(&mut settings);
+        ResolvedEngines::resolve(&settings, &UserSecrets::default(), &TEST_BUILT_IN)
+    }
+
+    /// A rig on `engines` with `transcriber` and `injector` and no refiner. Its probe names an
+    /// ordinary application (Notepad), as on a desktop: the check knows where a paste goes
+    /// (docs/dictation.md §28.2).
+    fn rig_with(engines: &ResolvedEngines, transcriber: FakeTranscriber, injector: FakeInjector) -> Rig {
+        rig_probed_with(notepad(), transcriber, None, None, engines, injector)
+    }
+
+    /// A rig whose injector pastes and reads the focused field through `reader`; the pasted text is
+    /// `transcript`.
+    fn checked_rig(transcript: &str, reader: &Arc<FakeFocusReader>) -> Rig {
+        rig_with(&engines_with(|_| {}), FakeTranscriber::ok(transcript), FakeInjector::paste().with_focus_reader(reader.clone()))
+    }
+
+    impl Rig {
+        /// One take from the press to its terminal phase, the probe's answer included.
+        async fn take(&mut self) -> Vec<Effect> {
+            self.start_probed().await;
+            self.engine.stop().unwrap();
+            self.run_to_terminal().await
+        }
+    }
+
+    /// What the insert check found, from a `Done` phase.
+    fn done_check(effects: &[Effect]) -> Option<InsertCheck> {
+        match phase(effects) {
+            DictationPhase::Done { check, .. } => *check,
+            other => panic!("not done: {other:?}"),
+        }
+    }
+
+    /// Regression (R02, docs/dictation.md §28): a paste the focused field never received (a
+    /// read-only field, an application that ignored the chord) was reported as inserted. Read
+    /// before the paste and every time after it, the field is unchanged: `not_written`, in the
+    /// phase and in the history; the text is pasted once and never again.
+    #[tokio::test(start_paused = true)]
+    async fn regression_a_paste_the_field_never_received_reports_not_written() {
+        let reader = Arc::new(FakeFocusReader::unchanged("前文"));
+        let mut r = checked_rig(FAKE_TRANSCRIPT, &reader);
+        let fx = r.take().await;
+        assert_eq!(done_check(&fx), Some(InsertCheck::NotWritten), "{fx:?}");
+        assert_eq!(record(&fx).unwrap().outcome, Outcome::Inserted { via: Via::Paste, check: Some(InsertCheck::NotWritten) });
+        assert_eq!(reader.calls(), FocusCalls { watched: vec![("notepad".to_owned(), FAKE_TRANSCRIPT.to_owned())], settled: vec![CONFIRM_WITHIN] });
+        assert_eq!(r.injector.injected(), [FAKE_TRANSCRIPT.to_owned()], "no second paste");
+        assert_eq!(r.injector.events(), [InsertEvent::Begin, InsertEvent::Piece(FAKE_TRANSCRIPT.into()), InsertEvent::Finish]);
+    }
+
+    /// The take's text right before the caret of the same field: `written`.
+    #[tokio::test(start_paused = true)]
+    async fn a_paste_whose_text_shows_at_the_caret_is_written() {
+        let reader = Arc::new(FakeFocusReader::showing("前文", &format!("前文{FAKE_TRANSCRIPT}")));
+        let mut r = checked_rig(FAKE_TRANSCRIPT, &reader);
+        let fx = r.take().await;
+        assert_eq!(done_check(&fx), Some(InsertCheck::Written), "{fx:?}");
+        assert_eq!(record(&fx).unwrap().outcome, Outcome::Inserted { via: Via::Paste, check: Some(InsertCheck::Written) });
+    }
+
+    /// Regression (docs/dictation.md §28): the same text pasted over the same selection leaves the
+    /// field as it was; that is no proof of a paste that went nowhere, so no card.
+    #[tokio::test(start_paused = true)]
+    async fn regression_same_text_over_the_same_selection_is_unconfirmed() {
+        let selected = selection_reading("前文", FAKE_TRANSCRIPT);
+        let reader = Arc::new(FakeFocusReader::reading(selected.clone(), vec![Sample::Text(selected.clone()), Sample::Text(selected)]));
+        let mut r = checked_rig(FAKE_TRANSCRIPT, &reader);
+        assert_eq!(done_check(&r.take().await), Some(InsertCheck::Unconfirmed));
+    }
+
+    /// A change that is not this take's text (an autocompletion), another control after the paste,
+    /// a field that cannot be read: `unconfirmed`, counted as inserted.
+    #[tokio::test(start_paused = true)]
+    async fn a_change_that_is_not_the_text_another_control_or_no_reading_is_unconfirmed() {
+        let cases = [
+            ("an autocompletion", FakeFocusReader::showing("前文", "前文你好，世"), 1),
+            ("another control", FakeFocusReader::reading(caret_reading("前文"), vec![Sample::OtherControl]), 1),
+            ("an unreadable field", FakeFocusReader::refusing(UnconfirmedWhy::Unreadable), 0),
+        ];
+        for (name, reader, settles) in cases {
+            let reader = Arc::new(reader);
+            let mut r = checked_rig(FAKE_TRANSCRIPT, &reader);
+            let fx = r.take().await;
+            assert_eq!(done_check(&fx), Some(InsertCheck::Unconfirmed), "{name}: {fx:?}");
+            assert_eq!(record(&fx).unwrap().outcome, Outcome::Inserted { via: Via::Paste, check: Some(InsertCheck::Unconfirmed) }, "{name}");
+            assert_eq!((reader.calls().watched.len(), reader.calls().settled.len()), (1, settles), "{name}");
+        }
+    }
+
+    /// The reader is given what the check compares: the text with its line breaks and no-break
+    /// spaces normalised and its ends trimmed, the last 64 characters of it.
+    #[tokio::test(start_paused = true)]
+    async fn the_reader_gets_the_normalised_last_64_characters() {
+        let transcript = format!("{}\r\n{}\u{a0}结尾", "长".repeat(80), "句".repeat(10));
+        let reader = Arc::new(FakeFocusReader::unchanged(""));
+        let mut r = checked_rig(&transcript, &reader);
+        r.take().await;
+        let pasted = r.injector.injected().pop().expect("pasted");
+        let (app, tail) = reader.calls().watched.pop().expect("watched");
+        assert_eq!(app, "notepad", "the application the paste goes to");
+        assert_eq!(tail, Expected::of(&pasted).tail());
+        assert_eq!(tail.chars().count(), 64);
+        assert!(!tail.contains('\r') && !tail.contains('\u{a0}'), "{tail}");
+        assert!(tail.ends_with("结尾"), "{tail}");
+    }
+
+    /// The take's application, as the probe named it when the take started, goes to the reader
+    /// (its table of applications it leaves alone, docs/dictation.md §28).
+    #[tokio::test(start_paused = true)]
+    async fn the_reader_is_told_the_takes_application() {
+        let reader = Arc::new(FakeFocusReader::showing("", FAKE_TRANSCRIPT));
+        let injector = FakeInjector::paste().with_focus_reader(reader.clone());
+        let mut r = rig_probed_with(notepad(), FakeTranscriber::ok(FAKE_TRANSCRIPT), None, None, &engines_with(|_| {}), injector);
+        r.start_probed().await;
+        r.engine.stop().unwrap();
+        assert_eq!(done_check(&r.run_to_terminal().await), Some(InsertCheck::Written));
+        assert_eq!(reader.calls().watched, [("notepad".to_owned(), FAKE_TRANSCRIPT.to_owned())]);
+    }
+
+    /// Regression (goal review 2026-10-30, R02): the check took the application from the take's
+    /// start, and read the field even when no probe named one — on a pure Wayland session a
+    /// terminal could be read, and an unchanged one reported 没有写进去. Without an application
+    /// for the window the paste went to, the check cannot tell a terminal or a remote desktop from
+    /// an ordinary window: `unconfirmed`, and the field is never read.
+    #[tokio::test(start_paused = true)]
+    async fn regression_a_paste_into_a_window_no_probe_names_is_unconfirmed_and_never_read() {
+        for probe in [FakeProbe::nothing(), FakeProbe::failing("no display")] {
+            let reader = Arc::new(FakeFocusReader::unchanged("前文"));
+            let injector = FakeInjector::paste().with_focus_reader(reader.clone());
+            let mut r = rig_probed_with(Arc::new(probe), FakeTranscriber::ok(FAKE_TRANSCRIPT), None, None, &engines_with(|_| {}), injector);
+            let fx = r.take().await;
+            assert_eq!(done_check(&fx), Some(InsertCheck::Unconfirmed), "{fx:?}");
+            assert_eq!(record(&fx).unwrap().outcome, Outcome::Inserted { via: Via::Paste, check: Some(InsertCheck::Unconfirmed) });
+            assert_eq!(reader.calls(), FocusCalls::default(), "the field is not read");
+            assert_eq!(r.injector.injected(), [FAKE_TRANSCRIPT.to_owned()], "pasted once, as before");
+        }
+        // A shell without any probe: the same.
+        let reader = Arc::new(FakeFocusReader::unchanged("前文"));
+        let mut r = rig(FakeAudio::speech(), FakeTranscriber::ok(FAKE_TRANSCRIPT), None, FakeInjector::paste().with_focus_reader(reader.clone()), false);
+        r.start_open().await;
+        r.engine.stop().unwrap();
+        assert_eq!(done_check(&r.run_to_terminal().await), Some(InsertCheck::Unconfirmed));
+        assert_eq!(reader.calls(), FocusCalls::default(), "the field is not read");
+    }
+
+    /// Regression (goal review 2026-10-30, R02): with 粘贴到当前窗口 (`switched_window =
+    /// paste_here`) the text goes into whatever window is in front, but the reader was told the
+    /// take's starting application: a switch to a terminal or a remote desktop slipped past the
+    /// table of applications it leaves alone. The reader is told the application in front at the
+    /// paste (the platform readers answer `Skipped` for those, crates/voltip-focus).
+    #[tokio::test(start_paused = true)]
+    async fn regression_paste_here_checks_the_application_in_front_at_the_paste() {
+        let probe = notepad();
+        let reader = Arc::new(FakeFocusReader::unchanged("前文"));
+        let injector = FakeInjector::paste().with_focus_reader(reader.clone());
+        let engines = engines_with(|s| s.switched_window = SwitchedWindow::PasteHere);
+        let mut r = rig_probed_with(probe.clone(), FakeTranscriber::ok(FAKE_TRANSCRIPT), None, None, &engines, injector);
+        r.start_probed().await;
+        probe.set_app("windowsterminal", "Windows Terminal", None);
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { via: Via::Paste, .. }), "{fx:?}");
+        assert_eq!(reader.calls().watched, [("windowsterminal".to_owned(), FAKE_TRANSCRIPT.to_owned())]);
+    }
+
+    /// 检查文字是否写入 off (`insert_check`, from the start and after a change): the reader is never
+    /// asked and nothing is recorded; switched on again, the next take is checked.
+    #[tokio::test(start_paused = true)]
+    async fn the_check_switched_off_never_asks_the_reader() {
+        let reader = Arc::new(FakeFocusReader::unchanged("前文"));
+        let off = engines_with(|s| s.insert_check = false);
+        let mut r = rig_with(&off, FakeTranscriber::ok(FAKE_TRANSCRIPT), FakeInjector::paste().with_focus_reader(reader.clone()));
+        let fx = r.take().await;
+        assert_eq!(done_check(&fx), None);
+        assert_eq!(record(&fx).unwrap().outcome, Outcome::Inserted { via: Via::Paste, check: None });
+        assert_eq!(reader.calls(), FocusCalls::default());
+        r.engine.configure(&engines_with(|_| {}));
+        assert_eq!(done_check(&r.take().await), Some(InsertCheck::NotWritten), "on again");
+        r.engine.configure(&off);
+        assert_eq!(done_check(&r.take().await), None, "off again");
+        assert_eq!(reader.calls().watched.len(), 1);
+    }
+
+    /// docs/dictation.md §28: only a paste is checked. A copy — a recording recognised again, a
+    /// text too long to paste, a window that changed — never asks the reader.
+    #[test]
+    fn a_copy_never_asks_the_reader() {
+        let reader = Arc::new(FakeFocusReader::unchanged(""));
+        let delivery = || Delivery {
+            injector: Arc::new(FakeInjector::paste()),
+            gate: InsertGate::new(),
+            target: Target::none(),
+            check: Some(reader.clone() as Arc<dyn crate::dictation::FocusReader>),
+            probe: Some(notepad() as Arc<dyn ForegroundProbe>),
+        };
+        assert!(matches!(delivery().copy("文字", None), Insertion::Done { injection: Ok(Injection { via: Via::Clipboard, .. }), check: None }));
+        assert_eq!(reader.calls(), FocusCalls::default());
+        assert!(matches!(
+            delivery().insert("文字"),
+            Insertion::Done { injection: Ok(Injection { via: Via::Paste, .. }), check: Some(InsertCheck::NotWritten) }
+        ));
+        assert_eq!(reader.calls().watched.len(), 1, "a paste does");
+    }
+
+    /// A recording recognised again goes to the clipboard: no check.
+    #[tokio::test(start_paused = true)]
+    async fn a_retake_is_never_checked() {
+        let reader = Arc::new(FakeFocusReader::unchanged(""));
+        let mut r = checked_rig(FAKE_TRANSCRIPT, &reader);
+        let wav = crate::dictation::fakes::speech_recording(1500).wav;
+        r.engine.retake(Retake { recording: Uuid::new_v4(), audio: RetakeAudio::Wav(wav), duration_ms: 1500, app: None, clients: None }).unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { via: Via::Clipboard, check: None, .. }), "{fx:?}");
+        assert_eq!(reader.calls(), FocusCalls::default());
+    }
+
+    /// A paste that fell back to the clipboard (no paste tool, no permission) has nothing to check,
+    /// and a take with 仅复制到剪贴板 does not even read the field.
+    #[tokio::test(start_paused = true)]
+    async fn a_clipboard_fallback_or_a_clipboard_only_take_is_never_checked() {
+        let reader = Arc::new(FakeFocusReader::unchanged(""));
+        let injector = FakeInjector::clipboard_with(InjectNote::new(ClipboardCode::NoTool, "no paste tool")).with_focus_reader(reader.clone());
+        let mut r = rig_with(&engines_with(|_| {}), FakeTranscriber::ok(FAKE_TRANSCRIPT), injector);
+        let fx = r.take().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { via: Via::Clipboard, check: None, .. }), "{fx:?}");
+        assert!(reader.calls().settled.is_empty(), "nothing went out to check");
+
+        let reader = Arc::new(FakeFocusReader::unchanged(""));
+        let clipboard_only = engines_with(|s| s.inject = InjectMode::ClipboardOnly);
+        let mut r = rig_with(&clipboard_only, FakeTranscriber::ok(FAKE_TRANSCRIPT), FakeInjector::clipboard(None).with_focus_reader(reader.clone()));
+        let fx = r.take().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { via: Via::Clipboard, check: None, .. }), "{fx:?}");
+        assert_eq!(reader.calls(), FocusCalls::default());
+    }
+
+    /// `live_inject` pastes sentence by sentence while the user watches them appear: no check
+    /// (docs/dictation.md §28).
+    #[tokio::test(start_paused = true)]
+    async fn live_inject_is_never_checked() {
+        let reader = Arc::new(FakeFocusReader::unchanged(""));
+        let injector = FakeInjector::paste().with_focus_reader(reader.clone());
+        let mut r = rig_mode(FakeAudio::speech(), FakeTranscriber::ok("never"), None, injector, english_script(), OutputMode::LiveInject);
+        r.start_open().await;
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { mode: OutputMode::LiveInject, check: None, .. }), "{fx:?}");
+        assert!(!r.injector.injected().is_empty(), "the sentences were pasted");
+        assert_eq!(reader.calls(), FocusCalls::default());
+    }
+
+    /// A voice edit is checked with its rewrite; a rewrite equal to the selection would leave the
+    /// field as it was either way, so it is not checked at all.
+    #[tokio::test(start_paused = true)]
+    async fn a_voice_edit_is_checked_unless_the_rewrite_equals_the_selection() {
+        let edit_rig = |injector: FakeInjector, refiner: FakeRefiner| {
+            rig_probed_with(notepad(), FakeTranscriber::ok(INSTRUCTION), Some(refiner), None, &engines_with(|_| {}), injector)
+        };
+        let reader = Arc::new(FakeFocusReader::showing("", REWRITE));
+        let mut r = edit_rig(FakeInjector::paste().with_selection(SELECTION).with_focus_reader(reader.clone()), FakeRefiner::ok(REWRITE));
+        r.start_edit_open(Vec::new()).await;
+        r.engine.stop().unwrap();
+        assert_eq!(done_check(&r.run_to_terminal().await), Some(InsertCheck::Written));
+        assert_eq!(reader.calls().watched, [("notepad".to_owned(), REWRITE.to_owned())]);
+
+        let reader = Arc::new(FakeFocusReader::unchanged(""));
+        let mut r = edit_rig(FakeInjector::paste().with_selection(SELECTION).with_focus_reader(reader.clone()), FakeRefiner::ok(SELECTION));
+        r.start_edit_open(Vec::new()).await;
+        r.engine.stop().unwrap();
+        assert_eq!(done_check(&r.run_to_terminal().await), None);
+        assert_eq!(reader.calls(), FocusCalls::default());
+    }
+
+    /// The four result cards (docs/dictation.md §28, user decision D11).
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Card {
+        /// 没有写进去.
+        NotWritten,
+        /// 窗口已切换.
+        WindowChanged,
+        /// A failure that kept its text.
+        FailedWithText,
+        /// A failure without text whose recording is kept.
+        FailedKept,
+    }
+
+    impl Card {
+        const ALL: [Self; 4] = [Self::NotWritten, Self::WindowChanged, Self::FailedWithText, Self::FailedKept];
+
+        /// How long the card stays when it does not stay: its dwell from before §28.
+        fn dwell(self) -> Duration {
+            if self == Self::FailedKept { DWELL } else { DWELL_WITH_TEXT }
+        }
+
+        /// The terminal state is this card's.
+        fn is(self, status: &DictationStatus) -> bool {
+            match (self, &status.phase) {
+                (Self::NotWritten, DictationPhase::Done { check: Some(InsertCheck::NotWritten), .. }) => true,
+                (Self::WindowChanged, DictationPhase::Done { clipboard_code: Some(ClipboardCode::TargetChanged), .. }) => true,
+                (Self::FailedWithText, DictationPhase::Failed { text: Some(_), .. }) => true,
+                (Self::FailedKept, DictationPhase::Failed { text: None, .. }) => status.recording.is_some(),
+                _ => false,
+            }
+        }
+    }
+
+    /// A rig whose take ended in `card`, with the shell's cards (`result_cards`) as `cards` says and
+    /// 识别结果卡片常驻 (`result_cards_stay`) as `stay` says.
+    async fn card_rig(card: Card, cards: bool, stay: bool) -> Rig {
+        let engines = engines_with(|s| s.result_cards_stay = stay);
+        let probe = notepad();
+        let mut r = match card {
+            Card::NotWritten => {
+                rig_with(&engines, FakeTranscriber::ok(FAKE_TRANSCRIPT), FakeInjector::paste().with_focus_reader(Arc::new(FakeFocusReader::unchanged("前文"))))
+            }
+            Card::WindowChanged => rig_probed_with(probe.clone(), FakeTranscriber::ok(FAKE_TRANSCRIPT), None, None, &engines, FakeInjector::paste()),
+            Card::FailedWithText => rig_with(&engines, FakeTranscriber::ok(FAKE_TRANSCRIPT), FakeInjector::err("denied")),
+            Card::FailedKept => rig_with(&engines, FakeTranscriber::err("401 unauthorized"), FakeInjector::paste()),
+        };
+        r.engine.set_result_cards(cards);
+        r.engine.set_keep_audio(card == Card::FailedKept);
+        r.start_probed().await;
+        if card == Card::WindowChanged {
+            probe.set_window(Some(8));
+        }
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(card.is(status_of(&fx)), "{card:?}: {fx:?}");
+        r
+    }
+
+    /// Advance the paused clock by `by` and let the dwell timer, if any, report.
+    async fn wait_virtual(r: &mut Rig, by: Duration) {
+        tokio::time::advance(by).await;
+        r.settle().await;
+    }
+
+    /// docs/dictation.md §28 (D8, D11): with result cards and 识别结果卡片常驻 on, the four cards stay
+    /// past every dwell — until 关闭 (`dismiss`: idle, the recording forgotten) or the next take,
+    /// which replaces the card. Dismissing anything that is not a terminal state changes nothing.
+    #[tokio::test(start_paused = true)]
+    async fn result_cards_stay_until_dismissed_or_the_next_take() {
+        for card in Card::ALL {
+            let mut r = card_rig(card, true, true).await;
+            wait_virtual(&mut r, DWELL_WITH_TEXT + Duration::from_secs(60)).await;
+            assert!(r.nothing_pending(), "{card:?}: no dwell timer");
+            assert!(card.is(r.engine.status()), "{card:?}: still the card");
+            let session = r.engine.status().session;
+            let fx = r.engine.dismiss(session);
+            assert_eq!(phase(&fx), &DictationPhase::Idle, "{card:?}");
+            assert_eq!(r.engine.status().recording, None, "{card:?}: idle forgets the recording");
+            assert!(r.engine.dismiss(session).is_empty(), "{card:?}: nothing to dismiss when idle");
+
+            let mut r = card_rig(card, true, true).await;
+            let fx = r.engine.start().unwrap();
+            assert!(matches!(phase(&fx), DictationPhase::Listening { .. }), "{card:?}: the next take replaces the card");
+            assert!(r.engine.dismiss(r.engine.status().session).is_empty(), "{card:?}: a running take is not dismissed");
+            assert!(matches!(r.engine.status().phase, DictationPhase::Listening { .. }));
+            r.drain().await;
+        }
+    }
+
+    /// Regression (goal review 2026-10-30, R06): a card's 粘贴 that answered late — after the next
+    /// take had ended in a card of its own — dismissed whatever card was up, and the next take's
+    /// result went with it. A dismiss names its take: one for an earlier take changes nothing.
+    #[tokio::test(start_paused = true)]
+    async fn regression_a_late_dismiss_for_an_earlier_card_leaves_the_next_card() {
+        let mut r = card_rig(Card::FailedWithText, true, true).await;
+        let first = r.engine.status().session;
+        r.take().await;
+        let second = r.engine.status().session;
+        assert_ne!(first, second);
+        assert!(Card::FailedWithText.is(r.engine.status()), "the next take's card");
+        assert!(r.engine.dismiss(first).is_empty(), "the earlier card's late dismiss");
+        assert!(Card::FailedWithText.is(r.engine.status()), "the next card stays");
+        assert_eq!(phase(&r.engine.dismiss(second)), &DictationPhase::Idle);
+    }
+
+    /// Regression (D13, docs/dictation.md §28): the cards follow 识别结果卡片常驻. Off, they go after
+    /// their dwell from before — 6 s, 2.5 s for a failure without text. Switched off while a card
+    /// stays, it goes after its dwell from then on; switched on while one dwells, it still goes
+    /// (the setting applies to the cards after it).
+    #[tokio::test(start_paused = true)]
+    async fn regression_result_cards_follow_the_stay_setting() {
+        for card in Card::ALL {
+            let mut r = card_rig(card, true, false).await;
+            wait_virtual(&mut r, card.dwell() - Duration::from_millis(1)).await;
+            assert!(r.nothing_pending(), "{card:?}: not before its dwell");
+            tokio::time::advance(Duration::from_millis(1)).await;
+            assert_eq!(phase(&r.next().await), &DictationPhase::Idle, "{card:?}: off, it goes after its dwell");
+
+            let mut r = card_rig(card, true, true).await;
+            wait_virtual(&mut r, Duration::from_secs(30)).await;
+            assert!(r.nothing_pending(), "{card:?}: stays");
+            r.engine.configure(&engines_with(|s| s.result_cards_stay = false));
+            wait_virtual(&mut r, card.dwell() - Duration::from_millis(1)).await;
+            assert!(r.nothing_pending(), "{card:?}: its dwell counts from the change");
+            tokio::time::advance(Duration::from_millis(1)).await;
+            assert_eq!(phase(&r.next().await), &DictationPhase::Idle, "{card:?}: switched off, it goes");
+
+            let mut r = card_rig(card, true, false).await;
+            r.engine.configure(&engines_with(|s| s.result_cards_stay = true));
+            tokio::time::advance(card.dwell()).await;
+            assert_eq!(phase(&r.next().await), &DictationPhase::Idle, "{card:?}: switched on, the card that dwells still goes");
+        }
+    }
+
+    /// A shell without cards (the phone, the local speech service: `result_cards` off) keeps the
+    /// dwells from before, whatever the setting says.
+    #[tokio::test(start_paused = true)]
+    async fn without_result_cards_every_card_keeps_its_dwell() {
+        for card in Card::ALL {
+            let mut r = card_rig(card, false, true).await;
+            wait_virtual(&mut r, card.dwell() - Duration::from_millis(1)).await;
+            assert!(r.nothing_pending(), "{card:?}");
+            tokio::time::advance(Duration::from_millis(1)).await;
+            assert_eq!(phase(&r.next().await), &DictationPhase::Idle, "{card:?}");
+        }
+    }
+
+    /// The other terminal states are no cards: an ordinary paste, a failure without speech or
+    /// recording, a cancel — all leave after their dwell with the cards on.
+    #[tokio::test(start_paused = true)]
+    async fn the_other_terminal_states_keep_their_dwell() {
+        let mut r = rig_with(&engines_with(|_| {}), FakeTranscriber::ok(FAKE_TRANSCRIPT), FakeInjector::paste());
+        r.engine.set_result_cards(true);
+        assert!(matches!(phase(&r.take().await), DictationPhase::Done { check: None, clipboard_code: None, .. }));
+        tokio::time::advance(DWELL).await;
+        assert_eq!(phase(&r.next().await), &DictationPhase::Idle, "a paste");
+
+        // Nothing is pasted, so this rig needs no probe.
+        let mut r = rig(FakeAudio::silence(), FakeTranscriber::ok("x"), None, FakeInjector::paste(), false);
+        r.engine.set_result_cards(true);
+        r.start_open().await;
+        r.engine.stop().unwrap();
+        assert!(matches!(phase(&r.run_to_terminal().await), DictationPhase::Failed { code: FailureCode::NoSpeech, text: None, .. }));
+        tokio::time::advance(DWELL).await;
+        assert_eq!(phase(&r.next().await), &DictationPhase::Idle, "no speech");
+
+        // The table of §28: no speech is no card, even with its recording kept.
+        let mut r = rig_with(&engines_with(|_| {}), FakeTranscriber::ok(""), FakeInjector::paste());
+        r.engine.set_result_cards(true);
+        r.engine.set_keep_audio(true);
+        assert!(matches!(phase(&r.take().await), DictationPhase::Failed { code: FailureCode::NoSpeech, text: None, .. }));
+        assert!(r.engine.status().recording.is_some(), "the recording is kept");
+        tokio::time::advance(DWELL).await;
+        assert_eq!(phase(&r.next().await), &DictationPhase::Idle, "no speech with its recording kept");
+
+        let mut r = rig_with(&engines_with(|_| {}), FakeTranscriber::err("401 unauthorized"), FakeInjector::paste());
+        r.engine.set_result_cards(true);
+        assert!(matches!(phase(&r.take().await), DictationPhase::Failed { text: None, .. }));
+        assert_eq!(r.engine.status().recording, None, "nothing kept");
+        tokio::time::advance(DWELL).await;
+        assert_eq!(phase(&r.next().await), &DictationPhase::Idle, "a failure without a recording");
+
+        let mut r = happy();
+        r.engine.set_result_cards(true);
+        r.start_open().await;
+        assert_eq!(phase(&r.engine.cancel().unwrap()), &DictationPhase::CANCELLED);
+        tokio::time::advance(DWELL).await;
+        assert_eq!(phase(&r.next().await), &DictationPhase::Idle, "a cancel");
+        r.wait_stops(1).await;
     }
 }

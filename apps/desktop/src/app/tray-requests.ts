@@ -3,15 +3,16 @@ import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef } from "react";
 
 /** Event the desktop shell sends the main window for a tray menu entry the webview finishes
- *  (`voltip_desktop_lib::platform::tray::TRAY_EVENT`); the shell has already shown the window. */
+ *  (`voltip_desktop_lib::platform::tray::TRAY_EVENT`), and for the result card's 打开历史
+ *  (`open_history`, docs/dictation.md §28); the shell has already shown the window. */
 export const TRAY_EVENT = "voltip://tray";
 
-export type TrayRequest = "settings" | "update";
+export type TrayRequest = "settings" | "update" | "history";
 
 export function trayRequestOf(payload: unknown): TrayRequest | undefined {
   if (typeof payload !== "object" || payload === null) return undefined;
   const action = (payload as { action?: unknown }).action;
-  return action === "settings" || action === "update" ? action : undefined;
+  return action === "settings" || action === "update" || action === "history" ? action : undefined;
 }
 
 export interface TrayRequestSource {

@@ -254,12 +254,17 @@ export function Shell({
     };
   }, [shell, navigate, sidebar]);
 
-  // The tray's 设置… and 检查更新… (the shell has already brought the window up).
+  // The tray's 设置… and 检查更新…, and the result card's 打开历史 (docs/dictation.md §28); the
+  // shell has already brought the window up.
   const updateState = state.update.state;
   const onTray = useCallback(
     (request: TrayRequest) => {
       if (request === "settings") {
         navigate({ name: "settings", section: "general" });
+        return;
+      }
+      if (request === "history") {
+        navigate({ name: "history" });
         return;
       }
       shell.setUpdateOpen(true);

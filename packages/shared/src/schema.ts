@@ -278,6 +278,12 @@ export const engineSettingsSchema = z.object({
   clipboard_after: clipboardAfterSchema.default("restore"),
   /** What a take does when the window changed while it was processed (§14.3); Rust omits the default. */
   switched_window: switchedWindowSchema.default("copy_only"),
+  /** 检查文字是否写入 (docs/dictation.md §28): after a paste, compare the focused field before and
+   *  after on this computer; Rust omits the default. */
+  insert_check: z.boolean().default(true),
+  /** 识别结果卡片常驻 (§28, user decision D13): a card stays until it is closed or the next take;
+   *  off, it leaves after its usual time. Rust omits the default. */
+  result_cards_stay: z.boolean().default(true),
   /** The recognition fallback models (docs/dictation.md §3.5); absent = off, none listed. */
   asr_fallback: fallbackSettingsSchema.optional(),
   /** The clean-up (and voice edit) fallback models; absent = off, none listed. */
@@ -302,6 +308,8 @@ export function defaultEngineSettings(): EngineSettings {
     inject: "paste",
     clipboard_after: "restore",
     switched_window: "copy_only",
+    insert_check: true,
+    result_cards_stay: true,
   };
 }
 
@@ -751,6 +759,9 @@ export const settingsSchema = z.object({
   /** The lone-key trigger (docs/dictation.md §13.1), next to `hotkey`; `null` = off. Always
    *  serialised; an older `settings.json` or core reads as off. */
   solo_key: soloKeySchema.nullable().default(null),
+  /** 复制上一条结果 (docs/dictation.md §28, user decision D12): a chord that puts the newest result
+   *  on the clipboard; absent = none (Rust omits it). */
+  copy_last_hotkey: z.string().nullable().optional(),
   /** Keep a pairing open on this desktop until turned off (docs/pairing.md 「常开配对」); off by
    *  default and in an older `settings.json`. */
   pairing_always_on: z.boolean().default(false),
@@ -961,6 +972,14 @@ export const CLIPBOARD_CODES = [
 export const clipboardCodeSchema = z.enum(CLIPBOARD_CODES);
 export type ClipboardCode = z.infer<typeof clipboardCodeSchema>;
 
+// ---- insert check (docs/dictation.md §28) ------------------------------------------------------
+
+/** `voltip_core::dictation::InsertCheck`: what the read of the focused field after a paste found —
+ *  the text is there, the field is exactly as it was (the 没有写进去 card), or no telling. */
+export const INSERT_CHECKS = ["written", "not_written", "unconfirmed"] as const;
+export const insertCheckSchema = z.enum(INSERT_CHECKS);
+export type InsertCheck = z.infer<typeof insertCheckSchema>;
+
 /** `voltip_core::dictation::DictationPhase` (`#[serde(tag = "phase")]`). `listening.ready` and
  *  `listening.locked` are `#[serde(default)]` (false = the device has not delivered samples yet /
  *  the take is not locked) and always on the wire; `live` and `processing.preview` are skip-if-none,
@@ -1010,6 +1029,8 @@ export const dictationPhaseSchema = z.discriminatedUnion("phase", [
     /** Why a paste that was asked for left the text on the clipboard (§4.2; `target_changed`:
      *  another window came to the front, §14.3); absent for a paste or a clipboard-only take. */
     clipboard_code: clipboardCodeSchema.optional(),
+    /** The insert check (§28); absent when no check ran (a copy, a fallback, `live_inject`, off). */
+    check: insertCheckSchema.optional(),
   }),
   z.object({
     phase: z.literal("failed"),
@@ -1251,7 +1272,12 @@ export function idleDictation(): DictationStatus {
 /** `voltip_core::history::Outcome`. A clipboard fallback's `reason` is the injector's own message
  *  (shown only under the technical details); `code` is absent in entries written before it. */
 export const historyOutcomeSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("inserted"), via: viaSchema }),
+  z.object({
+    kind: z.literal("inserted"),
+    via: viaSchema,
+    /** The insert check (docs/dictation.md §28); absent when none ran and in older entries. */
+    check: insertCheckSchema.optional(),
+  }),
   z.object({
     kind: z.literal("clipboard"),
     reason: z.string(),
@@ -2266,6 +2292,10 @@ export const hotkeyStatusSchema = z.object({
   solo_error: z.string().optional(),
   /** The lone key is held down on its own (Rust always sends it; absent in old payloads). */
   solo_pressed: z.boolean().optional(),
+  /** The 复制上一条结果 chord (docs/dictation.md §28): registered, or why not; both absent while
+   *  none is set. */
+  copy_last_registered: z.string().optional(),
+  copy_last_error: z.string().optional(),
 });
 export type HotkeyStatus = z.infer<typeof hotkeyStatusSchema>;
 
@@ -2975,6 +3005,8 @@ export interface CommandArgs {
   settings_set_hotkey: { hotkey: string };
   /** Voice edit (docs/dictation.md §19): the edit chord, or `null` to switch the key off. */
   settings_set_edit_hotkey: { hotkey: string | null };
+  /** 复制上一条结果 (docs/dictation.md §28): its chord, or `null` for none. */
+  settings_set_copy_last_hotkey: { hotkey: string | null };
   /** The lone-key trigger (docs/dictation.md §13.1), or `null` to switch it off. */
   settings_set_solo_key: { key: SoloKey | null };
   /** The microphone takes record from (an `audio_devices` id), or `null` for the system default. */
@@ -3001,6 +3033,10 @@ export interface CommandArgs {
   dictation_start: undefined;
   dictation_stop: undefined;
   dictation_cancel: undefined;
+  /** The result card's ×, or its 粘贴 that went in (docs/dictation.md §28): the card of the take
+   *  `session` (`DictationStatus.session`) goes; ignored while a take runs or once a later take
+   *  has replaced that card. */
+  dictation_dismiss: { session: number };
   /** The whole `Settings.engines` block; the core re-resolves and re-emits `engines`. */
   settings_set_engines: { engines: EngineSettings };
   /** Store (`value`) or delete (`null`) the user's key for a provider's service (a vendor's two
@@ -3223,6 +3259,14 @@ export interface CommandArgs {
    *  Voltip out of the way and pastes into the window that comes to the front, or copies; the
    *  answer says which. The phone answers `failed { unsupported }`. */
   paste_text: { text: string };
+  /** The result card's 复制 (docs/dictation.md §28, `Backend.overlayCopy`): the native clipboard,
+   *  never `navigator.clipboard` (the pill's webview cannot take focus). */
+  overlay_copy: { text: string };
+  /** The result card's 粘贴 (`Backend.overlayPaste`): into the window in front, or the one under
+   *  Voltip when Voltip itself came to the front; answered like `paste_text`. */
+  overlay_paste: { text: string };
+  /** The result card's 打开历史 (`Backend.openHistory`): the main window opens on the history page. */
+  open_history: undefined;
 }
 export type CommandName = keyof CommandArgs;
 /** Queries and streams: called through dedicated `Backend` methods, never through `invoke`. */
@@ -3249,6 +3293,9 @@ export type QueryCommand =
   | "permissions_request"
   | "inject_preflight"
   | "paste_text"
+  | "overlay_copy"
+  | "overlay_paste"
+  | "open_history"
   | "backup_export"
   | "backup_open"
   | "backup_import"
@@ -3291,6 +3338,9 @@ export const QUERY_COMMANDS: readonly QueryCommand[] = [
   "permissions_request",
   "inject_preflight",
   "paste_text",
+  "overlay_copy",
+  "overlay_paste",
+  "open_history",
   "backup_export",
   "backup_open",
   "backup_import",

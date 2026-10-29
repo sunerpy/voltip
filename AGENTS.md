@@ -6,10 +6,10 @@ How to work in this repository, for coding agents and people alike. `CONTRIBUTIN
 
 - `crates/` — the Rust workspace. `voltip-core` is the platform-free application core (commands in,
   events out, ports for everything native); the other crates are its adapters: audio, cloud and
-  on-device recognition, clean-up, injection, platform tables, protocol, crypto, identity, pairing,
-  transport, relay, the network proxy every connection follows (`voltip-net`), what a service said
-  when it refused a request (`voltip-reply`), the local speech service's HTTP layer
-  (`voltip-serve`), and the Tauri bridge.
+  on-device recognition, clean-up, injection, the insert check's focus readers (`voltip-focus`),
+  platform tables, protocol, crypto, identity, pairing, transport, relay, the network proxy every
+  connection follows (`voltip-net`), what a service said when it refused a request (`voltip-reply`),
+  the local speech service's HTTP layer (`voltip-serve`), and the Tauri bridge.
 - `apps/desktop`, `apps/mobile` — the Tauri 2 shells (`src-tauri/`) and their React front ends.
 - `apps/mobile-rn` — the phone app on React Native (Expo, `docs/mobile-rn.md`): its own Rust shell
   (`rust/`, UniFFI), shipped beside the Tauri phone app as `Voltip-RN_<version>_android_arm64.apk`.

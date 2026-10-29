@@ -25,8 +25,8 @@ pub use voltip_cloud::{
     builtin_preset_texts, prompt_hints, refine_preset,
 };
 use voltip_core::dictation::{
-    AudioSource, Capture, CaptureOptions, ClipboardCode, DictationError, DictationPorts, EngineFactory, InjectNote, Injection, Injector, InsertSession,
-    Inserted, LevelFrame, LivePcm, MAX_RECORDING, PcmStream, Recording, Refiner, SelectionTiming, Transcriber, Via,
+    AudioSource, Capture, CaptureOptions, ClipboardCode, DictationError, DictationPorts, EngineFactory, FocusReader, InjectNote, Injection, Injector,
+    InsertSession, Inserted, LevelFrame, LivePcm, MAX_RECORDING, PcmStream, Recording, Refiner, SelectionTiming, Transcriber, Via,
 };
 use voltip_core::{ClipboardAfter, InjectMode, Modifier, RecordingSource, ResolvedEngines};
 use voltip_inject::{AfterPaste, ClipboardOnlyInjector, CopyOptions, FallbackCode, PasteOptions, PieceOutcome, SelectionSource};
@@ -293,6 +293,8 @@ pub struct NativeInjector {
     preflight: Box<dyn Fn() -> InjectPreflight + Send + Sync>,
     selection: Option<Box<dyn SelectionSource>>,
     timing: SelectionTiming,
+    /// The insert check's reader of the focused control (docs/dictation.md §28).
+    focus: Option<Arc<dyn FocusReader>>,
 }
 
 impl NativeInjector {
@@ -303,9 +305,13 @@ impl NativeInjector {
         let paste = voltip_inject::system_paste_injector(PasteOptions::for_os(std::env::consts::OS));
         let timing = crate::hotkey::selection_timing_for(crate::hotkey::linux_session().map(|s| s.kind));
         tracing::info!(backend = %voltip_inject::backend_summary(), options = ?paste.options(), selection_timing = ?timing, "text injection backend");
-        Self::with(prefs, Arc::new(paste), Arc::new(ClipboardOnlyInjector::new()))
+        let injector = Self::with(prefs, Arc::new(paste), Arc::new(ClipboardOnlyInjector::new()))
             .with_preflight(crate::platform::inject_preflight)
-            .with_selection(Box::new(voltip_inject::system_selection(CopyOptions::default())), timing)
+            .with_selection(Box::new(voltip_inject::system_selection(CopyOptions::default())), timing);
+        match crate::platform::focus::system_reader() {
+            Some(reader) => injector.with_focus_reader(reader),
+            None => injector,
+        }
     }
 
     /// Explicit backends (tests); the preflight always answers `proceed` until
@@ -319,7 +325,14 @@ impl NativeInjector {
             preflight: Box::new(|| InjectPreflight::not_applicable(HostOs::current())),
             selection: None,
             timing: SelectionTiming::AtPress,
+            focus: None,
         }
+    }
+
+    /// The insert check's reader of the focused control (docs/dictation.md §28): the platform's in
+    /// production, none until this adds one.
+    pub fn with_focus_reader(self, reader: Arc<dyn FocusReader>) -> Self {
+        Self { focus: Some(reader), ..self }
     }
 
     /// The foreground check asked before every paste (`crate::platform::inject_preflight` in production).
@@ -469,6 +482,11 @@ impl Injector for NativeInjector {
     /// (`voltip_platform::foreground::terminal_ids`; empty on macOS).
     fn is_terminal_app(&self, app_id: &str) -> bool {
         voltip_platform::foreground::is_terminal(voltip_platform::HostOs::current(), app_id)
+    }
+
+    /// docs/dictation.md §28: the platform's reader of the focused control.
+    fn focus_reader(&self) -> Option<Arc<dyn FocusReader>> {
+        self.focus.clone()
     }
 }
 

@@ -2119,6 +2119,46 @@ export const en: Messages = {
       dest: "Destination",
     },
   },
+  /** docs/dictation.md §28: the insert check, the result cards and 复制上一条结果. */
+  insertCheck: {
+    /** A paste the field never received: the card's sentence and the history's mark. */
+    notWritten: "Not written",
+    /** The history detail of a paste the check could not confirm (it counts as inserted). */
+    unconfirmed: "Not confirmed as written",
+    /** A failure without text whose recording is kept: the reason, then this. */
+    failedKept: "{reason} · Recording kept",
+    card: {
+      paste: "Paste",
+      copy: "Copy",
+      retake: "Recognise again",
+      openHistory: "Open history",
+      close: "Close",
+      copied: "Copied",
+      copyFailed: "Couldn't copy",
+    },
+    /** The overlay spec sheet's result-card tile (`pnpm dev` only). */
+    sheet: "Result card · not written",
+    /** The pill's flash after the tray's or the hotkey's 复制上一条结果. */
+    copiedLast: "Copied the last result",
+    settings: {
+      check: "Check that the text was written",
+      checkHelp:
+        "Compares the input field before and after the paste, on this computer only. Nothing is saved or uploaded.",
+      stay: "Keep result cards on screen",
+      stayHelp:
+        "When the text wasn't written, the window changed or recognition failed, the result card stays until you close it or start the next dictation. Off, it disappears after its usual time.",
+      copyLast: "Copy last result",
+      copyLastHelp:
+        "Puts the latest result on the clipboard without opening the main window. The tray menu has it too.",
+      copyLastNone: "Not set",
+      copyLastRecord: "Record",
+      copyLastRecordLabel: "Record · Copy last result",
+      copyLastRerecordLabel: "Record again · Copy last result",
+      copyLastCancelLabel: "Cancel recording · Copy last result",
+      copyLastClear: "Clear",
+      copyLastClearLabel: "Clear · Copy last result",
+    },
+  },
   settings: {
     title: "Settings",
     groupsLabel: "Settings groups",

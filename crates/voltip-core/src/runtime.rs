@@ -122,6 +122,10 @@ pub struct CoreConfig {
     /// Keep the newest takes' recordings so they can be recognised again (docs/dictation.md §26):
     /// the desktop yes, the phone no (its interface offers none of it).
     pub keeps_audio: bool,
+    /// The shell shows result cards (docs/dictation.md §28): the desktop's pill keeps 没有写进去,
+    /// 窗口已切换 and the failures on screen until they are closed. Off (the default; the phone,
+    /// the local speech service), every terminal state goes after its dwell.
+    pub result_cards: bool,
     /// The shell shows the live preview (the desktop's pill). The phone does not, so the built-in
     /// service sends no previews there (docs/dictation.md §11.8): each would be a request for
     /// nothing.
@@ -227,6 +231,7 @@ impl CoreConfig {
             peer_handshake_timeout: Duration::from_secs(15),
             accepts_phone_takes: true,
             keeps_audio: true,
+            result_cards: false,
             shows_live_preview: true,
             builtin_scenes: true,
             manual_scenes: false,
@@ -295,6 +300,9 @@ pub enum CoreCommand {
     /// Change (`Some`) or switch off (`None`) the voice-edit hotkey (docs/dictation.md §19);
     /// validated like the dictation hotkey and refused when it is the same chord.
     SetEditHotkey(Option<String>),
+    /// Choose (`Some`) or clear (`None`) the 复制上一条结果 hotkey (docs/dictation.md §28); validated
+    /// like the dictation hotkey and refused when it is the dictation's or the voice edit's chord.
+    SetCopyLastHotkey(Option<String>),
     /// Choose (`Some`) or switch off (`None`) the lone-key trigger (docs/dictation.md §13.1);
     /// persisted, the desktop shell (un)installs its input hook on `Settings`.
     SetSoloKey(Option<crate::SoloKey>),
@@ -376,6 +384,16 @@ pub enum CoreCommand {
     DictationStop,
     /// Discard the recording or the pending result.
     DictationCancel,
+    /// The result card's 关闭, or its 粘贴 that went in (docs/dictation.md §28), for the take
+    /// `session`: that take's terminal phase goes to `Idle` now; any other take or phase stays as
+    /// it is.
+    DictationDismiss {
+        /// `DictationStatus.session` of the take whose card it is.
+        session: u64,
+    },
+    /// 复制上一条结果 (docs/dictation.md §28): the newest result's text onto the clipboard, on a
+    /// blocking thread; `reply` gets what happened.
+    CopyLastResult(crate::last_result::CopyLastReply),
     /// A hotkey / CLI key transition (docs/dictation.md §13): the activation machine turns it into
     /// start / stop / cancel / lock according to `Settings.activation`.
     HotkeyEdge {
@@ -887,6 +905,7 @@ impl AppCore {
             tracing::warn!(error = %e, "the audio cache could not be brought in line with the settings");
         }
         dictation.set_keep_audio(keeps_audio(&config, &settings));
+        dictation.set_result_cards(config.result_cards);
         let (cmd_tx, cmd_rx) = mpsc::channel(64);
         let (evt_tx, evt_rx) = mpsc::channel(512);
         let (link_tx, link_rx) = mpsc::channel(1024);
@@ -968,6 +987,7 @@ impl AppCore {
             network_status: crate::ui::NetworkStatus::default(),
             system_fingerprint: 0,
             usage,
+            last_result: None,
         };
         rt.system_fingerprint = rt.config.network.system_fingerprint();
         rt.connect_relay()?;
@@ -1234,6 +1254,8 @@ struct Runtime {
     system_fingerprint: u64,
     /// The built-in service's usage (docs/dictation.md §27).
     usage: usage::UsageRuntime,
+    /// The newest result's text for 复制上一条结果 (docs/dictation.md §28): in memory only.
+    last_result: Option<String>,
 }
 
 impl Runtime {
@@ -1454,6 +1476,7 @@ impl Runtime {
             CoreCommand::SetRelay { url, enabled } => self.set_relay(url, enabled),
             CoreCommand::SetHotkey(text) => self.set_hotkey(&text),
             CoreCommand::SetEditHotkey(text) => self.set_edit_hotkey(text.as_deref()),
+            CoreCommand::SetCopyLastHotkey(text) => self.set_copy_last_hotkey(text.as_deref()),
             CoreCommand::SetSoloKey(key) => self.set_solo_key(key),
             CoreCommand::SetMicrophone(device) => self.set_microphone(device),
             CoreCommand::SetRecording(recording) => self.set_recording(recording),
@@ -1502,6 +1525,15 @@ impl Runtime {
             CoreCommand::DictationStart => self.dictation_start(),
             CoreCommand::DictationStop => self.dictation_stop(),
             CoreCommand::DictationCancel => self.dictation_cancel(),
+            CoreCommand::DictationDismiss { session } => {
+                let fx = self.dictation.dismiss(session);
+                self.apply_dictation(fx);
+                Ok(())
+            }
+            CoreCommand::CopyLastResult(reply) => {
+                self.copy_last_result(reply);
+                Ok(())
+            }
             CoreCommand::HotkeyEdge { pressed, at_ms, source, purpose, chorded } => self.hotkey_edge(Edge { pressed, at_ms, source }, purpose, chorded),
             CoreCommand::SetActivation { activation, hold_threshold_ms, extra_recording_ms } => {
                 self.set_activation(activation, hold_threshold_ms, extra_recording_ms)
@@ -2423,6 +2455,10 @@ impl Runtime {
                     }
                     let hint = if self.activation.deferred_stop.is_some() { PhaseHint::Processing } else { PhaseHint::from(&status.phase) };
                     let kind = status.kind;
+                    // docs/dictation.md §28: 复制上一条结果 has the newest text, whatever the history.
+                    if let Some(text) = crate::last_result::result_text(&status.phase) {
+                        self.last_result = Some(text.to_owned());
+                    }
                     self.follow_refine_notice(&status.phase);
                     self.emit(CoreEvent::Dictation(status));
                     // A phone's text waits for the take to end (docs/dictation.md §20.6).
@@ -2751,8 +2787,64 @@ impl Runtime {
         {
             return Err(CoreError::Invalid(format!("hotkey: {} 已用作「编辑选中文本」的快捷键", hotkey.display())));
         }
+        if self.copy_last_chord_is(&hotkey) {
+            return Err(CoreError::Invalid(format!("hotkey: {} 已用作「复制上一条结果」的快捷键", hotkey.display())));
+        }
         self.settings.hotkey = hotkey.display();
         self.save_settings()
+    }
+
+    /// `hotkey` is the 复制上一条结果 chord (docs/dictation.md §28).
+    fn copy_last_chord_is(&self, hotkey: &crate::Hotkey) -> bool {
+        self.settings.copy_last_hotkey.as_deref().is_some_and(|copy| crate::Hotkey::same_chord(&hotkey.display(), copy))
+    }
+
+    /// `SetCopyLastHotkey` (docs/dictation.md §28): `None` assigns none; a chord is validated like
+    /// the dictation hotkey and refused when it is the dictation's or the voice edit's.
+    fn set_copy_last_hotkey(&mut self, text: Option<&str>) -> Result<(), CoreError> {
+        let chord = match text {
+            None => None,
+            Some(text) => {
+                let hotkey = crate::Hotkey::parse(text)?;
+                if crate::Hotkey::same_chord(&hotkey.display(), &self.settings.hotkey) {
+                    return Err(CoreError::Invalid(format!("copy_last_hotkey: {} 已用作听写快捷键", hotkey.display())));
+                }
+                if let Some(edit) = self.settings.edit_hotkey.as_deref()
+                    && crate::Hotkey::same_chord(&hotkey.display(), edit)
+                {
+                    return Err(CoreError::Invalid(format!("copy_last_hotkey: {} 已用作「编辑选中文本」的快捷键", hotkey.display())));
+                }
+                Some(hotkey.display())
+            }
+        };
+        self.settings.copy_last_hotkey = chord;
+        self.save_settings()
+    }
+
+    /// `CopyLastResult` (docs/dictation.md §28): the newest result onto the clipboard on a blocking
+    /// thread, as an ordinary copy; `nothing` before the first result of this run.
+    fn copy_last_result(&mut self, reply: crate::last_result::CopyLastReply) {
+        use crate::last_result::CopyLastOutcome;
+        let Some(text) = self.last_result.clone() else {
+            reply.send(CopyLastOutcome::Nothing);
+            return;
+        };
+        let injector = self.dictation.injector();
+        tokio::spawn(async move {
+            let outcome = match tokio::task::spawn_blocking(move || injector.copy(&text)).await {
+                Ok(Ok(())) => CopyLastOutcome::Copied,
+                Ok(Err(e)) => {
+                    tracing::warn!(error = %e, "the last result could not be copied");
+                    CopyLastOutcome::Failed
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "the copy task failed");
+                    CopyLastOutcome::Failed
+                }
+            };
+            tracing::info!(?outcome, "copy last result");
+            reply.send(outcome);
+        });
     }
 
     /// `SetEditHotkey` (docs/dictation.md §19): `None` switches voice edit off; a chord is validated
@@ -2764,6 +2856,9 @@ impl Runtime {
                 let hotkey = crate::Hotkey::parse(text)?;
                 if crate::Hotkey::same_chord(&hotkey.display(), &self.settings.hotkey) {
                     return Err(CoreError::Invalid(format!("edit_hotkey: {} 已用作听写快捷键", hotkey.display())));
+                }
+                if self.copy_last_chord_is(&hotkey) {
+                    return Err(CoreError::Invalid(format!("edit_hotkey: {} 已用作「复制上一条结果」的快捷键", hotkey.display())));
                 }
                 Some(hotkey.display())
             }

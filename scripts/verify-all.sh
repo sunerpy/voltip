@@ -48,8 +48,8 @@ gate rust rust-fmt        cargo fmt --all -- --check
 . scripts/lib/rust-features.sh
 gate rust rust-features   ./scripts/check-rust-features.sh
 gate rust rust-clippy     cargo clippy --workspace --all-targets --features "$RUST_FEATURES" -- -D warnings
-gate rust cross-check-darwin  cargo check -p voltip-platform -p voltip-inject -p voltip-hooks --target aarch64-apple-darwin
-gate rust cross-check-windows cargo check -p voltip-platform -p voltip-inject -p voltip-hooks --target x86_64-pc-windows-msvc
+gate rust cross-check-darwin  cargo check -p voltip-platform -p voltip-inject -p voltip-hooks -p voltip-focus --target aarch64-apple-darwin
+gate rust cross-check-windows cargo check -p voltip-platform -p voltip-inject -p voltip-hooks -p voltip-focus --target x86_64-pc-windows-msvc
 # The test suite runs once, instrumented, with the same features as clippy: coverage-gate is the
 # test gate (the workspace has no doctests, which it would skip).
 gate rust rust-coverage   make coverage-gate

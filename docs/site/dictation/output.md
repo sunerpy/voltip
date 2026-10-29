@@ -1,5 +1,5 @@
 ---
-description: How Voltip inserts the text, the clipboard after a paste, what happens when you switch windows while it processes, the three output modes, what happens when pasting is not possible, and how to copy or paste a result again.
+description: How Voltip inserts the text, the clipboard after a paste, what happens when you switch windows while it processes, the three output modes, what happens when pasting is not possible, how Voltip checks that the text arrived, the result cards, and how to copy or paste a result again.
 ---
 
 # Where the text goes
@@ -28,7 +28,7 @@ A few kinds of content cannot be put back in full: on Windows, formats such as m
 
 ## Switching windows while it processes
 
-Voltip inserts the text into the window you started in. If you switch to another window while it recognises or polishes, Voltip does not paste by default: it only copies the text, so that it does not land in the wrong place. The overlay shows **Window changed · text copied**, and you can paste it where you want with <kbd>Ctrl</kbd> <kbd>V</kbd> (<kbd>⌘</kbd> <kbd>V</kbd> on a Mac). With **Type as you speak**, the sentences after the switch are no longer typed one by one; they are copied together at the end.
+Voltip inserts the text into the window you started in. If you switch to another window while it recognises or polishes, Voltip does not paste by default: it only copies the text, so that it does not land in the wrong place. The overlay shows **Window changed · text copied** as a [result card](#result-cards): click into the field you want and press **Paste**, or paste with <kbd>Ctrl</kbd> <kbd>V</kbd> (<kbd>⌘</kbd> <kbd>V</kbd> on a Mac). With **Type as you speak**, the sentences after the switch are no longer typed one by one; they are copied together at the end.
 
 To paste into the window that is in front instead, set **If the window changes while processing**, under **Settings → Dictation**, to **Paste into current window**. Voice edit does not follow this setting: after a switch it always copies the rewrite only. Where Voltip cannot tell which window is in front when you start (on a pure Wayland session on Linux, for example), it pastes as usual. With **Copy to clipboard only**, the text is only copied anyway: switching windows changes nothing, and the overlay does not show this notice.
 
@@ -62,6 +62,38 @@ If Voltip cannot paste, the text stays on the clipboard so that nothing is lost.
 
 The details of the original error are available under **Technical details** in the history entry.
 
+## Checking that the text arrived
+
+After a paste, Voltip reads the input field that has the focus again, on this computer, and compares it with what it read just before the paste. When it is certain that the text did not arrive, because the same field still shows exactly what it showed before, the overlay says **Not written** and keeps the result on screen as a [result card](#result-cards), so that you can paste it into the right field. Voltip never pastes a second time by itself, so the text cannot end up there twice.
+
+When Voltip cannot tell, it treats the text as inserted and shows nothing more. That is the case when the field cannot be read, another field has taken the focus, the field changed in another way (an app completed a word, for example), or the app is a terminal, a remote desktop or a virtual machine. When Voltip cannot tell which app the text went to (on a pure Wayland session on Linux, for example), it does not read the field at all. Password fields are never read. The history entry's **Technical details** then say **Not confirmed as written**.
+
+- **Windows**: Voltip reads the field through UI Automation. The first reading makes apps built on Chromium (browsers such as Chrome, and many Electron apps) turn on their accessibility support until they are closed, which can slow down very large pages.
+- **Mac**: through the Accessibility permission that pasting already needs.
+- **Linux**: through the desktop's accessibility service (AT-SPI), only while accessibility is turned on in your session; Voltip does not turn it on. Apps built on Chromium can usually not be read.
+
+To turn the check off, switch off **Check that the text was written** under **Settings → Dictation**. What Voltip reads stays in memory for the moment of the paste; it is not saved or uploaded.
+
+## Result cards
+
+When the text was not written, the window changed while it processed, or recognition failed, the overlay keeps the result as a card instead of letting it disappear:
+
+<ScreenFigure src="/screens/overlay-card-en-light.webp" dark="/screens/overlay-card-en-dark.webp" width="1376" height="150" alt="The overlay's result card: Not written, with the Paste, Copy and Close buttons" />
+
+| Situation | The card says | Buttons |
+| --- | --- | --- |
+| The text did not arrive | **Not written** | **Paste**, **Copy** |
+| You switched windows while it processed | **Window changed · text copied** | **Paste**, **Copy** |
+| A failure after the text was recognised | The reason | **Paste**, **Copy** |
+| A failure before any text, with the recording kept | The reason · **Recording kept** | **Recognise again**, **Open history** |
+
+- **Paste** pastes the text into the window in front. Click into the right field first: the overlay never takes the keyboard focus, so the window you were using stays in front.
+- **Copy** puts the text on the clipboard, and the card says **Copied**.
+- **Recognise again** recognises the kept recording again with the current speech model, and copies the result. **Open history** opens the History page.
+- **×** closes the card. Starting a new dictation replaces it.
+
+A card stays until you close it or start the next dictation. To let cards disappear after their usual time instead (6 seconds, or 2.5 seconds for a failure without text), switch off **Keep result cards on screen** under **Settings → Dictation**; the buttons stay the same. Other results disappear as before: text pasted, text left on the clipboard because pasting was not possible, no speech, and a cancelled dictation.
+
 ## Copy or paste a result again
 
 On the home page's latest results (the buttons appear when you point at a row or move to it with the keyboard) and on the History page, every row has two buttons:
@@ -70,3 +102,5 @@ On the home page's latest results (the buttons appear when you point at a row or
 - **Paste into the previous window** hides Voltip, waits for the window you used before to come back to the front, and pastes the text there. If a different window comes to the front, the text is only copied.
 
 For a voice edit, both buttons use the rewritten text.
+
+**Copy last result** puts the latest result on the clipboard without opening Voltip, and the overlay says **Copied the last result**. It is in the tray menu on Windows and macOS (greyed until there is a result), on a shortcut you can set under **Settings → Shortcuts** (none by default), and on the command `voltip-desktop --copy-last`. Voltip keeps the latest result in memory until it quits, also when the history is turned off.

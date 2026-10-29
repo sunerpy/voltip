@@ -1,0 +1,68 @@
+[package]
+name = "voltip-focus"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "The insert check's readers of the focused control (docs/dictation.md §28): UI Automation on Windows, the Accessibility API on macOS, AT-SPI on Linux, each on a worker thread of its own, decided by voltip-platform's rules. Kept apart from the desktop shell so CI can run them against real applications on Windows and macOS desktops without building the app."
+
+# UI Automation and the Accessibility API are FFI: unsafe is denied, and allowed in those two
+# modules (`#![allow(unsafe_code)]` in src/windows.rs and src/macos.rs), as in voltip-hooks.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+
+[dependencies]
+parking_lot.workspace = true
+tracing.workspace = true
+# The check's rules (`insert_check::rules`) and the applications it skips; pure Rust.
+voltip-platform = { path = "../voltip-platform" }
+
+# AT-SPI over D-Bus, blocking API: the version and default features tauri-plugin-opener and the
+# keyring already pull.
+[target.'cfg(target_os = "linux")'.dependencies]
+serde.workspace = true
+zbus = "=5.19.0"
+
+# UI Automation: the version tao already compiles, with the features it already enables.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "=0.61.3", features = ["Win32_Foundation", "Win32_System_Com", "Win32_System_Ole", "Win32_UI_Accessibility"] }
+
+# CF types for the Accessibility API, whose declarations src/macos.rs writes itself: the versions
+# the desktop shell already pulls.
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "=0.10.1"
+core-foundation-sys = "=0.8.7"
+
+[dev-dependencies]
+# The real tests paste the way Voltip pastes (clipboard + paste chord).
+voltip-inject.workspace = true
+
+# tests/focus_windows.rs: its own window with two EDIT controls, a message loop, and the window in
+# front; the version and features voltip-hooks already pulls, plus GDI for the window class.
+[target.'cfg(target_os = "windows")'.dev-dependencies]
+windows-sys = { version = "=0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+# tests/focus_macos.rs: AppKit on the main thread (a window with a text view); the versions the
+# desktop shell already pulls.
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+objc2 = "=0.6.4"
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "libc", "NSApplication", "NSGraphics", "NSResponder", "NSRunningApplication", "NSText", "NSTextView", "NSView", "NSWindow", "NSWorkspace"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSGeometry", "NSString"] }
+
+# AppKit wants the main thread, which the test harness keeps for itself: the macOS test has its
+# own main (and does nothing on the other platforms).
+[[test]]
+name = "focus_macos"
+harness = false

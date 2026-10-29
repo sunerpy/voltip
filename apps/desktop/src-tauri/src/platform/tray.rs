@@ -1,12 +1,15 @@
 //! The tray icon (macOS menu bar / Windows notification area, docs/dictation.md §15.4): the app
 //! mark with a badge that follows the dictation phase (drawn by `voltip_platform::tray`), and a
-//! menu in the UI's language: 打开 Voltip, the AI 润色 submenu (the switch and every preset,
-//! docs/dictation.md §21), 设置…, 检查更新… (only when the build has an update source) and 退出
-//! Voltip. On Windows a left click (or a double click) shows the main window and a right click
+//! menu in the UI's language: 打开 Voltip, 复制上一条结果 (docs/dictation.md §28; greyed out until
+//! there is a result, and it never opens the main window), the AI 润色 submenu (the switch and every
+//! preset, docs/dictation.md §21), 设置…, 检查更新… (only when the build has an update source) and
+//! 退出 Voltip. On Windows a left click (or a double click) shows the main window and a right click
 //! opens the menu. On macOS a click opens the menu once the system's double-click interval has
 //! passed, and a double click shows the main window instead (user request 2026-09-30,
 //! `voltip_platform::tray::ClickSeries`); a right click opens the menu at once. The menu is rebuilt
 //! when the language, the engine settings or the custom presets change.
+
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use parking_lot::Mutex;
 use serde::Serialize;
@@ -28,7 +31,7 @@ use super::glyph_for;
 pub const TRAY_ID: &str = "voltip-tray";
 /// Event to the main window for a menu entry the webview completes once the window is up
 /// (`{ "action": "settings" | "update" }`, `TrayAction::webview_action`).
-pub const TRAY_EVENT: &str = "voltip://tray";
+pub const TRAY_EVENT: &str = crate::MAIN_REQUEST_EVENT;
 
 #[derive(Clone, Copy, Debug, Serialize)]
 struct TrayRequest {
@@ -45,6 +48,9 @@ pub struct TrayState {
     /// The clock of `clicks`.
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     started: std::time::Instant,
+    /// A take has left a result for 复制上一条结果 since the app started (the core keeps it until
+    /// the app quits).
+    has_last: AtomicBool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,11 +65,13 @@ struct MenuModel {
     locale: TrayLocale,
     updater: bool,
     polish: TrayPolish,
+    /// 复制上一条结果 has something to copy.
+    has_last: bool,
 }
 
-/// The menu for `model`: the entries in `TrayAction` order with the AI 润色 submenu after 打开
-/// Voltip, and a separator before 退出 Voltip. The presets are check items of which the current
-/// one is checked (menus have no radio items).
+/// The menu for `model`: the entries in `TrayAction` order with the AI 润色 submenu after
+/// 复制上一条结果, and a separator before 退出 Voltip. The presets are check items of which the
+/// current one is checked (menus have no radio items). 复制上一条结果 is greyed out without a result.
 fn build_menu<R: Runtime>(app: &AppHandle<R>, model: &MenuModel) -> tauri::Result<Menu<R>> {
     let locale = model.locale;
     let toggle = CheckMenuItem::with_id(app, TRAY_POLISH_TOGGLE_ID, polish_toggle_label(locale), true, model.polish.enabled, None::<&str>)?;
@@ -80,7 +88,10 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>, model: &MenuModel) -> tauri::Resul
     let items = TrayAction::ALL
         .into_iter()
         .filter(|a| a.shown(model.updater))
-        .map(|action| Ok((action, MenuItem::with_id(app, action.id(), action.label(locale), true, None::<&str>)?)))
+        .map(|action| {
+            let enabled = action != TrayAction::CopyLast || model.has_last;
+            Ok((action, MenuItem::with_id(app, action.id(), action.label(locale), enabled, None::<&str>)?))
+        })
         .collect::<tauri::Result<Vec<_>>>()?;
     let separator = PredefinedMenuItem::separator(app)?;
     let mut entries: Vec<&dyn IsMenuItem<R>> = Vec::new();
@@ -89,7 +100,7 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>, model: &MenuModel) -> tauri::Resul
             entries.push(&separator);
         }
         entries.push(item);
-        if *action == TrayAction::Open {
+        if *action == TrayAction::CopyLast {
             entries.push(&polish);
         }
     }
@@ -105,7 +116,7 @@ fn image(glyph: TrayGlyph) -> Image<'static> {
 /// Create the tray icon and its menu in `locale` with the AI 润色 submenu `polish`; `updater`
 /// adds 检查更新….
 pub fn install<R: Runtime>(app: &AppHandle<R>, locale: TrayLocale, updater: bool, polish: TrayPolish) -> tauri::Result<()> {
-    let model = MenuModel { locale, updater, polish };
+    let model = MenuModel { locale, updater, polish, has_last: false };
     let menu = build_menu(app, &model)?;
     let macos = cfg!(target_os = "macos");
     TrayIconBuilder::with_id(TRAY_ID)
@@ -147,6 +158,7 @@ pub fn install<R: Runtime>(app: &AppHandle<R>, locale: TrayLocale, updater: bool
         menu: MenuSync::new(model),
         clicks: Mutex::new(voltip_platform::tray::ClickSeries::default()),
         started: std::time::Instant::now(),
+        has_last: AtomicBool::new(false),
     });
     tracing::info!(?locale, updater, "tray icon installed");
     Ok(())
@@ -233,12 +245,16 @@ fn run_polish<R: Runtime>(app: &AppHandle<R>, action: TrayPolishAction<'_>) {
     tauri::async_runtime::spawn(async move { sync(&app, &bridge, true) });
 }
 
-/// A menu entry: every one but 退出 brings the main window up first; the webview finishes the
-/// ones that open a dialog.
+/// A menu entry: every one but 复制上一条结果 and 退出 brings the main window up first; the webview
+/// finishes the ones that open a dialog.
 pub fn run<R: Runtime>(app: &AppHandle<R>, action: TrayAction) {
     tracing::info!(?action, "tray menu");
     if action == TrayAction::Quit {
         app.exit(0);
+        return;
+    }
+    if !action.opens_window() {
+        crate::copy_last::run(app, "tray");
         return;
     }
     crate::show_main_window(app);
@@ -309,7 +325,8 @@ fn sync<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge, force: bool) {
         |shown| {
             let state = bridge.state();
             let locale = super::tray_locale(state.settings.locale);
-            MenuModel { locale, updater: shown.updater, polish: super::tray_polish(&state, locale) }
+            let has_last = tray_state.has_last.load(Ordering::Relaxed);
+            MenuModel { locale, updater: shown.updater, polish: super::tray_polish(&state, locale), has_last }
         },
         |next| {
             let current = *tray_state.shown.lock();
@@ -330,7 +347,15 @@ pub fn follow_dictation<R: Runtime>(app: AppHandle<R>, bridge: Bridge) {
     tauri::async_runtime::spawn(async move {
         loop {
             match events.recv().await {
-                Ok(UiEvent::Dictation(status)) => set_glyph(&app, glyph_for(&status.phase)),
+                Ok(UiEvent::Dictation(status)) => {
+                    set_glyph(&app, glyph_for(&status.phase));
+                    // docs/dictation.md §28: the first result makes 复制上一条结果 usable.
+                    if voltip_core::last_result::result_text(&status.phase).is_some()
+                        && app.try_state::<TrayState>().is_some_and(|state| !state.has_last.swap(true, Ordering::Relaxed))
+                    {
+                        sync(&app, &bridge, false);
+                    }
+                }
                 Ok(UiEvent::Settings(_) | UiEvent::State(_) | UiEvent::Presets { .. }) => sync(&app, &bridge, false),
                 Ok(_) => {}
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {

@@ -20,6 +20,7 @@ members = [
     "crates/voltip-inject",
     "crates/voltip-platform",
     "crates/voltip-hooks",
+    "crates/voltip-focus",
     "crates/voltip-serve",
     "crates/voltip-mcp",
     "apps/server",

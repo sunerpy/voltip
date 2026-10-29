@@ -8,7 +8,7 @@ Voltip 的程序 `voltip-desktop`（Windows 上为 `voltip-desktop.exe`）接受
 
 ## 控制正在运行的应用
 
-这些选项会转交给已经在运行的 Voltip。没有运行中的 Voltip 时，`--quit` 直接退出，其他选项会正常启动程序。
+这些选项会转交给已经在运行的 Voltip。没有运行中的 Voltip 时，`--quit` 和 `--copy-last` 直接退出，其他选项会正常启动程序。
 
 | 选项 | 作用 |
 | --- | --- |
@@ -17,8 +17,9 @@ Voltip 的程序 `voltip-desktop`（Windows 上为 `voltip-desktop.exe`）接受
 | `--cancel` | 取消当前的录音或结果 |
 | `--start-hidden` | 启动时不显示主窗口，只保留托盘和快捷键 |
 | `--quit` | 退出正在运行的 Voltip，与托盘菜单中的「退出 Voltip」相同 |
+| `--copy-last` | 把最近一次结果放到剪贴板，与托盘菜单中的「复制上一条结果」相同 |
 
-在 Linux 的 Wayland 会话中，请为 `--toggle`、`--edit-toggle` 和 `--cancel` 绑定系统快捷键，见[快捷键与录音方式](/zh/dictation/shortcuts#linux-与-wayland)。
+在 Linux 的 Wayland 会话中，请为 `--toggle`、`--edit-toggle`、`--cancel` 和 `--copy-last` 绑定系统快捷键，见[快捷键与录音方式](/zh/dictation/shortcuts#linux-与-wayland)。
 
 ## 不打开窗口
 

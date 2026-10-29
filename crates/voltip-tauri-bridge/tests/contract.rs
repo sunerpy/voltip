@@ -16,7 +16,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use voltip_core::audio_cache::{AudioCacheView, KeptFormat, KeptRecording, KeptStatus};
 use voltip_core::connectivity::{ConnectivityReport, ConnectivityStatus, PeerCheck, ProbeResult, RelayCheck};
-use voltip_core::dictation::{ClipboardCode, FailureCode, ProcessingStage, Via};
+use voltip_core::dictation::{ClipboardCode, FailureCode, InsertCheck, ProcessingStage, Via};
 use voltip_core::history::ProcessedText;
 use voltip_core::history::process::ProcessState;
 use voltip_core::mcp::{HistoryRange, McpAction, McpActivity, McpClient, McpRead, McpSettings, McpStatus, McpWrite};
@@ -301,6 +301,9 @@ fn engine_settings() -> EngineSettings {
         // gets the paste (the sample shows both non-default values).
         clipboard_after: ClipboardAfter::Keep,
         switched_window: SwitchedWindow::PasteHere,
+        // docs/dictation.md §28: both switches off, away from their defaults, so the sample shows them.
+        insert_check: false,
+        result_cards_stay: false,
         // docs/dictation.md §3.5: a ready fallback model for the recognition (and the selected one,
         // listed again: skipped), one without its key for the clean-up.
         asr_fallback: FallbackSettings {
@@ -337,6 +340,8 @@ fn settings() -> Settings {
         context_sharing: ContextSharing { app_name: false, window_title: true },
         // docs/dictation.md §13.1: a lone-key trigger next to the chord.
         solo_key: Some(SoloKey::RightCtrl),
+        // docs/dictation.md §28: a 复制上一条结果 chord, unassigned by default.
+        copy_last_hotkey: Some("Ctrl+Shift+V".into()),
         // docs/pairing.md 「常开配对」: on, away from its default.
         pairing_always_on: true,
         microphone: Some("wasapi:{0.0.1.00000000}.{c2}".into()),
@@ -451,6 +456,8 @@ fn done_phase() -> DictationPhase {
         segments: None,
         live_error: None,
         clipboard_code: None,
+        // docs/dictation.md §28: the insert check saw the text at the caret.
+        check: Some(InsertCheck::Written),
     }
 }
 
@@ -472,6 +479,7 @@ fn streamed_done_phase() -> DictationPhase {
         segments: Some(stream_segments()),
         live_error: None,
         clipboard_code: None,
+        check: None,
     }
 }
 
@@ -495,6 +503,7 @@ fn fallen_back_done_phase() -> DictationPhase {
                 segments: None,
                 live_error: Some("open: asr: 实时识别模型未下载：实时预览".into()),
                 clipboard_code: None,
+                check: None,
             }
         }
         other => other,
@@ -530,7 +539,8 @@ fn history_entries() -> Vec<HistoryEntry> {
             refine_ms: Some(2400),
             refine_failure: None,
             refine_error: None,
-            outcome: Outcome::Inserted { via: Via::Paste },
+            // docs/dictation.md §28: the insert check could not tell.
+            outcome: Outcome::Inserted { via: Via::Paste, check: Some(InsertCheck::Unconfirmed) },
             starred: true,
             mode: OutputMode::WholeTake,
             segments: None,
@@ -588,7 +598,8 @@ fn history_entries() -> Vec<HistoryEntry> {
             refine_ms: Some(900),
             refine_failure: None,
             refine_error: None,
-            outcome: Outcome::Inserted { via: Via::Paste },
+            // docs/dictation.md §28: the rewrite never reached the field (the 没有写进去 card).
+            outcome: Outcome::Inserted { via: Via::Paste, check: Some(InsertCheck::NotWritten) },
             starred: false,
             mode: OutputMode::WholeTake,
             segments: None,
@@ -617,7 +628,7 @@ fn history_entries() -> Vec<HistoryEntry> {
             refine_ms: None,
             refine_failure: None,
             refine_error: None,
-            outcome: Outcome::Inserted { via: Via::Paste },
+            outcome: Outcome::Inserted { via: Via::Paste, check: None },
             starred: false,
             mode: OutputMode::WholeTake,
             segments: None,
@@ -1030,6 +1041,8 @@ fn full_state() -> UiState {
             backend: "global-shortcut · Windows · RegisterHotKey".into(),
             edit_registered: Some("Ctrl+Alt+E".into()),
             edit_error: None,
+            copy_last_registered: Some("Ctrl+Shift+V".into()),
+            copy_last_error: None,
             capabilities: capabilities(true, true),
             solo_registered: Some(SoloKey::RightCtrl),
             solo_error: None,
@@ -1384,6 +1397,8 @@ fn all_events() -> Vec<UiEvent> {
             backend: "global-shortcut · Windows · RegisterHotKey".into(),
             edit_registered: Some("Ctrl+Alt+E".into()),
             edit_error: None,
+            copy_last_registered: Some("Ctrl+Shift+V".into()),
+            copy_last_error: None,
             capabilities: capabilities(true, true),
             solo_registered: Some(SoloKey::MouseBack),
             solo_error: None,
@@ -1397,6 +1412,8 @@ fn all_events() -> Vec<UiEvent> {
             backend: "global-shortcut · Linux · XWayland".into(),
             edit_registered: None,
             edit_error: Some("Ctrl+Alt+E 注册失败：already registered".into()),
+            copy_last_registered: None,
+            copy_last_error: Some("Ctrl+Shift+V 注册失败：already registered".into()),
             capabilities: capabilities(true, false),
             solo_registered: Some(SoloKey::RightAlt),
             solo_error: None,
@@ -1410,6 +1427,8 @@ fn all_events() -> Vec<UiEvent> {
             backend: "global-shortcut · Linux · Wayland".into(),
             edit_registered: None,
             edit_error: None,
+            copy_last_registered: None,
+            copy_last_error: None,
             capabilities: capabilities(false, false),
             solo_registered: None,
             solo_error: Some("右 Ctrl 无法单独触发：纯 Wayland 会话不允许应用监听全局按键".into()),
@@ -1605,8 +1624,38 @@ fn all_events() -> Vec<UiEvent> {
                 live_error: None,
                 // docs/dictation.md §14.3: another window came to the front, so the text was copied.
                 clipboard_code: Some(ClipboardCode::TargetChanged),
+                check: None,
             },
             session: 8,
+            context: None,
+            kind: TakeKind::Dictation,
+            remote: None,
+            preset: None,
+            source: None,
+            segments: None,
+            recording: None,
+            retake: false,
+        }),
+        // docs/dictation.md §28: the insert check found the field as it was — the 没有写进去 card.
+        UiEvent::Dictation(DictationStatus {
+            phase: DictationPhase::Done {
+                text: RAW_TEXT.into(),
+                raw_text: RAW_TEXT.into(),
+                chars: RAW_TEXT.chars().count(),
+                via: Via::Paste,
+                refined: false,
+                duration_ms: 3200,
+                asr_ms: 640,
+                refine_ms: None,
+                refine_failure: None,
+                refine_error: None,
+                mode: OutputMode::WholeTake,
+                segments: None,
+                live_error: None,
+                clipboard_code: None,
+                check: Some(InsertCheck::NotWritten),
+            },
+            session: 9,
             context: None,
             kind: TakeKind::Dictation,
             remote: None,
@@ -1924,6 +1973,7 @@ fn all_events() -> Vec<UiEvent> {
                 segments: None,
                 live_error: None,
                 clipboard_code: None,
+                check: None,
             },
             session: 20,
             context: Some(TakeContext { app: AppRef { id: "slack".into(), name: "Slack".into() }, scene: None }),
@@ -2078,6 +2128,7 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::SettingsSetTheme { .. } => "SettingsSetTheme",
         UiCommand::SettingsSetHotkey { .. } => "SettingsSetHotkey",
         UiCommand::SettingsSetEditHotkey { .. } => "SettingsSetEditHotkey",
+        UiCommand::SettingsSetCopyLastHotkey { .. } => "SettingsSetCopyLastHotkey",
         UiCommand::SettingsSetSoloKey { .. } => "SettingsSetSoloKey",
         UiCommand::SettingsSetMicrophone { .. } => "SettingsSetMicrophone",
         UiCommand::SettingsSetRecording { .. } => "SettingsSetRecording",
@@ -2101,6 +2152,7 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::DictationStart => "DictationStart",
         UiCommand::DictationStop => "DictationStop",
         UiCommand::DictationCancel => "DictationCancel",
+        UiCommand::DictationDismiss { .. } => "DictationDismiss",
         UiCommand::HotkeyEdge { .. } => "HotkeyEdge",
         UiCommand::SettingsSetActivation { .. } => "SettingsSetActivation",
         UiCommand::SettingsSetEngines { .. } => "SettingsSetEngines",
@@ -2176,6 +2228,8 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         ("settings_set_hotkey", json!({ "hotkey": "Ctrl+Alt+Space" }), "SettingsSetHotkey"),
         // docs/dictation.md §19: the voice-edit hotkey (`null` switches it off).
         ("settings_set_edit_hotkey", json!({ "hotkey": "Ctrl+Alt+Shift+E" }), "SettingsSetEditHotkey"),
+        // docs/dictation.md §28: the 复制上一条结果 hotkey (`null` assigns none).
+        ("settings_set_copy_last_hotkey", json!({ "hotkey": "Ctrl+Shift+V" }), "SettingsSetCopyLastHotkey"),
         // docs/dictation.md §13.1: the lone-key trigger (`null` switches it off).
         ("settings_set_solo_key", json!({ "key": "mouse_back" }), "SettingsSetSoloKey"),
         ("settings_set_microphone", json!({ "device": "wasapi:{0.0.1.00000000}.{c2}" }), "SettingsSetMicrophone"),
@@ -2215,6 +2269,8 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         ("dictation_start", Value::Null, "DictationStart"),
         ("dictation_stop", Value::Null, "DictationStop"),
         ("dictation_cancel", Value::Null, "DictationCancel"),
+        // docs/dictation.md §28: the result card's 关闭, for the take whose card it is.
+        ("dictation_dismiss", json!({ "session": 3 }), "DictationDismiss"),
         // The activation machine's inputs (docs/dictation.md §13): one CLI press — of the voice-edit
         // key (`voltip --edit-toggle`, §19) — and one mode change.
         ("hotkey_edge", json!({ "pressed": true, "atMs": AT_MS, "source": "cli", "purpose": "edit" }), "HotkeyEdge"),
@@ -2594,14 +2650,18 @@ fn events_fixture_covers_every_variant_and_matches_serde_output() {
         events.iter().filter_map(|e| if let UiEvent::Dictation(s) = e { Some(serde_json::to_value(s).unwrap()["phase"].clone()) } else { None }).collect();
     assert!(phases.iter().any(|p| p["phase"] == "processing" && p["stage"] == "finalizing"), "{phases:?}");
     let dones: Vec<&Value> = phases.iter().filter(|p| p["phase"] == "done").collect();
-    assert_eq!(dones.len(), 5);
+    assert_eq!(dones.len(), 6);
     assert_eq!(dones[0]["mode"], "whole_take");
     assert!(dones[0].get("segments").is_none() && dones[0].get("live_error").is_none(), "None is omitted: {}", dones[0]);
-    assert_eq!(dones[2]["mode"], "streaming_final");
-    assert_eq!(dones[2]["segments"][1]["text"], "然后加上错误处理");
-    assert_eq!(dones[2]["segments"][1]["end_ms"], 3200);
-    assert_eq!(dones[3]["mode"], "whole_take");
-    assert!(dones[3]["live_error"].as_str().is_some_and(|e| e.starts_with("open:")));
+    // docs/dictation.md §28: the insert check rides on `done`, and an unchecked take omits it.
+    assert_eq!(dones[0]["check"], "written");
+    assert!(dones[1].get("check").is_none(), "{}", dones[1]);
+    assert_eq!(dones[2]["check"], "not_written");
+    assert_eq!(dones[3]["mode"], "streaming_final");
+    assert_eq!(dones[3]["segments"][1]["text"], "然后加上错误处理");
+    assert_eq!(dones[3]["segments"][1]["end_ms"], 3200);
+    assert_eq!(dones[4]["mode"], "whole_take");
+    assert!(dones[4]["live_error"].as_str().is_some_and(|e| e.starts_with("open:")));
     let cancelled: Vec<&Value> = phases.iter().filter(|p| p["phase"] == "cancelled").collect();
     assert_eq!(cancelled.iter().map(|c| c["injected_chars"].as_u64().unwrap()).collect::<Vec<_>>(), vec![0, LIVE_COMMITTED.chars().count() as u64]);
     let modes: std::collections::BTreeSet<&str> =
@@ -2681,6 +2741,7 @@ fn commands_fixture_is_the_wire_form_and_parses_into_every_variant() {
         "SettingsSetTheme",
         "SettingsSetHotkey",
         "SettingsSetEditHotkey",
+        "SettingsSetCopyLastHotkey",
         "SettingsSetSoloKey",
         "SettingsSetMicrophone",
         "SettingsSetRecording",
@@ -2700,6 +2761,7 @@ fn commands_fixture_is_the_wire_form_and_parses_into_every_variant() {
         "DictationStart",
         "DictationStop",
         "DictationCancel",
+        "DictationDismiss",
         "HotkeyEdge",
         "SettingsSetActivation",
         "SettingsSetEngines",

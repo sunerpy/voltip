@@ -131,7 +131,7 @@ async fn pipeline_history_secrets_and_engines_through_the_core() {
     }
     let history = wait(&mut node, |e| if let CoreEvent::History { recent: h, .. } = e { (!h.is_empty()).then(|| h.clone()) } else { None }).await;
     assert_eq!(history.len(), 1);
-    assert_eq!(history[0].outcome, Outcome::Inserted { via: voltip_core::dictation::Via::Paste });
+    assert_eq!(history[0].outcome, Outcome::Inserted { via: voltip_core::dictation::Via::Paste, check: None });
     assert_eq!(injector.injected(), vec![FAKE_TRANSCRIPT.to_owned()]);
     let id = history[0].id;
 
@@ -527,4 +527,61 @@ async fn only_the_custom_provider_chooses_its_clean_up_interface() {
     let custom = &saved.engines.providers[&ProviderId::Custom];
     assert_eq!((custom.llm_api, custom.llm_reasoning), (Some(voltip_core::LlmApi::Responses), Some(voltip_core::ReasoningEffort::High)));
     node.handle.send(CoreCommand::Shutdown).await.unwrap();
+}
+
+/// docs/dictation.md §28 (D12): 复制上一条结果 answers `nothing` before the first result, then puts
+/// the newest result on the clipboard — with the history switched off too, and a failure's kept
+/// text counts. With the shell's cards on (`CoreConfig.result_cards`) the failure's card stays until
+/// its 关闭 (`DictationDismiss` for its session), which leaves a running take, and a dismiss for
+/// another take, alone.
+#[tokio::test]
+async fn copy_last_result_and_dismiss_through_the_core() {
+    use voltip_core::last_result::{CopyLastOutcome, CopyLastReply};
+    let dir = tempfile::tempdir().unwrap();
+    let injector = Arc::new(FakeInjector::err("denied"));
+    let mut cfg = config(dir.path());
+    cfg.result_cards = true;
+    let (handle, events) = AppCore::start_with(cfg, Arc::new(MemorySecretStore::new()), ports(Arc::new(AtomicUsize::new(0)), injector.clone())).unwrap();
+    let mut node = Node { handle, events };
+    wait(&mut node, |e| matches!(e, CoreEvent::Ready { .. }).then_some(())).await;
+    node.handle.send(CoreCommand::SetHistory(voltip_core::HistorySettings { enabled: false, keep: 500 })).await.unwrap();
+    wait(&mut node, |e| matches!(e, CoreEvent::Settings(s) if !s.history.enabled).then_some(())).await;
+
+    let copy_last = async |node: &mut Node| {
+        let (reply, answer) = CopyLastReply::channel();
+        node.handle.send(CoreCommand::CopyLastResult(reply)).await.unwrap();
+        tokio::time::timeout(STEP, answer).await.expect("answered within 10 s").expect("answered")
+    };
+    assert_eq!(copy_last(&mut node).await, CopyLastOutcome::Nothing, "no result yet");
+    assert!(injector.clipboard_copies().is_empty());
+
+    node.handle.send(CoreCommand::DictationStart).await.unwrap();
+    let session = wait(&mut node, |e| match e {
+        CoreEvent::Dictation(s) if matches!(s.phase, DictationPhase::Listening { .. }) => Some(s.session),
+        _ => None,
+    })
+    .await;
+    node.handle.send(CoreCommand::DictationDismiss { session }).await.unwrap();
+    node.handle.send(CoreCommand::DictationStop).await.unwrap();
+    let next = wait_phase(&mut node, |p| !matches!(p, DictationPhase::Listening { .. })).await;
+    assert!(matches!(next, DictationPhase::Processing { .. }), "a listening take is not dismissed: {next:?}");
+    let failed = wait_phase(&mut node, DictationPhase::is_terminal).await;
+    assert!(matches!(&failed, DictationPhase::Failed { text: Some(text), .. } if text == FAKE_TRANSCRIPT), "{failed:?}");
+
+    assert_eq!(copy_last(&mut node).await, CopyLastOutcome::Copied);
+    assert_eq!(injector.clipboard_copies(), [FAKE_TRANSCRIPT.to_owned()], "the failure's text, with the history off");
+    // The card stays past its dwell, until its 关闭.
+    let stayed =
+        tokio::time::timeout(voltip_core::dictation::DWELL_WITH_TEXT + Duration::from_millis(500), wait_phase(&mut node, |p| *p == DictationPhase::Idle)).await;
+    assert!(stayed.is_err(), "the card stays past its dwell: {stayed:?}");
+    node.handle.send(CoreCommand::DictationDismiss { session: session + 1 }).await.unwrap();
+    // A round trip through the same command loop: the dismiss above has been handled by now, and
+    // whatever it changed has been sent.
+    assert_eq!(copy_last(&mut node).await, CopyLastOutcome::Copied);
+    let left = tokio::time::timeout(Duration::from_millis(200), wait_phase(&mut node, |p| *p == DictationPhase::Idle)).await;
+    assert!(left.is_err(), "another take's dismiss leaves the card: {left:?}");
+    node.handle.send(CoreCommand::DictationDismiss { session }).await.unwrap();
+    assert_eq!(wait_phase(&mut node, |_| true).await, DictationPhase::Idle, "the card's 关闭");
+    assert_eq!(copy_last(&mut node).await, CopyLastOutcome::Copied, "a dismissed result is still the newest");
+    assert_eq!(injector.clipboard_copies().len(), 3);
 }

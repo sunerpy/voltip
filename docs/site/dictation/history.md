@@ -14,7 +14,7 @@ The latest results are also listed on the home page: four, or more when the wind
 - Which dictionary corrections and replacement rules applied, and the app and [scene](/recognition/scenes) the dictation was for.
 - The [AI preset](/recognition/polish#presets) that AI polish used, when it ran.
 - The models used and how long each step took.
-- Where the text went: pasted at the cursor, or left on the clipboard, with the reason.
+- Where the text went: pasted at the cursor, or left on the clipboard, with the reason. A paste that Voltip found did not arrive is marked **Not written**; when Voltip could not tell, the technical details say **Not confirmed as written** (see [Checking that the text arrived](/dictation/output#checking-that-the-text-arrived)).
 
 From an entry you can:
 
@@ -24,7 +24,7 @@ From an entry you can:
 - recognise it again while its recording is still kept, or polish it again when AI polish failed, see [Recognise or polish again](#recognise-or-polish-again);
 - delete it.
 
-The search box finds text, apps, scenes and models, and works together with the filters, which narrow the list to today, this week or this month, to starred entries, or to entries whose text was not inserted. After a search or a filter the list starts again at its first page, and the foot of the list shows how many entries were found.
+The search box finds text, apps, scenes and models, and works together with the filters, which narrow the list to today, this week or this month, to starred entries, or to entries whose text was not inserted, pastes marked **Not written** included. After a search or a filter the list starts again at its first page, and the foot of the list shows how many entries were found.
 
 On the computer the list is shown in pages. Choose 10, 20, 50, 100 or 200 entries per page at the foot of the list (10 at first; the page remembers your choice) and move between pages with the buttons beside it. A new dictation does not change the page you are on. The list and the details of the selected entry fill the window's height side by side, and each scrolls on its own when it holds more; another page starts at the top of the list. On a phone the list shows 100 entries at a time; scroll to the end, or tap **Load more**, to see the next ones.
 

@@ -317,11 +317,12 @@ try {
   $dots = [string][char]0x2026
   $settingsZh = U 0x8BBE 0x7F6E
   $labels = if ($zh) {
-    @("$(U 0x6253 0x5F00) Voltip", "AI $(U 0x6DA6 0x8272)", "$settingsZh$dots", "$(U 0x68C0 0x67E5 0x66F4 0x65B0)$dots", "$(U 0x9000 0x51FA) Voltip")
+    @("$(U 0x6253 0x5F00) Voltip", "$(U 0x590D 0x5236 0x4E0A 0x4E00 0x6761 0x7ED3 0x679C)", "AI $(U 0x6DA6 0x8272)", "$settingsZh$dots", "$(U 0x68C0 0x67E5 0x66F4 0x65B0)$dots", "$(U 0x9000 0x51FA) Voltip")
   } else {
-    @('Open Voltip', 'AI Polish', "Settings$dots", "Check for Updates$dots", 'Quit Voltip')
+    @('Open Voltip', 'Copy Last Result', 'AI Polish', "Settings$dots", "Check for Updates$dots", 'Quit Voltip')
   }
-  $openLabel, $polishLabel, $settingsLabel, $updateLabel, $quitLabel = $labels
+  # Copy Last Result (docs/dictation.md section 28) is listed, greyed until there is a result.
+  $openLabel, $copyLastLabel, $polishLabel, $settingsLabel, $updateLabel, $quitLabel = $labels
   $expected = @($labels | Where-Object { $updater -or $_ -ne $updateLabel })
   # The AI Polish submenu: the switch, then the built-in presets (a fresh profile has no custom one).
   $toggleLabel = if ($zh) { "$(U 0x542F 0x7528) AI $(U 0x6DA6 0x8272)" } else { 'Enable AI Polish' }

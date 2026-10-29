@@ -1,9 +1,10 @@
 //! Command line of the desktop binary (docs/dictation.md §13).
 //!
 //! Two kinds of flags: remote controls for a running instance (`--toggle`, `--edit-toggle`,
-//! `--cancel`, `--quit`), which the single-instance plugin forwards as `HotkeyEdge { source: cli }`
-//! (with `purpose: edit` for the voice edit of docs/dictation.md §19) / `DictationCancel` / an app
-//! exit, and which Wayland users bind to a compositor shortcut in place of a global hotkey; and headless
+//! `--cancel`, `--quit`, `--copy-last`), which the single-instance plugin forwards as `HotkeyEdge {
+//! source: cli }` (with `purpose: edit` for the voice edit of docs/dictation.md §19) /
+//! `DictationCancel` / an app exit / 复制上一条结果 (§28), and which Wayland users bind to a
+//! compositor shortcut in place of a global hotkey; and headless
 //! utilities (`--list-devices`, `--list-compute`, `--list-models`, `--download-model`,
 //! `--transcribe-file`) that run
 //! without a window, tray, hotkey or microphone and exit. `--start-hidden` starts the GUI without
@@ -42,6 +43,11 @@ pub struct Cli {
     /// Quit the running instance (what the tray's 退出 Voltip does); nothing happens when none runs.
     #[arg(long, conflicts_with_all = ["toggle", "edit_toggle", "cancel", "start_hidden", "list_devices", "list_compute", "list_models", "download_model", "transcribe_file"])]
     pub quit: bool,
+    /// Put the running instance's newest result on the clipboard (复制上一条结果, docs/dictation.md
+    /// §28); bind it to a compositor shortcut where no global hotkey exists (Wayland). Nothing
+    /// happens when none runs.
+    #[arg(long, conflicts_with_all = ["toggle", "edit_toggle", "cancel", "quit", "start_hidden", "list_devices", "list_compute", "list_models", "download_model", "transcribe_file"])]
+    pub copy_last: bool,
     /// Print the input devices (`id<TAB>name`, default first) and exit.
     #[arg(long, conflicts_with_all = ["list_models", "transcribe_file"])]
     pub list_devices: bool,
@@ -130,6 +136,8 @@ pub enum Action {
     /// `--quit`: reach the running instance through the single-instance plugin (while the app is
     /// built), and exit either way without starting a GUI.
     Quit,
+    /// `--copy-last`: the same way, for 复制上一条结果 (a new instance has no result yet).
+    CopyLast,
     /// `--list-devices`.
     ListDevices,
     /// `--list-compute`.
@@ -209,6 +217,9 @@ impl Cli {
         if self.quit {
             return Action::Quit;
         }
+        if self.copy_last {
+            return Action::CopyLast;
+        }
         Action::Gui { start_hidden: self.start_hidden, remote: self.remote() }
     }
 }
@@ -222,6 +233,11 @@ pub fn remote_from_args(args: &[String]) -> Option<Remote> {
 /// Whether a second instance's arguments ask this one to quit (`--quit`).
 pub fn quit_from_args(args: &[String]) -> bool {
     Cli::parse_args(args).is_ok_and(|cli| cli.quit)
+}
+
+/// Whether a second instance's arguments ask this one for 复制上一条结果 (`--copy-last`).
+pub fn copy_last_from_args(args: &[String]) -> bool {
+    Cli::parse_args(args).is_ok_and(|cli| cli.copy_last)
 }
 
 /// What `--transcribe-file --json` prints.
@@ -360,6 +376,6 @@ pub fn run_headless(action: &Action, data_dir: &Path, out: &mut dyn Write, err: 
             let transcriber = LocalTranscriber::new(models_root).select(&model).with_compute(compute);
             transcribe_file(&transcriber, path, *json, settings.engines.language.as_deref(), settings.engines.chinese_script, out, err)
         }
-        Action::Gui { .. } | Action::Quit => ExitCode::Ok,
+        Action::Gui { .. } | Action::Quit | Action::CopyLast => ExitCode::Ok,
     }
 }

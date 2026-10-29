@@ -86,6 +86,24 @@ describe("history queries of the mock backend (the core's semantics)", () => {
     expect(correctedChars(long, changed)).toBe(1);
   });
 
+  it("regression: a paste the insert check found not written is listed as not inserted", () => {
+    // docs/dictation.md §28: written and unconfirmed pastes stay inserted.
+    const rows = [
+      entry({ at_ms: NOW, outcome: { kind: "inserted", via: "paste", check: "written" } }),
+      entry({
+        at_ms: NOW - HOUR,
+        outcome: { kind: "inserted", via: "paste", check: "unconfirmed" },
+      }),
+      entry({
+        at_ms: NOW - 2 * HOUR,
+        outcome: { kind: "inserted", via: "paste", check: "not_written" },
+      }),
+    ];
+    expect(historyPageOf(rows, { limit: 10, failed: true }).entries.map((e) => e.at_ms)).toEqual([
+      NOW - 2 * HOUR,
+    ]);
+  });
+
   it("filters, searches and pages newest first, with the counts of every page", () => {
     const rows = [
       entry({ at_ms: NOW - HOUR, starred: true, text: "Hello World" }),

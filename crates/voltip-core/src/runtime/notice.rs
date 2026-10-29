@@ -91,6 +91,7 @@ mod tests {
             segments: None,
             live_error: None,
             clipboard_code: None,
+            check: None,
         }
     }
 

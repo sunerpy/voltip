@@ -85,6 +85,12 @@
   },
   {
     "args": {
+      "hotkey": "Ctrl+Shift+V"
+    },
+    "name": "settings_set_copy_last_hotkey"
+  },
+  {
+    "args": {
       "key": "mouse_back"
     },
     "name": "settings_set_solo_key"
@@ -221,6 +227,12 @@
   },
   {
     "args": {
+      "session": 3
+    },
+    "name": "dictation_dismiss"
+  },
+  {
+    "args": {
       "atMs": 1758700600000,
       "pressed": true,
       "purpose": "edit",
@@ -256,6 +268,7 @@
         "chinese_script": "traditional",
         "clipboard_after": "keep",
         "inject": "paste",
+        "insert_check": false,
         "language": "zh",
         "live_preview": true,
         "llm_fallback": {
@@ -288,6 +301,7 @@
         },
         "refine_enabled": true,
         "refine_preset": "7e57ab1e-0b0e-4c0d-9e5e-7e57ab1e0b0e",
+        "result_cards_stay": false,
         "switched_window": "paste_here",
         "vad_trim": true
       }

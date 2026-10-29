@@ -5,6 +5,7 @@ import {
   SettingsPane,
   SettingsRows,
   StatusRow,
+  Toggle,
   useBackend,
   useI18n,
   useUiState,
@@ -22,8 +23,9 @@ function lengthLabel(minutes: number, t: TFunction): string {
  *  the rest of the block unchanged. It used to sit among the 语音模型 page's recognition options;
  *  this is now the only place that sets it. Next to it what the clipboard holds after a paste and
  *  what a take does when the window changed (docs/dictation.md §14.3, `clipboard_after` /
- *  `switched_window`, written the same way). Also the longest recording (§22,
- *  `settings_set_recording` with the rest of the recording settings unchanged). */
+ *  `switched_window`, written the same way), and whether a paste is checked and a result card
+ *  stays on screen (§28, `insert_check` / `result_cards_stay`, the same way). Also the longest
+ *  recording (§22, `settings_set_recording` with the rest of the recording settings unchanged). */
 export function Dictation() {
   const { backend } = useBackend();
   const { t } = useI18n();
@@ -84,6 +86,31 @@ export function Dictation() {
               { value: "copy_only", label: t("settings.dictation.switched.copyOnly") },
               { value: "paste_here", label: t("settings.dictation.switched.pasteHere") },
             ]}
+          />
+        </StatusRow>
+        {/* docs/dictation.md §28: the check of the field after a paste, and the result cards. */}
+        <StatusRow
+          label={t("insertCheck.settings.check")}
+          help={t("insertCheck.settings.checkHelp")}>
+          <Toggle
+            checked={engines.insert_check}
+            ariaLabel={t("insertCheck.settings.check")}
+            onChange={(insert_check) => {
+              void backend.invoke("settings_set_engines", {
+                engines: { ...engines, insert_check },
+              });
+            }}
+          />
+        </StatusRow>
+        <StatusRow label={t("insertCheck.settings.stay")} help={t("insertCheck.settings.stayHelp")}>
+          <Toggle
+            checked={engines.result_cards_stay}
+            ariaLabel={t("insertCheck.settings.stay")}
+            onChange={(result_cards_stay) => {
+              void backend.invoke("settings_set_engines", {
+                engines: { ...engines, result_cards_stay },
+              });
+            }}
           />
         </StatusRow>
         <StatusRow label={t("settings.dictation.maxLabel")} help={t("settings.dictation.maxHelp")}>

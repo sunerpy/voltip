@@ -507,6 +507,9 @@ describe("dictation contract (docs/dictation.md)", () => {
       // docs/dictation.md §14.3: the clipboard comes back, a switched window only gets a copy.
       clipboard_after: "restore",
       switched_window: "copy_only",
+      // docs/dictation.md §28: both on by default (D13).
+      insert_check: true,
+      result_cards_stay: true,
     });
     // `#[serde(default)]` everywhere: an empty block is the defaults, an empty status the empty one.
     expect(engineSettingsSchema.parse({})).toEqual(defaultEngineSettings());

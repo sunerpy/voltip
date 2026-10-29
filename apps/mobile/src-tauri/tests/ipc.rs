@@ -774,9 +774,9 @@ fn sorted(mut names: Vec<String>) -> Vec<String> {
 const PENDING_TYPESCRIPT: &[&str] = &[];
 
 /// Commands of the shared contract (schema.ts, the fixtures) that only the desktop shell registers:
-/// the local speech service, the MCP service and the recording cache run on a computer only
-/// (docs/dictation.md §23.6, §25, §26), so the phone offers no command for them and an invoke is
-/// "not found".
+/// the local speech service, the MCP service, the recording cache and the result cards run on a
+/// computer only (docs/dictation.md §23.6, §25, §26, §28), so the phone offers no command for them
+/// and an invoke is "not found".
 const DESKTOP_ONLY: &[&str] = &[
     "settings_set_serve",
     "serve_copy_token",
@@ -790,6 +790,13 @@ const DESKTOP_ONLY: &[&str] = &[
     "audio_cache_clear",
     "audio_cache_delete",
     "audio_retake",
+    // The result cards and 复制上一条结果 (docs/dictation.md §28) live in the desktop's pill, tray
+    // and global hotkeys; a phone has none of them.
+    "dictation_dismiss",
+    "settings_set_copy_last_hotkey",
+    "overlay_copy",
+    "overlay_paste",
+    "open_history",
 ];
 
 #[test]
@@ -809,7 +816,8 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
         sorted(PENDING_TYPESCRIPT.iter().map(|s| (*s).to_owned()).collect()),
         "schema.ts CommandArgs keys != Rust COMMANDS (beyond the declared PENDING_TYPESCRIPT set)"
     );
-    for name in typescript_literal_invokes() {
+    // The desktop's own queries (the result card's, docs/dictation.md §28) are "not found" here.
+    for name in typescript_literal_invokes().into_iter().filter(|n| !DESKTOP_ONLY.contains(&n.as_str())) {
         assert!(rust.contains(&name), "tauri-backend.ts invokes unknown command {name}");
     }
     // Queries and streams (`QUERY_COMMANDS` in schema.ts) are not `UiCommand`s and have no fixture entry.

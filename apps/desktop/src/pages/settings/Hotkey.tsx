@@ -264,7 +264,9 @@ function SoloKeyRow({
  *  `settings.activation` / `hold_threshold_ms` / `extra_recording_ms`, written as one
  *  `settings_set_activation` whenever any of the three changes. The voice-edit chord (§19) is
  *  `settings.edit_hotkey` with its own recorder (`settings_set_edit_hotkey`, `null` = off) and the
- *  shell's `edit_registered` / `edit_error`; it needs the AI refine service, which the row says. */
+ *  shell's `edit_registered` / `edit_error`; it needs the AI refine service, which the row says.
+ *  复制上一条结果 (§28) is `settings.copy_last_hotkey` with a recorder of its own
+ *  (`settings_set_copy_last_hotkey`, none by default) and `copy_last_registered` / `copy_last_error`. */
 export function Hotkey() {
   const shell = useShell();
   const { backend } = useBackend();
@@ -319,13 +321,32 @@ export function Hotkey() {
   );
   const editRecorder = useChordRecorder({ onCommit: saveEdit, onReject: reject });
   const editRecording = editRecorder.recording;
+  // docs/dictation.md §28: 复制上一条结果, recorded the same way; none by default.
+  const copyLastHotkey = state.settings.copy_last_hotkey ?? null;
+  const copyLastRegistered =
+    copyLastHotkey !== null && status.copy_last_registered === copyLastHotkey;
+  const saveCopyLast = useCallback(
+    (combo: string | null) => {
+      void backend.invoke("settings_set_copy_last_hotkey", { hotkey: combo });
+    },
+    [backend],
+  );
+  const copyLastRecorder = useChordRecorder({ onCommit: saveCopyLast, onReject: reject });
+  const copyLastRecording = copyLastRecorder.recording;
   const startRecording = () => {
     editRecorder.cancel();
+    copyLastRecorder.cancel();
     recorder.start();
   };
   const startEditRecording = () => {
     recorder.cancel();
+    copyLastRecorder.cancel();
     editRecorder.start();
+  };
+  const startCopyLastRecording = () => {
+    recorder.cancel();
+    editRecorder.cancel();
+    copyLastRecorder.start();
   };
 
   const platformText = platform ? platformLabel(platform, locale) : "—";
@@ -474,6 +495,68 @@ export function Hotkey() {
           </div>
         </StatusRow>
         <SoloKeyRow status={status} soloKey={state.settings.solo_key} platform={platform} />
+        <StatusRow
+          label={t("insertCheck.settings.copyLast")}
+          help={t("insertCheck.settings.copyLastHelp")}>
+          <div
+            className={`flex h-11 items-center gap-3 rounded-10 bg-surface px-3 ${copyLastRecording ? "border-2 border-primary" : "hairline"}`}
+            data-testid="copy-last-hotkey-recorder"
+            data-recording={copyLastRecording ? "true" : "false"}>
+            {copyLastRecording ? (
+              copyLastRecorder.preview ? (
+                <Keycaps keys={copyLastRecorder.preview} />
+              ) : (
+                <LampText tone="ok" pulse>
+                  {t("settings.hotkey.recording")}
+                </LampText>
+              )
+            ) : copyLastHotkey === null ? (
+              <span className="text-[12px] text-fg-subtle" data-testid="copy-last-hotkey-status">
+                {t("insertCheck.settings.copyLastNone")}
+              </span>
+            ) : (
+              <>
+                <Keycaps keys={copyLastHotkey} />
+                <span className="text-[12px] text-fg-subtle" data-testid="copy-last-hotkey-status">
+                  {status.copy_last_error
+                    ? t("settings.hotkey.savedFailed")
+                    : copyLastRegistered
+                      ? t("settings.hotkey.savedOk")
+                      : t("settings.hotkey.savedWaiting")}
+                </span>
+              </>
+            )}
+            <Button
+              size="sm"
+              variant={copyLastRecording ? "ghost" : "primary"}
+              aria-label={
+                copyLastRecording
+                  ? t("insertCheck.settings.copyLastCancelLabel")
+                  : copyLastHotkey === null
+                    ? t("insertCheck.settings.copyLastRecordLabel")
+                    : t("insertCheck.settings.copyLastRerecordLabel")
+              }
+              onClick={copyLastRecording ? copyLastRecorder.cancel : startCopyLastRecording}>
+              {copyLastRecording
+                ? t("settings.hotkey.cancelRecording")
+                : copyLastHotkey === null
+                  ? t("insertCheck.settings.copyLastRecord")
+                  : t("settings.hotkey.record")}
+            </Button>
+            {copyLastHotkey !== null && (
+              <Button
+                size="sm"
+                variant="ghost"
+                aria-label={t("insertCheck.settings.copyLastClearLabel")}
+                onClick={() => {
+                  copyLastRecorder.cancel();
+                  saveCopyLast(null);
+                }}>
+                {t("insertCheck.settings.copyLastClear")}
+              </Button>
+            )}
+          </div>
+        </StatusRow>
       </SettingsRows>
 
       <SettingsSection
@@ -561,6 +644,18 @@ export function Hotkey() {
             </Button>
           }>
           {status.edit_error}
+        </Banner>
+      )}
+      {status.copy_last_error && (
+        <Banner
+          tone="danger"
+          marker="bar"
+          actions={
+            <Button size="sm" onClick={startCopyLastRecording}>
+              {t("settings.hotkey.change")}
+            </Button>
+          }>
+          {status.copy_last_error}
         </Banner>
       )}
 

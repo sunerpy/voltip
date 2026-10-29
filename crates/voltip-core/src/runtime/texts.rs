@@ -127,9 +127,9 @@ impl Runtime {
     pub(super) fn on_text_delivered(&mut self, text: IncomingText, result: Result<Injection, DictationError>) {
         self.texts.busy = false;
         let (state, outcome) = match &result {
-            Ok(Injection { via: Via::Paste, .. }) => (PhoneTextState::Delivered { pasted: true }, Outcome::Inserted { via: Via::Paste }),
+            Ok(Injection { via: Via::Paste, .. }) => (PhoneTextState::Delivered { pasted: true }, Outcome::Inserted { via: Via::Paste, check: None }),
             Ok(Injection { via: Via::Clipboard, note }) => {
-                (PhoneTextState::Delivered { pasted: false }, note.clone().map_or(Outcome::Inserted { via: Via::Clipboard }, Outcome::clipboard))
+                (PhoneTextState::Delivered { pasted: false }, note.clone().map_or(Outcome::Inserted { via: Via::Clipboard, check: None }, Outcome::clipboard))
             }
             Err(e) => (PhoneTextState::failed(PhoneTextFailure::Failed, &e.to_string()), Outcome::Failed { reason: e.to_string() }),
         };

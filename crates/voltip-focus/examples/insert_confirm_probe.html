@@ -1,0 +1,26 @@
+<!doctype html>
+<!-- The browser fields of the insert check's measurement (examples/insert_confirm_probe.rs,
+     docs/dictation.md §28): a textarea and a contenteditable block. The hash names the one shown
+     and focused (#textarea, #editable); it fills most of the window, so a click in the middle of
+     the window lands in it, and the title names it, so the measurement finds the window. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>voltip-probe</title>
+    <style>
+      body { margin: 8px; }
+      .field { box-sizing: border-box; width: 90vw; height: 80vh; border: 1px solid #888; font: 16px sans-serif; }
+    </style>
+  </head>
+  <body>
+    <textarea id="textarea" class="field"></textarea>
+    <div id="editable" class="field" contenteditable="true"></div>
+    <script>
+      const field = document.getElementById(location.hash.slice(1) || "textarea");
+      for (const other of document.querySelectorAll(".field")) other.hidden = other !== field;
+      document.title = "voltip-probe " + field.id;
+      field.focus();
+      window.addEventListener("load", () => field.focus());
+    </script>
+  </body>
+</html>

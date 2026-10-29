@@ -297,6 +297,19 @@ export class TauriBackend implements Backend {
     return pasteOutcomeSchema.parse(raw);
   }
 
+  async overlayCopy(text: string) {
+    await this.transport.invoke("overlay_copy", { text });
+  }
+
+  async overlayPaste(text: string) {
+    const raw = await this.transport.invoke("overlay_paste", { text });
+    return pasteOutcomeSchema.parse(raw);
+  }
+
+  async openHistory() {
+    await this.transport.invoke("open_history");
+  }
+
   async meter(deviceId: string | undefined, onFrame: FrameListener): Promise<Unsubscribe> {
     const warn = this.warn();
     const channel = (this.transport.channel ?? newChannel)();

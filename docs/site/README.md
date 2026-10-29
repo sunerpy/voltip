@@ -140,25 +140,35 @@ pnpm -C apps/desktop dev --host 127.0.0.1 --port 1430
 2. Page captures are viewport screenshots at device pixel ratio 1, saved as WebP at
    quality 85.
 3. The overlay pills, `overlay-<state>-<lang>-<theme>.webp`, come from `/overlay` at device
-   pixel ratio 2; firlab's `og.svg` uses `overlay-inserted-en-light.webp`. For each language
-   and theme, save a viewport screenshot as `<dir>/overlay-<lang>-<theme>.png`, and the pill
-   rectangles as `<dir>/overlay-<lang>-<theme>.json` from the page:
+   pixel ratio 2; firlab's `og.svg` uses `overlay-inserted-en-light.webp`. The result card of
+   the output page, `overlay-card-<lang>-<theme>.webp`, is the sheet's result-card tile. For
+   each language and theme, save a viewport screenshot as `<dir>/overlay-<lang>-<theme>.png`
+   (scroll the card into view first if the viewport ends above it), and the rectangles as
+   `<dir>/overlay-<lang>-<theme>.json` from the page:
 
    ```js
    JSON.stringify({
      dpr: devicePixelRatio,
-     rects: Object.fromEntries(['listening', 'processing', 'inserted'].map((state) => {
-       const r = document.querySelector(`[data-state="${state}"].rounded-pill`).getBoundingClientRect();
+     rects: Object.fromEntries([
+       ...['listening', 'processing', 'inserted'].map((state) => [state, `[data-state="${state}"].rounded-pill`]),
+       ['card', '[data-testid="overlay-card"] .rounded-pill'],
+     ].map(([state, selector]) => {
+       const r = document.querySelector(selector).getBoundingClientRect();
        return [state, { x: r.x, y: r.y, w: r.width, h: r.height }];
      })),
    })
    ```
 
-   Then cut them out onto a canvas at least as wide as the widest pill, and check `og.svg`
-   after a new cut, since it gives the image a fixed size:
+   Then cut the pills out onto a canvas at least as wide as the widest pill, and check
+   `og.svg` after a new cut, since it gives the image a fixed size. A `ScreenFigure` fills
+   the text column, so the card goes in the middle of a canvas as wide as the column
+   (688 px) with 20 px above and below, where it shows at its real size; set the printed
+   size as `width` and `height` of its `ScreenFigure` on both languages'
+   `dictation/output.md`:
 
    ```bash
    python3 docs/site/tools/crop-overlay.py --width 440 --out docs/site/public/screens <dir>/overlay-*-*.png
+   python3 docs/site/tools/crop-overlay.py --states card --width 688 --pad 20 --out docs/site/public/screens <dir>/overlay-*-*.png
    ```
 
 4. The home pages' phone panels, `phone-pair-<lang>-<theme>.webp` and

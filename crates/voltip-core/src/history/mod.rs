@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::dictation::{ClipboardCode, InjectNote, OutputMode, Segment, TakeKind, Via};
+use crate::dictation::{ClipboardCode, InjectNote, InsertCheck, OutputMode, Segment, TakeKind, Via};
 use crate::presets::PresetRef;
 use crate::scenes::{AppRef, SceneRef};
 use crate::vocabulary::VocabularyHits;
@@ -52,6 +52,10 @@ pub enum Outcome {
     Inserted {
         /// Route.
         via: Via,
+        /// What the insert check found after the paste (docs/dictation.md §28); absent when none
+        /// ran, and in entries written before it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        check: Option<InsertCheck>,
     },
     /// A paste was requested but the text stayed in the clipboard.
     Clipboard {

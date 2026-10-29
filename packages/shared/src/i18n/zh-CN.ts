@@ -2105,6 +2105,44 @@ export const zhCN = {
       dest: "去向",
     },
   },
+  /** docs/dictation.md §28: the insert check, the result cards and 复制上一条结果. */
+  insertCheck: {
+    /** A paste the field never received: the card's sentence and the history's mark. */
+    notWritten: "没有写进去",
+    /** The history detail of a paste the check could not confirm (it counts as inserted). */
+    unconfirmed: "未确认是否写入",
+    /** A failure without text whose recording is kept: the reason, then this. */
+    failedKept: "{reason} · 录音已保留",
+    card: {
+      paste: "粘贴",
+      copy: "复制",
+      retake: "重新识别",
+      openHistory: "打开历史",
+      close: "关闭",
+      copied: "已复制",
+      copyFailed: "复制失败",
+    },
+    /** The overlay spec sheet's result-card tile (`pnpm dev` only). */
+    sheet: "结果卡片 · 没有写进去",
+    /** The pill's flash after the tray's or the hotkey's 复制上一条结果. */
+    copiedLast: "已复制上一条结果",
+    settings: {
+      check: "检查文字是否写入",
+      checkHelp: "只在本机比较输入框前后的变化，不保存、不上传",
+      stay: "识别结果卡片常驻",
+      stayHelp:
+        "没写进去、窗口已切换和识别失败时，结果卡片一直留到你关闭或下一次听写；关闭后按原来的时长自动消失",
+      copyLast: "复制上一条结果",
+      copyLastHelp: "把最近一次结果放到剪贴板，不打开主窗口；托盘菜单里也有这一项",
+      copyLastNone: "未设置",
+      copyLastRecord: "录制",
+      copyLastRecordLabel: "录制 · 复制上一条结果",
+      copyLastRerecordLabel: "重新录制 · 复制上一条结果",
+      copyLastCancelLabel: "取消录制 · 复制上一条结果",
+      copyLastClear: "清除",
+      copyLastClearLabel: "清除 · 复制上一条结果",
+    },
+  },
   settings: {
     title: "设置",
     groupsLabel: "设置分组",
