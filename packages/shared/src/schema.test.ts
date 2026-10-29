@@ -504,6 +504,9 @@ describe("dictation contract (docs/dictation.md)", () => {
       chinese_script: "simplified",
       inject: "paste",
       refine_preset: "proofread",
+      // docs/dictation.md §14.3: the clipboard comes back, a switched window only gets a copy.
+      clipboard_after: "restore",
+      switched_window: "copy_only",
     });
     // `#[serde(default)]` everywhere: an empty block is the defaults, an empty status the empty one.
     expect(engineSettingsSchema.parse({})).toEqual(defaultEngineSettings());

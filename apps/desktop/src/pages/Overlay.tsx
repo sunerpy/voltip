@@ -191,9 +191,14 @@ export function Overlay({ state }: OverlayProps) {
                     ? edit
                       ? "overlay.live.editDonePaste"
                       : "overlay.live.donePaste"
-                    : edit
-                      ? "overlay.live.editDoneClipboard"
-                      : "overlay.live.doneClipboard",
+                    : // docs/dictation.md §14.3: another window came to the front meanwhile.
+                      phase.clipboard_code === "target_changed"
+                      ? edit
+                        ? "overlay.live.editDoneTargetChanged"
+                        : "overlay.live.doneTargetChanged"
+                      : edit
+                        ? "overlay.live.editDoneClipboard"
+                        : "overlay.live.doneClipboard",
                   {
                     n: phase.chars,
                   },

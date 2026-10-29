@@ -797,6 +797,8 @@ export const zhCN = {
       elevated_target:
         "无法粘贴到光标处：目标窗口以管理员身份运行。文字已复制到剪贴板，可按 {keys} 粘贴。",
       too_long: "全文超过 5000 字，未直接粘贴。文字已复制到剪贴板，可按 {keys} 粘贴。",
+      /** docs/dictation.md §14.3: another window came to the front while the take was processed. */
+      target_changed: "处理期间切换到了其他窗口，文字没有粘贴，已复制到剪贴板，可按 {keys} 粘贴。",
       other: "无法直接粘贴，文字已复制到剪贴板，可按 {keys} 粘贴。",
       openAccessibility: "打开辅助功能设置",
       details: "技术细节",
@@ -1487,7 +1489,7 @@ export const zhCN = {
         "阿里云百炼：请在百炼控制台为这些模型打开「免费额度用完即停」。打开后，额度用完时服务会拒绝请求，Voltip 随即改用下一个模型；未打开时服务会直接按量计费。Voltip 无法读取剩余额度。",
     },
     injectLabel: "插入方式",
-    injectHelp: "粘贴会临时占用剪贴板，完成后恢复原内容；选择「仅复制到剪贴板」时需要手动粘贴。",
+    injectHelp: "粘贴时会临时借用剪贴板；选择「仅复制到剪贴板」时需要手动粘贴。",
     inject: {
       paste: "粘贴到光标处",
       clipboard: "仅复制到剪贴板",
@@ -2069,6 +2071,9 @@ export const zhCN = {
       phoneTag: "手机 · {name}",
       editDonePaste: "已替换 {n} 字",
       editDoneClipboard: "改写结果已复制 {n} 字",
+      /** docs/dictation.md §14.3: the window changed while the take was processed. */
+      doneTargetChanged: "窗口已切换，文字已复制",
+      editDoneTargetChanged: "窗口已切换，改写结果已复制",
     },
     heading: "悬浮胶囊 · 八态 · 一个胶囊随状态连续变形（灵动岛语法），波形为密集细条镜像",
     captionEngine: "实时 · Zipformer · 本地",
@@ -2126,6 +2131,16 @@ export const zhCN = {
       maxHelp: "录音到达这个时长后自动停止。超过 2 分钟的录音在录制过程中分段识别。",
       minutes: { one: "{n} 分钟", other: "{n} 分钟" },
       hours: { one: "{n} 小时", other: "{n} 小时" },
+      /** docs/dictation.md §14.3: `engines.clipboard_after`. */
+      clipboardAfterLabel: "插入后剪贴板",
+      clipboardAfterHelp:
+        "粘贴时会临时借用剪贴板。恢复原内容：粘贴完成后放回你原来复制的文字、图片或文件；保留识别结果：识别结果留在剪贴板里，可以再次粘贴。",
+      clipboardAfter: { restore: "恢复原内容", keep: "保留识别结果" },
+      /** docs/dictation.md §14.3: `engines.switched_window`. */
+      switchedLabel: "处理期间切换了窗口",
+      switchedHelp:
+        "识别或润色期间切换到了其他窗口时，默认只把文字复制到剪贴板，避免粘贴到错误的位置。语音编辑总是只复制。",
+      switched: { copyOnly: "只复制", pasteHere: "粘贴到当前窗口" },
     },
     microphone: {
       title: "录音来源",

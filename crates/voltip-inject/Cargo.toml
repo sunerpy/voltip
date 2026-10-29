@@ -24,12 +24,25 @@ tracing.workspace = true
 # The macOS Cmd+V keycode fallback and modifier hold (docs/dictation.md §15.2): pure tables, no OS calls.
 voltip-platform = { path = "../voltip-platform" }
 
+# Linux: images survive an injection (docs/dictation.md §14.3): arboard reads and writes the
+# clipboard's PNG as RGBA through the `image` crate; Windows and macOS keep raw bytes instead.
+[target.'cfg(target_os = "linux")'.dependencies]
+arboard = { workspace = true, features = ["image-data"] }
+
 # macOS: the current keyboard layout's input source id, read per keystroke from the HIToolbox
 # preference domain (`mac_layout_id`). NSUserDefaults is thread-safe, unlike the TIS calls behind
 # UCKeyTranslate. The versions tray-icon / muda already pull.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "=0.6.4"
-objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSString", "NSUserDefaults"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSData", "NSString", "NSUserDefaults"] }
+# The pasteboard's items and their typed data, kept whole across an injection (docs/dictation.md
+# §14.3). The version arboard already pulls; these methods are safe bindings.
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSPasteboard", "NSPasteboardItem"] }
+
+# Windows: every raw clipboard format and the clipboard's sequence number (docs/dictation.md
+# §14.3). The version arboard already pulls.
+[target.'cfg(windows)'.dependencies]
+clipboard-win = { version = "=5.4.1", features = ["std"] }
 
 [dev-dependencies]
 # Fake paste tools on a private PATH directory (src/process.rs, src/linux.rs tests).

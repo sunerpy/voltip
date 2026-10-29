@@ -49,6 +49,7 @@ import {
   MOCK_PUBLIC_KEYS,
   MOCK_REFINE_FAILED,
   MOCK_REFINE_MS,
+  MOCK_WINDOW_CHANGED,
   MOCK_RETAKE_NOT_READY,
   MOCK_NO_SPEECH,
   MOCK_SCENE_MODE_NOT_READY,
@@ -608,6 +609,57 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
     });
     expect(entry?.refine_model).toBeUndefined();
     expect(entry?.preset).toBeUndefined();
+  });
+
+  it("docs/dictation.md §14.3: another window in front copies the text, says so, and stays as long as a failure", async () => {
+    const backend = new MockBackend({ now: () => clock, history: [] });
+    const take = async () => {
+      await backend.invoke("dictation_start");
+      tick(MOCK_MIC_READY_MS + 3200);
+      await backend.invoke("dictation_stop");
+      tick(MOCK_ASR_MS + MOCK_REFINE_MS);
+      return backend.peek().dictation.phase;
+    };
+    backend.simulateWindowSwitch(true);
+    expect(await take()).toMatchObject({
+      phase: "done",
+      text: MOCK_DICTATION_TEXT,
+      via: "clipboard",
+      clipboard_code: "target_changed",
+    });
+    expect(backend.peek().history_recent[0]?.outcome).toEqual({
+      kind: "clipboard",
+      reason: MOCK_WINDOW_CHANGED,
+      code: "target_changed",
+    });
+    tick(MOCK_DICTATION_DWELL_MS);
+    expect(backend.peek().dictation.phase.phase).toBe("done");
+    tick(MOCK_DICTATION_FAILED_DWELL_MS - MOCK_DICTATION_DWELL_MS);
+    expect(backend.peek().dictation.phase.phase).toBe("idle");
+    // 粘贴到当前窗口: the text goes where the person is now.
+    await backend.invoke("settings_set_engines", {
+      engines: { ...defaultEngineSettings(), switched_window: "paste_here" },
+    });
+    const here = await take();
+    expect(here).toMatchObject({ phase: "done", via: "paste" });
+    expect(here).not.toHaveProperty("clipboard_code");
+    tick(MOCK_DICTATION_DWELL_MS);
+    // 仅复制到剪贴板 copies anyway: nothing to say about the window.
+    await backend.invoke("settings_set_engines", {
+      engines: { ...defaultEngineSettings(), inject: "clipboard_only" },
+    });
+    const copied = await take();
+    expect(copied).toMatchObject({ phase: "done", via: "clipboard" });
+    expect(copied).not.toHaveProperty("clipboard_code");
+    expect(backend.peek().history_recent[0]?.outcome).toEqual({
+      kind: "inserted",
+      via: "clipboard",
+    });
+    tick(MOCK_DICTATION_DWELL_MS);
+    // The same window again: pasted.
+    await backend.invoke("settings_set_engines", { engines: defaultEngineSettings() });
+    backend.simulateWindowSwitch(false);
+    expect(await take()).toMatchObject({ phase: "done", via: "paste" });
   });
 
   it("regression: 开始听写 starts a real session and shows the phase; 停止 finishes with the inserted text", async () => {

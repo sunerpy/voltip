@@ -25,11 +25,11 @@ pub use voltip_cloud::{
     builtin_preset_texts, prompt_hints, refine_preset,
 };
 use voltip_core::dictation::{
-    AudioSource, Capture, CaptureOptions, ClipboardCode, DictationError, DictationPorts, EngineFactory, InjectNote, Injection, Injector, LevelFrame, LivePcm,
-    MAX_RECORDING, PcmStream, Recording, Refiner, SelectionTiming, Transcriber, Via,
+    AudioSource, Capture, CaptureOptions, ClipboardCode, DictationError, DictationPorts, EngineFactory, InjectNote, Injection, Injector, InsertSession,
+    Inserted, LevelFrame, LivePcm, MAX_RECORDING, PcmStream, Recording, Refiner, SelectionTiming, Transcriber, Via,
 };
-use voltip_core::{InjectMode, Modifier, RecordingSource, ResolvedEngines};
-use voltip_inject::{ClipboardOnlyInjector, CopyOptions, FallbackCode, PasteOptions, SelectionSource};
+use voltip_core::{ClipboardAfter, InjectMode, Modifier, RecordingSource, ResolvedEngines};
+use voltip_inject::{AfterPaste, ClipboardOnlyInjector, CopyOptions, FallbackCode, PasteOptions, PieceOutcome, SelectionSource};
 use voltip_platform::{HostOs, InjectDecision, InjectPreflight};
 
 /// A level frame as the core broadcasts it, from the audio crate's meter frame (same fields).
@@ -249,14 +249,47 @@ pub fn inject_route(mode: InjectMode, preflight: &InjectPreflight) -> InjectRout
     }
 }
 
+/// What the native injector reads from the settings at every take (docs/dictation.md §14.3,
+/// §15.3): the route, and what the clipboard holds after a paste. The engine factory records them
+/// whenever the configuration changes ([`engine_factory`]), so `settings_set_engines` takes effect
+/// without rebuilding the ports.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct InsertPrefs {
+    /// `EngineSettings.inject`.
+    pub mode: InjectMode,
+    /// `EngineSettings.clipboard_after`.
+    pub clipboard_after: ClipboardAfter,
+}
+
+impl InsertPrefs {
+    /// `mode`, the clipboard put back.
+    pub fn new(mode: InjectMode) -> Self {
+        Self { mode, clipboard_after: ClipboardAfter::Restore }
+    }
+
+    /// The prefs shared between the injector and the factory.
+    pub fn shared(mode: InjectMode) -> Arc<Mutex<Self>> {
+        Arc::new(Mutex::new(Self::new(mode)))
+    }
+}
+
+/// The inject crate's name for `after`.
+pub fn after_paste(after: ClipboardAfter) -> AfterPaste {
+    match after {
+        ClipboardAfter::Restore => AfterPaste::Restore,
+        ClipboardAfter::Keep => AfterPaste::Keep,
+    }
+}
+
 /// Clipboard + paste (or clipboard only) through `voltip-inject`, switched by the mode the
-/// engine factory last saw — so `settings_set_engines` takes effect without rebuilding the ports —
-/// and by the foreground preflight ([`inject_route`]) before every paste. For voice edit
-/// (docs/dictation.md §19) it also copies the selection, with the session's copy timing.
+/// engine factory last saw and by the foreground preflight ([`inject_route`]) before every piece.
+/// A take is one insert session (docs/dictation.md §14.3): the paste backend's session saves the
+/// clipboard before the take's first paste and puts it back once after its last. For voice edit
+/// (§19) it also copies the selection, with the session's copy timing.
 pub struct NativeInjector {
-    mode: Arc<Mutex<InjectMode>>,
-    paste: Box<dyn voltip_inject::Injector>,
-    clipboard: Box<dyn voltip_inject::Injector>,
+    prefs: Arc<Mutex<InsertPrefs>>,
+    paste: Arc<dyn voltip_inject::Injector>,
+    clipboard: Arc<dyn voltip_inject::Injector>,
     preflight: Box<dyn Fn() -> InjectPreflight + Send + Sync>,
     selection: Option<Box<dyn SelectionSource>>,
     timing: SelectionTiming,
@@ -266,11 +299,11 @@ impl NativeInjector {
     /// The real system clipboard and key synthesis: enigo on Windows / macOS, the Linux tool chain
     /// (docs/dictation.md §14) on Linux, with this platform's paste timings; the selection copy of
     /// the same ports, copying after the key-up on X11 (§19).
-    pub fn system(mode: Arc<Mutex<InjectMode>>) -> Self {
+    pub fn system(prefs: Arc<Mutex<InsertPrefs>>) -> Self {
         let paste = voltip_inject::system_paste_injector(PasteOptions::for_os(std::env::consts::OS));
         let timing = crate::hotkey::selection_timing_for(crate::hotkey::linux_session().map(|s| s.kind));
         tracing::info!(backend = %voltip_inject::backend_summary(), options = ?paste.options(), selection_timing = ?timing, "text injection backend");
-        Self::with(mode, Box::new(paste), Box::new(ClipboardOnlyInjector::new()))
+        Self::with(prefs, Arc::new(paste), Arc::new(ClipboardOnlyInjector::new()))
             .with_preflight(crate::platform::inject_preflight)
             .with_selection(Box::new(voltip_inject::system_selection(CopyOptions::default())), timing)
     }
@@ -278,9 +311,9 @@ impl NativeInjector {
     /// Explicit backends (tests); the preflight always answers `proceed` until
     /// [`NativeInjector::with_preflight`] replaces it, and there is no selection copy until
     /// [`NativeInjector::with_selection`] adds one.
-    pub fn with(mode: Arc<Mutex<InjectMode>>, paste: Box<dyn voltip_inject::Injector>, clipboard: Box<dyn voltip_inject::Injector>) -> Self {
+    pub fn with(prefs: Arc<Mutex<InsertPrefs>>, paste: Arc<dyn voltip_inject::Injector>, clipboard: Arc<dyn voltip_inject::Injector>) -> Self {
         Self {
-            mode,
+            prefs,
             paste,
             clipboard,
             preflight: Box::new(|| InjectPreflight::not_applicable(HostOs::current())),
@@ -297,6 +330,74 @@ impl NativeInjector {
     /// The selection copy of voice edit and when it may be sent (docs/dictation.md §19).
     pub fn with_selection(self, selection: Box<dyn SelectionSource>, timing: SelectionTiming) -> Self {
         Self { selection: Some(selection), timing, ..self }
+    }
+
+    /// One piece through the backend its route picks right now, in that backend's session of
+    /// `slots` (opened on first use with `after`).
+    fn piece_in(&self, slots: &mut Slots, after: AfterPaste, text: &str, may_deliver: &dyn Fn() -> bool) -> Result<Inserted, DictationError> {
+        let mode = self.prefs.lock().mode;
+        // The preflight only runs when a paste is wanted (on Windows it opens the foreground token).
+        let route = match mode {
+            InjectMode::Paste => inject_route(mode, &(self.preflight)()),
+            InjectMode::ClipboardOnly => InjectRoute::Clipboard { note: None },
+        };
+        let (backend, slot, blocked) = match route {
+            InjectRoute::Paste => (&self.paste, &mut slots.paste, None),
+            InjectRoute::Clipboard { note } => (&self.clipboard, &mut slots.clipboard, note),
+        };
+        if let Some(note) = &blocked {
+            tracing::warn!(reason = %note.detail, code = ?note.code, "paste not attempted; the text goes to the clipboard");
+        }
+        let session = slot.get_or_insert_with(|| Arc::clone(backend).begin_session(after));
+        let out = match session.piece(text, may_deliver).map_err(|e| DictationError::Inject(e.to_string()))? {
+            PieceOutcome::Cancelled => return Ok(Inserted::Cancelled),
+            PieceOutcome::Delivered(out) => out,
+        };
+        let note = out.note.or(blocked).map(core_note);
+        tracing::info!(via = %out.via, chars = out.chars, note = ?note, injector = backend.describe(), "text delivered");
+        let via = match out.via {
+            voltip_inject::Via::Paste => Via::Paste,
+            voltip_inject::Via::Clipboard => Via::Clipboard,
+        };
+        Ok(Inserted::Delivered(Injection { via, note }))
+    }
+}
+
+/// The inject crate sessions of one take, one per backend, opened when a piece first takes its
+/// route.
+#[derive(Default)]
+struct Slots {
+    paste: Option<Box<dyn voltip_inject::InjectSession>>,
+    clipboard: Option<Box<dyn voltip_inject::InjectSession>>,
+}
+
+impl Slots {
+    fn end(&mut self, abort: bool) {
+        for session in [&mut self.paste, &mut self.clipboard].into_iter().flatten() {
+            if abort { session.abort() } else { session.finish() }
+        }
+    }
+}
+
+/// One take through the native injector (docs/dictation.md §14.3), with what the clipboard holds
+/// afterwards as the settings said when it began.
+struct NativeSession {
+    injector: Arc<NativeInjector>,
+    after: AfterPaste,
+    slots: Slots,
+}
+
+impl InsertSession for NativeSession {
+    fn piece(&mut self, text: &str, may_deliver: &dyn Fn() -> bool) -> Result<Inserted, DictationError> {
+        self.injector.piece_in(&mut self.slots, self.after, text, may_deliver)
+    }
+
+    fn finish(&mut self) {
+        self.slots.end(false);
+    }
+
+    fn abort(&mut self) {
+        self.slots.end(true);
     }
 }
 
@@ -324,35 +425,31 @@ pub fn inject_modifier(modifier: Modifier) -> voltip_inject::Modifier {
 }
 
 impl Injector for NativeInjector {
+    /// One piece in a session of its own (the history's 粘贴到上一个窗口, `voltip_core::paste`).
     fn inject(&self, text: &str) -> Result<Injection, DictationError> {
-        let mode = *self.mode.lock();
-        // The preflight only runs when a paste is wanted (on Windows it opens the foreground token).
-        let route = match mode {
-            InjectMode::Paste => inject_route(mode, &(self.preflight)()),
-            InjectMode::ClipboardOnly => InjectRoute::Clipboard { note: None },
-        };
-        let (backend, blocked) = match route {
-            InjectRoute::Paste => (&self.paste, None),
-            InjectRoute::Clipboard { note } => (&self.clipboard, note),
-        };
-        if let Some(note) = &blocked {
-            tracing::warn!(reason = %note.detail, code = ?note.code, "paste not attempted; the text goes to the clipboard");
+        let after = after_paste(self.prefs.lock().clipboard_after);
+        let mut slots = Slots::default();
+        let out = self.piece_in(&mut slots, after, text, &|| true);
+        slots.end(false);
+        match out? {
+            Inserted::Delivered(injection) => Ok(injection),
+            Inserted::Cancelled => Err(DictationError::Inject("the paste was called off".to_owned())),
         }
-        let out = backend.inject(text).map_err(|e| DictationError::Inject(e.to_string()))?;
-        let note = out.note.or(blocked).map(core_note);
-        tracing::info!(via = %out.via, chars = out.chars, note = ?note, injector = backend.describe(), "text delivered");
-        let via = match out.via {
-            voltip_inject::Via::Paste => Via::Paste,
-            voltip_inject::Via::Clipboard => Via::Clipboard,
-        };
-        Ok(Injection { via, note })
     }
 
-    /// The history paste's copy (`voltip_core::paste`): the clipboard backend, whatever the mode;
-    /// never the paste chord.
+    /// A take's insert session, with the clipboard handled as the settings say right now.
+    fn begin_insert(self: Arc<Self>) -> Box<dyn InsertSession> {
+        let after = after_paste(self.prefs.lock().clipboard_after);
+        Box::new(NativeSession { injector: self, after, slots: Slots::default() })
+    }
+
+    /// The text on the clipboard alone, as an ordinary copy: the clipboard backend, whatever the
+    /// mode; never the paste chord. A paste from the history whose window is gone
+    /// (`voltip_core::paste`), a long take's text (§22), a kept recording's (§26), a take whose
+    /// window changed (§14.3).
     fn copy(&self, text: &str) -> Result<(), DictationError> {
         let out = self.clipboard.inject(text).map_err(|e| DictationError::Inject(e.to_string()))?;
-        tracing::info!(chars = out.chars, injector = self.clipboard.describe(), "text copied for a paste from the history");
+        tracing::info!(chars = out.chars, injector = self.clipboard.describe(), "text copied");
         Ok(())
     }
 
@@ -420,14 +517,15 @@ pub fn hardware_status(machine: &voltip_asr_local::HardwareInfo) -> voltip_core:
 }
 
 /// The factory the core calls at start and after every settings / secret change. It also
-/// records the injection mode for the [`NativeInjector`] sharing `mode`, hands the one
+/// records the injection mode and what the clipboard holds after a paste for the
+/// [`NativeInjector`] sharing `prefs`, hands the one
 /// [`LocalTranscriber`] (with its loaded recogniser) to every local-mode configuration, and — with
 /// a `store` — tells the model library whether the VAD is wanted (`vad_trim`, docs/dictation.md
 /// §12): it then rides along with the next model download, or is fetched right away in the
 /// background when the setting turns on later.
-pub fn engine_factory(mode: Arc<Mutex<InjectMode>>, local: LocalTranscriber, store: Option<ModelStore>, network: Arc<voltip_net::Network>) -> EngineFactory {
+pub fn engine_factory(prefs: Arc<Mutex<InsertPrefs>>, local: LocalTranscriber, store: Option<ModelStore>, network: Arc<voltip_net::Network>) -> EngineFactory {
     Arc::new(move |engines: &ResolvedEngines| {
-        *mode.lock() = engines.inject;
+        *prefs.lock() = InsertPrefs { mode: engines.inject, clipboard_after: engines.clipboard_after };
         if let Some(store) = &store {
             store.set_auxiliary_wanted(engines.vad_trim);
             if engines.vad_trim && store.spawn_auxiliary_download() {
@@ -469,14 +567,14 @@ pub fn production_ports(models_root: PathBuf, network: &Arc<voltip_net::Network>
 /// §11), and it loads nothing until then. A long take is cut where the Silero VAD hears a pause
 /// (§22); the first long take without the model fetches it.
 pub fn ports_with_backend(backend: Arc<dyn Backend + Send + Sync>, hub: Arc<AudioHub>, models_root: PathBuf, network: &Arc<voltip_net::Network>) -> ShellPorts {
-    let mode = Arc::new(Mutex::new(InjectMode::default()));
+    let prefs = InsertPrefs::shared(InjectMode::default());
     let store = ModelStore::new(models_root).with_network(network);
     // One folder for every part of the library: a move switches them all (docs/dictation.md §10.9).
     let root = store.shared_root();
     let dictation = DictationPorts {
         audio: Arc::new(RecorderAudioSource::with_backend(backend, hub.clone())),
-        injector: Arc::new(NativeInjector::system(mode.clone())),
-        factory: engine_factory(mode, LocalTranscriber::new(root.clone()), Some(store.clone()), Arc::clone(network)),
+        injector: Arc::new(NativeInjector::system(prefs.clone())),
+        factory: engine_factory(prefs, LocalTranscriber::new(root.clone()), Some(store.clone()), Arc::clone(network)),
         segmenter: Some(Arc::new(VadSegmenterFactory::new(root.clone(), Some(store.clone())))),
         models: Some(Arc::new(store)),
         streaming: Some(Arc::new(LocalStreamingTranscriber::new(root))),
@@ -593,9 +691,9 @@ mod tests {
     }
 
     impl Recording {
-        fn boxed(via: voltip_inject::Via) -> (Box<dyn voltip_inject::Injector>, Arc<Mutex<Vec<String>>>) {
+        fn boxed(via: voltip_inject::Via) -> (Arc<dyn voltip_inject::Injector>, Arc<Mutex<Vec<String>>>) {
             let calls = Arc::new(Mutex::new(Vec::new()));
-            (Box::new(Self { via, calls: calls.clone() }), calls)
+            (Arc::new(Self { via, calls: calls.clone() }), calls)
         }
     }
 
@@ -627,7 +725,7 @@ mod tests {
     /// source refuses with `edit_unavailable`.
     #[test]
     fn the_native_injector_copies_the_selection_with_the_held_modifiers() {
-        let mode = Arc::new(Mutex::new(InjectMode::Paste));
+        let mode = InsertPrefs::shared(InjectMode::Paste);
         let (paste, _) = Recording::boxed(voltip_inject::Via::Paste);
         let (clipboard, _) = Recording::boxed(voltip_inject::Via::Clipboard);
         let plain = NativeInjector::with(mode.clone(), paste, clipboard);
@@ -662,12 +760,12 @@ mod tests {
     /// The copy uses the clipboard backend whatever the mode, and never the paste chord.
     #[test]
     fn regression_the_native_injector_copies_for_the_history_paste() {
-        let mode = Arc::new(Mutex::new(InjectMode::Paste));
+        let mode = InsertPrefs::shared(InjectMode::Paste);
         let (paste, pasted) = Recording::boxed(voltip_inject::Via::Paste);
         let (clipboard, copied) = Recording::boxed(voltip_inject::Via::Clipboard);
         let injector = NativeInjector::with(mode.clone(), paste, clipboard);
         assert_eq!(injector.copy("只复制"), Ok(()));
-        *mode.lock() = InjectMode::ClipboardOnly;
+        mode.lock().mode = InjectMode::ClipboardOnly;
         assert_eq!(injector.copy("仍然只复制"), Ok(()));
         assert!(pasted.lock().is_empty(), "a copy never presses the paste chord");
         assert_eq!(*copied.lock(), vec!["只复制".to_string(), "仍然只复制".to_string()]);
@@ -675,7 +773,7 @@ mod tests {
 
     #[test]
     fn blocked_preflight_uses_the_clipboard_backend_with_the_reason() {
-        let mode = Arc::new(Mutex::new(InjectMode::Paste));
+        let mode = InsertPrefs::shared(InjectMode::Paste);
         let (paste, pasted) = Recording::boxed(voltip_inject::Via::Paste);
         let (clipboard, copied) = Recording::boxed(voltip_inject::Via::Clipboard);
         let decision = Arc::new(Mutex::new(InjectDecision::ElevatedTarget));
@@ -702,7 +800,7 @@ mod tests {
         assert_eq!(*pasted.lock(), vec!["普通窗口".to_string()]);
 
         // clipboard_only never consults the preflight and carries no reason.
-        *mode.lock() = InjectMode::ClipboardOnly;
+        mode.lock().mode = InjectMode::ClipboardOnly;
         *decision.lock() = InjectDecision::ElevatedTarget;
         let out = injector.inject("只复制").unwrap();
         assert_eq!((out.via, out.note), (Via::Clipboard, None));
@@ -711,8 +809,111 @@ mod tests {
         // `with` alone proceeds, which is the Linux / macOS behaviour.
         let (paste, pasted) = Recording::boxed(voltip_inject::Via::Paste);
         let (clipboard, _) = Recording::boxed(voltip_inject::Via::Clipboard);
-        let plain = NativeInjector::with(Arc::new(Mutex::new(InjectMode::Paste)), paste, clipboard);
+        let plain = NativeInjector::with(InsertPrefs::shared(InjectMode::Paste), paste, clipboard);
         assert_eq!(plain.inject("x").unwrap().via, Via::Paste);
         assert_eq!(*pasted.lock(), vec!["x".to_string()]);
+    }
+
+    /// Records the sessions it was asked for: when each began (with what it was told about the
+    /// clipboard), every piece and how it ended.
+    struct Sessions {
+        log: Arc<Mutex<Vec<String>>>,
+        name: &'static str,
+    }
+
+    struct Logged {
+        log: Arc<Mutex<Vec<String>>>,
+        name: &'static str,
+    }
+
+    impl voltip_inject::Injector for Sessions {
+        fn inject(&self, text: &str) -> Result<voltip_inject::Injection, voltip_inject::InjectError> {
+            self.log.lock().push(format!("{} inject {text}", self.name));
+            Ok(voltip_inject::Injection::pasted(text.chars().count()))
+        }
+        fn describe(&self) -> &'static str {
+            "sessions"
+        }
+        fn begin_session(self: Arc<Self>, after: AfterPaste) -> Box<dyn voltip_inject::InjectSession> {
+            self.log.lock().push(format!("{} begin {after:?}", self.name));
+            Box::new(Logged { log: self.log.clone(), name: self.name })
+        }
+    }
+
+    impl voltip_inject::InjectSession for Logged {
+        fn piece(&mut self, text: &str, may_deliver: &dyn Fn() -> bool) -> Result<PieceOutcome, voltip_inject::InjectError> {
+            if !may_deliver() {
+                self.log.lock().push(format!("{} called off {text}", self.name));
+                return Ok(PieceOutcome::Cancelled);
+            }
+            self.log.lock().push(format!("{} piece {text}", self.name));
+            let chars = text.chars().count();
+            Ok(PieceOutcome::Delivered(if self.name == "paste" {
+                voltip_inject::Injection::pasted(chars)
+            } else {
+                voltip_inject::Injection::clipboard(chars, None)
+            }))
+        }
+        fn finish(&mut self) {
+            self.log.lock().push(format!("{} finish", self.name));
+        }
+        fn abort(&mut self) {
+            self.log.lock().push(format!("{} abort", self.name));
+        }
+    }
+
+    /// docs/dictation.md §14.3: a take is one session of the paste backend however many pieces it
+    /// has — told what the clipboard holds afterwards as the settings said when the take began —
+    /// and a piece the preflight sends to the clipboard opens that backend's session; the end
+    /// reaches every session opened, a called-off piece comes back as such.
+    #[test]
+    fn a_take_is_one_session_per_backend_with_the_clipboard_setting_of_its_start() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let prefs = InsertPrefs::shared(InjectMode::Paste);
+        prefs.lock().clipboard_after = ClipboardAfter::Keep;
+        let decision = Arc::new(Mutex::new(InjectDecision::Proceed));
+        let asked = decision.clone();
+        let injector = Arc::new(
+            NativeInjector::with(
+                prefs.clone(),
+                Arc::new(Sessions { log: log.clone(), name: "paste" }),
+                Arc::new(Sessions { log: log.clone(), name: "clipboard" }),
+            )
+            .with_preflight(move || preflight(*asked.lock(), Some("taskmgr.exe"))),
+        );
+        let mut take = Arc::clone(&injector).begin_insert();
+        prefs.lock().clipboard_after = ClipboardAfter::Restore;
+        assert_eq!(take.piece("一。", &|| true).unwrap(), Inserted::Delivered(Injection { via: Via::Paste, note: None }));
+        assert_eq!(take.piece("二。", &|| true).unwrap(), Inserted::Delivered(Injection { via: Via::Paste, note: None }));
+        *decision.lock() = InjectDecision::ElevatedTarget;
+        let Inserted::Delivered(blocked) = take.piece("三。", &|| true).unwrap() else { panic!("delivered") };
+        assert_eq!((blocked.via, blocked.note.map(|n| n.code)), (Via::Clipboard, Some(ClipboardCode::ElevatedTarget)));
+        *decision.lock() = InjectDecision::Proceed;
+        assert_eq!(take.piece("四。", &|| false).unwrap(), Inserted::Cancelled);
+        take.finish();
+        assert_eq!(
+            *log.lock(),
+            [
+                "paste begin Keep",
+                "paste piece 一。",
+                "paste piece 二。",
+                "clipboard begin Keep",
+                "clipboard piece 三。",
+                "paste called off 四。",
+                "paste finish",
+                "clipboard finish"
+            ]
+            .map(String::from)
+        );
+        // The next take reads the settings again; an abort reaches its session.
+        log.lock().clear();
+        let mut take = Arc::clone(&injector).begin_insert();
+        take.piece("五。", &|| true).unwrap();
+        take.abort();
+        assert_eq!(*log.lock(), ["paste begin Restore", "paste piece 五。", "paste abort"].map(String::from));
+        // A single paste (the history's) is a session of its own.
+        log.lock().clear();
+        assert_eq!(injector.inject("六。").unwrap().via, Via::Paste);
+        assert_eq!(*log.lock(), ["paste begin Restore", "paste piece 六。", "paste finish"].map(String::from));
     }
 }

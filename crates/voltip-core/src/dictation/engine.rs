@@ -55,10 +55,10 @@ use super::archive::{self, ArchiveReport, ArchiveWriter, KeptLong};
 use super::fallback::{FallbackRefiner, FallbackTranscriber, Link, QuotaLedger};
 use super::long::{self, EnergySegmenter};
 use super::ports::{
-    AudioSource, Capture, CaptureOptions, ClipboardCode, DWELL, DWELL_WITH_TEXT, DictationError, ForegroundApp, ForegroundProbe, InjectNote, Injection,
-    Injector, LIVE_CHUNK_SAMPLES, LevelFrame, LivePcm, MAX_EDIT_SELECTION_CHARS, MAX_RECORDING, MIN_RECORDING, PARTIAL_THROTTLE, PCM_SAMPLE_RATE_HZ,
-    PROBE_DEADLINE, PcmStream, Recording, RefineContext, RefineHints, Refiner, Segment, Segmenter, SegmenterFactory, SelectionTiming, ServiceProbe,
-    StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber, Transcriber, Transcript, Via, max_recording,
+    AudioSource, Capture, CaptureOptions, ClipboardCode, DWELL, DWELL_WITH_TEXT, DictationError, ForegroundApp, ForegroundProbe, GateCancel, InjectNote,
+    Injection, Injector, InsertGate, InsertSession, Inserted, LIVE_CHUNK_SAMPLES, LevelFrame, LivePcm, MAX_EDIT_SELECTION_CHARS, MAX_RECORDING, MIN_RECORDING,
+    PARTIAL_THROTTLE, PCM_SAMPLE_RATE_HZ, PROBE_DEADLINE, PcmStream, Recording, RefineContext, RefineHints, Refiner, Segment, Segmenter, SegmenterFactory,
+    SelectionTiming, ServiceProbe, StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber, Transcriber, Transcript, Via, max_recording,
 };
 use super::redecode::RedecodeStreaming;
 use super::{
@@ -66,7 +66,7 @@ use super::{
 };
 use super::{steps, wav};
 use crate::audio_cache::{KeptAudio, KeptStatus, NewRecording};
-use crate::engines::{ChineseScript, FallbackTarget, LiveSource, ResolvedEngines};
+use crate::engines::{ChineseScript, FallbackTarget, LiveSource, ResolvedEngines, SwitchedWindow};
 use crate::history::{EditRecord, HistoryEntry, Outcome};
 use crate::hotkey::Modifier;
 use crate::models::ModelManager;
@@ -112,6 +112,27 @@ pub struct DictationPorts {
 impl std::fmt::Debug for DictationPorts {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DictationPorts").finish_non_exhaustive()
+    }
+}
+
+/// What became of one `live_inject` piece (docs/dictation.md §12, §14.3).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LivePiece {
+    /// Pasted, or left on the clipboard ([`Injection::via`]).
+    Delivered(Injection),
+    /// Another window was in front: not pasted.
+    Switched,
+    /// The take was cancelled before the paste: not pasted.
+    CalledOff,
+}
+
+impl LivePiece {
+    /// How it was delivered, when it was.
+    pub fn via(&self) -> Option<Via> {
+        match self {
+            Self::Delivered(injection) => Some(injection.via),
+            Self::Switched | Self::CalledOff => None,
+        }
     }
 }
 
@@ -187,7 +208,7 @@ pub enum Internal {
         /// Which piece (in queue order).
         idx: usize,
         /// The outcome.
-        result: Result<Injection, DictationError>,
+        result: Result<LivePiece, DictationError>,
     },
     /// `live_inject` degraded after some sentences were pasted: the whole-take transcriber's answer
     /// for the audio after the last of them.
@@ -291,7 +312,7 @@ impl std::fmt::Debug for Internal {
                 f.debug_struct("StreamFinished").field("session", session).field("segments", &result.as_ref().map(|r| r.committed.len())).finish()
             }
             Self::LiveInjected { session, idx, result } => {
-                f.debug_struct("LiveInjected").field("session", session).field("idx", idx).field("result", &result.as_ref().map(|i| i.via)).finish()
+                f.debug_struct("LiveInjected").field("session", session).field("idx", idx).field("result", &result.as_ref().map(LivePiece::via)).finish()
             }
             Self::Remainder { session, result } => {
                 f.debug_struct("Remainder").field("session", session).field("result", &result.as_ref().map(|t| t.text.chars().count())).finish()
@@ -473,6 +494,8 @@ struct Piece {
     text: String,
     /// Characters of the sentence itself (`Cancelled.injected_chars` counts these).
     chars: usize,
+    /// Whether it still goes out (docs/dictation.md §14.3); a cancel decides it here.
+    gate: InsertGate,
 }
 
 /// `live_inject` bookkeeping (docs/dictation.md §12): sentences go to the injector one at a time,
@@ -505,6 +528,11 @@ struct LiveInject {
     note: Option<InjectNote>,
     /// The final write of `rest` is with the injector.
     writing_rest: bool,
+    /// The run's insert session (docs/dictation.md §14.3), from its first sentence on: one
+    /// clipboard snapshot for the whole run, put back once at its end.
+    session: Option<Arc<Mutex<Box<dyn InsertSession>>>>,
+    /// A sentence found another window in front: no more pasting, the rest is copied at the end.
+    switched: bool,
     /// The last sentence (tail / remainder) has been queued: when the queue drains the run is done.
     closing: bool,
     /// End of the last committed sentence, where the remainder starts.
@@ -687,6 +715,12 @@ struct Take {
     /// Where the take comes from, for the usage record (docs/dictation.md §27): this device, a
     /// paired phone, a kept recording.
     origin: UsageOrigin,
+    /// What the take does when the window in front changed (docs/dictation.md §14.3), taken at
+    /// `start`.
+    switched_window: SwitchedWindow,
+    /// The gate of the take's text while a pipeline delivers it (a whole take, a long take, a
+    /// voice edit): a cancel decides there whether it still goes out.
+    gate: Option<InsertGate>,
 }
 
 impl Take {
@@ -728,6 +762,8 @@ impl Take {
             retake: false,
             clients: None,
             origin: UsageOrigin::ThisDevice,
+            switched_window: SwitchedWindow::default(),
+            gate: None,
         }
     }
 
@@ -752,6 +788,8 @@ pub struct DictationEngine {
     live_source: Option<LiveSource>,
     /// `EngineSettings.output_mode` of the last configuration; resolved per run at `start`.
     output_mode: OutputMode,
+    /// `EngineSettings.switched_window` of the last configuration (docs/dictation.md §14.3).
+    switched_window: SwitchedWindow,
     levels: broadcast::Sender<LevelFrame>,
     internal: mpsc::Sender<Internal>,
     status: DictationStatus,
@@ -965,6 +1003,7 @@ impl DictationEngine {
             live_ready: engines.live_preview_ready(),
             live_source: engines.live_source(),
             output_mode: engines.output_mode,
+            switched_window: engines.switched_window,
             levels,
             internal: tx,
             status: DictationStatus::default(),
@@ -1098,6 +1137,7 @@ impl DictationEngine {
         self.live_ready = engines.live_preview_ready();
         self.live_source = engines.live_source();
         self.output_mode = engines.output_mode;
+        self.switched_window = engines.switched_window;
         self.warm_streaming();
         self.warm_transcriber();
     }
@@ -1398,6 +1438,7 @@ impl DictationEngine {
             }
         };
         self.take = Take::with_presets(mode, self.vocabulary.clone(), self.scenes.clone(), (self.refine_preset, self.presets.clone()), self.context_sharing);
+        self.take.switched_window = self.switched_window;
         let local = source.is_none();
         self.take.source = source;
         self.take.origin = origin;
@@ -1605,6 +1646,25 @@ impl DictationEngine {
     }
 
     /// The take's language hint: the scene's (`auto` = none), else the engines'.
+    /// The window this take's text must still go to (docs/dictation.md §14.3): the one in front
+    /// at its start, checked for a voice edit always and for a dictation unless the take runs with
+    /// `switched_window = paste_here`.
+    fn target(&self) -> Target {
+        let check = self.status.kind == TakeKind::Edit || self.take.switched_window == SwitchedWindow::CopyOnly;
+        match (&self.take.app, &self.probe) {
+            (Some(app), Some(probe)) if check => Target { expected: Some(app.clone()), probe: Some(probe.clone()) },
+            _ => Target::none(),
+        }
+    }
+
+    /// The way out for the text of a pipeline about to start, with a fresh gate the take keeps
+    /// for a cancel.
+    fn delivery(&mut self) -> Delivery {
+        let gate = InsertGate::new();
+        self.take.gate = Some(gate.clone());
+        Delivery { injector: self.injector.clone(), gate, target: self.target() }
+    }
+
     fn take_language(&self) -> Option<String> {
         match self.take.scene.as_ref().and_then(|s| s.overrides.language.as_deref()) {
             Some(LANGUAGE_AUTO) => None,
@@ -1753,7 +1813,6 @@ impl DictationEngine {
     /// dismisses it straight to `Idle`. `live_inject` does not take back what it already pasted;
     /// `Cancelled.injected_chars` says how much that was (docs/dictation.md §12).
     pub fn cancel(&mut self) -> Result<Vec<Effect>, DictationError> {
-        let cancelled = DictationPhase::Cancelled { injected_chars: self.take.inject.pasted_chars };
         match self.status.phase {
             DictationPhase::Idle => Err(DictationError::Idle),
             DictationPhase::Listening { .. } => {
@@ -1766,11 +1825,22 @@ impl DictationEngine {
                     Mic::Closed | Mic::Stopping => {}
                 }
                 drop(mic);
+                let cancelled = self.cancel_live_inject();
                 Ok(self.terminal(cancelled, DWELL))
             }
             DictationPhase::Processing { .. } => {
+                // docs/dictation.md §14.3: the gate decides. Once the text began to go out the
+                // take finishes as usual — the same `Done`, the same history.
+                if let Some(gate) = &self.take.gate
+                    && gate.cancel() == GateCancel::TooLate
+                {
+                    tracing::info!(session = self.status.session, "the cancel came after the text began to go out; the take finishes as usual");
+                    return Ok(Vec::new());
+                }
                 // A stop still finalising releases the device by itself; its result is dropped.
+                // A delivery on its blocking thread sees the gate closed and puts the clipboard back.
                 self.abort_pipeline();
+                let cancelled = self.cancel_live_inject();
                 Ok(self.terminal(cancelled, DWELL))
             }
             DictationPhase::Done { .. } | DictationPhase::Failed { .. } | DictationPhase::Cancelled { .. } => {
@@ -1778,6 +1848,32 @@ impl DictationEngine {
                 Ok(vec![self.set_phase(DictationPhase::Idle)])
             }
         }
+    }
+
+    /// `live_inject` (docs/dictation.md §12, §14.3) is cancelled: the queued sentences are dropped;
+    /// the one with the injector goes out only if its paste had begun — then it counts. The
+    /// session ends aborted on a blocking thread, after that sentence. The `Cancelled` phase.
+    fn cancel_live_inject(&mut self) -> DictationPhase {
+        let li = &mut self.take.inject;
+        li.queue.clear();
+        let mut injected_chars = li.pasted_chars;
+        if let Some(piece) = &li.in_flight
+            && piece.gate.cancel() == GateCancel::TooLate
+        {
+            injected_chars += piece.chars;
+        }
+        self.end_live_session(true);
+        DictationPhase::Cancelled { injected_chars }
+    }
+
+    /// End the `live_inject` run's insert session (`abort` for a cancel), on a blocking thread:
+    /// it waits there for a sentence still with the injector.
+    fn end_live_session(&mut self, abort: bool) {
+        let Some(session) = self.take.inject.session.take() else { return };
+        tokio::task::spawn_blocking(move || {
+            let mut session = session.lock();
+            if abort { session.abort() } else { session.finish() }
+        });
     }
 
     /// Fold a notification from spawned work. Stale sessions are ignored.
@@ -2054,7 +2150,7 @@ impl DictationEngine {
             refiner: if refine { self.take_refiner() } else { None },
             refine_requested: refine,
             hints: self.refine_hints(),
-            injector: self.injector.clone(),
+            delivery: self.delivery(),
             vocabulary: self.take.vocabulary.clone(),
             script: self.take_script(),
             long: self.take.long.as_ref().is_some_and(LongTake::is_long),
@@ -2172,7 +2268,8 @@ impl DictationEngine {
             tracing::info!(session = self.status.session, "the vocabulary emptied a sentence; nothing to paste");
             return;
         }
-        let piece = Piece { idx: li.next_idx, text: format!("{sentence}{}", inject_separator(sentence)), chars: sentence.chars().count() };
+        let piece =
+            Piece { idx: li.next_idx, text: format!("{sentence}{}", inject_separator(sentence)), chars: sentence.chars().count(), gate: InsertGate::new() };
         li.next_idx += 1;
         join_text(&mut li.text, sentence);
         match &mut li.rest {
@@ -2182,13 +2279,52 @@ impl DictationEngine {
         }
     }
 
-    /// Hand `piece` to the injector on a blocking thread; [`Internal::LiveInjected`] follows.
+    /// Hand `piece` to the run's insert session on a blocking thread (docs/dictation.md §14.3):
+    /// pasted while the window the take started in is in front and the piece's gate opens; once
+    /// another window was found in front, the final write only copies. [`Internal::LiveInjected`]
+    /// follows.
     fn dispatch(&mut self, piece: Piece) {
-        let (session, idx, text) = (self.status.session, piece.idx, piece.text.clone());
-        self.take.inject.in_flight = Some(piece);
+        let (session, idx, text, gate) = (self.status.session, piece.idx, piece.text.clone(), piece.gate.clone());
+        let target = self.target();
         let (injector, tx) = (self.injector.clone(), self.internal.clone());
+        let li = &mut self.take.inject;
+        let copy_only = li.switched && li.writing_rest;
+        li.in_flight = Some(piece);
+        let insert = li.session.get_or_insert_with(|| Arc::new(Mutex::new(Arc::clone(&injector).begin_insert()))).clone();
         tokio::spawn(async move {
-            let result = match tokio::task::spawn_blocking(move || injector.inject(&text)).await {
+            let blocking = move || -> Result<LivePiece, DictationError> {
+                if copy_only {
+                    if !gate.begin_delivery() {
+                        return Ok(LivePiece::CalledOff);
+                    }
+                    let note = Some(InjectNote::new(ClipboardCode::TargetChanged, WINDOW_CHANGED));
+                    let out = injector.copy(&text).map(|()| LivePiece::Delivered(Injection { via: Via::Clipboard, note }));
+                    gate.delivered();
+                    return out;
+                }
+                let mut insert = insert.lock();
+                let switched = std::cell::Cell::new(false);
+                let may_deliver = || {
+                    if !target.still_there() {
+                        switched.set(true);
+                        return false;
+                    }
+                    gate.begin_delivery()
+                };
+                match insert.piece(&text, &may_deliver) {
+                    Ok(Inserted::Delivered(injection)) => {
+                        gate.delivered();
+                        Ok(LivePiece::Delivered(injection))
+                    }
+                    Ok(Inserted::Cancelled) if switched.get() => Ok(LivePiece::Switched),
+                    Ok(Inserted::Cancelled) => Ok(LivePiece::CalledOff),
+                    Err(e) => {
+                        gate.delivered();
+                        Err(e)
+                    }
+                }
+            };
+            let result = match tokio::task::spawn_blocking(blocking).await {
                 Ok(result) => result,
                 Err(e) => Err(DictationError::Inject(format!("injector task failed: {e}"))),
             };
@@ -2197,7 +2333,7 @@ impl DictationEngine {
     }
 
     /// One injection came back: count it, or switch to accumulating the rest; then the next one.
-    fn on_live_injected(&mut self, session: u64, idx: usize, result: Result<Injection, DictationError>) -> Vec<Effect> {
+    fn on_live_injected(&mut self, session: u64, idx: usize, result: Result<LivePiece, DictationError>) -> Vec<Effect> {
         if session != self.status.session || self.take.mode != OutputMode::LiveInject || self.status.phase.is_terminal() {
             tracing::debug!(session, idx, "live injection for a finished run dropped");
             return Vec::new();
@@ -2211,16 +2347,37 @@ impl DictationEngine {
             // The final write of everything not pasted: the run's outcome.
             li.writing_rest = false;
             let text = li.rest.take().unwrap_or_default();
-            return self.finish_live_inject(result.map(|i| (i, text.clone())).map_err(|e| (e, text)));
+            return match result {
+                Ok(LivePiece::Delivered(injection)) => self.finish_live_inject(Ok((injection, text))),
+                // §14.3: another window is in front now; the rest is copied instead.
+                Ok(LivePiece::Switched | LivePiece::CalledOff) => {
+                    tracing::info!(session, "the final paste found another window in front; copying the rest");
+                    li.switched = true;
+                    li.note = Some(InjectNote::new(ClipboardCode::TargetChanged, WINDOW_CHANGED));
+                    li.rest = Some(text);
+                    self.drain_or_finish_live_inject()
+                }
+                Err(e) => self.finish_live_inject(Err((e, text))),
+            };
         }
         match result {
-            Ok(Injection { via: Via::Paste, .. }) => {
+            Ok(LivePiece::Delivered(Injection { via: Via::Paste, .. })) => {
                 li.pasted += 1;
                 li.pasted_chars += piece.chars;
             }
-            Ok(Injection { via: Via::Clipboard, note }) => {
+            Ok(LivePiece::Delivered(Injection { via: Via::Clipboard, note })) => {
                 tracing::info!(session, idx, ?note, "paste fell back to the clipboard; accumulating the rest");
                 li.note = note;
+                let mut rest = piece.text;
+                rest.extend(li.queue.drain(..).map(|p| p.text));
+                li.rest = Some(rest);
+            }
+            Ok(LivePiece::Switched | LivePiece::CalledOff) => {
+                // §14.3: another window is in front; this sentence and the rest wait for one copy
+                // at the end.
+                tracing::info!(session, idx, "another window is in front; no more pasting, the rest is copied at the end");
+                li.switched = true;
+                li.note = Some(InjectNote::new(ClipboardCode::TargetChanged, WINDOW_CHANGED));
                 let mut rest = piece.text;
                 rest.extend(li.queue.drain(..).map(|p| p.text));
                 li.rest = Some(rest);
@@ -2261,7 +2418,7 @@ impl DictationEngine {
         match li.rest.clone() {
             Some(rest) if !rest.trim().is_empty() => {
                 li.writing_rest = true;
-                let piece = Piece { idx: li.next_idx, text: rest, chars: 0 };
+                let piece = Piece { idx: li.next_idx, text: rest, chars: 0, gate: InsertGate::new() };
                 li.next_idx += 1;
                 self.dispatch(piece);
                 Vec::new()
@@ -2273,6 +2430,7 @@ impl DictationEngine {
     /// `Done` (or `Failed` when the final write failed) for a `live_inject` run. `last` is the
     /// outcome of the final delivery with the text it carried (the accumulated rest, or nothing).
     fn finish_live_inject(&mut self, last: Result<(Injection, String), (DictationError, String)>) -> Vec<Effect> {
+        self.end_live_session(false);
         let text = self.take.inject.text.clone();
         let raw_text = self.take.inject.raw_text.clone();
         let vocabulary = std::mem::take(&mut self.take.inject.hits);
@@ -2369,7 +2527,7 @@ impl DictationEngine {
             transcriber: self.transcriber.clone(),
             refiner,
             hints: self.refine_hints(),
-            injector: self.injector.clone(),
+            delivery: self.delivery(),
             vocabulary: self.take.vocabulary.clone(),
             script: self.take_script(),
             tx: self.internal.clone(),
@@ -2877,7 +3035,7 @@ impl DictationEngine {
             refiner: if refine { self.take_refiner() } else { None },
             refine_requested: refine,
             hints: self.refine_hints(),
-            injector: self.injector.clone(),
+            delivery: self.delivery(),
             vocabulary: self.take.vocabulary.clone(),
             script: self.take_script(),
             long: true,
@@ -2946,7 +3104,7 @@ impl DictationEngine {
             refiner: if refine { self.take_refiner() } else { None },
             refine_requested: refine,
             hints: self.refine_hints(),
-            injector: self.injector.clone(),
+            delivery: self.delivery(),
             vocabulary: self.take.vocabulary.clone(),
             script: self.take_script(),
             long: false,
@@ -3012,11 +3170,15 @@ impl DictationEngine {
         let linked = kept.map(|recording| Effect::Kept { recording, status: KeptStatus::Recognized { entry: entry.id } });
         match injection {
             Ok(Injection { via, note }) => {
+                let clipboard_code = note.as_ref().filter(|_| via == Via::Clipboard).map(|n| n.code);
                 entry.outcome = match (via, note) {
                     (Via::Paste, _) => Outcome::Inserted { via: Via::Paste },
                     (Via::Clipboard, Some(note)) => Outcome::clipboard(note),
                     (Via::Clipboard, None) => Outcome::Inserted { via: Via::Clipboard },
                 };
+                // §14.3: the window changed and the text waits on the clipboard; the pill says so a
+                // little longer, like a failure that kept its text.
+                let dwell = if clipboard_code == Some(ClipboardCode::TargetChanged) { DWELL_WITH_TEXT } else { DWELL };
                 let phase = DictationPhase::Done {
                     chars: text.chars().count(),
                     text,
@@ -3031,8 +3193,9 @@ impl DictationEngine {
                     mode,
                     segments,
                     live_error,
+                    clipboard_code,
                 };
-                let mut effects = self.terminal(phase, DWELL);
+                let mut effects = self.terminal(phase, dwell);
                 effects.push(Effect::Record(entry));
                 effects.extend(linked);
                 effects
@@ -3057,6 +3220,7 @@ impl DictationEngine {
     /// Enter a terminal phase and arm its dwell timer. A kept recording no entry was made from
     /// (docs/dictation.md §26) is reported with why: the failure, or the cancel.
     fn terminal(&mut self, phase: DictationPhase, dwell: Duration) -> Vec<Effect> {
+        self.end_live_session(false);
         self.discard_long(&phase);
         self.status.segments = None;
         self.disarm();
@@ -3338,7 +3502,8 @@ struct PipelineJob {
     refine_requested: bool,
     /// What the refiner is told besides the text (glossary, language, style, context; §18.5).
     hints: RefineHints,
-    injector: Arc<dyn Injector>,
+    /// How the text goes out: the injector, the take's gate, the window it must still go to.
+    delivery: Delivery,
     vocabulary: Arc<Vocabulary>,
     /// The script the transcript is normalised to before anything else (docs/dictation.md §17).
     script: ChineseScript,
@@ -3351,6 +3516,140 @@ struct PipelineJob {
     tx: mpsc::Sender<Internal>,
 }
 
+/// Why a take's text was copied instead of pasted when its window was no longer in front
+/// (docs/dictation.md §14.3); the history keeps it under the technical details.
+pub const WINDOW_CHANGED: &str = "开始听写时的窗口已不在前台，文字只复制到剪贴板";
+
+/// The window a take's text must still go to (docs/dictation.md §14.3): the one in front when the
+/// take started. No expectation — the probe named nothing then, or `switched_window = paste_here`
+/// — means no check.
+#[derive(Clone)]
+struct Target {
+    expected: Option<ForegroundApp>,
+    probe: Option<Arc<dyn ForegroundProbe>>,
+}
+
+impl Target {
+    /// No check.
+    fn none() -> Self {
+        Self { expected: None, probe: None }
+    }
+
+    /// Whether the window in front now is still the expected one, asked right before the paste.
+    /// A probe that names nothing, fails or does not answer within [`PROBE_DEADLINE`] counts as
+    /// another window: the text is copied, never pasted blind.
+    fn still_there(&self) -> bool {
+        let (Some(expected), Some(probe)) = (&self.expected, &self.probe) else { return true };
+        let same = probe_now(probe, PROBE_DEADLINE).and_then(ForegroundApp::sanitized).is_some_and(|now| crate::paste::same_target(expected, &now));
+        if !same {
+            tracing::info!(app = %expected.app_id, "another window is in front now; the text is copied instead of pasted");
+        }
+        same
+    }
+}
+
+/// The application in front now, asked on a thread of its own for at most `deadline` — a stuck
+/// window system must not hold the paste: `None` when the probe names nothing, fails, panics or
+/// does not answer in time.
+fn probe_now(probe: &Arc<dyn ForegroundProbe>, deadline: Duration) -> Option<ForegroundApp> {
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    let probe = Arc::clone(probe);
+    let spawned = std::thread::Builder::new().name("voltip-target-probe".into()).spawn(move || {
+        let _ = tx.send(probe.foreground());
+    });
+    if let Err(e) = spawned {
+        tracing::warn!(error = %e, "could not start the foreground probe before the paste");
+        return None;
+    }
+    match rx.recv_timeout(deadline) {
+        Ok(Ok(app)) => app,
+        Ok(Err(e)) => {
+            tracing::debug!(error = %e, "foreground probe failed before the paste");
+            None
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            tracing::info!(deadline_ms = deadline.as_millis(), "foreground probe did not answer before the paste");
+            None
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            tracing::warn!("foreground probe panicked before the paste");
+            None
+        }
+    }
+}
+
+/// How a take's text goes out (docs/dictation.md §14.3): through one insert session of the
+/// injector, behind the take's gate, to the window the take started in.
+#[derive(Clone)]
+struct Delivery {
+    injector: Arc<dyn Injector>,
+    gate: InsertGate,
+    target: Target,
+}
+
+/// What became of a take's text on its blocking thread.
+enum Insertion {
+    /// It went out (pasted, or copied when the window changed), or the delivery failed.
+    Done(Result<Injection, DictationError>),
+    /// The take was cancelled before anything went out.
+    Cancelled,
+}
+
+impl Delivery {
+    /// The text as one piece of a session of its own: the target still in front and the gate
+    /// open → pasted; the window changed → copied (`target_changed`); cancelled → nothing, and
+    /// the session puts the clipboard back. Blocking.
+    fn insert(&self, text: &str) -> Insertion {
+        let mut session = Arc::clone(&self.injector).begin_insert();
+        let switched = std::cell::Cell::new(false);
+        let may_deliver = || {
+            if !self.target.still_there() {
+                switched.set(true);
+                return false;
+            }
+            self.gate.begin_delivery()
+        };
+        match session.piece(text, &may_deliver) {
+            Ok(Inserted::Delivered(injection)) => {
+                self.gate.delivered();
+                session.finish();
+                Insertion::Done(Ok(injection))
+            }
+            Ok(Inserted::Cancelled) if switched.get() => {
+                session.finish();
+                self.copy(text, Some(InjectNote::new(ClipboardCode::TargetChanged, WINDOW_CHANGED)))
+            }
+            Ok(Inserted::Cancelled) => {
+                session.abort();
+                Insertion::Cancelled
+            }
+            Err(e) => {
+                self.gate.delivered();
+                session.finish();
+                Insertion::Done(Err(e))
+            }
+        }
+    }
+
+    /// The text on the clipboard only, once the gate lets it out; `note` says why. Blocking.
+    fn copy(&self, text: &str, note: Option<InjectNote>) -> Insertion {
+        if !self.gate.begin_delivery() {
+            return Insertion::Cancelled;
+        }
+        let out = self.injector.copy(text).map(|()| Injection { via: Via::Clipboard, note });
+        self.gate.delivered();
+        Insertion::Done(out)
+    }
+
+    /// `run` on a blocking thread; a task that failed is a failed delivery.
+    async fn on_blocking(self, run: impl FnOnce(&Self) -> Insertion + Send + 'static) -> Insertion {
+        match tokio::task::spawn_blocking(move || run(&self)).await {
+            Ok(insertion) => insertion,
+            Err(e) => Insertion::Done(Err(DictationError::Inject(format!("injector task failed: {e}")))),
+        }
+    }
+}
+
 /// The dictionary then the rules on a text nothing else will touch (a `live_inject` sentence).
 fn process_final_text(vocabulary: &Vocabulary, text: &str) -> (String, VocabularyHits) {
     let corrected = steps::correct(vocabulary, text);
@@ -3361,7 +3660,7 @@ fn process_final_text(vocabulary: &Vocabulary, text: &str) -> (String, Vocabular
 /// (ASR →) dictionary → (refine) → rules → inject, off the core task (docs/dictation.md §16.3).
 /// Every step reports back with the session id.
 async fn run_pipeline(job: PipelineJob) {
-    let PipelineJob { session, input, language, transcriber, refiner, refine_requested, hints, injector, vocabulary, script, long, copy, tx } = job;
+    let PipelineJob { session, input, language, transcriber, refiner, refine_requested, hints, delivery, vocabulary, script, long, copy, tx } = job;
     let glossary = vocabulary.glossary();
     let (raw_text, asr_ms, asr_model) = match input {
         // The recogniser's text in the chosen script first (docs/dictation.md §17); a streaming
@@ -3403,22 +3702,24 @@ async fn run_pipeline(job: PipelineJob) {
     let _ = tx.send(Internal::Stage { session, stage: ProcessingStage::Inserting }).await;
     let to_inject = text.clone();
     let too_long_to_paste = long && text.chars().count() > long::PASTE_MAX_CHARS;
-    let injection = match tokio::task::spawn_blocking(move || {
-        if copy {
-            // docs/dictation.md §26: the window in front is Voltip's own; the text waits on the
-            // clipboard for wherever the user takes it.
-            injector.copy(&to_inject).map(|()| Injection { via: Via::Clipboard, note: None })
-        } else if too_long_to_paste {
-            // docs/dictation.md §22: a text this long waits on the clipboard.
-            injector.copy(&to_inject).map(|()| Injection { via: Via::Clipboard, note: Some(InjectNote::new(ClipboardCode::TooLong, long::TOO_LONG_TO_PASTE)) })
-        } else {
-            injector.inject(&to_inject)
-        }
-    })
-    .await
-    {
-        Ok(result) => result,
-        Err(e) => Err(DictationError::Inject(format!("injector task failed: {e}"))),
+    let insertion = delivery
+        .on_blocking(move |d| {
+            if copy {
+                // docs/dictation.md §26: the window in front is Voltip's own; the text waits on the
+                // clipboard for wherever the user takes it.
+                d.copy(&to_inject, None)
+            } else if too_long_to_paste {
+                // docs/dictation.md §22: a text this long waits on the clipboard.
+                d.copy(&to_inject, Some(InjectNote::new(ClipboardCode::TooLong, long::TOO_LONG_TO_PASTE)))
+            } else {
+                d.insert(&to_inject)
+            }
+        })
+        .await;
+    let Insertion::Done(injection) = insertion else {
+        // Cancelled before anything went out (docs/dictation.md §14.3): the engine has moved on.
+        tracing::debug!(session, "the cancel came before the text went out");
+        return;
     };
     let outcome = PipelineOutcome {
         raw_text,
@@ -3448,7 +3749,8 @@ struct EditJob {
     refiner: Arc<dyn Refiner>,
     /// The take's hints (glossary, the app in front as the privacy switches allow; no scene).
     hints: RefineHints,
-    injector: Arc<dyn Injector>,
+    /// The rewrite's way out; its target is always checked (docs/dictation.md §14.3).
+    delivery: Delivery,
     vocabulary: Arc<Vocabulary>,
     script: ChineseScript,
     tx: mpsc::Sender<Internal>,
@@ -3460,7 +3762,7 @@ struct EditJob {
 /// selection. The replacement rules do not run: they are for dictated text, not for the LLM's
 /// rewrite. Any failure before the paste leaves the selection untouched.
 async fn run_edit(job: EditJob) {
-    let EditJob { session, wav, selection, language, transcriber, refiner, hints, injector, vocabulary, script, tx } = job;
+    let EditJob { session, wav, selection, language, transcriber, refiner, hints, delivery, vocabulary, script, tx } = job;
     let finish = |result: Result<PipelineOutcome, DictationError>| {
         let tx = tx.clone();
         async move {
@@ -3492,9 +3794,9 @@ async fn run_edit(job: EditJob) {
     let _ = tx.send(Internal::Stage { session, stage: ProcessingStage::Inserting }).await;
     let text = out.text;
     let to_inject = text.clone();
-    let injection = match tokio::task::spawn_blocking(move || injector.inject(&to_inject)).await {
-        Ok(result) => result,
-        Err(e) => Err(DictationError::Inject(format!("injector task failed: {e}"))),
+    let Insertion::Done(injection) = delivery.on_blocking(move |d| d.insert(&to_inject)).await else {
+        tracing::debug!(session, "the cancel came before the rewrite went out");
+        return;
     };
     let outcome = PipelineOutcome {
         raw_text,
@@ -3753,8 +4055,10 @@ mod tests {
                 mode,
                 segments,
                 live_error,
+                clipboard_code,
             } => {
                 assert_eq!(text, "你好，世界。");
+                assert_eq!(*clipboard_code, None, "a paste names no clipboard reason");
                 assert_eq!(*refine_failure, None, "a clean-up that ran names no failure");
                 assert_eq!(raw_text, FAKE_TRANSCRIPT);
                 assert_eq!(*chars, 6);
@@ -4125,11 +4429,18 @@ mod tests {
             }),
         };
         assert!(format!("{stale:?}").contains("Finished"));
-        assert!(format!("{:?}", Internal::LiveInjected { session: 1, idx: 0, result: Ok(Injection { via: Via::Paste, note: None }) }).contains("idx: 0"));
+        assert!(
+            format!("{:?}", Internal::LiveInjected { session: 1, idx: 0, result: Ok(LivePiece::Delivered(Injection { via: Via::Paste, note: None })) })
+                .contains("idx: 0")
+        );
         assert!(
             format!("{:?}", Internal::Remainder { session: 1, result: Ok(Transcript { text: "秘密".into(), latency_ms: 1, model: None }) }).contains("Ok(2)")
         );
-        assert!(r.engine.on_internal(Internal::LiveInjected { session: 1, idx: 0, result: Ok(Injection { via: Via::Paste, note: None }) }).is_empty());
+        assert!(
+            r.engine
+                .on_internal(Internal::LiveInjected { session: 1, idx: 0, result: Ok(LivePiece::Delivered(Injection { via: Via::Paste, note: None })) })
+                .is_empty()
+        );
         assert!(r.engine.on_internal(Internal::Remainder { session: 1, result: Err(DictationError::Asr("late".into())) }).is_empty());
         assert!(r.engine.on_internal(stale).is_empty());
         assert!(r.engine.on_internal(Internal::Stage { session: 1, stage: ProcessingStage::Refining }).is_empty());
@@ -5103,7 +5414,10 @@ mod tests {
 
     /// Cancelling a `live_inject` run does not take back what was pasted (docs/dictation.md §12):
     /// `Cancelled.injected_chars` counts the characters of the sentences that reached the
-    /// application; a sentence still queued is never injected and nothing is transcribed.
+    /// application; a sentence still queued is never injected and nothing is transcribed. A
+    /// sentence handed to the injector whose paste had not begun is called off at its gate
+    /// (§14.3; before the gate it was pasted after the cancel and not counted), and the run's
+    /// session ends aborted.
     #[tokio::test(start_paused = true)]
     async fn live_inject_cancel_keeps_injected_text_and_reports_injected_chars() {
         let mut r = rig_mode(FakeAudio::speech(), FakeTranscriber::ok("never"), None, FakeInjector::paste().gated(), english_script(), OutputMode::LiveInject);
@@ -5116,13 +5430,18 @@ mod tests {
         let fx = r.engine.cancel().unwrap();
         assert_eq!(phase(&fx), &DictationPhase::Cancelled { injected_chars: "Hello world.".chars().count() });
         assert!(record(&fx).is_none(), "a cancelled run is not history");
-        // The second sentence, still with the (gated) injector, comes back to a finished run.
+        // The second sentence, held before its paste, finds its gate closed and comes back to a
+        // finished run.
         r.injector.release(1);
         r.wait_stops(1).await;
-        wait_until(|| r.injector.injected().len() == 2).await;
+        wait_until(|| r.injector.events().contains(&InsertEvent::Abort)).await;
         r.drain().await;
         assert_eq!(r.engine.status().phase, DictationPhase::Cancelled { injected_chars: 12 }, "the late result changes nothing");
-        assert_eq!(r.injector.injected(), ["Hello world. ", "How are you. "].map(String::from), "the piece already handed over cannot be recalled");
+        assert_eq!(r.injector.injected(), ["Hello world. "].map(String::from), "the held sentence never reached the application");
+        assert_eq!(
+            r.injector.events(),
+            [InsertEvent::Begin, InsertEvent::Piece("Hello world. ".into()), InsertEvent::CalledOff("How are you. ".into()), InsertEvent::Abort]
+        );
         assert_eq!(r.transcriber.calls(), 0);
         tokio::time::advance(DWELL).await;
         assert_eq!(phase(&r.next().await), &DictationPhase::Idle);
@@ -7317,5 +7636,237 @@ mod tests {
         tokio::time::advance(Duration::from_secs(10)).await;
         r.drain().await;
         assert!(r.injector.clipboard_copies().is_empty() && r.injector.injected().is_empty());
+    }
+
+    // ---------------- insert sessions, the gate and the target window (docs/dictation.md §14.3) ----------------
+
+    use crate::dictation::fakes::InsertEvent;
+    use crate::engines::SwitchedWindow;
+
+    fn resolved_switch(switched_window: SwitchedWindow) -> ResolvedEngines {
+        let settings = EngineSettings { switched_window, ..EngineSettings::default() };
+        ResolvedEngines::resolve(&settings, &UserSecrets::default(), &TEST_BUILT_IN)
+    }
+
+    /// Notepad, window 7, as the probe names it when the take starts.
+    fn notepad() -> Arc<FakeProbe> {
+        let probe = Arc::new(FakeProbe::app("notepad", "Notepad", None));
+        probe.set_window(Some(7));
+        probe
+    }
+
+    impl Rig {
+        /// Fold notifications until the take is inserting.
+        async fn until_inserting(&mut self) {
+            self.phases_until(|p| matches!(p, DictationPhase::Processing { stage: ProcessingStage::Inserting, .. })).await;
+        }
+    }
+
+    /// Regression (R02, 2026-10-28 review): a cancel while the take was inserting aborted the
+    /// task, but the paste already running on its blocking thread went ahead — text in the window,
+    /// no history entry. The gate decides now: cancelled before the delivery began, nothing goes out
+    /// and the session puts the clipboard back.
+    #[tokio::test(start_paused = true)]
+    async fn regression_a_cancel_before_the_paste_delivers_nothing_and_writes_no_history() {
+        let mut r = rig(FakeAudio::speech(), FakeTranscriber::ok(FAKE_TRANSCRIPT), Some(FakeRefiner::ok("你好，世界。")), FakeInjector::paste().gated(), true);
+        r.start_open().await;
+        r.engine.stop().unwrap();
+        r.until_inserting().await;
+        wait_until(|| r.injector.waiting() == 1).await;
+        assert_eq!(r.injector.waiting(), 1, "the piece is held before it asks the gate");
+        let fx = r.engine.cancel().unwrap();
+        assert_eq!(phase(&fx), &DictationPhase::CANCELLED);
+        r.injector.release(1);
+        wait_until(|| r.injector.events().contains(&InsertEvent::Abort)).await;
+        r.drain().await;
+        assert!(r.injector.injected().is_empty(), "nothing was delivered after the cancel");
+        assert_eq!(r.injector.events(), [InsertEvent::Begin, InsertEvent::CalledOff("你好，世界。".into()), InsertEvent::Abort]);
+        assert_eq!(r.engine.status().phase, DictationPhase::CANCELLED, "no late Done, no history");
+    }
+
+    /// The other side of the gate: once the delivery began, a cancel is too late and the take
+    /// finishes as if there had been none — the same `Done`, the same history entry.
+    #[tokio::test(start_paused = true)]
+    async fn regression_a_cancel_once_the_paste_has_begun_finishes_the_take_as_usual() {
+        let mut reference = happy();
+        reference.start_open().await;
+        reference.engine.stop().unwrap();
+        let fx = reference.run_to_terminal().await;
+        let (done, entry) = (phase(&fx).clone(), record(&fx).unwrap().clone());
+        assert_eq!(reference.injector.events(), [InsertEvent::Begin, InsertEvent::Piece("你好，世界。".into()), InsertEvent::Finish], "one session per take");
+
+        let mut r =
+            rig(FakeAudio::speech(), FakeTranscriber::ok(FAKE_TRANSCRIPT), Some(FakeRefiner::ok("你好，世界。")), FakeInjector::paste().delivery_gated(), true);
+        r.start_open().await;
+        r.engine.stop().unwrap();
+        r.until_inserting().await;
+        wait_until(|| r.injector.deliveries_waiting() == 1).await;
+        assert_eq!(r.injector.deliveries_waiting(), 1, "the paste is being delivered");
+        let fx = r.engine.cancel().unwrap();
+        assert!(fx.is_empty(), "too late: nothing changes now: {fx:?}");
+        assert!(matches!(r.engine.status().phase, DictationPhase::Processing { stage: ProcessingStage::Inserting, .. }));
+        r.injector.release_deliveries(1);
+        let fx = r.run_to_terminal().await;
+        assert_eq!(phase(&fx), &done);
+        let got = record(&fx).expect("the take is history like any other");
+        assert_eq!(HistoryEntry { id: entry.id, at_ms: entry.at_ms, ..got.clone() }, entry);
+        assert_eq!(r.injector.events(), [InsertEvent::Begin, InsertEvent::Piece("你好，世界。".into()), InsertEvent::Finish]);
+    }
+
+    /// Regression (R02): the text went to whatever window was in front when the take was done
+    /// processing. Another window in front now — another app, or another window of the same app —
+    /// means copy only (the setting's default), said in the pill and the history, with the longer
+    /// dwell; the same window still gets the paste.
+    #[tokio::test(start_paused = true)]
+    async fn regression_a_window_switch_during_processing_copies_instead_of_pasting() {
+        for switch_to in [Some(8), None] {
+            let probe = notepad();
+            let mut r = rig_probed(probe.clone(), FakeTranscriber::ok(FAKE_TRANSCRIPT), Some(FakeRefiner::ok("你好，世界。")), None, &resolved(true, None));
+            r.start_probed().await;
+            match switch_to {
+                Some(window) => probe.set_window(Some(window)),
+                None => probe.set_app("code", "Code", None),
+            }
+            r.engine.stop().unwrap();
+            let fx = r.run_to_terminal().await;
+            assert!(
+                matches!(phase(&fx), DictationPhase::Done { via: Via::Clipboard, clipboard_code: Some(ClipboardCode::TargetChanged), text, .. } if text == "你好，世界。"),
+                "{switch_to:?}: {fx:?}"
+            );
+            assert!(matches!(&record(&fx).unwrap().outcome, Outcome::Clipboard { code: Some(ClipboardCode::TargetChanged), .. }));
+            assert!(r.injector.injected().is_empty(), "nothing was pasted into the other window");
+            assert_eq!(r.injector.clipboard_copies(), vec!["你好，世界。".to_owned()]);
+            assert_eq!(r.injector.events(), [InsertEvent::Begin, InsertEvent::CalledOff("你好，世界。".into()), InsertEvent::Finish]);
+            tokio::time::advance(DWELL).await;
+            r.settle().await;
+            assert!(r.engine.status().phase.is_terminal(), "the window-changed pill stays like a failure with text");
+            tokio::time::advance(DWELL_WITH_TEXT - DWELL).await;
+            assert_eq!(phase(&r.next().await), &DictationPhase::Idle);
+        }
+        // Still the same window: pasted.
+        let mut r = rig_probed(notepad(), FakeTranscriber::ok(FAKE_TRANSCRIPT), Some(FakeRefiner::ok("你好，世界。")), None, &resolved(true, None));
+        r.start_probed().await;
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { via: Via::Paste, clipboard_code: None, .. }), "{fx:?}");
+        assert_eq!(r.injector.injected(), vec!["你好，世界。".to_owned()]);
+    }
+
+    /// 粘贴到当前窗口 (`switched_window = paste_here`): the text goes into the window in front
+    /// whatever it is.
+    #[tokio::test(start_paused = true)]
+    async fn paste_here_pastes_into_the_window_now_in_front() {
+        let probe = notepad();
+        let mut engines = resolved_switch(SwitchedWindow::PasteHere);
+        engines.refine_enabled = false;
+        let mut r = rig_probed(probe.clone(), FakeTranscriber::ok(FAKE_TRANSCRIPT), None, None, &engines);
+        r.start_probed().await;
+        probe.set_window(Some(8));
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { via: Via::Paste, .. }), "{fx:?}");
+        assert_eq!(r.injector.injected(), vec![FAKE_TRANSCRIPT.to_owned()]);
+        assert!(r.injector.clipboard_copies().is_empty());
+    }
+
+    /// Regression (R02, §19): a voice edit whose window changed replaced the selection of whatever
+    /// window was in front. It copies the rewrite instead — whatever the setting says.
+    #[tokio::test(start_paused = true)]
+    async fn regression_a_voice_edit_whose_window_changed_only_copies_the_rewrite() {
+        for setting in [SwitchedWindow::CopyOnly, SwitchedWindow::PasteHere] {
+            let probe = notepad();
+            let mut r = rig_probed_with(
+                probe.clone(),
+                FakeTranscriber::ok(INSTRUCTION),
+                Some(FakeRefiner::ok(REWRITE)),
+                None,
+                &resolved_switch(setting),
+                FakeInjector::paste().with_selection(SELECTION),
+            );
+            r.start_edit_open(Vec::new()).await;
+            probe.set_window(Some(8));
+            r.engine.stop().unwrap();
+            let fx = r.run_to_terminal().await;
+            assert!(
+                matches!(phase(&fx), DictationPhase::Done { via: Via::Clipboard, clipboard_code: Some(ClipboardCode::TargetChanged), text, .. } if text == REWRITE),
+                "{setting:?}: {fx:?}"
+            );
+            assert!(r.injector.injected().is_empty(), "{setting:?}: no selection was replaced elsewhere");
+            assert_eq!(r.injector.clipboard_copies(), vec![REWRITE.to_owned()]);
+        }
+    }
+
+    /// Regression (R02, §12): `live_inject` went on pasting sentence after sentence into whatever
+    /// window was in front. At the first sentence whose window changed it stops pasting; that
+    /// sentence, the rest and the tail are copied in one go at the end.
+    #[tokio::test(start_paused = true)]
+    async fn regression_live_inject_stops_pasting_after_a_window_switch_and_copies_the_rest() {
+        let probe = notepad();
+        let mut r = rig_probed_with(
+            probe.clone(),
+            FakeTranscriber::ok("never"),
+            None,
+            Some(english_script()),
+            &resolved_mode(OutputMode::LiveInject, true, false),
+            FakeInjector::paste().gated(),
+        );
+        r.start_probed().await;
+        r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if l.committed.len() == 2)).await;
+        wait_until(|| r.injector.waiting() == 1).await;
+        r.injector.release(1);
+        r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if l.injected == 1)).await;
+        probe.set_window(Some(8));
+        // The second sentence, then the final copy.
+        r.injector.release(2);
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        match phase(&fx) {
+            DictationPhase::Done { text, via, clipboard_code, mode, .. } => {
+                assert_eq!(text, "Hello world. How are you. Fine");
+                assert_eq!((*via, *clipboard_code, *mode), (Via::Clipboard, Some(ClipboardCode::TargetChanged), OutputMode::LiveInject));
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(r.injector.injected(), vec!["Hello world. ".to_owned()], "only the sentence before the switch was pasted");
+        assert_eq!(r.injector.clipboard_copies(), vec!["How are you. Fine ".to_owned()]);
+        assert_eq!(
+            r.injector.events(),
+            [InsertEvent::Begin, InsertEvent::Piece("Hello world. ".into()), InsertEvent::CalledOff("How are you. ".into()), InsertEvent::Finish]
+        );
+        assert!(matches!(&record(&fx).unwrap().outcome, Outcome::Clipboard { code: Some(ClipboardCode::TargetChanged), .. }));
+    }
+
+    /// Regression (§12 with the gate): a sentence whose paste had begun when the take was cancelled
+    /// reaches the application — `Cancelled.injected_chars` counts it — and the session ends
+    /// aborted once it is back.
+    #[tokio::test(start_paused = true)]
+    async fn regression_a_cancel_counts_the_sentence_being_pasted() {
+        let mut r =
+            rig_mode(FakeAudio::speech(), FakeTranscriber::ok("never"), None, FakeInjector::paste().delivery_gated(), english_script(), OutputMode::LiveInject);
+        r.start_open().await;
+        r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if !l.committed.is_empty())).await;
+        wait_until(|| r.injector.deliveries_waiting() == 1).await;
+        let fx = r.engine.cancel().unwrap();
+        assert_eq!(phase(&fx), &DictationPhase::Cancelled { injected_chars: "Hello world.".chars().count() }, "the sentence being pasted counts");
+        r.injector.release_deliveries(1);
+        wait_until(|| r.injector.events().contains(&InsertEvent::Abort)).await;
+        assert_eq!(r.injector.events(), [InsertEvent::Begin, InsertEvent::Piece("Hello world. ".into()), InsertEvent::Abort]);
+        r.wait_stops(1).await;
+    }
+
+    /// A probe that does not answer at the paste (a hung window system) counts as a switch: the
+    /// text is copied, never pasted blind.
+    #[tokio::test(start_paused = true)]
+    async fn regression_a_probe_that_does_not_answer_at_the_paste_counts_as_a_switch() {
+        let probe = notepad();
+        let mut r = rig_probed(probe.clone(), FakeTranscriber::ok(FAKE_TRANSCRIPT), None, None, &resolved(false, None));
+        r.start_probed().await;
+        probe.set_hanging();
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        probe.release();
+        assert!(matches!(phase(&fx), DictationPhase::Done { via: Via::Clipboard, clipboard_code: Some(ClipboardCode::TargetChanged), .. }), "{fx:?}");
+        assert!(r.injector.injected().is_empty());
+        assert_eq!(r.injector.clipboard_copies(), vec![FAKE_TRANSCRIPT.to_owned()]);
     }
 }

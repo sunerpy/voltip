@@ -29,6 +29,19 @@ export const hexKeySchema = z.string().regex(/^[0-9a-f]{64}$/, "expected 64 lowe
 export const injectModeSchema = z.enum(["paste", "clipboard_only"]);
 export type InjectMode = z.infer<typeof injectModeSchema>;
 
+/** `voltip_core::ClipboardAfter` (docs/dictation.md §14.3): what the clipboard holds after a paste
+ *  — what the user had copied (the default) or the pasted text. */
+export const CLIPBOARD_AFTER = ["restore", "keep"] as const;
+export const clipboardAfterSchema = z.enum(CLIPBOARD_AFTER);
+export type ClipboardAfter = z.infer<typeof clipboardAfterSchema>;
+
+/** `voltip_core::SwitchedWindow` (§14.3): what a take does when another window came to the front
+ *  while it was processed — copy only (the default) or paste into the window now in front. A
+ *  voice edit always copies only. */
+export const SWITCHED_WINDOW = ["copy_only", "paste_here"] as const;
+export const switchedWindowSchema = z.enum(SWITCHED_WINDOW);
+export type SwitchedWindow = z.infer<typeof switchedWindowSchema>;
+
 /** Who serves recognition or clean-up (`voltip_core::providers::ProviderId`, docs/dictation.md
  *  §3): the build's own service, the on-device models, OpenAI-compatible vendors, Alibaba Cloud
  *  Model Studio (its own recognition protocols, §3.4), Ollama on this machine and a custom
@@ -261,6 +274,10 @@ export const engineSettingsSchema = z.object({
   /** Script of every recogniser's Chinese text (§17); always serialised by the core. */
   chinese_script: chineseScriptSchema.default("simplified"),
   inject: injectModeSchema.default("paste"),
+  /** What the clipboard holds after a paste (§14.3); Rust omits the default. */
+  clipboard_after: clipboardAfterSchema.default("restore"),
+  /** What a take does when the window changed while it was processed (§14.3); Rust omits the default. */
+  switched_window: switchedWindowSchema.default("copy_only"),
   /** The recognition fallback models (docs/dictation.md §3.5); absent = off, none listed. */
   asr_fallback: fallbackSettingsSchema.optional(),
   /** The clean-up (and voice edit) fallback models; absent = off, none listed. */
@@ -283,6 +300,8 @@ export function defaultEngineSettings(): EngineSettings {
     vad_trim: false,
     chinese_script: "simplified",
     inject: "paste",
+    clipboard_after: "restore",
+    switched_window: "copy_only",
   };
 }
 
@@ -926,6 +945,22 @@ export const liveTextSchema = z.object({
 });
 export type LiveText = z.infer<typeof liveTextSchema>;
 
+/** `voltip_core::dictation::ClipboardCode`: why a requested paste left the text on the clipboard
+ *  (docs/dictation.md §4.2; `target_changed`: another window came to the front, §14.3). The
+ *  history explains each in a sentence. */
+export const CLIPBOARD_CODES = [
+  "no_permission",
+  "no_tool",
+  "no_display",
+  "secure_input",
+  "elevated_target",
+  "too_long",
+  "target_changed",
+  "other",
+] as const;
+export const clipboardCodeSchema = z.enum(CLIPBOARD_CODES);
+export type ClipboardCode = z.infer<typeof clipboardCodeSchema>;
+
 /** `voltip_core::dictation::DictationPhase` (`#[serde(tag = "phase")]`). `listening.ready` and
  *  `listening.locked` are `#[serde(default)]` (false = the device has not delivered samples yet /
  *  the take is not locked) and always on the wire; `live` and `processing.preview` are skip-if-none,
@@ -972,6 +1007,9 @@ export const dictationPhaseSchema = z.discriminatedUnion("phase", [
     segments: z.array(liveSegmentSchema).optional(),
     /** Why the streaming path was abandoned or cut short, when a streaming mode was asked for. */
     live_error: z.string().optional(),
+    /** Why a paste that was asked for left the text on the clipboard (§4.2; `target_changed`:
+     *  another window came to the front, §14.3); absent for a paste or a clipboard-only take. */
+    clipboard_code: clipboardCodeSchema.optional(),
   }),
   z.object({
     phase: z.literal("failed"),
@@ -1209,20 +1247,6 @@ export const emptyAudioCache = (): AudioCacheView => ({
 export function idleDictation(): DictationStatus {
   return { session: 0, phase: { phase: "idle" }, kind: "dictation" };
 }
-
-/** `voltip_core::dictation::ClipboardCode`: why a requested paste left the text on the clipboard
- *  (docs/dictation.md §4.2). The history explains each in a sentence. */
-export const CLIPBOARD_CODES = [
-  "no_permission",
-  "no_tool",
-  "no_display",
-  "secure_input",
-  "elevated_target",
-  "too_long",
-  "other",
-] as const;
-export const clipboardCodeSchema = z.enum(CLIPBOARD_CODES);
-export type ClipboardCode = z.infer<typeof clipboardCodeSchema>;
 
 /** `voltip_core::history::Outcome`. A clipboard fallback's `reason` is the injector's own message
  *  (shown only under the technical details); `code` is absent in entries written before it. */

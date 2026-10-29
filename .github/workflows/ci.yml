@@ -689,6 +689,16 @@ jobs:
         timeout-minutes: 5
         run: cargo test -p voltip-hooks --lib -- --ignored --test-threads=1 --nocapture
 
+      # The whole clipboard across a paste on this desktop's clipboard (docs/dictation.md §14.3):
+      # text, HTML, a bitmap and a file list come back byte for byte, and the dictation carries the
+      # clipboard history markers while it is pasted.
+      - name: Build the clipboard tests
+        run: cargo test -p voltip-inject --test real_clipboard --no-run
+
+      - name: Real clipboard (cargo test -p voltip-inject --test real_clipboard -- --ignored)
+        timeout-minutes: 5
+        run: cargo test -p voltip-inject --test real_clipboard -- --ignored --test-threads=1 --nocapture
+
   smoke-desktop:
     name: smoke · desktop under Xvfb
     needs: [changes]
@@ -758,6 +768,11 @@ jobs:
       # xdotool through XTEST.
       - name: Real X11 hook (cargo test -p voltip-hooks -- --ignored, under Xvfb)
         run: xvfb-run -a cargo test -p voltip-hooks --lib -- --ignored --test-threads=1 --nocapture
+
+      # The whole clipboard across a paste on a real X server (docs/dictation.md §14.3): an image
+      # and HTML xclip copied come back, and the dictation is marked for clipboard managers.
+      - name: Real clipboard under Xvfb (cargo test -p voltip-inject --test real_display -- --ignored)
+        run: xvfb-run -a cargo test -p voltip-inject --test real_display real_an_image -- --ignored --test-threads=1 --nocapture
 
       - name: make smoke-desktop (build, start under Xvfb, hotkey → overlay → outcome, screenshots)
         run: make smoke-desktop
@@ -1079,6 +1094,12 @@ jobs:
       # keyboard-layout read (`mac_layout_id`) that no Linux host can exercise.
       - name: macOS unit tests (voltip-platform, voltip-inject)
         run: cargo test -p voltip-platform -p voltip-inject
+
+      # The whole pasteboard across a paste (docs/dictation.md §14.3): several items with their
+      # types come back byte for byte, and the dictation is marked transient while it is pasted.
+      - name: Real pasteboard (cargo test -p voltip-inject --test real_clipboard -- --ignored)
+        timeout-minutes: 10
+        run: cargo test -p voltip-inject --test real_clipboard -- --ignored --test-threads=1 --nocapture
 
       # The lone-key trigger's real event tap (docs/dictation.md §13.1). An active CGEventTap and
       # CGEventPost both need the Accessibility permission; the runner's TCC database grants it to

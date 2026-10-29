@@ -1,5 +1,5 @@
 ---
-description: How Voltip inserts the text, the three output modes, what happens when pasting is not possible, and how to copy or paste a result again.
+description: How Voltip inserts the text, the clipboard after a paste, what happens when you switch windows while it processes, the three output modes, what happens when pasting is not possible, and how to copy or paste a result again.
 ---
 
 # Where the text goes
@@ -12,6 +12,25 @@ Under **Settings → Dictation**, **Insert method** has two choices:
 
 - **Paste at cursor** (default): Voltip puts the text on the clipboard, presses the paste keys for you (<kbd>Ctrl</kbd> <kbd>V</kbd>, or <kbd>⌘</kbd> <kbd>V</kbd> on a Mac) and then restores what was on the clipboard before.
 - **Copy to clipboard only**: the text is left on the clipboard and you paste it yourself.
+
+## The clipboard after a paste
+
+To paste, Voltip borrows the clipboard for a moment. Whatever you had copied before, whether text, an image, files or formatted content, is put back once the paste is done; with **Type as you speak**, which pastes sentence by sentence, it is put back once, at the end. If you copy something else in the meantime, Voltip keeps what you copied.
+
+Under **Settings → Dictation**, **Clipboard after inserting** decides what the clipboard holds after a paste:
+
+- **Restore original** (default): what you had copied comes back.
+- **Keep result**: the recognised text stays on the clipboard, so you can paste it again.
+
+The text Voltip puts on the clipboard for a paste is kept out of the Windows clipboard history (<kbd>Win</kbd> <kbd>V</kbd>) and the cloud clipboard. On a Mac and on Linux, Voltip marks it with the transient-content flag that clipboard managers use; managers that honour the flag, such as KDE's Klipper, do not record it.
+
+A few kinds of content cannot be put back in full: on Windows, formats such as metafiles that are provided as handles; on Linux, Voltip can read only files, images, formatted text and plain text, and when several are there it puts back one of them; and anything larger than 64 MiB at once.
+
+## Switching windows while it processes
+
+Voltip inserts the text into the window you started in. If you switch to another window while it recognises or polishes, Voltip does not paste by default: it only copies the text, so that it does not land in the wrong place. The overlay shows **Window changed · text copied**, and you can paste it where you want with <kbd>Ctrl</kbd> <kbd>V</kbd> (<kbd>⌘</kbd> <kbd>V</kbd> on a Mac). With **Type as you speak**, the sentences after the switch are no longer typed one by one; they are copied together at the end.
+
+To paste into the window that is in front instead, set **If the window changes while processing**, under **Settings → Dictation**, to **Paste into current window**. Voice edit does not follow this setting: after a switch it always copies the rewrite only. Where Voltip cannot tell which window is in front when you start (on a pure Wayland session on Linux, for example), it pastes as usual.
 
 ## Output modes
 
@@ -39,6 +58,7 @@ If Voltip cannot paste, the text stays on the clipboard so that nothing is lost.
 | No paste tool on Linux with Wayland | Install a tool for your desktop; see [Platform notes](/reference/platforms#linux). |
 | No connection to the display (Linux) | Voltip was started outside a graphical session. |
 | The text of a long recording is longer than 5,000 characters | A text this long is not pasted; paste it where you want it. See [Recording length](/dictation/shortcuts#recording-length). |
+| You switched to another window while it recognised or polished | Paste it where you want it. See [Switching windows while it processes](#switching-windows-while-it-processes). |
 
 The details of the original error are available under **Technical details** in the history entry.
 

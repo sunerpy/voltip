@@ -405,6 +405,9 @@ export const MOCK_PART_MAX_CHARS = 1_500;
 export const MOCK_EXPORT_DIR = "/home/you/Documents";
 export const MOCK_DICTATION_DWELL_MS = 2500;
 export const MOCK_DICTATION_FAILED_DWELL_MS = 6000;
+/** `voltip_core::dictation::engine::WINDOW_CHANGED`: why a take whose window changed was copied
+ *  (docs/dictation.md §14.3). */
+export const MOCK_WINDOW_CHANGED = "开始听写时的窗口已不在前台，文字只复制到剪贴板";
 /** The streaming modes (docs/dictation.md §12) wait this long for the recogniser's final text
  *  (`finalizing`) instead of the whole-take ASR pass, and `live_inject` pastes its tail in one more
  *  beat of the same length (`inserting`). */
@@ -1505,6 +1508,13 @@ export class MockBackend implements Backend {
    *  reports it on `done` and in the history (tests and the dev pages, docs/dictation.md §3.6). */
   simulateRefineFailure(failure: RefineFailure | null) {
     this.refineFailure = failure ?? undefined;
+  }
+
+  /** From now on another window is in front when a take's text is ready (`false`: the same one
+   *  again): with `switched_window = copy_only` the text is copied, and `done`, the history and the
+   *  longer dwell say so, as the core does (tests and the dev pages, docs/dictation.md §14.3). */
+  simulateWindowSwitch(switched: boolean) {
+    this.windowSwitched = switched;
   }
 
   /** The built-in clean-up service turned a take down (`null`: the notice went; tests and the dev
@@ -2647,6 +2657,7 @@ export class MockBackend implements Backend {
 
   /** `simulateRefineFailure`: how the next takes' clean-up fails, if it does. */
   private refineFailure: RefineFailure | undefined;
+  private windowSwitched = false;
 
   /** How often 复制令牌 was pressed (tests; the token itself never reaches the interface). */
   serveTokenCopies = 0;
@@ -4518,9 +4529,17 @@ export class MockBackend implements Backend {
     });
     const finish = () => {
       if (this.state.dictation.session !== session) return;
-      // The phone's result goes to its clipboard (docs/dictation.md §20.7), whatever the setting.
+      // The phone's result goes to its clipboard (docs/dictation.md §20.7), whatever the setting;
+      // another window in front copies instead of pasting (§14.3).
+      const switched =
+        this.role !== "phone" &&
+        engines.inject === "paste" &&
+        this.windowSwitched &&
+        this.state.settings.engines.switched_window === "copy_only";
       const via =
-        this.role === "phone" || engines.inject === "clipboard_only" ? "clipboard" : "paste";
+        this.role === "phone" || engines.inject === "clipboard_only" || switched
+          ? "clipboard"
+          : "paste";
       // docs/dictation.md §16.3: the dictionary corrects the transcript, the (canned) LLM keeps the
       // glossary terms, the rules run last; an emptied text is no speech, nothing is inserted.
       const vocabulary = Vocabulary.compile(this.state.dictionary, this.state.rules);
@@ -4559,6 +4578,7 @@ export class MockBackend implements Backend {
         ...(refineFailure === undefined
           ? {}
           : { refine_failure: refineFailure, refine_error: MOCK_REFINE_FAILED }),
+        ...(switched ? { clipboard_code: "target_changed" as const } : {}),
       };
       const entry: HistoryEntry = {
         id: this.uuid(),
@@ -4577,7 +4597,9 @@ export class MockBackend implements Backend {
           : {}),
         duration_ms: durationMs,
         asr_ms: asrMs,
-        outcome: { kind: "inserted", via },
+        outcome: switched
+          ? { kind: "clipboard", reason: MOCK_WINDOW_CHANGED, code: "target_changed" }
+          : { kind: "inserted", via },
         starred: false,
         mode,
         ...extra,
@@ -4591,7 +4613,7 @@ export class MockBackend implements Backend {
       this.settleRecording({ kind: "recognized", entry: entry.id });
       if (this.role === "phone") this.phoneClipboard = text;
       this.emitPhase(done);
-      this.dwell(MOCK_DICTATION_DWELL_MS, session);
+      this.dwell(switched ? MOCK_DICTATION_FAILED_DWELL_MS : MOCK_DICTATION_DWELL_MS, session);
     };
     this.laterDictation(asrMs, () => {
       if (this.state.dictation.session !== session) return;

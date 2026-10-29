@@ -1278,6 +1278,7 @@ fn overlay_pill_and_hotkey_edges_follow_the_dictation_contract() {
         mode: voltip_core::OutputMode::WholeTake,
         segments: None,
         live_error: None,
+        clipboard_code: None,
     };
     assert_eq!(pill_for(&done), Some("inserted"));
     let before = voltip_core::now_ms();

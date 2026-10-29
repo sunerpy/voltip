@@ -29,12 +29,12 @@ use voltip_core::ui::{
     GpuDevice, HardwareStatus, HotkeyCapabilities, HotkeyStatus, NetworkStatus, RefineNotice, ServePhase, ServeStatus, UiEvent, UiState, UpdateStatus,
 };
 use voltip_core::{
-    Activation, AppRef, BuiltIn, BuiltinScene, CAPABILITY_OFFLINE, CAPABILITY_STREAMING, ChineseScript, ContextSharing, DeviceConnection, DeviceView,
-    DictationPhase, DictationStatus, DictionaryDraft, DictionaryEntry, EditRecord, EngineSettings, EngineStatus, EntrySource, FallbackModel, FallbackSettings,
-    HistoryEntry, HistoryHits, HistoryPage, HistoryQuery, HistoryStats, HistoryStatsBucket, ImportMode, InjectMode, LiveText, LocalDevice, Locale,
-    ModelFileView, ModelInstallState, ModelState, Outcome, OutputMode, ProbeFailure, ProbeOutcome, ProbeReport, ProviderId, ProviderSettings, RefineFailure,
-    RelaySource, RelayStatus, ReplacementRule, ResolvedEngines, RuleDraft, RuleKind, Scene, SceneDraft, SceneMatch, SceneOverrides, SceneRef, Segment,
-    ServiceKind, Settings, SoloKey, TakeContext, TakeKind, ThemeId, UserSecrets, VocabularyHit, VocabularyHits,
+    Activation, AppRef, BuiltIn, BuiltinScene, CAPABILITY_OFFLINE, CAPABILITY_STREAMING, ChineseScript, ClipboardAfter, ContextSharing, DeviceConnection,
+    DeviceView, DictationPhase, DictationStatus, DictionaryDraft, DictionaryEntry, EditRecord, EngineSettings, EngineStatus, EntrySource, FallbackModel,
+    FallbackSettings, HistoryEntry, HistoryHits, HistoryPage, HistoryQuery, HistoryStats, HistoryStatsBucket, ImportMode, InjectMode, LiveText, LocalDevice,
+    Locale, ModelFileView, ModelInstallState, ModelState, Outcome, OutputMode, ProbeFailure, ProbeOutcome, ProbeReport, ProviderId, ProviderSettings,
+    RefineFailure, RelaySource, RelayStatus, ReplacementRule, ResolvedEngines, RuleDraft, RuleKind, Scene, SceneDraft, SceneMatch, SceneOverrides, SceneRef,
+    Segment, ServiceKind, Settings, SoloKey, SwitchedWindow, TakeContext, TakeKind, ThemeId, UserSecrets, VocabularyHit, VocabularyHits,
 };
 use voltip_core::{EntryOrigin, FailureKind, OriginKind, RelayFailure};
 use voltip_crypto::{PublicKey, SafetyCode};
@@ -297,6 +297,10 @@ fn engine_settings() -> EngineSettings {
         vad_trim: false,
         chinese_script: ChineseScript::Simplified,
         inject: InjectMode::Paste,
+        // docs/dictation.md §14.3: the text stays on the clipboard, and a switched window still
+        // gets the paste (the sample shows both non-default values).
+        clipboard_after: ClipboardAfter::Keep,
+        switched_window: SwitchedWindow::PasteHere,
         // docs/dictation.md §3.5: a ready fallback model for the recognition (and the selected one,
         // listed again: skipped), one without its key for the clean-up.
         asr_fallback: FallbackSettings {
@@ -446,6 +450,7 @@ fn done_phase() -> DictationPhase {
         mode: OutputMode::WholeTake,
         segments: None,
         live_error: None,
+        clipboard_code: None,
     }
 }
 
@@ -466,6 +471,7 @@ fn streamed_done_phase() -> DictationPhase {
         mode: OutputMode::StreamingFinal,
         segments: Some(stream_segments()),
         live_error: None,
+        clipboard_code: None,
     }
 }
 
@@ -488,6 +494,7 @@ fn fallen_back_done_phase() -> DictationPhase {
                 mode: OutputMode::WholeTake,
                 segments: None,
                 live_error: Some("open: asr: 实时识别模型未下载：实时预览".into()),
+                clipboard_code: None,
             }
         }
         other => other,
@@ -1596,6 +1603,8 @@ fn all_events() -> Vec<UiEvent> {
                 mode: OutputMode::WholeTake,
                 segments: None,
                 live_error: None,
+                // docs/dictation.md §14.3: another window came to the front, so the text was copied.
+                clipboard_code: Some(ClipboardCode::TargetChanged),
             },
             session: 8,
             context: None,
@@ -1914,6 +1923,7 @@ fn all_events() -> Vec<UiEvent> {
                 mode: OutputMode::WholeTake,
                 segments: None,
                 live_error: None,
+                clipboard_code: None,
             },
             session: 20,
             context: Some(TakeContext { app: AppRef { id: "slack".into(), name: "Slack".into() }, scene: None }),

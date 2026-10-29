@@ -3,7 +3,7 @@
 //! (or `xvfb-run -a cargo test -p voltip-inject --test real_display -- --ignored`).
 //! The selection tests (docs/dictation.md §19) also need `python3` with `tkinter` (the X11 text
 //! widget whose selection is copied) and `xdotool` (to hold keys the way a user holding the
-//! hotkey would).
+//! hotkey would); the whole-clipboard tests (§14.3) need `xclip`, the other program that copies.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -13,9 +13,12 @@ use std::sync::Mutex;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use std::sync::Arc;
+
+use voltip_inject::toolchain::{Chord, Delivery};
 use voltip_inject::{
-    ClipboardOnlyInjector, ClipboardPasteInjector, ClipboardPort, CopyOptions, Injection, Injector, Modifier, SelectionSource, SystemClipboard, Via,
-    display_available, system_selection,
+    AfterPaste, ClipboardOnlyInjector, ClipboardPasteInjector, ClipboardPort, CopyOptions, Delivered, DeliveryError, Injection, Injector, KeystrokePort,
+    Modifier, PasteOptions, PieceOutcome, SelectionSource, SystemClipboard, Via, display_available, paste_chord, system_selection,
 };
 
 /// The clipboard and the keyboard focus are shared by every test in this file.
@@ -275,4 +278,84 @@ fn regression_x11_hotkey_grab_swallows_the_copy_until_the_key_is_up() {
     assert_eq!(after.unwrap().as_deref(), Some(SELECTED), "after the key is up the same copy works");
     assert_eq!(clipboard.read_text().unwrap().as_deref(), Some("SENTINEL"));
     eprintln!("tk saw: {:?}", tk.drain());
+}
+
+/// A 1×1 PNG, one red pixel: what an image editor or a browser puts on the clipboard.
+const RED_PIXEL_PNG: [u8; 70] = [
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06,
+    0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0xda, 0x63, 0xf8, 0xcf, 0xc0, 0xf0, 0x1f, 0x00, 0x05, 0x00,
+    0x01, 0xff, 0x56, 0xc7, 0x2f, 0x0d, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+];
+
+/// `xclip` takes the clipboard with `bytes` as `target`, the way another program copies; it keeps
+/// serving it until something else takes the clipboard.
+fn xclip_copies(target: &str, bytes: &[u8]) {
+    let mut child = Command::new("xclip")
+        .args(["-selection", "clipboard", "-t", target, "-i"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("xclip must be installed for this test");
+    child.stdin.take().unwrap().write_all(bytes).unwrap();
+    // xclip forks to serve the selection; the parent ends once it owns it.
+    assert!(child.wait().unwrap().success());
+}
+
+/// The clipboard's targets, as another program sees them.
+fn xclip_targets() -> Vec<String> {
+    let out = Command::new("xclip").args(["-selection", "clipboard", "-t", "TARGETS", "-o"]).output().expect("xclip must be installed for this test");
+    String::from_utf8_lossy(&out.stdout).lines().map(str::to_owned).collect()
+}
+
+/// Answers every paste as delivered and records what the clipboard offered at that moment.
+struct WatchingKeys(std::sync::Mutex<Vec<Vec<String>>>);
+
+impl KeystrokePort for WatchingKeys {
+    fn deliver(&self, _: Chord, _: &str) -> Result<Delivered, DeliveryError> {
+        self.0.lock().unwrap().push(xclip_targets());
+        Ok(Delivered { tool: "watching".into(), delivery: Delivery::Chord })
+    }
+}
+
+/// docs/dictation.md §14.3 on a real X server: an image or the HTML of formatted text another
+/// program copied is saved before the paste, the dictation's text goes on the clipboard marked
+/// for clipboard managers (`x-kde-passwordManagerHint`), and afterwards what the program had
+/// copied is back — the same pixels, the same HTML.
+#[test]
+#[ignore = "needs an X11 display and xclip; run under xvfb-run"]
+fn real_an_image_or_html_another_program_copied_comes_back_after_a_paste() {
+    let _display = lock();
+    require_x11();
+    let clipboard = Arc::new(SystemClipboard::new());
+    for (target, bytes) in [("image/png", RED_PIXEL_PNG.to_vec()), ("text/html", "<b>加粗</b>的 voltip".as_bytes().to_vec())] {
+        xclip_copies(target, &bytes);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !xclip_targets().iter().any(|t| t == target) {
+            assert!(Instant::now() < deadline, "xclip never offered {target}");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let before = clipboard.snapshot().unwrap();
+        assert!(!before.is_empty(), "{target}: the snapshot holds the copy: {before:?}");
+        let keys = Arc::new(WatchingKeys(std::sync::Mutex::new(Vec::new())));
+        let injector = Arc::new(ClipboardPasteInjector::with_ports(
+            clipboard.clone(),
+            keys.clone(),
+            paste_chord(),
+            PasteOptions { paste_delay: Duration::from_millis(20), paste_delay_after: Duration::from_millis(50), ..PasteOptions::default() },
+        ));
+        let mut session = injector.clone().begin_session(AfterPaste::Restore);
+        assert!(matches!(session.piece("voltip 口述", &|| true).unwrap(), PieceOutcome::Delivered(Injection { via: Via::Paste, .. })));
+        session.finish();
+        let offered = keys.0.lock().unwrap().clone();
+        assert!(offered[0].iter().any(|t| t == "x-kde-passwordManagerHint"), "{target}: the dictation was marked: {offered:?}");
+        let deadline = Instant::now() + Duration::from_secs(3);
+        assert!(before.complete, "{target}: everything was kept: {before:?}");
+        while clipboard.snapshot().unwrap().items != before.items {
+            assert!(Instant::now() < deadline, "{target}: not back: {:?} vs {before:?}", clipboard.snapshot());
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let targets = xclip_targets();
+        assert!(targets.iter().any(|t| t == target), "{target} is offered again: {targets:?}");
+        assert!(targets.iter().any(|t| t == "x-kde-passwordManagerHint"), "the restore is marked too: {targets:?}");
+    }
 }

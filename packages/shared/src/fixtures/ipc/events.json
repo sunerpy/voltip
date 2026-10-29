@@ -432,6 +432,8 @@
       "vad_trim": false,
       "chinese_script": "simplified",
       "inject": "paste",
+      "clipboard_after": "keep",
+      "switched_window": "paste_here",
       "asr_fallback": {
         "enabled": true,
         "models": [
@@ -965,7 +967,8 @@
       "asr_ms": 640,
       "refine_error": "请求过于频繁：refine service rate limited (retry after 355000 ms)",
       "refine_failure": "rate_limited",
-      "mode": "whole_take"
+      "mode": "whole_take",
+      "clipboard_code": "target_changed"
     },
     "session": 8,
     "kind": "dictation"
@@ -4712,6 +4715,8 @@
       "vad_trim": false,
       "chinese_script": "simplified",
       "inject": "paste",
+      "clipboard_after": "keep",
+      "switched_window": "paste_here",
       "asr_fallback": {
         "enabled": true,
         "models": [

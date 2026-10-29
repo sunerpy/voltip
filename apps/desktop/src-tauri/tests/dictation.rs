@@ -18,7 +18,7 @@ use voltip_core::engines::{BuiltIn, EngineSettings, ProviderId, ProviderSettings
 use voltip_core::{InjectMode, dictation::wav};
 use voltip_desktop_lib::audio::AudioHub;
 use voltip_desktop_lib::dictation::{
-    HttpRefiner, HttpTranscriber, NativeInjector, RecorderAudioSource, Unconfigured, build_clients, engine_factory, to_audio_frame, to_core_frame,
+    HttpRefiner, HttpTranscriber, InsertPrefs, NativeInjector, RecorderAudioSource, Unconfigured, build_clients, engine_factory, to_audio_frame, to_core_frame,
 };
 use voltip_refine::RefineConfig;
 use wiremock::matchers::{header, method, path};
@@ -191,15 +191,15 @@ impl voltip_inject::Injector for Recording {
 
 #[test]
 fn native_injector_switches_on_the_mode_the_factory_saw() {
-    let mode = Arc::new(Mutex::new(InjectMode::Paste));
-    let paste = Box::new(Recording { outcome: Ok(voltip_inject::Injection::pasted(3)), calls: AtomicUsize::new(0) });
+    let mode = InsertPrefs::shared(InjectMode::Paste);
+    let paste = Arc::new(Recording { outcome: Ok(voltip_inject::Injection::pasted(3)), calls: AtomicUsize::new(0) });
     let note = voltip_inject::InjectNote::new(voltip_inject::FallbackCode::Other, "clipboard only");
-    let clipboard = Box::new(Recording { outcome: Ok(voltip_inject::Injection::clipboard(3, Some(note))), calls: AtomicUsize::new(0) });
+    let clipboard = Arc::new(Recording { outcome: Ok(voltip_inject::Injection::clipboard(3, Some(note))), calls: AtomicUsize::new(0) });
     let injector = NativeInjector::with(mode.clone(), paste, clipboard);
     assert_eq!(injector.inject("abc").unwrap().via, Via::Paste);
     let factory = engine_factory(mode.clone(), LocalTranscriber::new(std::env::temp_dir().join("voltip-test-models")), None, voltip_net::Network::new());
     factory(&resolved(None, None, None, None, InjectMode::ClipboardOnly));
-    assert_eq!(*mode.lock(), InjectMode::ClipboardOnly, "the factory records the mode");
+    assert_eq!(mode.lock().mode, InjectMode::ClipboardOnly, "the factory records the mode");
     let out = injector.inject("abc").unwrap();
     assert_eq!(out.via, Via::Clipboard);
     assert_eq!(out.note, Some(voltip_core::dictation::InjectNote::other("clipboard only")));
@@ -207,9 +207,9 @@ fn native_injector_switches_on_the_mode_the_factory_saw() {
     assert_eq!(injector.inject("abc").unwrap().via, Via::Paste);
     // Failures map to `Inject` with the crate's message.
     let failing = NativeInjector::with(
-        Arc::new(Mutex::new(InjectMode::Paste)),
-        Box::new(Recording { outcome: Err(voltip_inject::InjectError::Clipboard("busy".into())), calls: AtomicUsize::new(0) }),
-        Box::new(Recording { outcome: Ok(voltip_inject::Injection::pasted(0)), calls: AtomicUsize::new(0) }),
+        InsertPrefs::shared(InjectMode::Paste),
+        Arc::new(Recording { outcome: Err(voltip_inject::InjectError::Clipboard("busy".into())), calls: AtomicUsize::new(0) }),
+        Arc::new(Recording { outcome: Ok(voltip_inject::Injection::pasted(0)), calls: AtomicUsize::new(0) }),
     );
     assert_eq!(failing.inject("x").unwrap_err(), DictationError::Inject("clipboard: busy".into()));
 }
@@ -334,7 +334,7 @@ async fn the_engine_warms_the_selected_local_model_before_the_first_take() {
     let loads = Arc::new(Mutex::new(Vec::new()));
     let local = LocalTranscriber::with_loader(root.path(), CATALOGUE, Arc::new(Counting(loads.clone())));
     let mut ports = voltip_core::dictation::fakes::ports();
-    ports.factory = engine_factory(Arc::new(Mutex::new(InjectMode::Paste)), local.clone(), None, voltip_net::Network::new());
+    ports.factory = engine_factory(InsertPrefs::shared(InjectMode::Paste), local.clone(), None, voltip_net::Network::new());
     let on = |id: &str| {
         ResolvedEngines::resolve(
             &EngineSettings { asr_provider: ProviderId::Local, local_model: Some(id.into()), ..EngineSettings::default() },

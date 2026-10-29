@@ -11,9 +11,9 @@ use parking_lot::Mutex;
 
 use super::engine::DictationPorts;
 use super::ports::{
-    AudioSource, Capture, CaptureOptions, DictationError, ForegroundApp, ForegroundProbe, InjectNote, Injection, Injector, LIVE_CHUNK_SAMPLES, LevelFrame,
-    LivePcm, PCM_SAMPLE_RATE_HZ, PcmStream, Recording, RefineHints, Refined, Refiner, Segment, SelectionTiming, StreamEvent, StreamFinal, StreamingSession,
-    StreamingTranscriber, Transcriber, Transcript, Via,
+    AudioSource, Capture, CaptureOptions, DictationError, ForegroundApp, ForegroundProbe, InjectNote, Injection, Injector, InsertSession, Inserted,
+    LIVE_CHUNK_SAMPLES, LevelFrame, LivePcm, PCM_SAMPLE_RATE_HZ, PcmStream, Recording, RefineHints, Refined, Refiner, Segment, SelectionTiming, StreamEvent,
+    StreamFinal, StreamingSession, StreamingTranscriber, Transcriber, Transcript, Via,
 };
 use super::wav;
 use crate::hotkey::Modifier;
@@ -811,6 +811,11 @@ impl FakeProbe {
         *self.reply.lock() = ProbeReply::Nothing;
     }
 
+    /// Hang from the next call on, until [`FakeProbe::release`].
+    pub fn set_hanging(&self) {
+        *self.reply.lock() = ProbeReply::Hang;
+    }
+
     /// Let hanging calls (current and future) return.
     pub fn release(&self) {
         let (open, cv) = &*self.gate;
@@ -881,9 +886,28 @@ impl Gate {
     }
 }
 
+/// One step of a [`FakeInjector`] insert session (docs/dictation.md §14.3), in order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum InsertEvent {
+    /// A session began.
+    Begin,
+    /// A piece was delivered: its text.
+    Piece(String),
+    /// `may_deliver` called a piece off: its text.
+    CalledOff(String),
+    /// The session finished.
+    Finish,
+    /// The session was aborted.
+    Abort,
+    /// The session was dropped without finishing or aborting.
+    Dropped,
+}
+
 /// Injector stand-in: records every text it was given. Optionally gated ([`FakeInjector::gated`]):
 /// every call then blocks until a permit is [`FakeInjector::release`]d, so a test can observe what
-/// the core does while an injection is in flight. For voice edit (docs/dictation.md §19) it also
+/// the core does while an injection is in flight. In an insert session the gate holds a piece
+/// before it asks `may_deliver`; [`FakeInjector::delivery_gated`] holds it after, while it is
+/// being delivered. For voice edit (docs/dictation.md §19) it also
 /// plays the foreground application's selection ([`FakeInjector::with_selection`]; nothing is
 /// selected by default), records every copy with its held modifiers, can gate the copies
 /// ([`FakeInjector::copy_gated`]) and report [`SelectionTiming::AfterKeyUp`].
@@ -901,6 +925,10 @@ pub struct FakeInjector {
     clipboard: Mutex<Vec<String>>,
     /// Which application ids are terminals (docs/dictation.md §19.2).
     terminals: Arc<dyn Fn(&str) -> bool + Send + Sync>,
+    /// Holds a session's piece once `may_deliver` agreed.
+    delivery_gate: Option<Arc<Gate>>,
+    /// Every insert session step.
+    events: Mutex<Vec<InsertEvent>>,
 }
 
 impl FakeInjector {
@@ -937,6 +965,8 @@ impl FakeInjector {
             copy_gate: None,
             clipboard: Mutex::new(Vec::new()),
             terminals: Arc::new(|_: &str| false),
+            delivery_gate: None,
+            events: Mutex::new(Vec::new()),
         }
     }
 
@@ -1021,13 +1051,32 @@ impl FakeInjector {
     pub fn clipboard_copies(&self) -> Vec<String> {
         self.clipboard.lock().clone()
     }
-}
 
-impl Injector for FakeInjector {
-    fn inject(&self, text: &str) -> Result<Injection, DictationError> {
-        if let Some(gate) = &self.gate {
-            gate.pass();
+    /// Every session piece that `may_deliver` let through blocks, while it is being delivered,
+    /// until [`FakeInjector::release_deliveries`] grants it a permit.
+    pub fn delivery_gated(self) -> Self {
+        Self { delivery_gate: Some(Arc::new(Gate::default())), ..self }
+    }
+
+    /// Let `n` held deliveries through.
+    pub fn release_deliveries(&self, n: usize) {
+        if let Some(gate) = &self.delivery_gate {
+            gate.release(n);
         }
+    }
+
+    /// Deliveries held right now.
+    pub fn deliveries_waiting(&self) -> usize {
+        self.delivery_gate.as_ref().map_or(0, |g| g.waiting.load(Ordering::SeqCst))
+    }
+
+    /// Every insert session step so far, in order.
+    pub fn events(&self) -> Vec<InsertEvent> {
+        self.events.lock().clone()
+    }
+
+    /// Record `text` and answer with the next reply.
+    fn deliver(&self, text: &str) -> Result<Injection, DictationError> {
         self.injected.lock().push(text.to_owned());
         let reply = self.first.lock().pop_front().unwrap_or_else(|| self.reply.clone());
         match reply {
@@ -1035,6 +1084,69 @@ impl Injector for FakeInjector {
             InjectReply::Clipboard(note) => Ok(Injection { via: Via::Clipboard, note }),
             InjectReply::Err(m) => Err(DictationError::Inject(m)),
         }
+    }
+}
+
+/// A [`FakeInjector`] insert session: the gate before `may_deliver`, the delivery gate after.
+struct FakeInsert {
+    fake: Arc<FakeInjector>,
+    ended: bool,
+}
+
+impl FakeInsert {
+    fn end(&mut self, event: InsertEvent) {
+        if !std::mem::replace(&mut self.ended, true) {
+            self.fake.events.lock().push(event);
+        }
+    }
+}
+
+impl InsertSession for FakeInsert {
+    fn piece(&mut self, text: &str, may_deliver: &dyn Fn() -> bool) -> Result<Inserted, DictationError> {
+        if self.ended {
+            return Ok(Inserted::Cancelled);
+        }
+        if let Some(gate) = &self.fake.gate {
+            gate.pass();
+        }
+        if !may_deliver() {
+            self.fake.events.lock().push(InsertEvent::CalledOff(text.to_owned()));
+            return Ok(Inserted::Cancelled);
+        }
+        if let Some(gate) = &self.fake.delivery_gate {
+            gate.pass();
+        }
+        let out = self.fake.deliver(text);
+        self.fake.events.lock().push(InsertEvent::Piece(text.to_owned()));
+        out.map(Inserted::Delivered)
+    }
+
+    fn finish(&mut self) {
+        self.end(InsertEvent::Finish);
+    }
+
+    fn abort(&mut self) {
+        self.end(InsertEvent::Abort);
+    }
+}
+
+impl Drop for FakeInsert {
+    fn drop(&mut self) {
+        self.end(InsertEvent::Dropped);
+    }
+}
+
+impl Injector for FakeInjector {
+    fn inject(&self, text: &str) -> Result<Injection, DictationError> {
+        if let Some(gate) = &self.gate {
+            gate.pass();
+        }
+        self.deliver(text)
+    }
+
+    fn begin_insert(self: Arc<Self>) -> Box<dyn InsertSession> {
+        self.events.lock().push(InsertEvent::Begin);
+        Box::new(FakeInsert { fake: self, ended: false })
     }
 
     fn copy(&self, text: &str) -> Result<(), DictationError> {
