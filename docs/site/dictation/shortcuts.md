@@ -20,6 +20,8 @@ Settings → Shortcuts offers three ways for the shortcut to control a recording
 
 For the third mode, **Short-press threshold** sets how long a press may last and still count as short (300 ms by default). In every mode, **Keep recording after release** keeps the microphone open for up to five seconds after you stop, so the last word is not cut off.
 
+When you hold to talk and the release never reaches Voltip (for example because another program caught the key at that moment), Voltip notices within a second that the key is up and ends the recording as usual. This works on Windows, on a Mac and in an X11 session on Linux.
+
 ## A single key or mouse button
 
 A single key can start dictation on its own, in addition to the shortcut: Right Ctrl, Right Alt, Right Shift, the right Windows, Command or Super key, the Fn key on a Mac, or the middle, back or forward mouse button. It follows the same recording mode as the shortcut.
@@ -29,6 +31,8 @@ A single key can start dictation on its own, in addition to the shortcut: Right 
 - On a Mac, set **When pressing the 🌐 key** to **Do Nothing** under System Settings → Keyboard before using Fn.
 - On a Mac the single key needs the Accessibility permission, which Voltip already asks for to paste.
 - A pure Wayland session does not allow it.
+
+Windows sometimes stops Voltip from watching the single key, for example when the computer is very busy for a moment. Voltip notices and restores it without a restart, and it starts watching again after the computer wakes from sleep or is unlocked. **Settings → Shortcuts** shows when it last recovered. On a Mac, if the Accessibility permission is withdrawn, the setting says so and recovers once the permission is granted again; on Linux, Voltip reconnects when the connection to the X server is lost.
 
 ## The overlay
 

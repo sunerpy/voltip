@@ -24,6 +24,12 @@ The **Language** setting on the Speech models page's **Recognition** tab is pass
 
 When **Silence trimming** is on, a 1.8 MB silence detection model is downloaded with the first local model.
 
+### Longer recordings
+
+The longer the recording a local model recognises in one go, the more words it misses. In our tests with Chinese and English speech from the FLEURS test set, SenseVoice Small's Chinese character error rate was 8.9% at 30 seconds and 16.7% at 60 seconds; Qwen3-ASR 0.6B's English word error rate rose from 5.2% at 30 seconds to 10.8% at 60 seconds, and recordings of 90 seconds or more could fail. Recordings longer than 30 seconds are therefore split at pauses, recognised part by part and joined into one text. This happens automatically; recordings longer than 2 minutes are still recognised in parts while you record.
+
+After you cancel a dictation, the next one does not wait for the cancelled recognition to finish: with SenseVoice or Paraformer, Voltip loads a second copy of the model for it; with Qwen3-ASR, it waits at most for the part being recognised.
+
 ## Downloading
 
 - Release packages download from the project's own mirror first, then from Hugging Face, then from hf-mirror.com. When a source is slow or unreachable, Voltip switches to the next one by itself.
@@ -64,6 +70,8 @@ Under **This computer**, **Run on** offers:
 - **GPU**: the graphics card, and which one if there are several.
 
 Only the two Qwen3-ASR models use the graphics card: through Vulkan on Windows and Linux, which needs a graphics driver with Vulkan support, and through Metal on a Mac. SenseVoice, Paraformer and the live transcription model always run on the processor. If the graphics card cannot be used, Voltip falls back to the processor and dictation continues.
+
+If the graphics card fails during recognition, Voltip recognises the recording again on the processor, and **Recognised on** in the [history](/dictation/history) details says so. After a second failure within 10 minutes, the processor is used until Voltip restarts.
 
 The first run on a graphics card takes longer, because the driver prepares the model for it once: about 13 seconds on an NVIDIA L40S and about two minutes on a Tesla T4 in our measurements. Later runs start quickly.
 

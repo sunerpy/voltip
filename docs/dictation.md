@@ -634,6 +634,7 @@ pub enum ModelInstallState {
 
 - **transcribe.cpp（Qwen3-ASR 两档）**：`cpu` = `Backend::Cpu`；`auto` = `Backend::Auto`（构建里有 GPU 后端就用 GPU，否则 CPU）；`gpu` = 按名字找 `transcribe_cpp::devices()` 里的 GPU（找不到名字用第一块），`ModelOptions.device` 精确指定。没有 GPU、或 GPU 加载失败（驱动、显存）时退回 CPU 并记日志，不让识别失败。线程数进 `SessionOptions.n_threads`（缺省 0 = 库默认）。实际后端（`Model::backend()`：`CPU` / `Metal` / `Vulkan0`）记在日志，`--transcribe-file --json` 输出 `backend`。
 - **sherpa-onnx（SenseVoice、Paraformer、实时预览）**：只在 CPU 上运行；线程数生效（缺省 `default_threads()`，≤ 4），设备选择不适用。
+- **识别中出错**：GPU 上的设备或显存错误让这一条改用 CPU 重试，10 分钟内第二次之后重启前都用 CPU，历史详情写明（§29.5）。
 - **构建**：macOS 打开 transcribe.cpp 的 `metal`（metallib 内嵌，无旁路文件）。Linux / Windows 的 Vulkan 在 `voltip-asr-local` 的 `vulkan` 特性（桌面壳 `gpu-vulkan`）后面：两个打包脚本和发布工作流都打开它，测试和 lint 门不打开（它们不装 Vulkan SDK）。`scripts/lib/vulkan-sdk.sh` 按版本和 SHA-256 固定 LunarG 的 Linux SDK（头文件、glslc、SPIRV-Headers、链接用的 loader）和 Windows 运行时组件（Khronos loader `vulkan-1.dll`；Windows 包在 Linux 上交叉构建，导入库 `vulkan-1.lib` 由 `llvm-dlltool` 从这个 DLL 的导出表生成），下载到 `~/.cache/voltip-vulkan`；`TRANSCRIBE_CMAKE_ARGS` 在 `.cargo/config.toml` 的 CPU 基线上加 SDK 路径，`VOLTIP_VULKAN_LIB_DIR` 告诉链接器 loader 在哪（transcribe.cpp 的链接清单只写库名）。验证门用显式特性列表（`scripts/lib/rust-features.sh`）编译除 GPU 后端外的全部特性，`scripts/check-rust-features.sh` 保证新特性不会漏掉。
 - **运行时**：loader 动态链接。Windows 包把 `vulkan-1.dll` 和它的许可证放在 exe 旁边（安装包和便携 zip 都带）；Linux 的 deb / rpm 依赖系统的 `libvulkan1` / `libvulkan.so.1()(64bit)`，AppImage 自带 `libvulkan.so.1`。没有 Vulkan 驱动时 loader 报告没有设备（ggml 的注册会捕获初始化失败），模型在 CPU 上跑；ggml 只用独立 / 集成 GPU，llvmpipe 一类 CPU 实现不算。打包脚本检查可执行文件确实链接了 loader（`vulkan-1.dll` 导入 / `NEEDED libvulkan.so.1`），并在构建机上无头运行 `--list-compute`。
 - **退出**：Linux 上 NVIDIA 驱动自己的析构（`libGLX_nvidia.so.0` → libglvnd `libEGL` 的 `eglReleaseThread`）在 Vulkan 后端初始化过、却没加载模型的进程里会重复释放内存，正常退出变成 SIGABRT（L40S、驱动 580.126 实测，换 Ubuntu 自带的 1.3.204 loader 一样）。桌面壳因此在 Linux 上刷新 stdout / stderr 后用 `_exit` 退出（`src/exit.rs`；无头命令直接退，GUI 在 Tauri 清理完之后退，更新后的重启仍走 Tauri 自己的流程）；核心的设置和历史在变化时就已写盘，不依赖退出处理。
@@ -647,7 +648,7 @@ pub enum ModelInstallState {
 整段识别的模型在第一次听写前就加载好，第一次按热键不再多等一次加载（CPU 上 0.6–2 s，GPU 首次 10 s 以上）。
 
 - **端口**：`Transcriber::warm(language)`，默认什么都不做（云端客户端没有要加载的东西）。核心在构造 `DictationEngine` 时和每次 `configure`（设置、密钥变化，模型下载完成或删除后的重新扫描）之后调用，语言取配置里的语言提示。按下热键时不预热：场景可能换语言（§18.4），这次录音自己会加载它需要的。
-- **本地实现**：`LocalTranscriber::warm_up` 在独立线程 `voltip-asr-warm` 上把选中的模型按当前语言与运行设备（§10.6）加载进共享缓存，和录音用的是同一个槽，所以录音直接复用。模型未安装、或同一模型已按同样的语言和设备在内存里时什么都不做；正在进行的录音占着识别器时线程等它结束；等待期间又来了新的预热（例如连续改了两次设置），旧的让位，只加载最新的。换模型时先释放旧的，内存里始终只有一个整段识别模型。失败只记 warn：下一次录音会再加载并照常报错。
+- **本地实现**：`LocalTranscriber::warm_up` 在独立线程 `voltip-asr-warm` 上把选中的模型按当前语言与运行设备（§10.6）加载进录音共用的实例池（§29.6），所以录音直接复用。模型未安装、或同一模型已按同样的语言和设备在内存里时什么都不做；正在进行的录音占着识别器时线程等它结束；等待期间又来了新的预热（例如连续改了两次设置），旧的让位，只加载最新的。换模型时先释放旧的，内存里始终只有一个整段识别模型（sherpa-onnx 的同一个模型最多两个实例，§29.6）。失败只记 warn：下一次录音会再加载并照常报错。
 - 实时预览的流式模型另有自己的预热（§11，`StreamingTranscriber::warm`），规则不变。
 
 ### 10.8 手动下载与导入（2026-10-02 用户要求）
@@ -845,6 +846,7 @@ TS 侧已接（2026-09-26）：`schema.ts` `CommandArgs` 有 `hotkey_edge: { pre
 - **只认硬件输入**：Voltip 自己的粘贴、复制组合键和其他注入的输入都不算（Windows `LLKHF_INJECTED` / `LLMHF_INJECTED`，macOS enigo 的 `EVENT_SOURCE_USER_DATA` 标记，X11 的 XTEST 设备），所以粘贴永远不会被当成组合。
 - **取消键**：`hold` 下按着右侧修饰键时 Esc 带着这个修饰键，`cancel_shortcuts` 因此也注册「修饰键 + Escape」（右 Shift → `Shift+Escape`）；按 Esc 本身也是组合，同样会取消。
 - **录制器打开时**：钩子卸下，录制器里按右 Ctrl + K 不会开始录音；关闭后按设置重新安装。
+- **钩子的健康**：系统摘掉钩子、睡眠唤醒、解锁、辅助功能权限被收回、X 连接断开后的自动恢复，以及按住录音漏掉松开时的对账，见 §29。
 
 各平台（钩子在 `crates/voltip-hooks/src/{windows,macos,x11}.rs`，桌面壳的 `apps/desktop/src-tauri/src/solo_key.rs` 决定哪些键可用并转发边沿；纯规则与状态机在 `crates/voltip-platform/src/solo_key.rs`，每个主机都测。三个钩子各有一个 `#[ignore]` 的真机测试：CI 在 Windows Server 桌面（`hooks-windows`）、macOS（CI 的 `macos` job，先在 TCC 里给测试程序授予辅助功能）和 Xvfb（`smoke-desktop`）上跑）：
 
@@ -2504,6 +2506,118 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 - `focus_macos` 只在 Apple 芯片腿上跑（与 event tap 相同），Intel 腿的时长离发版候选的 45 分钟门槛不远。
 - 粘贴之前还不判断焦点控件能否编辑（docs/roadmap.md 第 2 条）；不可编辑时照常粘贴，再由插入确认报「没有写进去」。
 - Linux 上基于 Chromium 的应用和没有开启辅助功能的会话读不到，Windows 与 macOS 上只提供整段值的控件只能证明写入：这些情形都是「无法确认」，不出卡片。
+
+## 29. 热键健康与本机推理恢复（2026-10-30）
+
+此前单键触发的输入钩子被系统摘掉后，要重启 Voltip 才能恢复；按住录音时漏掉了松开，录音不会结束（R03）。本机识别出错后，出错的识别器留在内存里；被取消的推理占着识别器，下一次本机识别要等它跑完（R04）。本节是它们的恢复规则。
+
+### 29.1 Windows 单键钩子
+
+- **静默摘除**：低级钩子的回调超过 `LowLevelHooksTimeout` 时，系统把钩子摘掉，既不通知，钩子线程也照常运行，单键从此没有反应。
+- **旁路**：钩子线程建一个从不显示的窗口（`WS_POPUP`，`WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`；`RIDEV_INPUTSINK` 需要真窗口，所以不是 `HWND_MESSAGE`），在它上面注册 Raw Input 并带 `RIDEV_INPUTSINK`，窗口不在前台也收得到：鼠标总是注册，单键是修饰键时再注册键盘。
+- **与 tao 的关系**：tao 在隐藏的消息窗口上注册了键盘和鼠标的 Raw Input，只用来产生设备事件；同一进程每类设备只有一个接收窗口，后注册的生效。Voltip 不用设备事件，tauri-runtime-wry 只有应用调用 `set_device_event_filter` 时才重新注册，所以钩子线程的注册取代 tao 的，不影响别的功能。`scripts/check-no-device-event-filter.sh`（`make lint`）保证没有代码调用它；以后真要调用，这里的判定就要改。
+- **判定**（`voltip_hooks::watch::HookWatch`，键盘与鼠标各一个）：自上一次钩子回调以来，Raw Input 收到至少 3 次来自真实设备的按下（`hDevice` 非空；测试的注入输入在 `synthetic` 模式下也算），而且第一次距今至少 1 s，就认为钩子已被摘掉，卸下后在同一线程重新安装。钩子的任何一次回调都让计数清零。没有按键就没有判定：很久不按键从不算故障。
+- **再装仍然听不到**：另一个程序的钩子排在前面、把输入截下时，重装的钩子同样收不到，判定不会因此每按三下就重装一次：没有回调回应的判定之后，下一次判定要等 1、2、4 …… 最多 60 s（`retry_after`）。以管理员身份运行的窗口在前台时（UIPI），钩子和 Raw Input 都收不到这个窗口的输入，不会产生判定。
+- **唤醒与解锁**：`RegisterSuspendResumeNotification`（`PBT_APMRESUMEAUTOMATIC`、`PBT_APMRESUMESUSPEND`）和 `WTSRegisterSessionNotification(NOTIFY_FOR_THIS_SESSION)`（`WTS_SESSION_UNLOCK`）到达这个窗口时，不论钩子是否还在，一律卸下重装。
+- **复位**：每次重装都清空 `SoloTracker` 的按下状态，经通道发 `SoloEdge::Recovered`；重装失败发 `SoloEdge::Lost(SoloLoss::Hook)`。按着触发键时钩子回来，下一次按下之前不报告任何边沿，所以恢复不会凭空开始或结束录音。
+- **测试**：`watch.rs` 的判定、退避和消息规则在每个主机上跑；真钩子测试（`#[ignore]`，CI 的 `hooks-windows`）用只在测试里有的 `WM_FORCE_UNHOOK` 模拟系统摘除，再用 `SendInput` 按三次，收到 `Recovered` 后单键照常有边沿（`regression_a_hook_windows_removed_silently_is_put_back`，键盘与鼠标各一次）；唤醒与解锁的消息同样让钩子重装（`regression_waking_and_unlocking_put_the_hook_back`）。
+
+### 29.2 macOS 与 X11
+
+- **macOS**：系统停用事件监听（回调超时、用户输入）时重新启用；停用事件有时不送达，run loop 因此每 2 s 检查一次 `CGEventTapIsEnabled`。重建失败（通常是辅助功能权限被收回）按 1、2、4 …… 最多 60 s 重试，期间 `solo_error` 说明要在「系统设置 › 隐私与安全性 › 辅助功能」里重新允许 Voltip；成功后清空并发 `Recovered`。桌面壳订阅 `NSWorkspaceDidWakeNotification` 和 `NSWorkspaceSessionDidBecomeActiveNotification`，收到后 `SoloHook::refresh()`：事件监听不在启用状态就重新启用或重建。真测试（`macos` job，两台 Mac）用 `CGEventTapEnable(tap, false)` 模拟系统停用（`regression_a_tap_the_system_disables_is_put_back`）。
+- **X11**：与 X 服务器的连接断开时监听结束，按同样的退避重连，期间 `solo_error` 说明正在重新连接，连上后发 `Recovered`。Xvfb 里的真测试用 `KillClient` 断开连接（`regression_a_lost_x_connection_comes_back`）。
+- 纯 Wayland 没有单键触发，不变。
+
+### 29.3 状态与界面
+
+- `HotkeyStatus.solo_recovered_at: Option<u64>`：最近一次自动恢复的时间（毫秒）。钩子正在恢复时 `solo_error` 写明哪个键、为什么，恢复后清空，`solo_pressed` 复位。快捷键设置页在单键一行下显示「已自动恢复（时间）」或错误。
+- `sync_solo` 在钩子线程已经结束（转发循环退出）时换一个新钩子，不再「同一个键就保留旧钩子」（`regression_a_hook_whose_thread_ended_is_replaced`）。
+
+### 29.4 漏掉的松开（`apps/desktop/src-tauri/src/held.rs`）
+
+按住式录音靠松开边沿结束，这个边沿可能丢：钩子在按住期间被摘掉、按住时钩子刚好重装、窗口系统把松开留给了别的程序。
+
+- 壳记下转发过的每个按下（全局快捷键的按下、单键钩子的按下边沿），归到它开始的那次录音：按下后 2 s（`START_GRACE_MS`）内开始的第一个同用途录音（`DictationStatus.session`）。核心开始录音前读到的状态还是空闲，所以按下要等它；这次录音结束、换成了另一次录音、2 s 内没有开始录音，或转发了松开，就忘掉这个按下（`regression_a_press_read_before_its_take_started_still_ends_that_take`：满载 200 次里有 1 次，按下在核心开始录音前被一次读数清掉，漏掉的松开没有补上）。
+- 这次录音是 `hold` 或 `hold_or_toggle`、正在录音且没有锁定（`Listening { locked: false }`），或已在处理中时，每 250 ms（`POLL_EVERY`）读一次这个键的物理状态；连续两次读到已松开，就补发松开边沿（时间取第一次读到松开的时刻）并记一条 warn。`toggle`、锁定的录音、另一种用途的录音不读。
+- **读物理状态**（`voltip_hooks::is_down`）：Windows 用 `GetAsyncKeyState`；钩子吞掉的鼠标键既不进 Raw Input 也不进 `GetAsyncKeyState`，所以鼠标单键读钩子自己记下的状态。macOS 用 HID 系统状态（`CGEventSourceKeyState`、`CGEventSourceButtonState`）。X11 用自己的连接：键盘 `QueryKeymap`，鼠标 XInput 2 的 `XIQueryPointer`（核心 `QueryPointer` 没有 8、9 号键）。
+- **读不到就不做**：读数为 `None`（纯 Wayland；XWayland，它只知道 X11 窗口上按下的键；表里没有的键）时什么都不做，录音照旧靠松开边沿结束。桌面壳只在 X11 会话里读 Linux 的状态。
+- 测试：`held.rs` 的纯函数（连续两次、`None`、锁定、`toggle`、另一种用途、录音结束）；`tests/ipc.rs@regression_a_missed_release_stops_a_hold_take`（假读数：按住 → 读数变成松开 → 核心收到松开，听写停止）。
+
+### 29.5 本机识别的错误
+
+`Recognizer::transcribe(&mut self, rate, samples, abort: &Abort) -> Result<String, RecognizeError>`；`RecognizeError { kind: LocalFailure, message }`。`LocalFailure`（`voltip_core::dictation`，公开，候补模型按它决定是否换下一个）：
+
+| 种类 | transcribe.cpp 的错误 | 处理 |
+|---|---|---|
+| `device` | `Backend` | 丢掉这个实例；在 GPU 上时本次改用 CPU 重试一次 |
+| `memory` | `OutOfMemory` | 同上 |
+| `model` | `ModelLoad`、`ModelFileNotFound`，加载失败 | 丢掉这个模型的全部实例：空闲的立即丢，正在用的用完再丢 |
+| `input_too_long` | `InputTooLong` | 保留实例 |
+| `aborted` | `Aborted`、`OutputTruncated` | 保留实例 |
+| `other` | 其余；sherpa-onnx 的错误都是这一种 | 保留实例 |
+
+- **改用 CPU**：GPU 上出现 `device` 或 `memory` 时，这次录音以 `Compute { device: Cpu }` 加载并重试一次。10 分钟内第二次（`GPU_STRIKE_WINDOW`）之后，这次运行剩下的时间里本机模型都在 CPU 上（内存里的标志，重启 Voltip 恢复）。CPU 也失败时，错误是两次的说明合在一起：「显卡出错（…），改用 CPU 也失败（…）」。
+- **说明实际后端**：`Transcript.backend_note: Option<AsrNote>`（`gpu_failed_ran_on_cpu`：这一条改用 CPU；`gpu_off_until_restart`：显卡多次出错，重启前都用 CPU），进历史条目的可选字段 `asr_note`（旧条目没有这个字段照常读取）；历史详情的技术信息里显示「识别方式」。长录音取各段里最重的一条。
+- 默认从不因为本机失败把音频发到云端；候补模型另有规则。
+
+### 29.6 取消与实例池（`crates/voltip-asr-local/src/pool.rs`）
+
+此前一把锁同时包住加载和推理：取消一次听写后，被取消的推理还在跑，下一次本机识别要等它。
+
+- **取消**：`LocalTranscriber::transcribe` 持有一个被丢弃时设置 `Abort` 的守卫；核心取消听写时中止流水线任务，这个 future 被丢弃。识别在阻塞线程上继续到当前这一段（§29.7）结束，之后不再开始下一段；还没开始的推理两个引擎都不再开始。
+- **transcribe.cpp**：每次推理把 `Abort` 接到一个新的 `CancelToken`（`Session::set_cancel_token`）。transcribe-cpp 的 Rust 文档说取消在解码步之间检查，但 0.2.3 的 Qwen3-ASR 是一次完成的推理，只在开始前看一次（`src/arch/qwen3_asr/model.cpp:539`），所以进行中的那一段照样跑完：真模型测试里，60 s 的录音在第一段中途取消后，下一次识别在第一段结束后拿到实例（`real_a_cancelled_gguf_take_frees_the_model_after_its_piece`）。每个模型只有一个实例（模型大），下一次识别最多等一段：30 s 的片段推理实测最慢 Linux 3.6 s、Windows 构建机 8.4 s。
+- **sherpa-onnx**（SenseVoice、Paraformer）：解码是同步调用，没有停止的接口。被取消的那一段在后台跑完，结果丢弃；下一次识别用第二个实例，所以每个模型最多两个实例（int8 约 230 MB，多一个可以接受）。
+- **一次一个模型**：换模型时先丢掉旧模型的空闲实例；旧模型还有实例在用时，等它用完。同一个模型、语言和设备的加载正在进行时，等它，不重复加载。
+- **等待上限**：一次识别拿实例最多等 `LOCK_WAIT`（75 s，§29.8），等不到就失败：「本地识别失败：上一次识别还没结束」。无头服务端同时处理最多 `MAX_CONCURRENCY`（8）个请求，它们轮流用一个识别器，所以服务端等 `LOCK_WAIT × MAX_CONCURRENCY`（10 分钟）。
+- **不做独立进程**：一次推理在 `max_piece` 之内只要几秒，sherpa 有两个实例、transcribe.cpp 最多等一段，已经够用；原生崩溃要隔离时再评估。
+- 预热（§10.7）用同一个池：模型已在内存或正在加载时不再加载；正在用的实例属于另一个模型时等它，期间又有新的预热就让位。
+
+### 29.7 一次识别的最长音频（`ModelEntry.max_piece`）
+
+- 每个整段识别模型有 `max_piece`（实时预览模型和 VAD 为 0，不适用）。更长的输入由 `segmenter::pieces` 在模型内部切开：一段达到 `max_piece` 的一半（最多 20 s）后，在 VAD 报告的第一个停顿处切；一直没有停顿，到 `max_piece` 时在最后 5 s 里最安静的 200 ms 处切；没有 VAD 模型时只做后一种切法。各段在同一个实例上依次识别，按长录音的规则（`long::assemble`）拼回，对核心仍是一段文字；取消时不再开始下一段。
+- 超过 2 分钟的长录音路径不变（§22）：它的段（20–45 s）交给识别器后，同样按 `max_piece` 再切。
+
+### 29.8 测量（写定 `max_piece` 与 `LOCK_WAIT`）
+
+- **语料**（`scripts/measure/make-corpus.py`，`/usr/bin/python3 -I` 运行）：FLEURS 的 `cmn_hans_cn` 与 `en_us` 测试集（CC BY 4.0，Hugging Face 修订 `70bb2e84`，归档按 Hub 报告的 SHA-256 校验），句子之间留 300 ms 静音，拼成 30、60、90、119、121 s 的片段，中英文各 10 条，参考文本同样拼接。同一条片段的较短版本是较长版本的前缀，各长度比较的是同样的语音。音频与结果放在 `/tmp/voltip-measure/`，不提交。PR-5、PR-9 复用这个生成器（`--sentence-range`、`--count`、`--langs`）。
+- **测量**（`scripts/measure/local-pieces.sh`；Windows 上 `scripts/windows-remote.sh gate pieces <id>=<模型目录>`，在构建机的锁里运行）：`crates/voltip-asr-local/examples/piece_quality.rs` 用生产加载器在 CPU 上、以引擎缺省的线程数把每条片段一次送进模型，不经过分段；中文按简体字算 CER，英文按词算 WER，都不计标点和大小写；同时记下推理耗时、实时率和进程的峰值内存（Linux `VmHWM`，与 `/usr/bin/time -v` 的数一致；Windows `PeakWorkingSet64`）。`scripts/measure/summarize-pieces.py` 汇总成 `summary.csv`，并按下面的规则算出 `decisions.csv`。
+- **规则**：`max_piece` = 30、60、90、119 s 中最大的 L，两台机器、两种语言都满足「没有报错，且错误率不超过同一条件下 30 s 的错误率 + 1 个百分点」；一个都没有就取 30 s。`LOCK_WAIT` = 两台机器上 121 s 片段最慢一次推理 × 2，向上取整到 5 s，至少 30 s。
+- **机器**：本机 Linux（32 核服务器 CPU）；Windows 构建机（Xeon 8259CL，8 核 16 线程）。识别质量是模型的属性，没有报错的长度上两台机器的错误率相差不到 1.1 个百分点；仓库没有可用的显卡机器，显卡不测（显卡出错由 §29.5 的 CPU 重试兜住）。
+- **结果**（2026-10-30，错误率是 10 条片段合计的编辑数除以参考长度；括号里是报错的条数，全部是 transcribe.cpp 的 `OutputTruncated`：生成预算用完，Linux 约 12–15 s、Windows 约 30–37 s 后返回）：
+
+  | 模型 | 语言 | 机器 | 30 s | 60 s | 90 s | 119 s | 121 s | 121 s 最慢推理 | 峰值内存（121 s） |
+  |---|---|---|---|---|---|---|---|---|---|
+  | SenseVoice Small | 中文 CER | Linux | 8.89% | 16.71% | 23.63% | 30.25% | 29.86% | 5.2 s | 1015 MB |
+  | | | Windows | 9.05% | 16.59% | 22.93% | 31.08% | 29.69% | 10.7 s | 1016 MB |
+  | | 英文 WER | Linux | 9.32% | 10.15% | 15.97% | 21.38% | 20.61% | 5.3 s | |
+  | | | Windows | 8.96% | 10.48% | 16.55% | 21.50% | 21.09% | 10.7 s | |
+  | Qwen3-ASR 0.6B | 中文 CER | Linux | 8.10% | 8.41% | 9.81% | 12.08%（3） | 13.74%（4） | 14.9 s | 3398 MB |
+  | | | Windows | 7.94% | 8.90% | 10.85% | 12.25%（3） | 13.29%（4） | 37.4 s | 3168 MB |
+  | | 英文 WER | Linux | 5.20% | 10.82% | 23.21%（2） | 33.23%（6） | 37.96%（7） | 14.9 s | |
+  | | | Windows | 5.20% | 11.06% | 23.14%（2） | 34.19%（6） | 39.56%（9） | 37.3 s | |
+
+  实时率（推理 / 音频，30 s → 121 s）：SenseVoice Linux 0.021 → 0.043、Windows 0.045 → 0.087；Qwen3-ASR 0.6B Linux 0.094 → 0.12、Windows 0.23 → 0.30。
+- **结论**：SenseVoice Small 与 Qwen3-ASR 0.6B 的 `max_piece` 都是 30 s。SenseVoice 的长输入大量漏字（119 s 的一条中文片段只输出 134 个字，参考是 361 个）；Qwen3-ASR 0.6B 的英文在 60 s 时就超过界限（漏句），90 s 起开始报错。此前 120 s 以内的录音整段送进模型，30–120 s 的本机听写因此漏字或失败。`LOCK_WAIT` = 2 × 37.4 s，取整为 75 s。
+- **未测**：Paraformer 与 Qwen3-ASR 1.7B 两台机器上都没有，暂取规则的下限 30 s（只会多切几段，不会让识别变差）。
+- 30 s 的界限让 30–120 s 的输入多了几次推理：60 s 的样音拼接片段，Qwen3-ASR 0.6B 分四段共 6.3 s，SenseVoice 1.6 s（Linux）。
+
+### 29.9 门禁
+
+- Rust：`voltip-hooks` 的 `watch.rs`（`no_presses_no_judgement`、`three_presses_the_hook_missed_over_a_second_mean_it_is_gone`、`a_hook_that_still_hears_nothing_is_put_back_less_and_less_often`、`a_hook_put_back_starts_its_count_afresh` 等）；`voltip-platform` 的 `held_key.rs` 与 `SoloTracker::resumed`；三个平台钩子的真测试（见上）；桌面 `held.rs`（含 `regression_a_press_read_before_its_take_started_still_ends_that_take`）、`hotkey.rs`（`the_lone_key_status_follows_the_hook_s_health`、`regression_a_hook_whose_thread_ended_is_replaced`）、`tests/ipc.rs@regression_a_missed_release_stops_a_hold_take`。
+- `voltip-asr-local`：`pool.rs`（实例复用与上限、一次一个模型、驱逐、预热、10 分钟内第二次显卡错误）；`transcriber.rs`（`a_gpu_failure_is_tried_again_on_the_cpu_and_a_second_keeps_the_cpu`、`a_failed_cpu_retry_reports_both_failures`、`a_model_failure_drops_the_model_and_the_next_take_loads_it_again`、`regression_a_cancelled_local_take_releases_the_model`、`regression_a_cancelled_sherpa_take_does_not_block_the_next`、`a_cancelled_take_stops_between_pieces`、`an_input_longer_than_the_model_takes_is_recognised_piece_by_piece`）；`segmenter.rs@an_input_longer_than_max_piece_is_cut_into_pieces_that_fit`；`gguf.rs@transcribe_cpp_errors_map_to_their_kind`；真模型（`tests/real.rs`，`#[ignore]`）：`real_sherpa_long_inputs_are_recognised_like_their_pieces`、`real_gguf_long_inputs_are_recognised_like_their_pieces`（60 s 与 121 s：转写器的文字等于逐段识别再拼接的文字，字数不少于样音单独识别的 80%）、`real_a_cancelled_gguf_take_frees_the_model_after_its_piece`；`catalogue.rs@every_whole_take_model_has_a_max_piece`。
+- 核心：`asr_note` 进历史（`an_asr_note_round_trips_and_older_entries_read_without`、`the_recogniser_s_backend_note_reaches_the_history`、`a_long_take_keeps_its_segments_backend_note`）。
+- `make lint` 的 `check-no-device-event-filter.sh`；`scripts/measure` 的 Python 单测（`make verify` 的 `measure-helpers`）。
+- 依赖时间和线程的测试在满载下（每个逻辑 CPU 一个空转循环）各跑 200 次：`HookWatch`、`held_key` 与 `solo_key`、`held.rs` 与 `hotkey.rs`、`regression_a_missed_release_stops_a_hold_take`、`transcriber.rs` 与 `pool.rs` 的全部测试。第一轮 `regression_a_missed_release_stops_a_hold_take` 有 1 次失败（§29.4 的按下被提前清掉），修正后它与 `held.rs` 各再跑 300 次无失败。
+- 失败原因的确认：钩子判定、对账（含按下被提前清掉的回归）和 X11 重连的测试先对着未实现的版本失败；`voltip-asr-local` 的恢复规则与实现一同写成，用 11 处临时改动（去掉 CPU 重试、显卡永不关闭、不驱逐、取消不设 `Abort`、sherpa 只留一个实例、不分段、段间不看取消、保留被驱逐的实例、两个模型同时在内存、重复加载、预热重复加载）逐一确认对应的测试以预期的原因失败。
+
+### 29.10 未做与限制
+
+- **取消 transcribe.cpp 的推理**：0.2.3 的 Qwen3-ASR 推理中途不能停（§29.6），被取消的录音不再开始下一段，下一次识别最多等正在进行的那一段。计划设想的「GGUF 中止推理」要等上游在解码过程中检查取消；给 transcribe.cpp 第二个实例（像 sherpa 那样）会多占一份模型内存或显存，没有做。
+- **松开对账的平台**：纯 Wayland 与 XWayland 读不到物理状态，不对账，录音照旧靠松开边沿结束。
+- **UIPI**：以管理员身份运行的窗口在前台时，钩子和 Raw Input 都收不到它的输入，这段时间单键不起作用，也不会被误判为钩子被摘掉。
+- **Shift 作单键**：按住 8 s 以上的筛选键提示、连按 5 次的粘滞键提示，要在用户电脑上照实记录后补进本节。
+- **显卡**：识别中出错改用 CPU 的真机路径没有测试（没有可用的显卡机器），由假识别器的单测覆盖。
+- **文字**：`solo_error` 的说明与现有的「无法监听」原因一样由壳生成（中文），英文界面里也显示中文。
 
 ## 31. 音视频文件导入与字幕（2026-10-30）
 
