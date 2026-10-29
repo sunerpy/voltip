@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.2.1](https://github.com/sunerpy/voltip/compare/v0.2.0...v0.2.1) (2026-10-29)
+
+
+### Features
+
+* 悬浮球可在空闲时自动收起到屏幕边缘（默认关闭） ([74bd8cd](https://github.com/sunerpy/voltip/commit/74bd8cdda08b59b9125a05a7c5a944099c612ce7))
+* 手机悬浮球新增手势粘贴，按住说话时向屏幕内侧滑动，识别完成后直接粘贴到输入框 ([#199](https://github.com/sunerpy/voltip/issues/199)) ([74bd8cd](https://github.com/sunerpy/voltip/commit/74bd8cdda08b59b9125a05a7c5a944099c612ce7))
+* 手机支持横屏和平板，横屏时标签栏移到屏幕左侧 ([74bd8cd](https://github.com/sunerpy/voltip/commit/74bd8cdda08b59b9125a05a7c5a944099c612ce7))
+* 新增设置「处理期间切换了窗口」，可改为粘贴到当前窗口 ([9f0ab97](https://github.com/sunerpy/voltip/commit/9f0ab97278330d0764d0e36b4dabc410d7ac34ef))
+* 新增设置「插入后剪贴板」，可改为保留识别结果 ([9f0ab97](https://github.com/sunerpy/voltip/commit/9f0ab97278330d0764d0e36b4dabc410d7ac34ef))
+* 电脑端粘贴后完整恢复剪贴板，处理期间切换了窗口时只复制文字 ([#201](https://github.com/sunerpy/voltip/issues/201)) ([9f0ab97](https://github.com/sunerpy/voltip/commit/9f0ab97278330d0764d0e36b4dabc410d7ac34ef))
+* 粘贴时临时放到剪贴板上的文字不再进入 Windows 剪贴板历史和云剪贴板 ([9f0ab97](https://github.com/sunerpy/voltip/commit/9f0ab97278330d0764d0e36b4dabc410d7ac34ef))
+
+
+### Bug Fixes
+
+* 粘贴开始后按 Esc 不再中途取消，这次听写照常完成并写入历史记录 ([9f0ab97](https://github.com/sunerpy/voltip/commit/9f0ab97278330d0764d0e36b4dabc410d7ac34ef))
+
+
+### Performance Improvements
+
+* 手机安装包经过优化，体积由约 33 MB 减小到约 30 MB ([74bd8cd](https://github.com/sunerpy/voltip/commit/74bd8cdda08b59b9125a05a7c5a944099c612ce7))
+
 ## [0.2.0](https://github.com/sunerpy/voltip/compare/v0.1.9...v0.2.0) (2026-10-28)
 
 
