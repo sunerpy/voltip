@@ -48,6 +48,7 @@ gate rust rust-fmt        cargo fmt --all -- --check
 . scripts/lib/rust-features.sh
 gate rust rust-features   ./scripts/check-rust-features.sh
 gate rust rust-clippy     cargo clippy --workspace --all-targets --features "$RUST_FEATURES" -- -D warnings
+gate rust device-event-filter ./scripts/check-no-device-event-filter.sh
 gate rust cross-check-darwin  cargo check -p voltip-platform -p voltip-inject -p voltip-hooks -p voltip-focus --target aarch64-apple-darwin
 gate rust cross-check-windows cargo check -p voltip-platform -p voltip-inject -p voltip-hooks -p voltip-focus --target x86_64-pc-windows-msvc
 # The test suite runs once, instrumented, with the same features as clippy: coverage-gate is the
@@ -65,6 +66,8 @@ gate web web-bundle      ./scripts/check-web-bundle.sh
 gate web acceptance      ./scripts/check-acceptance-ledger.sh
 gate web no-prod-hosts   .github/scripts/check-no-production-hosts.sh
 gate web release-helpers python3 -m unittest discover -s scripts/release -p "test_*.py"
+# The measurement corpus builder (scripts/measure/, docs/dictation.md §29).
+gate web measure-helpers python3 -m unittest discover -s scripts/measure -p "test_*.py"
 # The self-hosted recognition gateway in its nginx image (deploy/selfhost/); needs Docker, which CI has.
 gate web selfhost-gateway python3 -m unittest discover -s deploy/selfhost -p "test_*.py"
 

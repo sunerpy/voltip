@@ -172,7 +172,8 @@ pub enum SoloInput {
     OtherDown,
 }
 
-/// What the core hears (a `HotkeyEdge`).
+/// What a hook reports: the edges the core hears (a `HotkeyEdge`), and the hook's own health
+/// (docs/dictation.md §29), which only the shell's status hears.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SoloEdge {
     /// The trigger went down on its own.
@@ -182,6 +183,24 @@ pub enum SoloEdge {
     /// Another key or button went down while it was held: the press was the start of a shortcut
     /// (Right Ctrl + C), not a take. Its physical release is not reported.
     Chorded,
+    /// The hook was put back (the system had removed it, the computer woke, the session was
+    /// unlocked, a disabled tap or a lost X connection came back). Nothing counts as held from
+    /// here: a key that was down when it came back reports no edge until it has gone up.
+    Recovered,
+    /// The hook stopped and could not be put back yet; it keeps trying, and says
+    /// [`SoloEdge::Recovered`] when it is back.
+    Lost(SoloLoss),
+}
+
+/// Why a hook could not be put back (`SoloEdge::Lost`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SoloLoss {
+    /// Windows refused to install the hook again.
+    Hook,
+    /// macOS refused the event tap: the Accessibility permission is no longer granted.
+    Accessibility,
+    /// The connection to the X server is gone.
+    Display,
 }
 
 /// Raw input → edges for one trigger: auto-repeat is dropped, the first other key or button during
@@ -198,6 +217,15 @@ impl SoloTracker {
     /// A tracker for `key`, with nothing held.
     pub const fn new(key: SoloKey) -> Self {
         Self { chords: !key.is_mouse(), held: false, chorded: false }
+    }
+
+    /// A tracker for a hook that has just come back (docs/dictation.md §29), when the trigger is
+    /// physically `down` or not. A trigger held across the gap is let go without an edge: its
+    /// auto-repeat and its release report nothing, so a press the hook never saw neither starts a
+    /// take nor ends one; the next press after it is a take again.
+    pub const fn resumed(key: SoloKey, down: bool) -> Self {
+        // `chorded` is what keeps a release from being reported: the press it ends was never one.
+        Self { chords: !key.is_mouse(), held: down, chorded: down }
     }
 
     /// Whether the trigger is down, as far as the input says.
@@ -258,6 +286,19 @@ mod tests {
         );
         // A key held before the trigger went down is no chord.
         assert_eq!(run(SoloKey::RightShift, &[OtherDown, TriggerDown, TriggerUp]), vec![None, Some(Press), Some(Release)]);
+    }
+
+    /// docs/dictation.md §29: a hook put back while its key is held starts no take with that hold.
+    #[test]
+    fn regression_a_hook_that_comes_back_during_a_hold_reports_nothing_until_the_next_press() {
+        let mut tracker = SoloTracker::resumed(SoloKey::RightShift, true);
+        assert!(tracker.held());
+        assert_eq!([TriggerDown, TriggerDown, OtherDown, TriggerUp].map(|i| tracker.feed(i)), [None, None, None, None]);
+        assert_eq!([TriggerDown, TriggerUp].map(|i| tracker.feed(i)), [Some(Press), Some(Release)]);
+        let mut mouse = SoloTracker::resumed(SoloKey::MouseBack, true);
+        assert_eq!([TriggerDown, TriggerUp, TriggerDown, TriggerUp].map(|i| mouse.feed(i)), [None, None, Some(Press), Some(Release)]);
+        // Nothing held: a new tracker.
+        assert_eq!(SoloTracker::resumed(SoloKey::RightCtrl, false), SoloTracker::new(SoloKey::RightCtrl));
     }
 
     #[test]

@@ -312,7 +312,7 @@ pub async fn recognize_segment(
     call: &crate::usage::AsrCall,
 ) -> Result<Transcript, DictationError> {
     if wav::is_silent(wav) {
-        return Ok(Transcript { text: String::new(), latency_ms: 0, model: None });
+        return Ok(Transcript { text: String::new(), latency_ms: 0, model: None, backend_note: None });
     }
     transcriber.transcribe_as(wav, language, glossary, call).await.map(|t| Transcript { text: normalized(script, t.text.trim()), ..t })
 }

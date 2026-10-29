@@ -12,7 +12,7 @@ use parking_lot::Mutex;
 use super::engine::DictationPorts;
 use super::insert_check::{Expected, FocusText, Sample, decide};
 use super::ports::{
-    AudioSource, Capture, CaptureOptions, DictationError, FocusReader, FocusWatch, ForegroundApp, ForegroundProbe, InjectNote, Injection, Injector,
+    AsrNote, AudioSource, Capture, CaptureOptions, DictationError, FocusReader, FocusWatch, ForegroundApp, ForegroundProbe, InjectNote, Injection, Injector,
     InsertSession, Inserted, LIVE_CHUNK_SAMPLES, LevelFrame, LivePcm, PCM_SAMPLE_RATE_HZ, PROBE_DEADLINE, PcmStream, Recording, RefineHints, Refined, Refiner,
     Segment, SelectionTiming, Settled, StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber, Transcriber, Transcript, UnconfirmedWhy, Via,
 };
@@ -397,6 +397,8 @@ pub struct FakeTranscriber {
     usage_calls: Mutex<Vec<crate::usage::AsrCall>>,
     /// A used-up quota says when it is back ([`FakeTranscriber::quota_until`]).
     quota_retry_at: Option<u64>,
+    /// What its transcripts say about the backend that made them ([`FakeTranscriber::with_note`]).
+    note: Option<AsrNote>,
 }
 
 impl FakeTranscriber {
@@ -468,7 +470,13 @@ impl FakeTranscriber {
             quota_after: None,
             usage_calls: Mutex::new(Vec::new()),
             quota_retry_at: None,
+            note: None,
         }
+    }
+
+    /// Its transcripts report `note` (docs/dictation.md §29: the local engine fell back to the CPU).
+    pub fn with_note(self, note: AsrNote) -> Self {
+        Self { note: Some(note), ..self }
     }
 
     /// What every call was for and where its take came from, in order (docs/dictation.md §27);
@@ -536,11 +544,11 @@ impl Transcriber for FakeTranscriber {
             });
         }
         match &self.reply {
-            Reply::Ok(text) => Ok(Transcript { text: text.clone(), latency_ms: FAKE_LATENCY_MS, model: self.model.clone() }),
+            Reply::Ok(text) => Ok(Transcript { text: text.clone(), latency_ms: FAKE_LATENCY_MS, model: self.model.clone(), backend_note: self.note }),
             Reply::Err(e) => Err(e.clone()),
             Reply::Slow(text, delay) => {
                 tokio::time::sleep(*delay).await;
-                Ok(Transcript { text: text.clone(), latency_ms: FAKE_LATENCY_MS, model: self.model.clone() })
+                Ok(Transcript { text: text.clone(), latency_ms: FAKE_LATENCY_MS, model: self.model.clone(), backend_note: self.note })
             }
             Reply::Numbered { pad, fail, delay } => {
                 let n = self.calls.load(Ordering::SeqCst);
@@ -550,7 +558,12 @@ impl Transcriber for FakeTranscriber {
                 if fail.contains(&n) {
                     return Err(DictationError::Asr(format!("fake failure of call {n}")));
                 }
-                Ok(Transcript { text: format!("第{n}段{}。", "字".repeat(*pad)), latency_ms: FAKE_LATENCY_MS, model: self.model.clone() })
+                Ok(Transcript {
+                    text: format!("第{n}段{}。", "字".repeat(*pad)),
+                    latency_ms: FAKE_LATENCY_MS,
+                    model: self.model.clone(),
+                    backend_note: self.note,
+                })
             }
         }
     }
@@ -1535,6 +1548,7 @@ pub fn history_entry(text: &str) -> crate::HistoryEntry {
         text: text.to_owned(),
         refined: false,
         asr_model: "fake/asr".to_owned(),
+        asr_note: None,
         refine_model: None,
         duration_ms: 1500,
         asr_ms: FAKE_LATENCY_MS,

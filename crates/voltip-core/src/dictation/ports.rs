@@ -130,6 +130,69 @@ impl DictationError {
     }
 }
 
+/// What went wrong in an on-device recognition (docs/dictation.md §29). The local engines sort
+/// their failures into these kinds; a recogniser that failed with [`LocalFailure::Device`] or
+/// [`LocalFailure::Memory`] is not used again, one that failed with [`LocalFailure::Model`] takes
+/// every instance of its model with it, and the fallback chain decides by the kind whether
+/// another model may take over. The wire names are part of the contract.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalFailure {
+    /// The compute device failed: a GPU backend error (Vulkan, Metal), a device that went away.
+    Device,
+    /// Out of memory, on the host or on the device.
+    Memory,
+    /// The audio is longer than the model takes in one go.
+    InputTooLong,
+    /// The model itself: a file that does not load, an architecture or variant this build cannot run.
+    Model,
+    /// The recognition stopped before its end: the take was cancelled, or the decoder's output
+    /// budget ran out.
+    Aborted,
+    /// Anything else, among them every failure of an engine that reports no kind (sherpa-onnx).
+    Other,
+}
+
+impl LocalFailure {
+    /// Every kind, in declaration order.
+    pub const ALL: [Self; 6] = [Self::Device, Self::Memory, Self::InputTooLong, Self::Model, Self::Aborted, Self::Other];
+
+    /// Wire name (`device`, `input_too_long`, …).
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Device => "device",
+            Self::Memory => "memory",
+            Self::InputTooLong => "input_too_long",
+            Self::Model => "model",
+            Self::Aborted => "aborted",
+            Self::Other => "other",
+        }
+    }
+
+    /// A failure of the device or its memory: on a GPU, the same audio is tried once more on the CPU.
+    pub const fn is_device(self) -> bool {
+        matches!(self, Self::Device | Self::Memory)
+    }
+}
+
+impl std::fmt::Display for LocalFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// How an on-device recognition got its text, when that is worth telling (docs/dictation.md §29):
+/// the history's technical details show it (`HistoryEntry.asr_note`). Ordered by weight: a take
+/// whose segments carry different notes keeps the greater.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AsrNote {
+    /// The GPU failed during this recognition, and it ran again on the CPU.
+    GpuFailedRanOnCpu,
+    /// The GPU failed twice within ten minutes: recognition runs on the CPU until Voltip restarts.
+    GpuOffUntilRestart,
+}
+
 /// Captured audio, ready for upload.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Recording {
@@ -319,6 +382,9 @@ pub struct Transcript {
     /// what the history records, also when a fallback model or a configuration changed mid-take
     /// did the work. `None` when the client cannot say (the fakes).
     pub model: Option<String>,
+    /// How an on-device recogniser got the text when it was not the usual way (docs/dictation.md
+    /// §29: the GPU failed and the CPU did it); the history keeps it as `asr_note`.
+    pub backend_note: Option<AsrNote>,
 }
 
 /// Speech-to-text.

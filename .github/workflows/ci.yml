@@ -1122,7 +1122,7 @@ jobs:
 
   # macOS on both processors (moved here from macos.yml, 2026-09-28): the app and the dmg, signed
   # ad hoc as the release signs them and checked the same way (.github/scripts/
-  # check-macos-bundle.sh), the macOS-only unit tests, the real event tap on Apple silicon, and the
+  # check-macos-bundle.sh), the macOS-only unit tests, the real event tap on both Macs, and the
   # same headless run the Windows and Linux jobs do (scripts/smoke-native-cli.ps1), which proves the
   # bundle's dylibs load and the ggml / sherpa-onnx engines run natively. About 20 minutes on
   # macos-15 and more on macos-15-intel (GitHub's last x86_64 image, until 2027-08), so it runs on
@@ -1237,12 +1237,12 @@ jobs:
         timeout-minutes: 10
         run: cargo test -p voltip-inject --test real_clipboard -- --ignored --test-threads=1 --nocapture
 
-      # The lone-key trigger's real event tap (docs/dictation.md §13.1). An active CGEventTap and
-      # CGEventPost both need the Accessibility permission; the runner's TCC database grants it to
-      # the test binary (the runner image allows writing it), then the ignored test installs the
-      # tap, posts Right Control, Right Control + C and the back button, and asserts the edges.
+      # The lone-key trigger's real event tap (docs/dictation.md §13.1, §29). An active CGEventTap
+      # and CGEventPost both need the Accessibility permission; the runner's TCC database grants it
+      # to the test binary (the runner image allows writing it), then the ignored tests install the
+      # tap, post Right Control, Right Control + C and the back button, disable the tap as the
+      # system would and watch it come back, and read the held keys' state.
       - name: Real event tap (Accessibility granted to the test binary)
-        if: matrix.arch == 'aarch64'
         run: |
           set -euo pipefail
           csrutil status || true

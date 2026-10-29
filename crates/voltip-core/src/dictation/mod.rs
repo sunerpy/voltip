@@ -24,12 +24,12 @@ pub use crate::scenes::TakeContext;
 pub use engine::{DictationEngine, DictationPorts, EngineFactory, Retake, RetakeAudio, TakeClients, engine_clients};
 pub use fallback::{FallbackRefiner, FallbackTranscriber, Link, QUOTA_RETRY_AFTER, QuotaKey, QuotaLedger, first_with_quota, open_order};
 pub use ports::{
-    AudioSource, CONFIRM_WITHIN, Capture, CaptureOptions, ClipboardCode, DWELL, DWELL_WITH_TEXT, DictationError, FOCUS_READ_DEADLINE, FocusReader, FocusWatch,
-    ForegroundApp, ForegroundProbe, GateCancel, InjectNote, Injection, Injector, InsertCheck, InsertGate, InsertSession, Inserted, LIVE_CHUNK_SAMPLES,
-    LIVE_SAMPLE_RATE_HZ, LevelFrame, LivePcm, MAX_EDIT_SELECTION_CHARS, MAX_RECORDING, MAX_RECORDING_STREAMING, MIN_RECORDING, PARTIAL_THROTTLE,
-    PCM_SAMPLE_RATE_HZ, PROBE_DEADLINE, PcmStream, Recording, RefineContext, RefineHints, Refined, Refiner, Segment, SegmentBounds, Segmenter,
-    SegmenterFactory, SelectionTiming, ServiceProbe, Settled, StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber, Transcriber, Transcript,
-    UnconfirmedWhy, Via, max_recording,
+    AsrNote, AudioSource, CONFIRM_WITHIN, Capture, CaptureOptions, ClipboardCode, DWELL, DWELL_WITH_TEXT, DictationError, FOCUS_READ_DEADLINE, FocusReader,
+    FocusWatch, ForegroundApp, ForegroundProbe, GateCancel, InjectNote, Injection, Injector, InsertCheck, InsertGate, InsertSession, Inserted,
+    LIVE_CHUNK_SAMPLES, LIVE_SAMPLE_RATE_HZ, LevelFrame, LivePcm, LocalFailure, MAX_EDIT_SELECTION_CHARS, MAX_RECORDING, MAX_RECORDING_STREAMING,
+    MIN_RECORDING, PARTIAL_THROTTLE, PCM_SAMPLE_RATE_HZ, PROBE_DEADLINE, PcmStream, Recording, RefineContext, RefineHints, Refined, Refiner, Segment,
+    SegmentBounds, Segmenter, SegmenterFactory, SelectionTiming, ServiceProbe, Settled, StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber,
+    Transcriber, Transcript, UnconfirmedWhy, Via, max_recording,
 };
 
 /// What a take is for (docs/dictation.md §19): dictating text, or rewriting the text selected in

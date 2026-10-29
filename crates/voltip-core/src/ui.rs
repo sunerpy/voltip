@@ -431,6 +431,11 @@ pub struct HotkeyStatus {
     /// The lone key is currently held down on its own.
     #[serde(default)]
     pub solo_pressed: bool,
+    /// When the shell last put the lone key's hook back by itself (docs/dictation.md §29: the
+    /// system had removed it, the computer woke, the session was unlocked, the connection came
+    /// back), milliseconds since the epoch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub solo_recovered_at: Option<u64>,
 }
 
 /// What the global hotkey can do in the session the desktop runs in (docs/dictation.md §13, §14),
@@ -881,6 +886,7 @@ mod tests {
             text: "a。".into(),
             refined: true,
             asr_model: "m".into(),
+            asr_note: None,
             refine_model: Some("r".into()),
             duration_ms: 2,
             asr_ms: 3,

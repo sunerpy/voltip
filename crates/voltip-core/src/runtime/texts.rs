@@ -142,6 +142,7 @@ impl Runtime {
             text: text.body,
             refined: false,
             asr_model: String::new(),
+            asr_note: None,
             refine_model: None,
             duration_ms: 0,
             asr_ms: 0,

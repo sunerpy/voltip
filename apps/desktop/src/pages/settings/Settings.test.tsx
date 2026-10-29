@@ -3,6 +3,7 @@ import {
   MAX_ACTIVATION_MS,
   createTranslator,
   defaultEngineSettings,
+  formatDateTime,
   zhT,
 } from "@voltip/shared";
 import {
@@ -785,6 +786,46 @@ describe("Settings · 热键", () => {
       expect(backend.peek().settings.solo_key).toBeNull();
     });
     expect(within(row).queryByTestId("solo-key-status")).toBeNull();
+  });
+
+  it("regression: section 29 a lone-key hook the system took away says it is coming back, then when it came back", async () => {
+    const user = userEvent.setup();
+    const { backend } = renderApp({ path: "/settings/hotkey" });
+    const row = await screen.findByTestId("solo-key");
+    await user.selectOptions(
+      within(row).getByRole("combobox", { name: "单键触发的按键" }),
+      "right_ctrl",
+    );
+    await waitFor(() => {
+      expect(within(row).getByTestId("solo-key-status")).toHaveTextContent("已生效");
+    });
+    expect(within(row).queryByTestId("solo-key-recovered")).toBeNull();
+    // Gone: the shell's reason, as an alert.
+    act(() => {
+      backend.publish({
+        type: "hotkey",
+        ...backend.peek().hotkey,
+        solo_error: "右 Ctrl 暂时无法单独触发：系统移除了输入钩子，Voltip 正在重新安装",
+      });
+    });
+    expect(within(row).getByRole("alert")).toHaveTextContent("正在重新安装");
+    expect(within(row).queryByTestId("solo-key-recovered")).toBeNull();
+    // Back: no error, and when it came back.
+    const at = new Date(2026, 9, 30, 14, 5).getTime();
+    act(() => {
+      backend.publish({
+        type: "hotkey",
+        ...backend.peek().hotkey,
+        solo_error: undefined,
+        solo_recovered_at: at,
+      });
+    });
+    expect(within(row).getByTestId("solo-key-status")).toHaveTextContent("已生效");
+    expect(within(row).queryByRole("alert")).toBeNull();
+    const when = formatDateTime("zh-CN", at, { dateStyle: "medium", timeStyle: "short" });
+    expect(within(row).getByTestId("solo-key-recovered")).toHaveTextContent(
+      `已自动恢复（${when}）`,
+    );
   });
 
   it("regression: the conflict banner comes from the shell's registration error and its action starts recording", async () => {

@@ -233,6 +233,16 @@ impl ForegroundProbe for PlatformProbe {
 /// with `--start-hidden` would leave the user without any way back to the window (on macOS the
 /// Dock icon is gone too under the `Accessory` policy, applied before the event loop started), so
 /// that case restores the `Regular` policy and shows the window instead.
+/// Call `wake` when the computer wakes from sleep and when the user's session becomes active again
+/// (macOS; docs/dictation.md §29: the lone-key tap checks itself then). Windows hears both on the
+/// hook thread itself; Linux needs neither.
+pub fn on_wake(wake: impl Fn() + Send + Sync + 'static) {
+    #[cfg(target_os = "macos")]
+    macos::on_wake(wake);
+    #[cfg(not(target_os = "macos"))]
+    let _ = wake;
+}
+
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub fn install_tray<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge, start_hidden: bool, updater: bool) {
     let state = bridge.state();

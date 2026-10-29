@@ -1599,6 +1599,13 @@ export const processStateSchema = z.discriminatedUnion("state", [
 ]);
 export type ProcessState = z.infer<typeof processStateSchema>;
 
+// ---- on-device recognition notes (docs/dictation.md §29) ----------------------------------
+
+/** How an on-device recognition got its text, when that is worth telling
+ *  (`voltip_core::dictation::AsrNote`). */
+export const asrNoteSchema = z.enum(["gpu_failed_ran_on_cpu", "gpu_off_until_restart"]);
+export type AsrNote = z.infer<typeof asrNoteSchema>;
+
 export const historyEntrySchema = z.object({
   id: z.string(),
   at_ms: z.number().nonnegative(),
@@ -1606,6 +1613,9 @@ export const historyEntrySchema = z.object({
   text: z.string(),
   refined: z.boolean(),
   asr_model: z.string(),
+  /** The local engine's GPU failed and the CPU recognised the take (§29); absent otherwise and
+   *  in entries written before it. */
+  asr_note: asrNoteSchema.optional(),
   refine_model: z.string().optional(),
   duration_ms: z.number().nonnegative(),
   asr_ms: z.number().nonnegative(),
@@ -2390,6 +2400,9 @@ export const hotkeyStatusSchema = z.object({
    *  none is set. */
   copy_last_registered: z.string().optional(),
   copy_last_error: z.string().optional(),
+  /** When the lone key's input hook last came back by itself after the system took it away
+   *  (docs/dictation.md §29), in ms since the epoch; absent until it has. */
+  solo_recovered_at: z.number().int().nonnegative().optional(),
 });
 export type HotkeyStatus = z.infer<typeof hotkeyStatusSchema>;
 

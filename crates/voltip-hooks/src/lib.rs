@@ -12,13 +12,22 @@
 //! chords never look like a chord. The desktop shell decides which keys a session offers and
 //! forwards the edges; this crate only installs, reports and removes.
 //!
-//! Each backend has an `#[ignore]`d test that installs the real hook and feeds it synthetic input;
+//! Keeping the hook (docs/dictation.md §29): each backend notices when the system took its hook
+//! away and puts it back (Windows: Raw Input against the hooks, waking and unlocking; macOS: a
+//! disabled tap; X11: a lost connection), reporting [`SoloEdge::Recovered`], or
+//! [`SoloEdge::Lost`] while it cannot. [`is_down`] reads a trigger's physical state, which the
+//! shell checks a hold-to-talk take against when a release may have been missed.
+//!
+//! Each backend has `#[ignore]`d tests that install the real hook and feed it synthetic input;
 //! CI runs them on a Windows Server desktop, a macOS session and Xvfb.
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::time::Duration;
 
-pub use voltip_platform::solo_key::{SoloEdge, SoloKey};
+pub use voltip_platform::held_key::HeldKey;
+pub use voltip_platform::solo_key::{SoloEdge, SoloKey, SoloLoss};
+
+pub mod watch;
 
 #[cfg(target_os = "macos")]
 #[path = "macos.rs"]
@@ -31,7 +40,13 @@ mod backend;
 mod backend;
 
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
-pub use backend::{Backend, start};
+pub use backend::{Backend, is_down, start};
+
+/// Whether `key` is physically down: without a backend, nobody knows.
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+pub fn is_down(_key: &HeldKey) -> Option<bool> {
+    None
+}
 
 /// Whether this build has a hook backend at all.
 pub const HAS_BACKEND: bool = cfg!(any(target_os = "macos", target_os = "windows", target_os = "linux"));

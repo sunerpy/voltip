@@ -1101,6 +1101,12 @@ export const zhCN = {
     },
     detail: {
       asrModel: "识别模型",
+      /** docs/dictation.md §29: how the local engine recognised a take, when worth telling. */
+      asrNote: {
+        label: "识别方式",
+        gpu_failed_ran_on_cpu: "显卡出错，这条改用 CPU 识别",
+        gpu_off_until_restart: "显卡多次出错，重启 Voltip 前都用 CPU 识别",
+      },
       refineModel: "润色模型",
       preset: "AI 预设",
       notRefined: "未润色",
@@ -2449,6 +2455,7 @@ export const zhCN = {
         pressed: "按下中",
         waiting: "等待生效",
         failed: "未生效",
+        recovered: "已自动恢复（{time}）",
         unavailable: "当前会话不支持单键触发（纯 Wayland 下只能使用组合键）",
         key: {
           right_ctrl: "右 Ctrl",

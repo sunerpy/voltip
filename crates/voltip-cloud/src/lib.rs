@@ -64,7 +64,7 @@ impl Transcriber for HttpTranscriber {
             None => Vec::new(),
         };
         let t = self.client.transcribe_with_headers(wav, language, prompt.as_deref(), &headers).await.map_err(asr_error)?;
-        Ok(Transcript { text: t.text, latency_ms: t.latency_ms, model: Some(t.model) })
+        Ok(Transcript { text: t.text, latency_ms: t.latency_ms, model: Some(t.model), backend_note: None })
     }
 }
 

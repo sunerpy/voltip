@@ -244,6 +244,7 @@
       "text": "把 fetchUser 改成 async，然后加上错误处理。",
       "refined": true,
       "asr_model": "Qwen/Qwen3-ASR-1.7B",
+      "asr_note": "gpu_failed_ran_on_cpu",
       "refine_model": "qwen/qwen3.8-27b",
       "duration_ms": 3200,
       "asr_ms": 640,

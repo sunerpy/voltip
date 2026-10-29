@@ -15,13 +15,21 @@
 //!
 //! Only hardware input counts: Voltip's own paste and copy chords and other synthetic input are
 //! ignored, so a paste never looks like a chord.
+//!
+//! The hooks keep themselves alive (docs/dictation.md §29): Windows puts back a hook the system
+//! removed, and does so again after a wake and an unlock; macOS installs a disabled tap again and
+//! keeps trying while it is refused; X11 reconnects. Each reports [`SoloEdge::Recovered`] /
+//! [`SoloEdge::Lost`], which only the status hears. A hook whose thread ended anyway is
+//! [`SoloHook::is_alive`] `false`, and the next settings sync installs a new one.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::thread::JoinHandle;
 
 use voltip_core::SoloKey;
 use voltip_inject::{SessionKind, X11Grab};
-use voltip_platform::solo_key::SoloEdge;
+use voltip_platform::solo_key::{SoloEdge, SoloLoss};
 
 /// How the settings page and the log name a key (the core stores the wire name).
 pub fn label(key: SoloKey, os: &str) -> &'static str {
@@ -65,18 +73,46 @@ pub fn unavailable(key: SoloKey, os: &str, session: Option<SessionKind>) -> Opti
     })
 }
 
+/// `solo_error` while the hook of `key` is gone and being brought back (docs/dictation.md §29).
+pub fn lost_reason(key: SoloKey, loss: SoloLoss, os: &str) -> String {
+    let name = label(key, os);
+    match loss {
+        SoloLoss::Hook => format!("{name} 暂时无法单独触发：系统移除了输入钩子，Voltip 正在重新安装"),
+        SoloLoss::Accessibility => format!("{name} 无法单独触发：需要在「系统设置 › 隐私与安全性 › 辅助功能」里重新允许 Voltip，允许后自动恢复"),
+        SoloLoss::Display => format!("{name} 暂时无法单独触发：与 X 服务器的连接断开了，正在重新连接"),
+    }
+}
+
 /// A running input hook. Dropping it removes the hook and joins its threads.
 pub struct SoloHook {
     key: SoloKey,
     #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     backend: Option<voltip_hooks::Backend>,
     forwarder: Option<JoinHandle<()>>,
+    /// The forwarder still runs: the hook's thread has not ended.
+    alive: Arc<AtomicBool>,
 }
 
 impl SoloHook {
     /// The key it watches.
     pub fn key(&self) -> SoloKey {
         self.key
+    }
+
+    /// Whether the hook's thread still runs. One that ended (it should not: every backend brings
+    /// its hook back by itself) is replaced at the next settings sync.
+    pub fn is_alive(&self) -> bool {
+        self.alive.load(Ordering::SeqCst)
+    }
+
+    /// The computer woke or the session became active again (macOS, docs/dictation.md §29): make
+    /// sure the hook is installed and enabled. Windows does this on its hook thread, X11 needs
+    /// nothing.
+    pub fn refresh(&self) {
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+        if let Some(backend) = &self.backend {
+            backend.refresh();
+        }
     }
 }
 
@@ -107,12 +143,15 @@ pub fn watch(key: SoloKey, session: Option<SessionKind>, synthetic: bool, sink: 
     {
         let _ = (tx, synthetic);
     }
+    let alive = Arc::new(AtomicBool::new(true));
+    let running = alive.clone();
     let forwarder = std::thread::Builder::new()
         .name("voltip-solo-key".into())
         .spawn(move || {
             for edge in rx {
                 sink(edge);
             }
+            running.store(false, Ordering::SeqCst);
         })
         .map_err(|e| format!("{} 无法单独触发：{e}", label(key, std::env::consts::OS)))?;
     Ok(SoloHook {
@@ -120,6 +159,7 @@ pub fn watch(key: SoloKey, session: Option<SessionKind>, synthetic: bool, sink: 
         #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
         backend: Some(backend),
         forwarder: Some(forwarder),
+        alive,
     })
 }
 
@@ -146,5 +186,17 @@ mod tests {
                 assert!(!label(key, os).is_empty());
             }
         }
+    }
+
+    /// docs/dictation.md §29: while a hook is being brought back, `solo_error` says which key, why
+    /// and that it comes back by itself.
+    #[test]
+    fn a_lost_hook_says_why_and_that_it_is_coming_back() {
+        let hook = lost_reason(SoloKey::RightCtrl, SoloLoss::Hook, "windows");
+        assert!(hook.starts_with("右 Ctrl ") && hook.contains("重新安装"), "{hook}");
+        let tap = lost_reason(SoloKey::Fn, SoloLoss::Accessibility, "macos");
+        assert!(tap.starts_with("Fn ") && tap.contains("辅助功能") && tap.contains("自动恢复"), "{tap}");
+        let x = lost_reason(SoloKey::MouseBack, SoloLoss::Display, "linux");
+        assert!(x.starts_with("鼠标后退键 ") && x.contains("重新连接"), "{x}");
     }
 }

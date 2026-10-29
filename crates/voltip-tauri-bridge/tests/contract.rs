@@ -554,6 +554,8 @@ fn history_entries() -> Vec<HistoryEntry> {
             text: REFINED_TEXT.into(),
             refined: true,
             asr_model: ASR_MODEL.into(),
+            // docs/dictation.md §29: the local engine's GPU failed and the CPU did the take.
+            asr_note: Some(voltip_core::dictation::AsrNote::GpuFailedRanOnCpu),
             refine_model: Some(REFINE_MODEL.into()),
             duration_ms: 3200,
             asr_ms: 640,
@@ -583,6 +585,7 @@ fn history_entries() -> Vec<HistoryEntry> {
             text: "测试一下".into(),
             refined: false,
             asr_model: ASR_MODEL.into(),
+            asr_note: None,
             refine_model: None,
             duration_ms: 900,
             asr_ms: 410,
@@ -615,6 +618,7 @@ fn history_entries() -> Vec<HistoryEntry> {
             text: EDIT_REWRITE.into(),
             refined: true,
             asr_model: ASR_MODEL.into(),
+            asr_note: None,
             refine_model: Some(REFINE_MODEL.into()),
             duration_ms: 1400,
             asr_ms: 380,
@@ -646,6 +650,7 @@ fn history_entries() -> Vec<HistoryEntry> {
             text: "会议改到三点".into(),
             refined: false,
             asr_model: String::new(),
+            asr_note: None,
             refine_model: None,
             duration_ms: 0,
             asr_ms: 0,
@@ -1148,6 +1153,7 @@ fn full_state() -> UiState {
             solo_registered: Some(SoloKey::RightCtrl),
             solo_error: None,
             solo_pressed: false,
+            solo_recovered_at: None,
         },
         presets: custom_presets(),
         dictation: DictationStatus {
@@ -1507,6 +1513,7 @@ fn all_events() -> Vec<UiEvent> {
             solo_registered: Some(SoloKey::MouseBack),
             solo_error: None,
             solo_pressed: true,
+            solo_recovered_at: Some(AT_MS),
         }),
         UiEvent::Hotkey(HotkeyStatus {
             registered: None,
@@ -1522,6 +1529,7 @@ fn all_events() -> Vec<UiEvent> {
             solo_registered: Some(SoloKey::RightAlt),
             solo_error: None,
             solo_pressed: false,
+            solo_recovered_at: None,
         }),
         UiEvent::Hotkey(HotkeyStatus {
             registered: None,
@@ -1537,6 +1545,7 @@ fn all_events() -> Vec<UiEvent> {
             solo_registered: None,
             solo_error: Some("右 Ctrl 无法单独触发：纯 Wayland 会话不允许应用监听全局按键".into()),
             solo_pressed: false,
+            solo_recovered_at: None,
         }),
         // Every dictation phase the pill and the home page discriminate on. `listening` in its three
         // shapes (device opening; ready with the live preview; preview degraded), `processing` with

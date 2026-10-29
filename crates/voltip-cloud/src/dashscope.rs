@@ -43,7 +43,7 @@ impl Transcriber for DashscopeTranscriber {
     /// the model takes them.
     async fn transcribe(&self, wav: &[u8], language: Option<&str>, glossary: &[String]) -> Result<Transcript, DictationError> {
         let t = self.client.transcribe(wav, language, glossary).await.map_err(crate::asr_error)?;
-        Ok(Transcript { text: t.text, latency_ms: t.latency_ms, model: Some(t.model) })
+        Ok(Transcript { text: t.text, latency_ms: t.latency_ms, model: Some(t.model), backend_note: None })
     }
 
     fn streaming(&self, glossary: &[String]) -> Option<Arc<dyn StreamingTranscriber>> {

@@ -32,8 +32,9 @@ fmt-check: ## Verify formatting (CI gate)
 	$(PNPM) -r run format:check
 
 .PHONY: lint
-lint: frontend-dist-dirs ## clippy -D warnings + eslint/tsc
+lint: frontend-dist-dirs ## clippy -D warnings + eslint/tsc + no device event filter (docs/dictation.md §29)
 	$(CARGO) clippy --workspace --all-targets -- -D warnings
+	./scripts/check-no-device-event-filter.sh
 	$(PNPM) -r run lint
 
 .PHONY: test

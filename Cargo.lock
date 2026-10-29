@@ -7750,6 +7750,7 @@ name = "voltip-desktop"
 version = "0.0.0"
 dependencies = [
  "async-trait",
+ "block2",
  "clap",
  "core-foundation 0.10.1",
  "core-foundation-sys",

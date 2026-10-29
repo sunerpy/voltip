@@ -331,7 +331,7 @@ impl Transcriber for LocalTranscriber {
         .map_err(|e| DictationError::Asr(format!("本地识别任务失败：{e}")))?
         .map_err(|e| DictationError::Asr(format!("本地识别失败：{e}")))?;
         let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        Ok(Transcript { text: text.trim().to_owned(), latency_ms, model: Some(name) })
+        Ok(Transcript { text: text.trim().to_owned(), latency_ms, model: Some(name), backend_note: None })
     }
 }
 

@@ -757,3 +757,26 @@ describe("History detail · quick fix (docs/dictation.md section 16.9)", () => {
     expect(await within(card()).findByText("数据库不可用")).toBeInTheDocument();
   });
 });
+
+describe("History detail · technical details", () => {
+  it("regression: section 29 a take the local engine finished on the CPU says so next to its model", async () => {
+    const cpu = take(1, RAW, TEXT, { asr_note: "gpu_failed_ran_on_cpu" });
+    const off = take(2, "第二条", "第二条。", { asr_note: "gpu_off_until_restart" });
+    const plain = take(3, "第三条", "第三条。");
+    const { user } = setup({ history: [cpu, off, plain] });
+    expect(await screen.findByTestId("history-asr-note")).toHaveTextContent(
+      "显卡出错，这条改用 CPU 识别",
+    );
+    const rows = within(screen.getByRole("list", { name: "听写记录" })).getAllByRole("button", {
+      pressed: false,
+    });
+    await user.click(rows[0] ?? document.body);
+    expect(await screen.findByTestId("history-asr-note")).toHaveTextContent(
+      "显卡多次出错，重启 Voltip 前都用 CPU 识别",
+    );
+    await user.click(rows[1] ?? document.body);
+    await waitFor(() => {
+      expect(screen.queryByTestId("history-asr-note")).toBeNull();
+    });
+  });
+});

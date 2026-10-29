@@ -1084,6 +1084,13 @@ export const en: Messages = {
     },
     detail: {
       asrModel: "Transcription model",
+      /** docs/dictation.md §29: how the local engine recognised a take, when worth telling. */
+      asrNote: {
+        label: "Recognised on",
+        gpu_failed_ran_on_cpu: "The graphics card failed; this one was recognised on the CPU",
+        gpu_off_until_restart:
+          "The graphics card failed again; the CPU recognises until Voltip restarts",
+      },
       refineModel: "Polish model",
       preset: "AI preset",
       notRefined: "Not polished",
@@ -2474,6 +2481,7 @@ export const en: Messages = {
         pressed: "Pressed",
         waiting: "Waiting",
         failed: "Not active",
+        recovered: "Recovered automatically ({time})",
         unavailable:
           "This session does not support a single-key trigger (pure Wayland supports key combinations only)",
         key: {

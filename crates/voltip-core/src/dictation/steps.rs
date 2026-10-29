@@ -5,7 +5,7 @@
 
 use super::RefineFailure;
 use super::long;
-use super::ports::{DictationError, RefineHints, Refiner, Transcriber};
+use super::ports::{AsrNote, DictationError, RefineHints, Refiner, Transcriber};
 use crate::engines::ChineseScript;
 use crate::script::normalized;
 use crate::vocabulary::{Step, Vocabulary};
@@ -27,6 +27,8 @@ pub struct Recognised {
     pub asr_ms: u64,
     /// The model that recognised it, when the client says.
     pub model: Option<String>,
+    /// How an on-device recogniser got it, when that is worth telling (docs/dictation.md §29).
+    pub note: Option<AsrNote>,
 }
 
 /// Recognise `wav` with the take's `language` hint and the vocabulary's `glossary`, and bring the
@@ -41,7 +43,7 @@ pub async fn recognize(
     call: &crate::usage::AsrCall,
 ) -> Result<Recognised, DictationError> {
     let t = transcriber.transcribe_as(wav, language, glossary, call).await?;
-    Ok(Recognised { text: normalized(script, t.text.trim()), asr_ms: t.latency_ms, model: t.model })
+    Ok(Recognised { text: normalized(script, t.text.trim()), asr_ms: t.latency_ms, model: t.model, note: t.backend_note })
 }
 
 /// Log a vocabulary step that fell back to its input (docs/dictation.md §16.3); the take goes on.

@@ -26,6 +26,7 @@ pub mod export;
 pub mod imports;
 /// In-app feedback (docs/feedback.md): the client lives in `voltip-cloud`, shared with the phone.
 pub use voltip_cloud::feedback;
+pub mod held;
 pub mod hotkey;
 #[cfg(target_os = "macos")]
 pub mod keychain_handoff;
@@ -1524,6 +1525,8 @@ pub fn attach_bridge<R: Runtime>(
     // The global hotkey follows `Settings.hotkey`: registered now, re-registered on every change,
     // and reported back into the same state the webview reads.
     let registry = Arc::new(hotkey::HotkeyRegistry::default());
+    // A hold-to-talk take whose key-up got lost ends once the key reads as up (docs/dictation.md §29).
+    held::follow(bridge.clone(), registry.clone());
     if options.global_hotkey {
         // The pill window is prewarmed hidden so the first press only has to show it.
         if let Err(e) = overlay::prewarm(app) {
@@ -1531,6 +1534,13 @@ pub fn attach_bridge<R: Runtime>(
         }
         overlay::follow_dictation(app.clone(), bridge.clone());
         hotkey::follow_settings(app.clone(), bridge.clone(), registry.clone());
+        // After a wake the lone-key hook checks itself (macOS; docs/dictation.md §29).
+        let woken = Arc::downgrade(&registry);
+        platform::on_wake(move || {
+            if let Some(registry) = woken.upgrade() {
+                hotkey::refresh_solo(&registry);
+            }
+        });
         audio::follow_phone_takes(bridge.clone(), hub.clone());
         platform::install_tray(app, &bridge, options.start_hidden, updater.enabled());
     }
