@@ -16,7 +16,8 @@ use std::time::Duration;
 use voltip_asr_local::{Compute, LocalTranscriber, ModelStore, VadSegmenterFactory};
 use voltip_core::dictation::{EngineFactory, Refiner, SegmenterFactory, Transcriber};
 use voltip_core::serve::{
-    Defaults, FileSource, FileSourceConfig, ListenConfig, Service, StateSource, default_token_path, load_or_create_token, not_ready, uploads_dir,
+    Defaults, FileSource, FileSourceConfig, ListenConfig, MAX_CONCURRENCY, Service, StateSource, default_token_path, load_or_create_token, not_ready,
+    uploads_dir,
 };
 use voltip_core::{BuiltIn, CoreConfig, ModelManager, ProviderId, ResolvedEngines, UserSecrets};
 use voltip_identity::SecretStore;
@@ -35,6 +36,10 @@ pub const DEV_DATA_DIR_ENV: &str = "VOLTIP_DEV_DATA_DIR";
 pub const DEV_SECRET_STORE_ENV: &str = "VOLTIP_DEV_SECRET_STORE";
 /// How long the requests in progress may take to finish once a signal asked the server to stop.
 pub const GRACE: Duration = Duration::from_secs(30);
+/// How long a request waits for the local recogniser (docs/dictation.md §29). The app's wait
+/// covers the take ahead of it; here up to `MAX_CONCURRENCY` admitted requests take turns on one
+/// recogniser, so a request waits as long as all of them may take.
+pub const LOCK_WAIT: Duration = voltip_asr_local::LOCK_WAIT.saturating_mul(MAX_CONCURRENCY as u32);
 
 /// The app's data directory (the desktop app's: `ProjectDirs` dev / voltip / Voltip).
 pub fn data_dir() -> PathBuf {
@@ -142,7 +147,7 @@ pub fn production_wiring(data_dir: &Path) -> Wiring {
     let proxy_password = if secrets_notice.is_none() { voltip_core::peek_proxy_password(keychain.as_ref()) } else { None };
     let (secrets, secrets_from_env) = with_env_keys(secrets, |name| std::env::var(name).ok());
     Wiring {
-        factory: engine_factory(LocalTranscriber::new(root.clone()), Arc::clone(&network)),
+        factory: engine_factory(LocalTranscriber::new(root.clone()).with_lock_wait(LOCK_WAIT), Arc::clone(&network)),
         models: Some(Arc::new(store)),
         // No store: a missing VAD model is never downloaded; the core's own cutter runs instead.
         segmenter: Some(Arc::new(VadSegmenterFactory::new(root, None))),

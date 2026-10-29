@@ -72,6 +72,7 @@ fn catalogue() -> &'static [ModelEntry] {
         recommended: true,
         repo: REPO,
         files,
+        max_piece: Duration::from_secs(119),
     };
     let aux_files: &'static [ModelFile] =
         Box::leak(vec![ModelFile { name: "silero_vad.onnx", size: AUX_SIZE as u64, sha256: Box::leak(sha(&aux_bytes()).into_boxed_str()) }].into_boxed_slice());
@@ -86,6 +87,7 @@ fn catalogue() -> &'static [ModelEntry] {
         recommended: false,
         repo: AUX_REPO,
         files: aux_files,
+        max_piece: Duration::ZERO,
     };
     Box::leak(vec![entry, aux].into_boxed_slice())
 }

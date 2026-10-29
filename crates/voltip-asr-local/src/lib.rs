@@ -13,6 +13,8 @@
 //!   [`transcriber::RecognizerLoader`]: transcribe.cpp for the GGUF tiers (`gguf.rs`), sherpa-onnx
 //!   for SenseVoice / Paraformer (`sherpa.rs`); the unit tests run on a fake without a model file,
 //!   the real inference tests need `VOLTIP_LOCAL_MODEL_DIR` / `VOLTIP_LOCAL_GGUF`.
+//! * [`pool`] — the recognisers in memory, the GPU's record and how long a take waits for a busy
+//!   one (docs/dictation.md §29).
 //! * [`streaming`] — [`LocalStreamingTranscriber`]: [`voltip_core::dictation::StreamingTranscriber`]
 //!   over the streaming Zipformer (sherpa-onnx `OnlineRecognizer`) for the live preview.
 //! * [`vad`] — [`VadTrimmer`]: the Silero VAD (sherpa-onnx `VoiceActivityDetector`, catalogue
@@ -31,6 +33,7 @@ pub mod catalogue;
 pub mod cli;
 pub mod compute;
 mod gguf;
+pub mod pool;
 pub mod relocate;
 pub mod root;
 pub mod segmenter;
@@ -44,6 +47,7 @@ pub use catalogue::{
     CATALOGUE, Capability, DEFAULT_MODEL_ID, Engine, ModelEntry, ModelFile, STREAMING_MODEL_ID, Tier, VAD_MODEL_ID, entry, streaming_entry, vad_entry,
 };
 pub use compute::{Compute, GpuInfo, HardwareInfo, LocalDevice, hardware};
+pub use pool::{GPU_STRIKE_WINDOW, LOCK_WAIT};
 pub use relocate::STAGING_SUFFIX;
 pub use root::ModelsRoot;
 pub use segmenter::{VadSegmenter, VadSegmenterFactory};
@@ -51,5 +55,5 @@ pub use store::{
     CATALOGUE_VERSION, DISK_HEADROOM, FreeSpace, ImportError, MANIFEST_FILE, Manifest, ModelStore, SlowSourcePolicy, Source, StoreError, bytes_to_fetch,
 };
 pub use streaming::{LocalStreamingTranscriber, StreamingLoader, StreamingRecognizer};
-pub use transcriber::{DefaultLoader, LocalTranscriber, MIN_INPUT, Recognizer, RecognizerLoader, decode_wav};
+pub use transcriber::{Abort, BUSY, DefaultLoader, LocalFailure, LocalTranscriber, MIN_INPUT, RecognizeError, Recognizer, RecognizerLoader, decode_wav};
 pub use vad::{SpeechSpan, Trim, VadLoader, VadTrimmer, VoiceActivity};

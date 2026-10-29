@@ -127,6 +127,16 @@ impl VadTrimmer {
         self.entry
     }
 
+    /// The loader it loads its detector with (the transcriber's piece cuts load one of their own).
+    pub(crate) fn loader(&self) -> Arc<dyn VadLoader> {
+        self.loader.clone()
+    }
+
+    /// The model's directory.
+    pub(crate) fn dir(&self) -> std::path::PathBuf {
+        self.root.join(self.entry.id)
+    }
+
     /// Whether the model files are on disk and verified.
     pub fn is_installed(&self) -> bool {
         store::is_installed(&self.root.join(self.entry.id), self.entry)

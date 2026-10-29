@@ -27,8 +27,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use voltip_asr_local::{
-    CATALOGUE_VERSION, Compute, LocalDevice, LocalStreamingTranscriber, LocalTranscriber, MANIFEST_FILE, Manifest, ModelEntry, VadSegmenterFactory, VadTrimmer,
-    entry, hardware, streaming_entry, vad_entry,
+    Abort, CATALOGUE_VERSION, Compute, DefaultLoader, LocalDevice, LocalStreamingTranscriber, LocalTranscriber, MANIFEST_FILE, Manifest, ModelEntry,
+    RecognizerLoader, VadSegmenterFactory, VadTrimmer, entry, hardware, streaming_entry, vad_entry,
 };
 use voltip_core::dictation::{LIVE_CHUNK_SAMPLES, Segment, SegmenterFactory, StreamEvent, StreamingTranscriber, Transcriber};
 
@@ -815,4 +815,132 @@ async fn real_imports_of_one_clip_agree_across_containers() {
     for (name, text) in &texts[1..] {
         assert_eq!(words(text), words(reference), "{name} and {first} were heard differently:\n{text}\n{reference}");
     }
+}
+/// The sample repeated with 300 ms of silence between the repeats until it is `seconds` long, as
+/// 16 kHz samples; how many whole repeats it holds.
+fn repeated_sample(seconds: usize) -> (Vec<f32>, usize) {
+    let (sample, rate) = voltip_asr_local::decode_wav(&sample_wav()).unwrap();
+    assert_eq!(rate, 16_000, "the sample is 16 kHz mono");
+    let (mut clip, mut repeats) = (Vec::new(), 0);
+    while clip.len() + sample.len() <= seconds * 16_000 {
+        clip.extend_from_slice(&sample);
+        clip.extend(std::iter::repeat_n(0.0_f32, 300 * 16));
+        repeats += 1;
+    }
+    clip.resize(seconds * 16_000, 0.0);
+    (clip, repeats)
+}
+
+fn wav_of(samples: &[f32]) -> Vec<u8> {
+    let pcm: Vec<i16> = samples.iter().map(|s| (s.clamp(-1.0, 1.0) * 32_767.0) as i16).collect();
+    voltip_core::dictation::wav::encode_pcm16(&pcm, 16_000)
+}
+
+/// Chinese characters only, in simplified form.
+fn hanzi(text: &str) -> String {
+    voltip_core::script::normalized(voltip_core::ChineseScript::Simplified, text).chars().filter(|c| ('\u{4e00}'..='\u{9fff}').contains(c)).collect()
+}
+
+/// docs/dictation.md §29: a 60 s and a 121 s input through the transcriber give the text of their
+/// pieces recognised one by one and put together (the cuts the VAD makes, each piece at most the
+/// entry's `max_piece`), and nothing of it is dropped: about as many characters as its repeats of
+/// the sample give alone.
+async fn long_inputs_are_recognised_like_their_pieces(e: &'static ModelEntry, root: &Path, language: Option<&'static str>) {
+    let model = PathBuf::from(std::env::var("VOLTIP_LOCAL_VAD_MODEL").expect("VOLTIP_LOCAL_VAD_MODEL"));
+    stage(root, vad_entry(), |_| model.clone());
+    let t = LocalTranscriber::new(root).select(e.id);
+    let once = hanzi(&t.transcribe(&sample_wav(), language, &[]).await.unwrap().text).chars().count();
+    assert!(once >= 4, "the sample is recognised as Chinese ({once} characters)");
+    let hint = voltip_asr_local::transcriber::language_for(e.engine, language);
+    let mut recognizer = DefaultLoader.load(e, &root.join(e.id), hint, &Compute::default()).unwrap();
+    for seconds in [60, 121] {
+        let (clip, repeats) = repeated_sample(seconds);
+        let started = Instant::now();
+        let whole = t.transcribe(&wav_of(&clip), language, &[]).await.unwrap().text;
+        let whole_ms = started.elapsed().as_millis();
+        let (samples, _) = voltip_asr_local::decode_wav(&wav_of(&clip)).unwrap();
+        let pieces = voltip_asr_local::segmenter::pieces(&samples, 16_000, e.max_piece, &VadTrimmer::new(root));
+        let mut segments = Vec::new();
+        for piece in &pieces {
+            assert!(piece.len() <= e.max_piece.as_secs() as usize * 16_000, "a piece of {} samples", piece.len());
+            let text = recognizer.transcribe(16_000, &samples[piece.clone()], &Abort::new()).unwrap();
+            segments.push((piece.start as u64, piece.end as u64, Some(text)));
+        }
+        let by_piece = voltip_core::dictation::long::assemble(&segments, &[]);
+        // Nothing is dropped: the long input yields about as many characters as its repeats do alone.
+        let found = hanzi(&whole).chars().count();
+        let lengths: Vec<f64> = pieces.iter().map(|p| p.len() as f64 / 16_000.0).collect();
+        println!("model={} {seconds} s: {} piece(s) {lengths:.1?} in {whole_ms} ms, {found} characters for {repeats} × {once}: {whole}", e.id, pieces.len());
+        assert_eq!(whole, by_piece.trim(), "{seconds} s: the transcriber's text is its pieces' text");
+        assert!(found * 10 >= repeats * once * 8, "{seconds} s: {found} characters for {repeats} repeats of {once}: {whole}");
+        if seconds as u64 > e.max_piece.as_secs() {
+            assert!(pieces.len() > 1, "{seconds} s is longer than the {} s max_piece", e.max_piece.as_secs());
+        }
+    }
+}
+
+#[tokio::test]
+#[ignore = "needs VOLTIP_LOCAL_MODEL_DIR (a downloaded sherpa-onnx model), VOLTIP_LOCAL_VAD_MODEL and VOLTIP_LOCAL_SAMPLE_WAV"]
+async fn real_sherpa_long_inputs_are_recognised_like_their_pieces() {
+    let model_dir = PathBuf::from(std::env::var("VOLTIP_LOCAL_MODEL_DIR").expect("VOLTIP_LOCAL_MODEL_DIR"));
+    let id = if model_dir.to_string_lossy().contains("paraformer") { "paraformer-zh" } else { "sense-voice-small" };
+    let e = entry(id).unwrap();
+    let root = tempfile::tempdir().unwrap();
+    stage(root.path(), e, |name| model_dir.join(name));
+    long_inputs_are_recognised_like_their_pieces(e, root.path(), Some("zh")).await;
+}
+
+#[tokio::test]
+#[ignore = "needs VOLTIP_LOCAL_GGUF (a downloaded Qwen3-ASR Q6_K gguf), VOLTIP_LOCAL_VAD_MODEL and VOLTIP_LOCAL_SAMPLE_WAV"]
+async fn real_gguf_long_inputs_are_recognised_like_their_pieces() {
+    let gguf = PathBuf::from(std::env::var("VOLTIP_LOCAL_GGUF").expect("VOLTIP_LOCAL_GGUF"));
+    let id = if gguf.to_string_lossy().contains("1.7B") { "qwen3-asr-1.7b" } else { "qwen3-asr-0.6b" };
+    let e = entry(id).unwrap();
+    let root = tempfile::tempdir().unwrap();
+    stage(root.path(), e, |_| gguf.clone());
+    long_inputs_are_recognised_like_their_pieces(e, root.path(), None).await;
+}
+
+/// docs/dictation.md §29: transcribe.cpp 0.2.3 looks at a cancel only before a Qwen3-ASR run, so a
+/// cancelled take's piece in progress ends as it would have; a cancelled take starts no further
+/// piece, though, and the next take gets the model right after that piece, long before the rest of
+/// the cancelled take would have been recognised.
+#[tokio::test]
+#[ignore = "needs VOLTIP_LOCAL_GGUF (a downloaded Qwen3-ASR Q6_K gguf) and VOLTIP_LOCAL_SAMPLE_WAV"]
+async fn real_a_cancelled_gguf_take_frees_the_model_after_its_piece() {
+    let gguf = PathBuf::from(std::env::var("VOLTIP_LOCAL_GGUF").expect("VOLTIP_LOCAL_GGUF"));
+    let id = if gguf.to_string_lossy().contains("1.7B") { "qwen3-asr-1.7b" } else { "qwen3-asr-0.6b" };
+    let e = entry(id).unwrap();
+    let root = tempfile::tempdir().unwrap();
+    stage(root.path(), e, |_| gguf.clone());
+    let t = LocalTranscriber::new(root.path()).select(e.id).with_compute(Compute { device: LocalDevice::Cpu, ..Compute::default() });
+    let sample = sample_wav();
+    t.transcribe(&sample, None, &[]).await.unwrap();
+    let started = Instant::now();
+    t.transcribe(&sample, None, &[]).await.unwrap();
+    let one = started.elapsed();
+    let (clip, _) = repeated_sample(60);
+    let clip = wav_of(&clip);
+    let started = Instant::now();
+    t.transcribe(&clip, None, &[]).await.unwrap();
+    let full = started.elapsed();
+    let task = tokio::spawn({
+        let (t, clip) = (t.clone(), clip.clone());
+        async move { t.transcribe(&clip, None, &[]).await }
+    });
+    // An eighth into a run like the one before: inside its first piece.
+    tokio::time::sleep(full / 8).await;
+    task.abort();
+    let cancelled_at = Instant::now();
+    assert!(task.await.unwrap_err().is_cancelled());
+    let next = t.transcribe(&sample, None, &[]).await.unwrap();
+    let waited = cancelled_at.elapsed();
+    println!(
+        "model={id} 60 s in {full:?}, the sample alone in {one:?}; the take after a cancel an eighth in was done {waited:?} after the cancel: {}",
+        next.text
+    );
+    assert!(is_chinese(&next.text));
+    // Waiting for the rest of the cancelled take would be about seven eighths of it; its pieces are
+    // at most half of it (four pieces of about 17 s here).
+    assert!(waited < full * 6 / 10 + one, "the next take waited {waited:?}; the whole 60 s take takes {full:?}, the sample {one:?}");
 }

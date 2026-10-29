@@ -14,11 +14,11 @@ use std::path::Path;
 
 use rubato::audioadapter_buffers::direct::InterleavedSlice;
 use rubato::{Fft, FixedSync, Resampler as _};
-use transcribe_cpp::{Backend, DeviceType, Model, ModelOptions, RunOptions, Session, SessionOptions};
+use transcribe_cpp::{Backend, CancelToken, DeviceType, Model, ModelOptions, RunOptions, Session, SessionOptions};
 
 use crate::catalogue::ModelEntry;
 use crate::compute::{Compute, GpuInfo, LocalDevice};
-use crate::transcriber::{Recognizer, RecognizerLoader};
+use crate::transcriber::{Abort, LocalFailure, RecognizeError, Recognizer, RecognizerLoader};
 
 /// The sample rate transcribe.cpp models take.
 pub const MODEL_RATE_HZ: u32 = 16_000;
@@ -134,7 +134,7 @@ struct Gguf {
 }
 
 impl Recognizer for Gguf {
-    fn transcribe(&mut self, sample_rate: u32, samples: &[f32]) -> Result<String, String> {
+    fn transcribe(&mut self, sample_rate: u32, samples: &[f32], abort: &Abort) -> Result<String, RecognizeError> {
         let resampled;
         let pcm = if sample_rate == MODEL_RATE_HZ {
             samples
@@ -142,14 +142,35 @@ impl Recognizer for Gguf {
             resampled = resample_to_model_rate(samples, sample_rate)?;
             &resampled
         };
+        // docs/dictation.md §29: a cancelled take's token. transcribe.cpp 0.2.3 looks at it before a
+        // Qwen3-ASR run only (that family runs in one shot); a family that polls it between decode
+        // steps stops there.
+        let token = CancelToken::new();
+        self.session.set_cancel_token(&token);
+        abort.on_abort(move || token.cancel());
         // No language hint: unsupported by the Qwen3 family (the call would be refused).
-        let transcript = self.session.run(pcm, &RunOptions::default()).map_err(|e| e.to_string())?;
+        let result = self.session.run(pcm, &RunOptions::default());
+        self.session.clear_cancel_token();
+        let transcript = result.map_err(|e| RecognizeError::new(failure(&e), e.to_string()))?;
         tracing::debug!(language = ?transcript.language, "gguf transcription done");
         Ok(transcript.text)
     }
 
     fn backend(&self) -> String {
         self.backend.clone()
+    }
+}
+
+/// What a transcribe.cpp error means for the transcriber (docs/dictation.md §29).
+pub fn failure(error: &transcribe_cpp::Error) -> LocalFailure {
+    use transcribe_cpp::Error as E;
+    match error {
+        E::Backend(_) => LocalFailure::Device,
+        E::OutOfMemory(_) => LocalFailure::Memory,
+        E::ModelLoad(_) | E::ModelFileNotFound(_) => LocalFailure::Model,
+        E::InputTooLong(_) => LocalFailure::InputTooLong,
+        E::Aborted { .. } | E::OutputTruncated { .. } => LocalFailure::Aborted,
+        _ => LocalFailure::Other,
     }
 }
 
@@ -197,6 +218,27 @@ mod tests {
         assert!(reason.contains("AVX2 / FMA") && reason.contains(entry.name) && reason.contains("轻量"), "{reason}");
         #[cfg(target_arch = "x86_64")]
         assert!(missing_cpu_features().is_empty(), "the test host is below the baseline the packages need: {:?}", missing_cpu_features());
+    }
+
+    /// docs/dictation.md §29: transcribe.cpp's typed errors become the transcriber's kinds.
+    #[test]
+    fn transcribe_cpp_errors_map_to_their_kind() {
+        use transcribe_cpp::Error as E;
+        let cases = [
+            (E::Backend("vk lost".into()), LocalFailure::Device),
+            (E::OutOfMemory("vram".into()), LocalFailure::Memory),
+            (E::ModelLoad("bad gguf".into()), LocalFailure::Model),
+            (E::ModelFileNotFound("gone".into()), LocalFailure::Model),
+            (E::InputTooLong("too long".into()), LocalFailure::InputTooLong),
+            (E::Aborted { message: "abort".into(), partial: None }, LocalFailure::Aborted),
+            (E::OutputTruncated { message: "budget".into(), partial: None }, LocalFailure::Aborted),
+            (E::Busy("busy".into()), LocalFailure::Other),
+            (E::Other("?".into()), LocalFailure::Other),
+            (E::InvalidArgument("x".into()), LocalFailure::Other),
+        ];
+        for (error, kind) in cases {
+            assert_eq!(failure(&error), kind, "{error}");
+        }
     }
 
     /// A missing file is a load error with the entry's id, not a panic (no model needed).

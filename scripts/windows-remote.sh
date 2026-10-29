@@ -13,6 +13,10 @@
 #                                                logged-on user's clipboard, which the test puts back afterwards
 #   scripts/windows-remote.sh gate echo          the mixed take's echo canceller, optimised, on the machine's CPU: the
 #                                                synthetic rooms and the per-frame timing (docs/dictation.md §22.6)
+#   scripts/windows-remote.sh gate pieces <id>=<model dir>   recognition quality and speed by input length on the
+#                                                machine's CPU (docs/dictation.md §29, scripts/measure/local-pieces.sh):
+#                                                the corpus and the model are copied over, the rows come back as
+#                                                target/windows-remote/pieces-<id>.rows
 #   scripts/windows-remote.sh gate loopback      a tone played through the default output is recorded back as the
 #                                                computer's sound (docs/dictation.md §22; audible on the machine); with
 #                                                VOLTIP_LOOPBACK_PLAY=<16 kHz mono WAV> that recording plays instead and
@@ -163,6 +167,20 @@ stage_real_models() {
   put '' "$local_dir/real.env"
 }
 
+# The piece_quality measurement's inputs: the corpus (VOLTIP_MEASURE_MANIFEST's directory, default
+# /tmp/voltip-measure/corpus) and one model's directory, copied to <dir>\measure\.
+stage_pieces() {
+  local model=${1%%=*} src=${1#*=} corpus
+  corpus=$(dirname "${VOLTIP_MEASURE_MANIFEST:-/tmp/voltip-measure/corpus/manifest.csv}")
+  if [ -z "$model" ] || [ ! -d "$src" ] || [ ! -f "$corpus/manifest.csv" ]; then
+    echo "windows-remote: gate pieces <model-id>=<model directory>, with the corpus at $corpus (scripts/measure/make-corpus.py)" >&2
+    exit 2
+  fi
+  remote_ps <<<'$m = Join-Path $Dir "measure"; Remove-Item -Recurse -Force $m -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force (Join-Path $m "models") | Out-Null'
+  scp -q -r "${ssh_opts[@]}" "$corpus" "$host:$scp_dir/measure/corpus"
+  scp -q -r "${ssh_opts[@]}" "$src" "$host:$scp_dir/measure/models/$model"
+}
+
 # The loopback gate's inputs: the recording to play, and where the test writes what it recorded.
 stage_loopback() {
   local lines=() play=${VOLTIP_LOOPBACK_PLAY:-}
@@ -193,9 +211,16 @@ gate() {
     # Echo cancellation of the mixed take (docs/dictation.md §22.6): its timing means something only
     # in an optimised build on the machine being judged.
     echo) args='test --release -p voltip-audio --test echo -- --include-ignored --nocapture --test-threads=1' ;;
-    *) echo "usage: $0 gate test|clippy|real|hooks|clipboard|loopback|echo [test-name filter]" >&2; exit 2 ;;
+    # Recognition quality and speed by input length (docs/dictation.md §29): its timings mean
+    # something only in an optimised build on the machine being measured.
+    pieces)
+      args="run --release -p voltip-asr-local --example piece_quality -- --model ${2%%=*} --dir $dir\\measure\\models\\${2%%=*}"
+      args+=" --manifest $dir\\measure\\corpus\\manifest.csv --lengths ${VOLTIP_MEASURE_LENGTHS:-30,60,90,119,121} --machine windows"
+      ;;
+    *) echo "usage: $0 gate test|clippy|real|hooks|clipboard|loopback|echo [test-name filter] | gate pieces <id>=<dir>" >&2; exit 2 ;;
   esac
   if [ "$name" = real ]; then stage_real_models "${2:-}"; fi
+  if [ "$name" = pieces ]; then stage_pieces "${2:-}"; fi
   if [ "$name" = loopback ]; then stage_loopback; fi
   put '' scripts/windows-remote-gate.ps1
   remote_ps Gate="$name" CargoArgs="$args" <<'PS'
@@ -215,6 +240,10 @@ PS
   wait_log "$name" "voltip-gate-$name" || rc=$?
   if [ "$name" = loopback ] && scp -q "${ssh_opts[@]}" "$host:$scp_dir/loopback-out.wav" "$local_dir/loopback-out.wav" 2>/dev/null; then
     echo "windows-remote: the recording is at $local_dir/loopback-out.wav"
+  fi
+  if [ "$name" = pieces ] && [ -f "$local_dir/pieces.log" ]; then
+    grep -E '^(piece|peak),' "$local_dir/pieces.log" | tr -d '\r' >"$local_dir/pieces-${2%%=*}.rows" || true
+    echo "windows-remote: the rows are in $local_dir/pieces-${2%%=*}.rows"
   fi
   return "$rc"
 }
@@ -260,8 +289,8 @@ case "${1:-}" in
     case "${2:-}" in
       test | clippy | real) wait_log "$2" "voltip-gate-$2" ;;
       smoke) wait_log smoke voltip-smoke-native ;;
-      hooks | clipboard | loopback | echo) wait_log "$2" "voltip-gate-$2" ;;
-      *) echo "usage: $0 wait test|clippy|real|hooks|clipboard|loopback|echo|smoke" >&2; exit 2 ;;
+      hooks | clipboard | loopback | echo | pieces) wait_log "$2" "voltip-gate-$2" ;;
+      *) echo "usage: $0 wait test|clippy|real|hooks|clipboard|loopback|echo|pieces|smoke" >&2; exit 2 ;;
     esac
     ;;
   ps) remote_ps ;;

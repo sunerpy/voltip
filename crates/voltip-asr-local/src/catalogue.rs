@@ -5,6 +5,8 @@
 //! shows as a card, installed alongside the first local model when `vad_trim` is on. The UI shows
 //! tiers, never file formats.
 
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
 use voltip_core::{ModelInstallState, ModelState};
 
@@ -146,6 +148,10 @@ pub struct ModelEntry {
     /// Every file of the model, primary first (one GGUF; ONNX model + tokens; the streaming
     /// transducer's five files).
     pub files: &'static [ModelFile],
+    /// The longest audio one recognition is given (docs/dictation.md §29, measured): the local
+    /// transcriber cuts a longer input where it pauses and recognises it piece by piece. Zero for
+    /// the entries that recognise no whole take (the preview, the VAD).
+    pub max_piece: Duration,
 }
 
 impl ModelEntry {
@@ -213,6 +219,9 @@ pub const CATALOGUE: &[ModelEntry] = &[
         recommended: true,
         repo: "handy-computer/Qwen3-ASR-0.6B-gguf",
         files: &[ModelFile { name: "Qwen3-ASR-0.6B-Q6_K.gguf", size: 690_417_824, sha256: "3b051f108f03c0c91bbe1a3b2c1ee15e3ed51e4caec2a48751b01f2a21441cc3" }],
+        // docs/dictation.md §29: the English error rate doubles from 30 s to 60 s, and 90 s input
+        // can run out of the decoder's output budget.
+        max_piece: Duration::from_secs(30),
     },
     ModelEntry {
         id: "qwen3-asr-1.7b",
@@ -229,6 +238,8 @@ pub const CATALOGUE: &[ModelEntry] = &[
             size: 1_692_554_208,
             sha256: "c75a961b7134a6c952d89797865cb0d0376876185aee04ef6d12c31c2952e4e1",
         }],
+        // docs/dictation.md §29: not measured yet; the rule's floor until it is.
+        max_piece: Duration::from_secs(30),
     },
     ModelEntry {
         id: "sense-voice-small",
@@ -244,6 +255,8 @@ pub const CATALOGUE: &[ModelEntry] = &[
             ModelFile { name: "model.int8.onnx", size: 239_233_841, sha256: "c71f0ce00bec95b07744e116345e33d8cbbe08cef896382cf907bf4b51a2cd51" },
             ModelFile { name: "tokens.txt", size: 315_894, sha256: "f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc" },
         ],
+        // docs/dictation.md §29: longer input loses words (Chinese CER 8.9 % at 30 s, 16.7 % at 60 s).
+        max_piece: Duration::from_secs(30),
     },
     ModelEntry {
         id: "paraformer-zh",
@@ -259,6 +272,8 @@ pub const CATALOGUE: &[ModelEntry] = &[
             ModelFile { name: "model.int8.onnx", size: 227_330_205, sha256: "90bc03034ae1bef9575f8cc798cd1519c8be8aa9e8b458a033e32017ff4d584c" },
             ModelFile { name: "tokens.txt", size: 75_354, sha256: "6c0e3b35cece259829e6cb5b8d90d13db88f61ea3a2953d11898e4b2bfd7a2e2" },
         ],
+        // docs/dictation.md §29: not measured yet; the rule's floor until it is.
+        max_piece: Duration::from_secs(30),
     },
     ModelEntry {
         id: STREAMING_MODEL_ID,
@@ -277,6 +292,7 @@ pub const CATALOGUE: &[ModelEntry] = &[
             ModelFile { name: "tokens.txt", size: 58_806, sha256: "b818a60878b9aae978cbb8ad594acbd403d76d1af2e31ef4197c84e2dbdba27c" },
             ModelFile { name: "bpe.model", size: 119_265, sha256: "f87a38025a5fdd1e4e9591f6a44bb81295097ce0b80df6f4ab9f44e52c64ca5f" },
         ],
+        max_piece: Duration::ZERO,
     },
     ModelEntry {
         id: VAD_MODEL_ID,
@@ -292,6 +308,7 @@ pub const CATALOGUE: &[ModelEntry] = &[
         // different export of the same v4 model and is not what this entry pins.
         repo: "csukuangfj/vad",
         files: &[ModelFile { name: "silero_vad.onnx", size: 1_807_522, sha256: "a35ebf52fd3ce5f1469b2a36158dba761bc47b973ea3382b3186ca15b1f5af28" }],
+        max_piece: Duration::ZERO,
     },
 ];
 
@@ -318,6 +335,20 @@ pub fn vad_entry() -> &'static ModelEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// docs/dictation.md §29: every model that recognises a whole take has a `max_piece` between
+    /// the rule's 30 s floor and the 120 s a take goes whole at; the preview and the VAD have none.
+    #[test]
+    fn every_whole_take_model_has_a_max_piece() {
+        for e in CATALOGUE {
+            match e.engine {
+                Engine::ZipformerStreaming | Engine::SileroVad => assert_eq!(e.max_piece, Duration::ZERO, "{}", e.id),
+                Engine::TranscribeCpp | Engine::SenseVoice | Engine::Paraformer => {
+                    assert!((Duration::from_secs(30)..Duration::from_secs(120)).contains(&e.max_piece), "{}: {:?}", e.id, e.max_piece);
+                }
+            }
+        }
+    }
 
     #[test]
     fn catalogue_invariants() {

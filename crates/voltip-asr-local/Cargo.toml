@@ -52,6 +52,12 @@ transcribe-cpp = { workspace = true, features = ["metal"] }
 # test and lint gates do not install (scripts/lib/vulkan-sdk.sh fetches it for the packages).
 vulkan = ["transcribe-cpp/vulkan"]
 
+# The measurement behind `max_piece` and `LOCK_WAIT` (docs/dictation.md §29,
+# scripts/measure/local-pieces.sh); `cargo test` runs its scoring tests.
+[[example]]
+name = "piece_quality"
+test = true
+
 [dev-dependencies]
 tempfile.workspace = true
 # The import's decoder, for the real import test (tests/real.rs, docs/dictation.md §31).

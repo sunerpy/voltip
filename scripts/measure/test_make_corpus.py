@@ -112,7 +112,8 @@ class FilesTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             clips = mc.plan_clips("cmn_hans_cn", [sentence(str(i), 2.0, f"第{i}句。") for i in range(10)], [5], 1, 300, "test_wavs")
             manifest = mc.write_corpus(Path(d), clips)
-            rows = list(csv.DictReader(manifest.open(encoding="utf-8")))
+            with manifest.open(encoding="utf-8") as f:
+                rows = list(csv.DictReader(f))
             self.assertEqual(len(rows), 1)
             row = rows[0]
             self.assertEqual((row["lang"], row["name"], row["length_s"], row["source"]), ("cmn_hans_cn", "cmn_hans_cn-00-5s", "5", "test_wavs"))

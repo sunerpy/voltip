@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use voltip_asr_local::{
-    CATALOGUE, CATALOGUE_VERSION, Capability, Compute, Engine, LocalDevice, LocalTranscriber, MANIFEST_FILE, Manifest, ModelEntry, ModelFile, ModelStore,
-    Recognizer, RecognizerLoader, Source, Tier, entry,
+    Abort, CATALOGUE, CATALOGUE_VERSION, Capability, Compute, Engine, LocalDevice, LocalTranscriber, MANIFEST_FILE, Manifest, ModelEntry, ModelFile,
+    ModelStore, RecognizeError, Recognizer, RecognizerLoader, Source, Tier, entry,
 };
 use voltip_core::dictation::fakes::speech_recording;
 use voltip_core::{ChineseScript, DEFAULT_LOCAL_MODEL_ID, EdgeSource, EngineSettings, ProviderId, Settings, SettingsStore, TakeKind};
@@ -210,9 +210,9 @@ struct Echo {
 }
 
 impl Recognizer for Echo {
-    fn transcribe(&mut self, sample_rate: u32, samples: &[f32]) -> Result<String, String> {
+    fn transcribe(&mut self, sample_rate: u32, samples: &[f32], _abort: &Abort) -> Result<String, RecognizeError> {
         if samples.iter().all(|s| *s == 0.0) {
-            return Err("all zero".into());
+            return Err(RecognizeError::other("all zero"));
         }
         Ok(format!(" {}@{sample_rate}:{} ", self.id, samples.len()))
     }
@@ -266,7 +266,7 @@ impl RecognizerLoader for TraditionalLoader {
     fn load(&self, _entry: &ModelEntry, _dir: &Path, _language: Option<&str>, _compute: &Compute) -> Result<Box<dyn Recognizer>, String> {
         struct Traditional;
         impl Recognizer for Traditional {
-            fn transcribe(&mut self, _sample_rate: u32, _samples: &[f32]) -> Result<String, String> {
+            fn transcribe(&mut self, _sample_rate: u32, _samples: &[f32], _abort: &Abort) -> Result<String, RecognizeError> {
                 Ok("開放時間：早上九點至下午五點。".into())
             }
         }
@@ -546,6 +546,7 @@ static TINY_CATALOGUE: [ModelEntry; 1] = [ModelEntry {
     recommended: true,
     repo: TINY_REPO,
     files: &TINY_FILES,
+    max_piece: std::time::Duration::from_secs(119),
 }];
 
 fn download(store: &ModelStore, id: &str) -> (ExitCode, String, String) {

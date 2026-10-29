@@ -300,10 +300,10 @@ async fn build_clients_local_mode_selects_the_model_and_needs_no_endpoint() {
 /// change to another model warms that one (one model in memory at a time).
 #[tokio::test]
 async fn the_engine_warms_the_selected_local_model_before_the_first_take() {
-    use voltip_asr_local::{CATALOGUE, CATALOGUE_VERSION, Compute, MANIFEST_FILE, Manifest, ModelEntry, Recognizer, RecognizerLoader};
+    use voltip_asr_local::{Abort, CATALOGUE, CATALOGUE_VERSION, Compute, MANIFEST_FILE, Manifest, ModelEntry, RecognizeError, Recognizer, RecognizerLoader};
     struct Silent;
     impl Recognizer for Silent {
-        fn transcribe(&mut self, _sample_rate: u32, _samples: &[f32]) -> Result<String, String> {
+        fn transcribe(&mut self, _sample_rate: u32, _samples: &[f32], _abort: &Abort) -> Result<String, RecognizeError> {
             Ok(String::new())
         }
     }

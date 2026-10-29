@@ -16,7 +16,7 @@ use voltip_core::dictation::{DictationError, LIVE_SAMPLE_RATE_HZ, Segment, Strea
 use crate::catalogue::{Engine, ModelEntry};
 use crate::compute::Compute;
 use crate::streaming::{StreamingLoader, StreamingRecognizer};
-use crate::transcriber::{Recognizer, RecognizerLoader, default_threads};
+use crate::transcriber::{Abort, LocalFailure, RecognizeError, Recognizer, RecognizerLoader, default_threads};
 use crate::vad::{MAX_SPEECH, MIN_SILENCE, MIN_SPEECH, SpeechSpan, THRESHOLD, VAD_SAMPLE_RATE_HZ, VadLoader, VoiceActivity, WINDOW_SAMPLES};
 
 /// Loads SenseVoice / Paraformer recognisers from an installed model directory.
@@ -56,11 +56,16 @@ impl RecognizerLoader for SherpaLoader {
 struct Offline(OfflineRecognizer);
 
 impl Recognizer for Offline {
-    fn transcribe(&mut self, sample_rate: u32, samples: &[f32]) -> Result<String, String> {
+    /// sherpa-onnx's decode cannot be stopped (docs/dictation.md §29): a cancelled take runs to its
+    /// end, unless it was cancelled before it began.
+    fn transcribe(&mut self, sample_rate: u32, samples: &[f32], abort: &Abort) -> Result<String, RecognizeError> {
+        if abort.is_aborted() {
+            return Err(RecognizeError::new(LocalFailure::Aborted, "cancelled"));
+        }
         let stream = self.0.create_stream();
-        stream.accept_waveform(i32::try_from(sample_rate).map_err(|_| "sample rate out of range".to_owned())?, samples);
+        stream.accept_waveform(i32::try_from(sample_rate).map_err(|_| RecognizeError::other("sample rate out of range"))?, samples);
         self.0.decode(&stream);
-        stream.get_result().map(|r| r.text).ok_or_else(|| "sherpa-onnx returned no result".to_owned())
+        stream.get_result().map(|r| r.text).ok_or_else(|| RecognizeError::other("sherpa-onnx returned no result"))
     }
 }
 
