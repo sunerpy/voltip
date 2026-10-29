@@ -158,3 +158,16 @@ runs landed in a row on 2026-09-30, and one of them stalled a release for an hou
 - Releases build once: `release-candidate.yml` builds, signs and seals every package for the
   release PR head, and `release.yml` promotes those exact bytes after the squash merge, without
   compiling. `docs/runbook.md` (发布) has the recovery steps.
+- Release notes are bilingual and complete (user decision 2026-10-29): Chinese first, then
+  English, each language under its own heading and split by kind into subheadings (新功能 /
+  Features, 问题修复 / Fixes, 外观 / Appearance, 改进 / Improvements, and 文档 / Documentation or
+  其他 / Other when the release has them). Every change the release contains gets its own line,
+  not only the headline ones: each user-visible change of every merged pull request, naming the
+  platform it affects (电脑 / 手机, Desktop / Phone), in the reader's words and without internals.
+  They go into the release PR's body right before it merges, because release-please builds the
+  GitHub release, and with it the update dialog's notes in `latest.json`, from that body: keep
+  its first `## [x.y.z](…)` line, put nothing but the notes between its `---` lines, and use no
+  `<details>`. A push to `main` after the edit makes release-please rewrite the body, so write it
+  again then. `CHANGELOG.md` stays release-please's list of commits. The owner reviews the notes
+  before the release PR merges. Google Play's release notes keep Play's 500-character limit per
+  language and cover the phone's changes.
