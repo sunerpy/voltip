@@ -1,11 +1,13 @@
 //! The injectors and the decisions they make, kept apart from the OS calls in
 //! [`crate::platform`] / [`crate::linux`] so everything here runs on a headless host.
 
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
+use crate::clip::ClipSnapshot;
 use crate::toolchain::{Chord, Delivery, PasteMethod};
-use crate::{FallbackCode, InjectError, InjectNote, Injection, Injector};
+use crate::{AfterPaste, FallbackCode, InjectError, InjectNote, InjectSession, Injection, Injector, PieceOutcome};
 
 /// Linux default pause between writing the clipboard and pressing the paste chord, so the target
 /// application observes the new content (`paste_delay_ms`, docs/dictation.md §14).
@@ -69,14 +71,11 @@ pub fn paste_chord_for(os: &str) -> Chord {
     PasteMethod::CtrlV.chord_for(os)
 }
 
-/// Whether the clipboard should be put back to `previous` after a paste: only when there was a
-/// previous text, the clipboard still holds `ours` (the user has not copied something new), and
-/// restoring would change anything.
-pub fn should_restore(previous: Option<&str>, current: Option<&str>, ours: &str) -> bool {
-    match (previous, current) {
-        (Some(previous), Some(current)) => current == ours && previous != ours,
-        _ => false,
-    }
+/// Whether `snapshot` comes back after a paste of `ours`: when it holds anything, and anything
+/// besides `ours` itself (putting the same text back would change nothing). An empty text the user
+/// had copied is something.
+pub fn puts_back(snapshot: &ClipSnapshot, ours: &str) -> bool {
+    !snapshot.is_empty() && !snapshot.holds_only(ours)
 }
 
 /// Whether a display server is reachable, judged from the environment: on `linux` either
@@ -100,6 +99,38 @@ pub trait ClipboardPort: Send + Sync {
     /// "nothing copied"; [`crate::SystemClipboard`] clears for real.
     fn clear(&self) -> Result<(), InjectError> {
         self.write_text("")
+    }
+
+    /// Everything the clipboard holds now, to put back after an injection (docs/dictation.md
+    /// §14.3). The default keeps the text alone ([`ClipSnapshot::of_text`]); the platform ports keep
+    /// every format they can read.
+    fn snapshot(&self) -> Result<ClipSnapshot, InjectError> {
+        Ok(ClipSnapshot::of_text(self.read_text()?.as_deref()))
+    }
+
+    /// Put `snapshot` back: what it holds replaces the clipboard; an empty one empties it. The
+    /// default writes the snapshot's text; the platform ports write every format, marked so
+    /// that clipboard histories do not list it a second time.
+    fn restore(&self, snapshot: &ClipSnapshot) -> Result<(), InjectError> {
+        match snapshot.text() {
+            Some(text) => self.write_text(text),
+            None => self.clear(),
+        }
+    }
+
+    /// A number that changes whenever anything writes the clipboard (Windows'
+    /// `GetClipboardSequenceNumber`, macOS' `changeCount`): it tells "still ours" from "the user
+    /// copied the same text again". `None` where the platform has none; the text is compared then.
+    fn change_count(&self) -> Option<u64> {
+        None
+    }
+
+    /// Write `text` for a paste that is put back afterwards, marked for clipboard histories and
+    /// managers to skip (Windows clipboard history and cloud clipboard, Ditto, macOS managers,
+    /// Klipper). `Ok(true)` when a marker went with it, so text that stays after all is written again
+    /// plainly; the default writes plainly and answers `false`.
+    fn write_transient(&self, text: &str) -> Result<bool, InjectError> {
+        self.write_text(text).map(|()| false)
     }
 }
 
@@ -148,17 +179,21 @@ pub trait KeystrokePort: Send + Sync {
     }
 }
 
-/// Clipboard write, paste chord, delayed restore. See the crate docs for the platform caveats.
+/// Clipboard write, paste chord, delayed restore, in sessions (docs/dictation.md §14.3). See the
+/// crate docs for the platform caveats.
 pub struct ClipboardPasteInjector {
     clipboard: Arc<dyn ClipboardPort>,
     keys: Arc<dyn KeystrokePort>,
     chord: Chord,
     options: PasteOptions,
+    /// The last session's restore while it waits for its delay; the next session takes it over.
+    pending: Arc<Mutex<Option<Pending>>>,
+    generations: Arc<AtomicU64>,
 }
 
 impl ClipboardPasteInjector {
     /// [`crate::system_paste_injector`] with this platform's [`PasteOptions::for_os`] and
-    /// `restore_delay` before the old clipboard text comes back.
+    /// `restore_delay` before the old clipboard content comes back.
     pub fn new(restore_delay: Duration) -> Self {
         crate::system_paste_injector(PasteOptions::for_os(std::env::consts::OS).with_restore_delay(restore_delay))
     }
@@ -170,7 +205,7 @@ impl ClipboardPasteInjector {
 
     /// Explicit ports, chord and options, for tests and unusual hosts.
     pub fn with_ports(clipboard: Arc<dyn ClipboardPort>, keys: Arc<dyn KeystrokePort>, chord: Chord, options: PasteOptions) -> Self {
-        Self { clipboard, keys, chord, options }
+        Self { clipboard, keys, chord, options, pending: Arc::default(), generations: Arc::default() }
     }
 
     /// The chord this injector sends.
@@ -183,80 +218,260 @@ impl ClipboardPasteInjector {
         self.options
     }
 
-    fn schedule_restore(&self, previous: String, ours: String) {
-        let clipboard = Arc::clone(&self.clipboard);
-        let delay = self.options.paste_delay_after;
+    fn session(&self, after: AfterPaste) -> PasteSession {
+        PasteSession {
+            clipboard: Arc::clone(&self.clipboard),
+            keys: Arc::clone(&self.keys),
+            chord: self.chord,
+            options: self.options,
+            pending: Arc::clone(&self.pending),
+            generations: Arc::clone(&self.generations),
+            after,
+            snapshot: None,
+            ours: None,
+            last_paste: None,
+            left_for_user: false,
+            ended: false,
+        }
+    }
+}
+
+/// What a session wrote last: the text, and the clipboard's change count right after where it has
+/// one ([`ClipboardPort::change_count`]).
+#[derive(Clone)]
+struct Ours {
+    text: String,
+    seq: Option<u64>,
+}
+
+/// A finished session's restore, waiting for the target to read the last paste.
+struct Pending {
+    snapshot: ClipSnapshot,
+    ours: Ours,
+    generation: u64,
+}
+
+/// The clipboard still holds `ours`: the same change count where the clipboard counts its
+/// changes, the same text otherwise.
+fn still_ours(clipboard: &dyn ClipboardPort, ours: &Ours) -> bool {
+    match (ours.seq, clipboard.change_count()) {
+        (Some(then), Some(now)) => then == now,
+        _ => matches!(clipboard.read_text(), Ok(Some(text)) if text == ours.text),
+    }
+}
+
+/// Put `snapshot` back if the clipboard still holds `ours`; log, never fail.
+fn restore_if_ours(clipboard: &dyn ClipboardPort, snapshot: &ClipSnapshot, ours: &Ours) {
+    if !still_ours(clipboard, ours) {
+        tracing::debug!("clipboard changed since the paste; leaving it alone");
+        return;
+    }
+    match clipboard.restore(snapshot) {
+        Ok(()) => tracing::debug!(formats = ?snapshot.format_names(), bytes = snapshot.bytes(), "clipboard put back"),
+        Err(err) => tracing::warn!(%err, "could not put the previous clipboard content back"),
+    }
+}
+
+/// One [`ClipboardPasteInjector`] session (docs/dictation.md §14.3). The clipboard is saved before
+/// the first piece — or taken over from an earlier session whose restore is still waiting — and
+/// saved again when the user copies something between two pieces; it comes back once, after the
+/// last paste, while it still holds the session's text.
+struct PasteSession {
+    clipboard: Arc<dyn ClipboardPort>,
+    keys: Arc<dyn KeystrokePort>,
+    chord: Chord,
+    options: PasteOptions,
+    pending: Arc<Mutex<Option<Pending>>>,
+    generations: Arc<AtomicU64>,
+    after: AfterPaste,
+    /// What comes back; `None` before the first piece. An empty snapshot puts nothing back.
+    snapshot: Option<ClipSnapshot>,
+    /// What the session wrote last, while it is on the clipboard.
+    ours: Option<Ours>,
+    /// When the last piece was pasted: the restore waits for the target to have read it.
+    last_paste: Option<Instant>,
+    /// A paste could not be attempted: the text stays for the user to paste, nothing comes back.
+    left_for_user: bool,
+    ended: bool,
+}
+
+impl PasteSession {
+    fn read_snapshot(&self) -> ClipSnapshot {
+        match self.clipboard.snapshot() {
+            Ok(snapshot) => {
+                if !snapshot.complete {
+                    tracing::info!(formats = ?snapshot.format_names(), bytes = snapshot.bytes(), "not every clipboard format could be kept; the others will not come back");
+                }
+                snapshot
+            }
+            Err(err) => {
+                tracing::debug!(%err, "could not read the clipboard before injecting; nothing will be put back");
+                ClipSnapshot::empty()
+            }
+        }
+    }
+
+    /// Before a piece: the first takes over a waiting restore whose text is still on the clipboard
+    /// (its snapshot is the user's clipboard), or saves the clipboard; a later one saves it again
+    /// when it no longer holds the session's text (the user copied something meanwhile).
+    fn save(&mut self) {
+        if self.snapshot.is_none() {
+            let mut pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
+            if let Some(waiting) = pending.take()
+                && still_ours(self.clipboard.as_ref(), &waiting.ours)
+            {
+                tracing::debug!("a restore was still waiting; this session puts that clipboard back instead");
+                self.snapshot = Some(waiting.snapshot);
+                return;
+            }
+            drop(pending);
+            self.snapshot = Some(self.read_snapshot());
+            return;
+        }
+        if self.ours.as_ref().is_none_or(|ours| !still_ours(self.clipboard.as_ref(), ours)) {
+            tracing::debug!("the clipboard changed between two pieces; that is what comes back now");
+            self.snapshot = Some(self.read_snapshot());
+            self.left_for_user = false;
+        }
+    }
+
+    /// The snapshot, when putting it back would change something after a paste of `text`.
+    fn to_put_back(&self, text: &str) -> Option<&ClipSnapshot> {
+        self.snapshot.as_ref().filter(|s| puts_back(s, text))
+    }
+
+    /// Put the clipboard back now (the piece was called off or failed). Whether there was
+    /// anything to put back.
+    fn put_back_now(&mut self) -> bool {
+        let Some(ours) = self.ours.take() else { return false };
+        let Some(snapshot) = self.to_put_back(&ours.text) else { return false };
+        restore_if_ours(self.clipboard.as_ref(), snapshot, &ours);
+        true
+    }
+
+    /// The end of the session: put the clipboard back once the last paste has had its delay.
+    fn end(&mut self, aborted: bool) {
+        if std::mem::replace(&mut self.ended, true) {
+            return;
+        }
+        let Some(ours) = self.ours.take() else { return };
+        if self.after == AfterPaste::Keep || (self.left_for_user && !aborted) {
+            return;
+        }
+        let Some(snapshot) = self.to_put_back(&ours.text).cloned() else { return };
+        let wait = self.last_paste.map_or(Duration::ZERO, |at| self.options.paste_delay_after.saturating_sub(at.elapsed()));
+        if wait.is_zero() {
+            restore_if_ours(self.clipboard.as_ref(), &snapshot, &ours);
+            return;
+        }
+        let generation = self.generations.fetch_add(1, Ordering::SeqCst) + 1;
+        *self.pending.lock().unwrap_or_else(PoisonError::into_inner) = Some(Pending { snapshot, ours, generation });
+        let (clipboard, pending) = (Arc::clone(&self.clipboard), Arc::clone(&self.pending));
         let spawned = std::thread::Builder::new().name("voltip-clipboard-restore".into()).spawn(move || {
             // Deliberate fixed delay: the target application must have consumed the paste before
             // the clipboard changes under it. There is no event to wait for.
-            std::thread::sleep(delay);
-            restore_now(clipboard.as_ref(), &previous, &ours);
+            std::thread::sleep(wait);
+            // Checked and put back under the lock: a session starting now either takes the
+            // restore over first or finds the clipboard already back.
+            let mut slot = pending.lock().unwrap_or_else(PoisonError::into_inner);
+            if let Some(waiting) = slot.take_if(|w| w.generation == generation) {
+                restore_if_ours(clipboard.as_ref(), &waiting.snapshot, &waiting.ours);
+            }
         });
         if let Err(err) = spawned {
-            tracing::warn!(%err, "could not start the clipboard restore thread; previous text stays replaced");
+            tracing::warn!(%err, "could not start the clipboard restore thread; the next paste puts the clipboard back");
         }
     }
 }
 
-/// Put `previous` back if the clipboard still holds `ours`; log, never fail.
-fn restore_now(clipboard: &dyn ClipboardPort, previous: &str, ours: &str) {
-    let current = clipboard.read_text().unwrap_or_default();
-    if should_restore(Some(previous), current.as_deref(), ours) {
-        if let Err(err) = clipboard.write_text(previous) {
-            tracing::warn!(%err, "could not restore the previous clipboard text");
+impl InjectSession for PasteSession {
+    fn piece(&mut self, text: &str, may_deliver: &dyn Fn() -> bool) -> Result<PieceOutcome, InjectError> {
+        if self.ended {
+            return Ok(PieceOutcome::Cancelled);
         }
-    } else {
-        tracing::debug!("clipboard changed since the paste; leaving it alone");
-    }
-}
-
-impl Injector for ClipboardPasteInjector {
-    fn inject(&self, text: &str) -> Result<Injection, InjectError> {
         if text.trim().is_empty() {
             return Err(InjectError::EmptyText);
         }
         let text = self.options.prepare(text);
         let chars = text.chars().count();
-        let previous = match self.clipboard.read_text() {
-            Ok(previous) => previous,
-            Err(err) => {
-                tracing::debug!(%err, "could not read the clipboard before injecting; nothing will be restored");
-                None
-            }
+        self.save();
+        // Marked for clipboard histories only when something comes back over it.
+        let transient = self.after == AfterPaste::Restore && self.to_put_back(&text).is_some();
+        let marked = if transient {
+            self.clipboard.write_transient(&text)?
+        } else {
+            self.clipboard.write_text(&text)?;
+            false
         };
-        self.clipboard.write_text(&text)?;
+        self.ours = Some(Ours { text: text.clone(), seq: self.clipboard.change_count() });
         std::thread::sleep(self.options.paste_delay);
-        let previous = previous.filter(|p| *p != text);
+        if !may_deliver() {
+            self.put_back_now();
+            tracing::debug!(chars, "piece called off before the paste");
+            return Ok(PieceOutcome::Cancelled);
+        }
         match self.keys.deliver(self.chord, &text) {
             Ok(delivered) => {
-                if let Some(previous) = previous {
-                    self.schedule_restore(previous, text);
-                }
+                self.last_paste = Some(Instant::now());
                 tracing::debug!(chars, chord = %self.chord, tool = %delivered.tool, delivery = ?delivered.delivery, "pasted");
-                Ok(Injection::pasted(chars))
+                Ok(PieceOutcome::Delivered(Injection::pasted(chars)))
             }
             Err(DeliveryError::Unavailable(note)) => {
-                // Nothing reached the application: the text stays on the clipboard for the user.
+                // Nothing reached the application: the text stays on the clipboard for the user,
+                // as an ordinary copy.
                 tracing::warn!(reason = %note.detail, code = ?note.code, chord = %self.chord, "no way to paste; text left on the clipboard");
-                Ok(Injection::clipboard(chars, Some(note)))
+                if marked && self.ours.as_ref().is_some_and(|ours| still_ours(self.clipboard.as_ref(), ours)) {
+                    match self.clipboard.write_text(&text) {
+                        Ok(()) => self.ours = Some(Ours { text: text.clone(), seq: self.clipboard.change_count() }),
+                        Err(err) => tracing::warn!(%err, "could not write the text again without the history marker"),
+                    }
+                }
+                self.left_for_user = true;
+                Ok(PieceOutcome::Delivered(Injection::clipboard(chars, Some(note))))
             }
             Err(DeliveryError::Failed(reason)) => {
-                // Something was attempted and failed: undo our clipboard write right away.
-                let restored = match &previous {
-                    Some(previous) => {
-                        restore_now(self.clipboard.as_ref(), previous, &text);
-                        true
-                    }
-                    None => false,
-                };
+                // Something was attempted and failed: the clipboard comes back right away.
+                let restored = self.put_back_now();
                 tracing::warn!(%reason, chord = %self.chord, restored, "paste failed");
                 Err(InjectError::Keystroke(if restored { reason } else { format!("{reason} (text left on the clipboard)") }))
             }
         }
     }
 
+    fn finish(&mut self) {
+        self.end(false);
+    }
+
+    fn abort(&mut self) {
+        self.end(true);
+    }
+}
+
+/// A session dropped without its end ends as finished.
+impl Drop for PasteSession {
+    fn drop(&mut self) {
+        self.end(false);
+    }
+}
+
+impl Injector for ClipboardPasteInjector {
+    /// One piece in a session of its own, the clipboard put back afterwards.
+    fn inject(&self, text: &str) -> Result<Injection, InjectError> {
+        let mut session = self.session(AfterPaste::Restore);
+        let outcome = session.piece(text, &|| true);
+        session.finish();
+        match outcome? {
+            PieceOutcome::Delivered(injection) => Ok(injection),
+            PieceOutcome::Cancelled => Err(InjectError::Keystroke("the paste was called off".into())),
+        }
+    }
+
     fn describe(&self) -> &'static str {
         "clipboard+paste"
+    }
+
+    fn begin_session(self: Arc<Self>, after: AfterPaste) -> Box<dyn InjectSession> {
+        Box::new(self.session(after))
     }
 }
 
@@ -302,18 +517,33 @@ impl Injector for ClipboardOnlyInjector {
 #[cfg(test)]
 pub(crate) mod tests {
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::time::Instant;
 
     use super::*;
-    use crate::Via;
+    use crate::clip::{ClipFormat, TEXT_FORMAT};
+    use crate::{AfterPaste, PieceOutcome, Via};
 
-    /// In-memory clipboard with optional failure injection and a write log.
+    /// In-memory clipboard with optional failure injection and a write log. Besides its text it
+    /// holds other formats (an image, a file list, HTML: `formats`), counts its changes when asked
+    /// to ([`MemoryClipboard::counted`], like Windows and macOS), and remembers whether the current
+    /// text came with a history-exclusion marker ([`MemoryClipboard::marking`] makes
+    /// `write_transient` add one).
     #[derive(Default)]
     pub struct MemoryClipboard {
         pub text: Mutex<Option<String>>,
+        /// The formats besides the text.
+        pub formats: Mutex<Vec<ClipFormat>>,
         pub fail_read: Mutex<Option<InjectError>>,
         pub fail_write: Mutex<Option<InjectError>>,
         pub writes: Mutex<Vec<String>>,
+        /// Changes so far; offered as `change_count` when `counts`.
+        pub seq: AtomicU64,
+        pub counts: bool,
+        /// `write_transient` adds a marker.
+        pub marks: bool,
+        /// The current text carries a marker.
+        pub marked: AtomicBool,
     }
 
     impl MemoryClipboard {
@@ -323,12 +553,64 @@ pub(crate) mod tests {
             Arc::new(cb)
         }
 
+        /// Holding `formats` (and `text` when given) — what an application copied.
+        pub fn holding_formats(text: Option<&str>, formats: Vec<ClipFormat>) -> Self {
+            let cb = Self::default();
+            *cb.text.lock().unwrap() = text.map(str::to_owned);
+            *cb.formats.lock().unwrap() = formats;
+            cb
+        }
+
+        /// Counting its changes.
+        pub fn counted(self) -> Self {
+            Self { counts: true, ..self }
+        }
+
+        /// Marking transient writes.
+        pub fn marking(self) -> Self {
+            Self { marks: true, ..self }
+        }
+
         pub fn current(&self) -> Option<String> {
             self.text.lock().unwrap().clone()
         }
 
         pub fn writes(&self) -> Vec<String> {
             self.writes.lock().unwrap().clone()
+        }
+
+        /// What it holds, as a snapshot sees it.
+        pub fn content(&self) -> ClipSnapshot {
+            let text = self.current();
+            let mut formats = self.formats.lock().unwrap().clone();
+            if let Some(text) = text {
+                formats.push(ClipFormat::new(TEXT_FORMAT, text.into_bytes()));
+            }
+            ClipSnapshot::single(formats)
+        }
+
+        pub fn is_marked(&self) -> bool {
+            self.marked.load(Ordering::SeqCst)
+        }
+
+        /// Another application copies `text`: a change, not one of ours (not in `writes`).
+        pub fn user_copies(&self, text: &str) {
+            *self.text.lock().unwrap() = Some(text.to_owned());
+            self.formats.lock().unwrap().clear();
+            self.marked.store(false, Ordering::SeqCst);
+            self.seq.fetch_add(1, Ordering::SeqCst);
+        }
+
+        fn replace(&self, text: Option<&str>, formats: Vec<ClipFormat>, marked: bool, log: String) -> Result<(), InjectError> {
+            if let Some(err) = self.fail_write.lock().unwrap().clone() {
+                return Err(err);
+            }
+            *self.text.lock().unwrap() = text.map(str::to_owned);
+            *self.formats.lock().unwrap() = formats;
+            self.marked.store(marked, Ordering::SeqCst);
+            self.seq.fetch_add(1, Ordering::SeqCst);
+            self.writes.lock().unwrap().push(log);
+            Ok(())
         }
     }
 
@@ -341,22 +623,40 @@ pub(crate) mod tests {
         }
 
         fn write_text(&self, text: &str) -> Result<(), InjectError> {
-            if let Some(err) = self.fail_write.lock().unwrap().clone() {
-                return Err(err);
-            }
-            *self.text.lock().unwrap() = Some(text.to_string());
-            self.writes.lock().unwrap().push(text.to_string());
-            Ok(())
+            self.replace(Some(text), Vec::new(), false, text.to_string())
         }
 
         /// Empties for real (like arboard) instead of writing `""`; recorded as `<clear>`.
         fn clear(&self) -> Result<(), InjectError> {
-            if let Some(err) = self.fail_write.lock().unwrap().clone() {
+            self.replace(None, Vec::new(), false, CLEARED.to_string())
+        }
+
+        fn snapshot(&self) -> Result<ClipSnapshot, InjectError> {
+            if let Some(err) = self.fail_read.lock().unwrap().clone() {
                 return Err(err);
             }
-            *self.text.lock().unwrap() = None;
-            self.writes.lock().unwrap().push(CLEARED.to_string());
-            Ok(())
+            Ok(self.content())
+        }
+
+        /// Recorded as the snapshot's text, `<clear>` for an empty one, `<restore …>` with the
+        /// format names for one without text.
+        fn restore(&self, snapshot: &ClipSnapshot) -> Result<(), InjectError> {
+            let text = snapshot.text();
+            let others: Vec<ClipFormat> = snapshot.items.iter().flatten().filter(|f| f.name != TEXT_FORMAT).cloned().collect();
+            let log = match text {
+                _ if snapshot.is_empty() => CLEARED.to_string(),
+                Some(text) => text.to_string(),
+                None => format!("<restore {}>", snapshot.format_names().join(",")),
+            };
+            self.replace(text, others, false, log)
+        }
+
+        fn change_count(&self) -> Option<u64> {
+            self.counts.then(|| self.seq.load(Ordering::SeqCst))
+        }
+
+        fn write_transient(&self, text: &str) -> Result<bool, InjectError> {
+            self.replace(Some(text), Vec::new(), self.marks, text.to_string()).map(|()| self.marks)
         }
     }
 
@@ -459,12 +759,28 @@ pub(crate) mod tests {
 
     #[test]
     fn restore_decision_table() {
-        assert!(should_restore(Some("old"), Some("ours"), "ours"));
-        assert!(!should_restore(Some("old"), Some("user copied this"), "ours"), "user changed it");
-        assert!(!should_restore(None, Some("ours"), "ours"), "nothing to restore");
-        assert!(!should_restore(Some("old"), None, "ours"), "clipboard unreadable or empty");
-        assert!(!should_restore(Some("ours"), Some("ours"), "ours"), "no-op");
-        assert!(should_restore(Some(""), Some("ours"), "ours"), "empty string was a real previous text");
+        let of = |t: &str| ClipSnapshot::of_text(Some(t));
+        assert!(puts_back(&of("old"), "ours"));
+        assert!(!puts_back(&ClipSnapshot::empty(), "ours"), "nothing to restore");
+        assert!(!puts_back(&of("ours"), "ours"), "no-op");
+        assert!(puts_back(&of(""), "ours"), "empty string was a real previous text");
+        assert!(puts_back(&ClipSnapshot::single(image()), "ours"), "an image is something");
+        // Ours while the clipboard holds our text — or, where it counts its changes, while nothing
+        // wrote it since, whatever the text.
+        let ours = |text: &str, seq| Ours { text: text.into(), seq };
+        let plain = MemoryClipboard::holding("ours");
+        assert!(still_ours(plain.as_ref(), &ours("ours", None)));
+        plain.user_copies("user copied this");
+        assert!(!still_ours(plain.as_ref(), &ours("ours", None)), "user changed it");
+        *plain.text.lock().unwrap() = None;
+        assert!(!still_ours(plain.as_ref(), &ours("ours", None)), "clipboard empty");
+        *plain.fail_read.lock().unwrap() = Some(InjectError::Clipboard("busy".into()));
+        assert!(!still_ours(plain.as_ref(), &ours("ours", None)), "clipboard unreadable");
+        let counted = MemoryClipboard::holding_formats(Some("ours"), Vec::new()).counted();
+        let seq = counted.change_count();
+        assert!(still_ours(&counted, &ours("ours", seq)));
+        counted.user_copies("ours");
+        assert!(!still_ours(&counted, &ours("ours", seq)), "the same text copied again is the user's");
     }
 
     #[test]
@@ -667,6 +983,251 @@ pub(crate) mod tests {
         assert_eq!(injector.inject("   ").unwrap_err(), InjectError::EmptyText);
         *clipboard.fail_write.lock().unwrap() = Some(InjectError::Clipboard("locked".into()));
         assert_eq!(injector.inject("x").unwrap_err(), InjectError::Clipboard("locked".into()));
+    }
+
+    /// A PNG and its alt text, a Finder / Explorer file list, formatted text: what users copy
+    /// besides plain text.
+    fn image() -> Vec<ClipFormat> {
+        vec![ClipFormat::new("image/png", [0x89, b'P', b'N', b'G', 1, 2, 3])]
+    }
+
+    fn files() -> Vec<ClipFormat> {
+        vec![ClipFormat::new("text/uri-list", "file:///home/u/report.pdf\r\n")]
+    }
+
+    fn html() -> Vec<ClipFormat> {
+        vec![ClipFormat::new("text/html", "<b>加粗</b>的一段")]
+    }
+
+    fn session_injector(clipboard: &Arc<MemoryClipboard>, keys: Arc<RecordingKeys>, restore: Duration) -> Arc<ClipboardPasteInjector> {
+        Arc::new(ClipboardPasteInjector::with_ports(
+            clipboard.clone(),
+            keys,
+            paste_chord_for("linux"),
+            PasteOptions { paste_delay: FAST, paste_delay_after: restore, ..PasteOptions::default() },
+        ))
+    }
+
+    /// Regression (R01, 2026-10-28 review): only the text was saved, so an image, a file list or
+    /// the HTML of formatted text the user had copied was replaced by the dictation and never came
+    /// back. The whole clipboard comes back now.
+    #[test]
+    fn regression_an_image_file_list_or_html_on_the_clipboard_comes_back_after_the_paste() {
+        for (text, formats) in [(None, image()), (None, files()), (Some("加粗的一段"), html())] {
+            let clipboard = Arc::new(MemoryClipboard::holding_formats(text, formats.clone()));
+            let before = clipboard.content();
+            let injector = make_injector_with(Arc::clone(&clipboard));
+            assert_eq!(injector.inject("口述的文字").unwrap().via, Via::Paste);
+            wait_until(|| clipboard.content() == before);
+            assert_eq!(clipboard.writes().len(), 2, "our text, then the restore: {:?}", clipboard.writes());
+            assert_eq!(clipboard.formats.lock().unwrap().as_slice(), formats.as_slice());
+        }
+    }
+
+    /// Regression (R01, `live_inject` and quick takes): a paste that came before the previous one's
+    /// restore saved the previous dictation as "the user's clipboard" and put that back. A session
+    /// that starts while an earlier one's restore is pending takes the earlier one's snapshot over:
+    /// the user's own clipboard comes back, once.
+    #[test]
+    fn regression_two_pastes_within_the_restore_delay_put_back_the_users_clipboard_once() {
+        for counted in [false, true] {
+            let clipboard = Arc::new(if counted {
+                MemoryClipboard::holding_formats(Some("用户的剪贴板"), Vec::new()).counted()
+            } else {
+                MemoryClipboard::holding_formats(Some("用户的剪贴板"), Vec::new())
+            });
+            let injector = session_injector(&clipboard, Arc::new(RecordingKeys::default()), Duration::from_millis(400));
+            injector.inject("第一次").unwrap();
+            injector.inject("第二次").unwrap();
+            wait_until(|| clipboard.current().as_deref() == Some("用户的剪贴板"));
+            // Long enough for both restores to have run, had there been two.
+            std::thread::sleep(Duration::from_millis(1200));
+            assert_eq!(clipboard.current().as_deref(), Some("用户的剪贴板"), "counted={counted}");
+            let writes = clipboard.writes();
+            let second = writes.iter().position(|w| w == "第二次").unwrap();
+            assert!(!writes[second..].iter().any(|w| w == "第一次"), "the first dictation never comes back: {writes:?}");
+        }
+    }
+
+    /// Regression (R01): with a change count the clipboard tells our text from the same text the
+    /// user copied again; the user's copy is not overwritten by the restore.
+    #[test]
+    fn regression_the_same_text_copied_again_by_the_user_is_kept() {
+        let clipboard = Arc::new(MemoryClipboard::holding_formats(Some("原来的"), Vec::new()).counted());
+        let injector = session_injector(&clipboard, Arc::new(RecordingKeys::default()), RESTORE);
+        injector.inject("一样的字").unwrap();
+        clipboard.user_copies("一样的字");
+        std::thread::sleep(RESTORE * 4);
+        assert_eq!(clipboard.current().as_deref(), Some("一样的字"));
+        assert_eq!(clipboard.writes(), vec!["一样的字".to_string()], "nothing was restored over the user's copy");
+    }
+
+    /// Regression (R01, `live_inject`): every sentence scheduled its own restore, which put an
+    /// earlier sentence back instead of the user's text. A session puts the clipboard back once,
+    /// after its last paste.
+    #[test]
+    fn regression_a_session_restores_once_after_its_last_piece() {
+        let clipboard = Arc::new(MemoryClipboard::holding_formats(Some("用户的"), image()));
+        let keys = Arc::new(RecordingKeys::default());
+        let injector = session_injector(&clipboard, Arc::clone(&keys), RESTORE);
+        let before = clipboard.content();
+        let mut session = injector.clone().begin_session(AfterPaste::Restore);
+        for piece in ["一句。", "二句。", "三句。"] {
+            assert!(matches!(session.piece(piece, &|| true).unwrap(), PieceOutcome::Delivered(Injection { via: Via::Paste, .. })));
+            std::thread::sleep(RESTORE * 2);
+            assert_eq!(clipboard.current().as_deref(), Some(piece), "nothing is put back between pieces");
+        }
+        session.finish();
+        wait_until(|| clipboard.content() == before);
+        assert_eq!(clipboard.writes(), ["一句。", "二句。", "三句。", "用户的"].map(String::from));
+        assert_eq!(keys.pressed.lock().unwrap().len(), 3);
+    }
+
+    /// What the user copies in the middle of a session is what the session puts back at its end.
+    #[test]
+    fn a_copy_the_user_makes_during_a_session_is_what_comes_back() {
+        let clipboard = Arc::new(MemoryClipboard::holding_formats(Some("原来的"), Vec::new()));
+        let injector = session_injector(&clipboard, Arc::new(RecordingKeys::default()), RESTORE);
+        let mut session = injector.clone().begin_session(AfterPaste::Restore);
+        session.piece("一。", &|| true).unwrap();
+        clipboard.user_copies("新复制的");
+        session.piece("二。", &|| true).unwrap();
+        session.finish();
+        wait_until(|| clipboard.current().as_deref() == Some("新复制的"));
+        std::thread::sleep(RESTORE * 4);
+        assert_eq!(clipboard.current().as_deref(), Some("新复制的"));
+        assert!(!clipboard.writes().contains(&"原来的".to_string()), "{:?}", clipboard.writes());
+    }
+
+    /// Regression (R01): a paste that failed put back the text only; the image the user had
+    /// copied was gone. The whole snapshot comes back at once.
+    #[test]
+    fn regression_a_failed_paste_puts_the_whole_clipboard_back_at_once() {
+        let clipboard = Arc::new(MemoryClipboard::holding_formats(Some("图片说明"), image()));
+        let before = clipboard.content();
+        let keys = RecordingKeys::failing(DeliveryError::Failed("wtype exited with exit status: 1".into()));
+        let injector = make_injector(Arc::clone(&clipboard), keys);
+        assert!(matches!(injector.inject("口述"), Err(InjectError::Keystroke(m)) if m == "wtype exited with exit status: 1"));
+        assert_eq!(clipboard.content(), before, "back before inject returns");
+    }
+
+    /// A piece `may_deliver` turns down (the take was cancelled, the window changed) is not
+    /// delivered and the clipboard is put back right away; it was asked with our text already on
+    /// the clipboard, right before the paste.
+    #[test]
+    fn a_piece_that_may_not_be_delivered_is_not_and_the_clipboard_comes_back() {
+        let clipboard = Arc::new(MemoryClipboard::holding_formats(Some("原来的"), image()));
+        let before = clipboard.content();
+        let keys = Arc::new(RecordingKeys::default());
+        let injector = session_injector(&clipboard, Arc::clone(&keys), RESTORE);
+        let mut session = injector.clone().begin_session(AfterPaste::Restore);
+        let seen = Mutex::new(None);
+        let outcome = session
+            .piece("取消的", &|| {
+                *seen.lock().unwrap() = clipboard.current();
+                false
+            })
+            .unwrap();
+        assert_eq!(outcome, PieceOutcome::Cancelled);
+        assert_eq!(seen.lock().unwrap().as_deref(), Some("取消的"), "asked once our text was on the clipboard");
+        assert!(keys.pressed.lock().unwrap().is_empty(), "nothing was pressed");
+        assert_eq!(clipboard.content(), before, "the clipboard is back at once");
+        session.finish();
+        std::thread::sleep(RESTORE * 4);
+        assert_eq!(clipboard.writes(), ["取消的", "原来的"].map(String::from), "write, restore; nothing at the finish");
+    }
+
+    /// An ended session delivers nothing more and leaves the clipboard alone.
+    #[test]
+    fn an_ended_session_delivers_nothing() {
+        let clipboard = MemoryClipboard::holding("原来的");
+        let keys = Arc::new(RecordingKeys::default());
+        let injector = session_injector(&clipboard, Arc::clone(&keys), RESTORE);
+        for end in [true, false] {
+            let mut session = injector.clone().begin_session(AfterPaste::Restore);
+            if end {
+                session.finish()
+            } else {
+                session.abort()
+            }
+            assert_eq!(session.piece("迟到的", &|| true).unwrap(), PieceOutcome::Cancelled);
+        }
+        assert!(keys.pressed.lock().unwrap().is_empty());
+        assert!(clipboard.writes().is_empty());
+    }
+
+    /// `Keep` (the `clipboard_after` setting): the text is written as an ordinary copy and stays,
+    /// and an earlier session's pending restore does not land on it.
+    #[test]
+    fn keep_leaves_the_text_as_an_ordinary_copy() {
+        let clipboard = Arc::new(MemoryClipboard::holding_formats(Some("原来的"), Vec::new()).marking());
+        let injector = session_injector(&clipboard, Arc::new(RecordingKeys::default()), Duration::from_millis(300));
+        injector.inject("先粘贴的").unwrap();
+        let mut session = injector.clone().begin_session(AfterPaste::Keep);
+        session.piece("保留的", &|| true).unwrap();
+        assert!(!clipboard.is_marked(), "kept text carries no history marker");
+        session.finish();
+        std::thread::sleep(Duration::from_millis(900));
+        assert_eq!(clipboard.current().as_deref(), Some("保留的"));
+    }
+
+    /// The text of a paste that is put back afterwards carries the history marker; when the paste
+    /// is unavailable and the text stays for the user, it is written again as an ordinary copy and
+    /// the session puts nothing back.
+    #[test]
+    fn a_restored_paste_is_marked_and_text_left_for_the_user_is_not() {
+        let clipboard = Arc::new(MemoryClipboard::holding_formats(Some("原来的"), Vec::new()).marking());
+        struct Watching(Arc<MemoryClipboard>, Mutex<Vec<bool>>);
+        impl KeystrokePort for Watching {
+            fn deliver(&self, _: Chord, _: &str) -> Result<Delivered, DeliveryError> {
+                self.1.lock().unwrap().push(self.0.is_marked());
+                Ok(Delivered { tool: "fake".into(), delivery: Delivery::Chord })
+            }
+        }
+        let keys = Arc::new(Watching(Arc::clone(&clipboard), Mutex::new(Vec::new())));
+        let injector = ClipboardPasteInjector::with_ports(clipboard.clone(), keys.clone(), paste_chord_for("linux"), fast());
+        injector.inject("口述").unwrap();
+        assert_eq!(keys.1.lock().unwrap().as_slice(), &[true], "marked while the target reads it");
+        wait_until(|| clipboard.current().as_deref() == Some("原来的"));
+        // Unavailable: the text stays, as an ordinary copy.
+        let clipboard = Arc::new(MemoryClipboard::holding_formats(Some("原来的"), Vec::new()).marking());
+        let keys = RecordingKeys::failing(DeliveryError::Unavailable(InjectNote::new(FallbackCode::NoTool, "no paste tool")));
+        let injector = make_injector(Arc::clone(&clipboard), keys);
+        assert_eq!(injector.inject("留下的").unwrap().via, Via::Clipboard);
+        std::thread::sleep(RESTORE * 4);
+        assert_eq!(clipboard.current().as_deref(), Some("留下的"));
+        assert!(!clipboard.is_marked(), "written again without the marker");
+        assert_eq!(clipboard.writes(), ["留下的", "留下的"].map(String::from));
+    }
+
+    /// Nothing on the clipboard before: nothing to put back, so no marker either.
+    #[test]
+    fn an_empty_clipboard_gets_an_ordinary_copy_that_stays() {
+        let clipboard = Arc::new(MemoryClipboard::default().marking());
+        let injector = make_injector_with(Arc::clone(&clipboard));
+        injector.inject("新的").unwrap();
+        std::thread::sleep(RESTORE * 4);
+        assert_eq!((clipboard.current().as_deref(), clipboard.is_marked()), (Some("新的"), false));
+        assert_eq!(clipboard.writes(), vec!["新的".to_string()]);
+    }
+
+    /// `abort` right after a paste still gives the target its restore delay; long after the last
+    /// paste it puts the clipboard back at once.
+    #[test]
+    fn abort_waits_for_the_last_paste_to_be_read() {
+        let restore = Duration::from_millis(300);
+        let clipboard = MemoryClipboard::holding("原来的");
+        let injector = session_injector(&clipboard, Arc::new(RecordingKeys::default()), restore);
+        let mut session = injector.clone().begin_session(AfterPaste::Restore);
+        session.piece("刚粘贴", &|| true).unwrap();
+        session.abort();
+        assert_eq!(clipboard.current().as_deref(), Some("刚粘贴"), "the target may not have read it yet");
+        wait_until(|| clipboard.current().as_deref() == Some("原来的"));
+        let mut session = injector.clone().begin_session(AfterPaste::Restore);
+        session.piece("早就粘贴了", &|| true).unwrap();
+        std::thread::sleep(restore + Duration::from_millis(100));
+        session.abort();
+        assert_eq!(clipboard.current().as_deref(), Some("原来的"), "back before abort returns");
     }
 
     #[test]

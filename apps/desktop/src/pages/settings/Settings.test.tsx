@@ -394,6 +394,37 @@ describe("Settings · 听写", () => {
   });
 });
 
+describe("Settings · 听写 · 剪贴板与窗口切换 (docs/dictation.md section 14.3)", () => {
+  it("the clipboard and switched-window settings write settings_set_engines with the rest unchanged", async () => {
+    const user = userEvent.setup();
+    const { backend } = renderApp({ path: "/settings/dictation" });
+    const dialog = await screen.findByRole("dialog", { name: "设置" });
+    const pane = within(dialog).getByTestId("dictation-pane");
+    expect(within(pane).getByRole("radio", { name: "恢复原内容" })).toBeChecked();
+    expect(within(pane).getByRole("radio", { name: "只复制" })).toBeChecked();
+    expect(
+      within(pane).getByText(/粘贴完成后放回你原来复制的文字、图片或文件/),
+    ).toBeInTheDocument();
+    await user.click(within(pane).getByRole("radio", { name: "保留识别结果" }));
+    await waitFor(() => {
+      expect(backend.peek().settings.engines).toEqual({
+        ...defaultEngineSettings(),
+        clipboard_after: "keep",
+      });
+    });
+    await user.click(within(pane).getByRole("radio", { name: "粘贴到当前窗口" }));
+    await waitFor(() => {
+      expect(backend.peek().settings.engines).toEqual({
+        ...defaultEngineSettings(),
+        clipboard_after: "keep",
+        switched_window: "paste_here",
+      });
+    });
+    expect(within(pane).getByRole("radio", { name: "保留识别结果" })).toBeChecked();
+    expect(within(pane).getByRole("radio", { name: "粘贴到当前窗口" })).toBeChecked();
+  });
+});
+
 describe("Settings · 听写 · 最长录音时长 (docs/dictation.md section 22)", () => {
   it("lists 1 minute to 2 hours, shows the saved length and writes settings_set_recording with the rest unchanged", async () => {
     const user = userEvent.setup();

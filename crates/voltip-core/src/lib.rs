@@ -42,9 +42,10 @@ pub use dictation::{
     ProcessingStage, RefineFailure, Segment, SelectionTiming, TakeKind,
 };
 pub use engines::{
-    BuiltIn, ChineseScript, EngineIssue, EngineSettings, EngineStatus, FallbackModel, FallbackModelStatus, FallbackPlan, FallbackRow, FallbackRowState,
-    FallbackSettings, FallbackSkip, FallbackStatus, FallbackTarget, InjectMode, LiveSource, LocalDevice, LocalModelRef, MAX_FALLBACK_MODELS, MAX_LOCAL_THREADS,
-    OutputMode, ProviderSettings, ProviderStatus, RemoteService, ResolvedEngines, SecretSource, SecretState, ServiceStatus, SiteStatus, UserSecrets,
+    BuiltIn, ChineseScript, ClipboardAfter, EngineIssue, EngineSettings, EngineStatus, FallbackModel, FallbackModelStatus, FallbackPlan, FallbackRow,
+    FallbackRowState, FallbackSettings, FallbackSkip, FallbackStatus, FallbackTarget, InjectMode, LiveSource, LocalDevice, LocalModelRef, MAX_FALLBACK_MODELS,
+    MAX_LOCAL_THREADS, OutputMode, ProviderSettings, ProviderStatus, RemoteService, ResolvedEngines, SecretSource, SecretState, ServiceStatus, SiteStatus,
+    SwitchedWindow, UserSecrets,
 };
 pub use history::{
     EditRecord, EntryOrigin, HistoryEntry, HistoryHits, HistoryPage, HistoryQuery, HistoryReader, HistoryStats, HistoryStatsBucket, HistoryStore, OriginKind,

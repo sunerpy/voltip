@@ -8,6 +8,7 @@
 //! [`crate::dictation::fakes`].
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -532,9 +533,15 @@ impl ForegroundApp {
 /// platform's implementation (Win32 / X11 / AppKit); shells without one (the phone) plug in none.
 pub trait ForegroundProbe: Send + Sync {
     /// The focused application right now. Blocking but meant to be quick: the core calls it on a
-    /// blocking thread and waits at most [`PROBE_DEADLINE`]. `Ok(None)` when there is no
+    /// blocking thread and waits at most [`ForegroundProbe::deadline`]. `Ok(None)` when there is no
     /// application the shell can name (pure Wayland, the desktop itself, Voltip's own window).
     fn foreground(&self) -> Result<Option<ForegroundApp>, String>;
+
+    /// How long the core waits for [`ForegroundProbe::foreground`] before it treats the window in
+    /// front as unknown: [`PROBE_DEADLINE`].
+    fn deadline(&self) -> Duration {
+        PROBE_DEADLINE
+    }
 }
 
 /// Asks an OpenAI-compatible service which models it serves (`GET {base}/models`): the engines
@@ -575,6 +582,9 @@ pub enum ClipboardCode {
     /// The text is longer than a paste should be (a long take over 5 000 characters,
     /// docs/dictation.md §22): it waits on the clipboard.
     TooLong,
+    /// Another window came to the front while the take was processed (docs/dictation.md §14.3):
+    /// the text was copied, not pasted where the user no longer is.
+    TargetChanged,
     /// Anything else.
     Other,
 }
@@ -622,11 +632,116 @@ pub enum SelectionTiming {
     AfterKeyUp,
 }
 
+/// The one point that decides whether a take's text still goes out (docs/dictation.md §14.3):
+/// `Pending`, then `Delivering` once the injector is about to paste (or type, or copy), then
+/// `Delivered`; or `Cancelled` when the take was cancelled first. Every change is a single
+/// compare-and-swap, so a cancel and the start of a delivery cannot both win.
+#[derive(Clone, Debug, Default)]
+pub struct InsertGate(Arc<AtomicU8>);
+
+const GATE_PENDING: u8 = 0;
+const GATE_DELIVERING: u8 = 1;
+const GATE_DELIVERED: u8 = 2;
+const GATE_CANCELLED: u8 = 3;
+
+/// What a cancel found at the gate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GateCancel {
+    /// Nothing had gone out: nothing will.
+    Cancelled,
+    /// The text was going out or out already: the take finishes as if there had been no cancel.
+    TooLate,
+}
+
+impl InsertGate {
+    /// A pending gate.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Right before the delivery: `Pending → Delivering`. `false` when the take was cancelled
+    /// first (or this gate already let a delivery through): nothing may go out.
+    pub fn begin_delivery(&self) -> bool {
+        self.0.compare_exchange(GATE_PENDING, GATE_DELIVERING, Ordering::SeqCst, Ordering::SeqCst).is_ok()
+    }
+
+    /// The delivery returned: `Delivering → Delivered`.
+    pub fn delivered(&self) {
+        let _ = self.0.compare_exchange(GATE_DELIVERING, GATE_DELIVERED, Ordering::SeqCst, Ordering::SeqCst);
+    }
+
+    /// The take is cancelled: `Pending → Cancelled`, or too late when a delivery had begun.
+    pub fn cancel(&self) -> GateCancel {
+        match self.0.compare_exchange(GATE_PENDING, GATE_CANCELLED, Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(_) | Err(GATE_CANCELLED) => GateCancel::Cancelled,
+            Err(_) => GateCancel::TooLate,
+        }
+    }
+
+    /// A delivery went through the gate (it is `Delivering` or `Delivered`).
+    pub fn reached(&self) -> bool {
+        matches!(self.0.load(Ordering::SeqCst), GATE_DELIVERING | GATE_DELIVERED)
+    }
+}
+
+/// What became of one piece of an insert session.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Inserted {
+    /// The piece was delivered (pasted, or left on the clipboard: [`Injection::via`]).
+    Delivered(Injection),
+    /// `may_deliver` said no right before the delivery: nothing went out, the clipboard is back
+    /// to what the session found.
+    Cancelled,
+}
+
+/// The pieces of one take's text, delivered through one clipboard session (docs/dictation.md
+/// §14.3): the whole take is one piece; `live_inject` (§12) has one per sentence. The clipboard is
+/// saved before the first piece and put back once, after the last. Every method blocks; the core
+/// calls them on blocking threads.
+pub trait InsertSession: Send {
+    /// Deliver `text`. `may_deliver` is asked right before the delivery — the core checks the
+    /// target window there and opens the take's [`InsertGate`] — and `false` calls the piece off.
+    fn piece(&mut self, text: &str, may_deliver: &dyn Fn() -> bool) -> Result<Inserted, DictationError>;
+    /// The take's text is all in: the clipboard comes back once the target has read the last paste.
+    fn finish(&mut self);
+    /// The take was cancelled: the clipboard comes back as soon as that is safe.
+    fn abort(&mut self);
+}
+
+/// The default insert session: every piece through [`Injector::inject`] once `may_deliver` agrees,
+/// nothing to put back.
+struct EachPiece<I: ?Sized>(Option<Arc<I>>);
+
+impl<I: Injector + ?Sized> InsertSession for EachPiece<I> {
+    fn piece(&mut self, text: &str, may_deliver: &dyn Fn() -> bool) -> Result<Inserted, DictationError> {
+        let Some(injector) = &self.0 else { return Ok(Inserted::Cancelled) };
+        if !may_deliver() {
+            return Ok(Inserted::Cancelled);
+        }
+        injector.inject(text).map(Inserted::Delivered)
+    }
+
+    fn finish(&mut self) {
+        self.0 = None;
+    }
+
+    fn abort(&mut self) {
+        self.0 = None;
+    }
+}
+
 /// Puts text into the foreground application — and, for voice edit, reads what is selected there.
-pub trait Injector: Send + Sync {
+pub trait Injector: Send + Sync + 'static {
     /// Inject `text`. Blocking (clipboard + synthetic key events + a short restore delay); the
     /// core calls it from a blocking task.
     fn inject(&self, text: &str) -> Result<Injection, DictationError>;
+
+    /// One take's insert session ([`InsertSession`]). The default delivers each piece through
+    /// [`Injector::inject`] after asking `may_deliver` — the shells without a clipboard session
+    /// of their own (the phone) and the fakes.
+    fn begin_insert(self: Arc<Self>) -> Box<dyn InsertSession> {
+        Box::new(EachPiece(Some(self)))
+    }
 
     /// Put `text` on the clipboard and nothing else, whatever `EngineSettings.inject` says: a paste
     /// from the history whose window is gone ([`crate::paste`]). Blocking, like `inject`. The

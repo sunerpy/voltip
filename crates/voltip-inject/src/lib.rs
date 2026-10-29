@@ -3,14 +3,16 @@
 //! * [`Injector`] — the one operation: `inject(text)`. Implementations report how the text
 //!   arrived ([`Via::Paste`] typed a paste chord, [`Via::Clipboard`] left it on the clipboard for
 //!   the user to paste) and why, if a step was skipped ([`Injection::note`]).
-//! * [`ClipboardPasteInjector`] — the default: save the clipboard text, write ours, wait
-//!   [`PasteOptions::paste_delay`], deliver through a [`KeystrokePort`] (`Ctrl+V` / `Cmd+V` by
-//!   default, see [`PasteMethod`]), then restore the previous text after
-//!   [`PasteOptions::paste_delay_after`] if the clipboard still holds ours
-//!   ([`PasteOptions::for_os`]: 60 / 120 ms on Linux, 40 / 600 ms on Windows and macOS). Two
-//!   failure shapes ([`DeliveryError`]): nothing could be tried → `Via::Clipboard` with the
-//!   reason, text left for the user; a tool ran and failed → the previous clipboard is restored
-//!   at once and `inject` returns [`InjectError::Keystroke`].
+//! * [`ClipboardPasteInjector`] — the default: save the whole clipboard ([`ClipSnapshot`]: every
+//!   format, see [`clip`]), write ours, wait [`PasteOptions::paste_delay`], deliver through a
+//!   [`KeystrokePort`] (`Ctrl+V` / `Cmd+V` by default, see [`PasteMethod`]), then put the
+//!   clipboard back [`PasteOptions::paste_delay_after`] after the last paste if it still holds
+//!   ours ([`PasteOptions::for_os`]: 60 / 120 ms on Linux, 40 / 600 ms on Windows and macOS). A
+//!   take's pieces share one [`InjectSession`] ([`Injector::begin_session`], docs/dictation.md
+//!   §14.3), so the clipboard comes back once. Two failure shapes ([`DeliveryError`]): nothing
+//!   could be tried → `Via::Clipboard` with the reason, text left for the user; a tool ran and
+//!   failed → the previous clipboard is put back at once and the piece returns
+//!   [`InjectError::Keystroke`].
 //! * [`ClipboardOnlyInjector`] — for the `inject = clipboard_only` setting: never types.
 //! * [`system_paste_injector`] — the shells' constructor: enigo on Windows / macOS, the Linux tool
 //!   chain below on Linux.
@@ -21,13 +23,14 @@
 //!   selection to land, read it, restore.
 //! * [`FakeInjector`] (feature `test-support`, always on for this crate's tests) — records calls
 //!   and returns a configured outcome, so the core and the shells test without a display.
-//! * [`Session`], [`toolchain`], [`should_restore`], [`check_display`] — the decisions, as pure
+//! * [`Session`], [`toolchain`], [`puts_back`], [`check_display`] — the decisions, as pure
 //!   functions.
 //!
 //! # Platform notes
 //!
-//! * **Windows**: arboard uses the Win32 clipboard, enigo uses `SendInput`. No setup needed.
-//! * **macOS**: arboard uses `NSPasteboard`; enigo posts `CGEvent`s, which requires the app to
+//! * **Windows**: arboard reads and writes text through the Win32 clipboard, `clipboard-win`'s raw
+//!   API keeps and restores its other formats; enigo uses `SendInput`. No setup needed.
+//! * **macOS**: arboard and `objc2-app-kit` use `NSPasteboard`; enigo posts `CGEvent`s, which requires the app to
 //!   be trusted under *Privacy & Security → Accessibility*. Without it `Enigo::new` fails (the
 //!   prompt is never opened from here, `open_prompt_to_get_permissions = false`) and the result
 //!   is `Via::Clipboard` with the reason in the note. The `v` of Cmd+V is sent as a virtual
@@ -49,18 +52,27 @@
 //!   returns [`InjectError::NoDisplay`]. Headless CI therefore runs the fakes and the pure
 //!   functions; the one real test is `#[ignore]` and runs with
 //!   `DISPLAY=:99 cargo test -p voltip-inject -- --ignored` under Xvfb.
-//! * Only **text** is preserved across an injection: an image or file list on the clipboard is
-//!   replaced and not restored.
+//! * The clipboard is kept whole across an injection (docs/dictation.md §14.3): Windows' raw
+//!   formats, every item of a macOS pasteboard, and on Linux what arboard reads (a file list, an
+//!   image, HTML with its text, text; one of them comes back). Handle-only formats, data an owner
+//!   does not render and more than [`MAX_SNAPSHOT_BYTES`] are not; the snapshot says so
+//!   ([`ClipSnapshot::complete`]). What is written to be put back later, and every restore, is
+//!   marked for clipboard histories (Windows' history and cloud clipboard,
+//!   `org.nspasteboard.TransientType`, `x-kde-passwordManagerHint`).
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
+use std::sync::Arc;
+
+pub mod clip;
 #[cfg(any(test, feature = "test-support"))]
 mod fake;
 mod injector;
 #[cfg(target_os = "linux")]
 pub mod linux;
+mod os_clip;
 pub mod platform;
 #[cfg(unix)]
 pub mod process;
@@ -68,11 +80,12 @@ pub mod selection;
 pub mod session;
 pub mod toolchain;
 
+pub use clip::{ClipFormat, ClipSnapshot, MAX_SNAPSHOT_BYTES, TEXT_FORMAT};
 #[cfg(any(test, feature = "test-support"))]
 pub use fake::FakeInjector;
 pub use injector::{
     ClipboardOnlyInjector, ClipboardPasteInjector, ClipboardPort, DEFAULT_RESTORE_DELAY, Delivered, DeliveryError, KeystrokePort, PASTE_DELAY,
-    PASTE_DELAY_AFTER, PASTE_SETTLE, PasteOptions, check_display, paste_chord, paste_chord_for, should_restore,
+    PASTE_DELAY_AFTER, PASTE_SETTLE, PasteOptions, check_display, paste_chord, paste_chord_for, puts_back,
 };
 pub use platform::{EnigoBackend, EnigoError, SystemClipboard, SystemKeys, display_available, resolve_backend};
 pub use selection::{COPY_POLL, COPY_TIMEOUT, ClipboardSelection, CopyOptions, SelectionSource, copy_chord, copy_chord_for};
@@ -80,13 +93,79 @@ pub use session::{Desktop, Session, SessionKind, X11Grab, remote_command, toggle
 pub use toolchain::{Chord, Key, Modifier, PasteMethod, TypingTool};
 
 /// Something that can put text into the focused application.
-pub trait Injector: Send + Sync {
+pub trait Injector: Send + Sync + 'static {
     /// Deliver `text`. `Ok` means the text is at least on the clipboard; `Err` means it is not
     /// (or, for [`InjectError::Keystroke`], that a paste was attempted and failed and the previous
     /// clipboard text was put back).
     fn inject(&self, text: &str) -> Result<Injection, InjectError>;
     /// Short stable name for logs and the history (`"clipboard+paste"`, `"clipboard-only"`).
     fn describe(&self) -> &'static str;
+
+    /// A session for the pieces of one take's text (docs/dictation.md §14.3), with the clipboard
+    /// handled as `after` says. The default delivers each piece through [`Injector::inject`]
+    /// after asking `may_deliver`, and has nothing to put back ([`ClipboardOnlyInjector`] leaves
+    /// each piece on the clipboard).
+    fn begin_session(self: Arc<Self>, after: AfterPaste) -> Box<dyn InjectSession> {
+        let _ = after;
+        Box::new(EachPiece(Some(self)))
+    }
+}
+
+/// What the clipboard holds once a session's text is in (the `clipboard_after` setting,
+/// docs/dictation.md §14.3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum AfterPaste {
+    /// What the user had copied comes back after the paste (the default).
+    #[default]
+    Restore,
+    /// The pasted text stays on the clipboard, as an ordinary copy.
+    Keep,
+}
+
+/// What became of one piece of a session.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PieceOutcome {
+    /// The piece went out, or stayed on the clipboard for the user ([`Injection::via`]).
+    Delivered(Injection),
+    /// `may_deliver` said no right before the delivery: nothing reached the application, and the
+    /// clipboard is back to what the session found.
+    Cancelled,
+}
+
+/// The pieces of one take's text, delivered through one clipboard session (docs/dictation.md
+/// §14.3): the clipboard is saved before the first piece and put back once, after the last.
+/// A session that has ended ([`InjectSession::finish`], [`InjectSession::abort`]) delivers nothing
+/// more: every later piece is [`PieceOutcome::Cancelled`] without touching the clipboard.
+pub trait InjectSession: Send {
+    /// Deliver `text`. `may_deliver` is asked right before the delivery — for a paste, once the
+    /// text is on the clipboard and the target has had its settle delay — and `false` calls the
+    /// piece off.
+    fn piece(&mut self, text: &str, may_deliver: &dyn Fn() -> bool) -> Result<PieceOutcome, InjectError>;
+    /// The take's text is all in: the clipboard comes back once the target has read the last paste.
+    fn finish(&mut self);
+    /// The take was abandoned: the clipboard comes back as soon as that is safe.
+    fn abort(&mut self);
+}
+
+/// The default session: every piece through [`Injector::inject`], nothing to put back.
+struct EachPiece<I: ?Sized>(Option<Arc<I>>);
+
+impl<I: Injector + ?Sized> InjectSession for EachPiece<I> {
+    fn piece(&mut self, text: &str, may_deliver: &dyn Fn() -> bool) -> Result<PieceOutcome, InjectError> {
+        let Some(injector) = &self.0 else { return Ok(PieceOutcome::Cancelled) };
+        if !may_deliver() {
+            return Ok(PieceOutcome::Cancelled);
+        }
+        injector.inject(text).map(PieceOutcome::Delivered)
+    }
+
+    fn finish(&mut self) {
+        self.0 = None;
+    }
+
+    fn abort(&mut self) {
+        self.0 = None;
+    }
 }
 
 /// The clipboard-and-paste injector for this process: enigo through [`SystemKeys`] on Windows and

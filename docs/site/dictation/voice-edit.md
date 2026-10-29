@@ -29,7 +29,7 @@ Voltip copies the selection with a copy shortcut, reads it, and puts your clipbo
 - On Windows and Linux it uses <kbd>Ctrl</kbd> <kbd>Insert</kbd>, because <kbd>Ctrl</kbd> <kbd>C</kbd> interrupts the running program in a terminal.
 - On a Mac it uses <kbd>⌘</kbd> <kbd>C</kbd>.
 
-The result is pasted over the selection, which is still highlighted because the focus never leaves the app.
+The result is pasted over the selection, which is still highlighted because the focus never leaves the app. If you switch to another window while it processes, the rewrite is only copied to the clipboard and the selection stays as it was (see [Switching windows while it processes](/dictation/output#switching-windows-while-it-processes)).
 
 ## Where it does not work
 

@@ -90,6 +90,7 @@ mod tests {
             mode: OutputMode::WholeTake,
             segments: None,
             live_error: None,
+            clipboard_code: None,
         }
     }
 

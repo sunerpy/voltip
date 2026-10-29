@@ -780,6 +780,9 @@ export const en: Messages = {
         "Could not paste at the cursor: the target window runs as administrator. The text is on the clipboard; press {keys} to paste it.",
       too_long:
         "The text is over 5,000 characters, so it was not pasted directly. It is on the clipboard; press {keys} to paste it.",
+      /** docs/dictation.md §14.3: another window came to the front while the take was processed. */
+      target_changed:
+        "You switched to another window while the text was processed, so it was not pasted. It is on the clipboard; press {keys} to paste it.",
       other: "Could not paste directly. The text is on the clipboard; press {keys} to paste it.",
       openAccessibility: "Open Accessibility settings",
       details: "Technical details",
@@ -1486,7 +1489,7 @@ export const en: Messages = {
     },
     injectLabel: "Insert method",
     injectHelp:
-      "Pasting borrows the clipboard and restores it afterwards; with “Copy to clipboard only” you paste manually.",
+      "Pasting borrows the clipboard for a moment; with “Copy to clipboard only” you paste manually.",
     inject: {
       paste: "Paste at cursor",
       clipboard: "Copy to clipboard only",
@@ -2081,6 +2084,9 @@ export const en: Messages = {
       phoneTag: "Phone · {name}",
       editDonePaste: "Replaced with {n} chars",
       editDoneClipboard: "Rewrite copied, {n} chars",
+      /** docs/dictation.md §14.3: the window changed while the take was processed. */
+      doneTargetChanged: "Window changed · text copied",
+      editDoneTargetChanged: "Window changed · rewrite copied",
     },
     heading:
       "Overlay · eight pill states · one capsule morphs with the state (dynamic-island grammar), the waveform is a dense mirrored bar strip",
@@ -2140,6 +2146,16 @@ export const en: Messages = {
         "A recording stops by itself at this length. Recordings longer than 2 minutes are recognised in segments while you record.",
       minutes: { one: "{n} minute", other: "{n} minutes" },
       hours: { one: "{n} hour", other: "{n} hours" },
+      /** docs/dictation.md §14.3: `engines.clipboard_after`. */
+      clipboardAfterLabel: "Clipboard after inserting",
+      clipboardAfterHelp:
+        "Pasting borrows the clipboard for a moment. Restore original: what you had copied, such as text, an image or files, comes back after the paste. Keep result: the recognised text stays on the clipboard so you can paste it again.",
+      clipboardAfter: { restore: "Restore original", keep: "Keep result" },
+      /** docs/dictation.md §14.3: `engines.switched_window`. */
+      switchedLabel: "If the window changes while processing",
+      switchedHelp:
+        "If you switch to another window while the text is recognised or polished, it is only copied to the clipboard by default, so it does not land in the wrong place. Voice edits always only copy.",
+      switched: { copyOnly: "Copy only", pasteHere: "Paste into current window" },
     },
     microphone: {
       title: "Recording source",

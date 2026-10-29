@@ -20,7 +20,9 @@ function lengthLabel(minutes: number, t: TFunction): string {
 /** 设置 › 听写 (user feedback 2026-09-29): how a take's text reaches the app in front — pasted at
  *  the cursor (the default) or only copied — written through `settings_set_engines { inject }` with
  *  the rest of the block unchanged. It used to sit among the 语音模型 page's recognition options;
- *  this is now the only place that sets it. Also the longest recording (docs/dictation.md §22,
+ *  this is now the only place that sets it. Next to it what the clipboard holds after a paste and
+ *  what a take does when the window changed (docs/dictation.md §14.3, `clipboard_after` /
+ *  `switched_window`, written the same way). Also the longest recording (§22,
  *  `settings_set_recording` with the rest of the recording settings unchanged). */
 export function Dictation() {
   const { backend } = useBackend();
@@ -43,6 +45,44 @@ export function Dictation() {
             options={[
               { value: "paste", label: t("engines.inject.paste") },
               { value: "clipboard_only", label: t("engines.inject.clipboard") },
+            ]}
+          />
+        </StatusRow>
+        {/* docs/dictation.md §14.3: what the clipboard holds once the text is pasted, and what a
+            take does when another window came to the front while it was processed. */}
+        <StatusRow
+          label={t("settings.dictation.clipboardAfterLabel")}
+          help={t("settings.dictation.clipboardAfterHelp")}>
+          <Segmented
+            size="sm"
+            label={t("settings.dictation.clipboardAfterLabel")}
+            value={engines.clipboard_after}
+            onChange={(clipboard_after) => {
+              void backend.invoke("settings_set_engines", {
+                engines: { ...engines, clipboard_after },
+              });
+            }}
+            options={[
+              { value: "restore", label: t("settings.dictation.clipboardAfter.restore") },
+              { value: "keep", label: t("settings.dictation.clipboardAfter.keep") },
+            ]}
+          />
+        </StatusRow>
+        <StatusRow
+          label={t("settings.dictation.switchedLabel")}
+          help={t("settings.dictation.switchedHelp")}>
+          <Segmented
+            size="sm"
+            label={t("settings.dictation.switchedLabel")}
+            value={engines.switched_window}
+            onChange={(switched_window) => {
+              void backend.invoke("settings_set_engines", {
+                engines: { ...engines, switched_window },
+              });
+            }}
+            options={[
+              { value: "copy_only", label: t("settings.dictation.switched.copyOnly") },
+              { value: "paste_here", label: t("settings.dictation.switched.pasteHere") },
             ]}
           />
         </StatusRow>

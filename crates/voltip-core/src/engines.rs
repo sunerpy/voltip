@@ -31,6 +31,45 @@ pub enum InjectMode {
     ClipboardOnly,
 }
 
+/// What the clipboard holds after a take's text was pasted (docs/dictation.md §14.3): the
+/// `clipboard_after` setting, 插入后剪贴板.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClipboardAfter {
+    /// What the user had copied comes back once the paste is in (the default).
+    #[default]
+    Restore,
+    /// The pasted text stays on the clipboard, as an ordinary copy.
+    Keep,
+}
+
+impl ClipboardAfter {
+    /// The default: not written to the settings file.
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// What a take does when another window came to the front while it was processed
+/// (docs/dictation.md §14.3): the `switched_window` setting, 处理期间切换了窗口. A voice edit
+/// always copies only (§19): it must not replace a selection somewhere else.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SwitchedWindow {
+    /// Copy the text instead of pasting it into the window now in front (the default).
+    #[default]
+    CopyOnly,
+    /// Paste into the window now in front.
+    PasteHere,
+}
+
+impl SwitchedWindow {
+    /// The default: not written to the settings file.
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// Where the live preview comes from (docs/dictation.md §11.8, §11.9).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -246,6 +285,12 @@ pub struct EngineSettings {
     pub chinese_script: ChineseScript,
     /// Injection route.
     pub inject: InjectMode,
+    /// What the clipboard holds after a paste (docs/dictation.md §14.3).
+    #[serde(skip_serializing_if = "ClipboardAfter::is_default")]
+    pub clipboard_after: ClipboardAfter,
+    /// What a take does when the window in front changed while it was processed (§14.3).
+    #[serde(skip_serializing_if = "SwitchedWindow::is_default")]
+    pub switched_window: SwitchedWindow,
     /// The recognition models to try after the selected one runs out of quota (docs/dictation.md §3.5).
     #[serde(skip_serializing_if = "FallbackSettings::is_default")]
     pub asr_fallback: FallbackSettings,
@@ -272,6 +317,8 @@ impl Default for EngineSettings {
             vad_trim: false,
             chinese_script: ChineseScript::Simplified,
             inject: InjectMode::Paste,
+            clipboard_after: ClipboardAfter::Restore,
+            switched_window: SwitchedWindow::CopyOnly,
             asr_fallback: FallbackSettings::default(),
             llm_fallback: FallbackSettings::default(),
         }
@@ -593,6 +640,10 @@ pub struct ResolvedEngines {
     pub local_threads: Option<u16>,
     /// Injection route.
     pub inject: InjectMode,
+    /// `EngineSettings.clipboard_after` (docs/dictation.md §14.3).
+    pub clipboard_after: ClipboardAfter,
+    /// `EngineSettings.switched_window` (§14.3).
+    pub switched_window: SwitchedWindow,
     /// The recognition fallback models (docs/dictation.md §3.5).
     pub asr_fallback: FallbackPlan,
     /// The clean-up fallback models.
@@ -804,6 +855,8 @@ impl ResolvedEngines {
             local_gpu: trimmed(settings.local_gpu.as_deref()).map(str::to_owned),
             local_threads: settings.local_threads,
             inject: settings.inject,
+            clipboard_after: settings.clipboard_after,
+            switched_window: settings.switched_window,
             asr_fallback,
             refine_fallback,
             metering: None,

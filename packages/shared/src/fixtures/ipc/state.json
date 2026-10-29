@@ -38,6 +38,8 @@
       "vad_trim": false,
       "chinese_script": "simplified",
       "inject": "paste",
+      "clipboard_after": "keep",
+      "switched_window": "paste_here",
       "asr_fallback": {
         "enabled": true,
         "models": [

@@ -254,6 +254,7 @@
         },
         "asr_provider": "local",
         "chinese_script": "traditional",
+        "clipboard_after": "keep",
         "inject": "paste",
         "language": "zh",
         "live_preview": true,
@@ -287,6 +288,7 @@
         },
         "refine_enabled": true,
         "refine_preset": "7e57ab1e-0b0e-4c0d-9e5e-7e57ab1e0b0e",
+        "switched_window": "paste_here",
         "vad_trim": true
       }
     },

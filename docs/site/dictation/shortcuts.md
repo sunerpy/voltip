@@ -42,7 +42,7 @@ The overlay never takes the keyboard focus, so the text still goes to the app yo
 
 ## Cancelling
 
-Press <kbd>Esc</kbd> while recording or processing to cancel; the overlay shows the key in red for as long as it works. Nothing is inserted and nothing is saved in the history, except that with **Type as you speak** the sentences already typed stay where they are. Voltip listens for Esc only during a dictation, so it does not interfere with other apps the rest of the time.
+Press <kbd>Esc</kbd> while recording or processing to cancel; the overlay shows the key in red for as long as it works. Nothing is inserted and nothing is saved in the history, except that with **Type as you speak** the sentences already typed stay where they are. Once the paste has begun, Esc no longer cancels: the dictation finishes, and the text is inserted and saved in the history as usual. Voltip listens for Esc only during a dictation, so it does not interfere with other apps the rest of the time.
 
 On a pure Wayland session, bind a system shortcut to `voltip-desktop --cancel` instead.
 

@@ -23,11 +23,11 @@ pub use crate::scenes::TakeContext;
 pub use engine::{DictationEngine, DictationPorts, EngineFactory, Retake, RetakeAudio, TakeClients, engine_clients};
 pub use fallback::{FallbackRefiner, FallbackTranscriber, Link, QUOTA_RETRY_AFTER, QuotaKey, QuotaLedger, first_with_quota, open_order};
 pub use ports::{
-    AudioSource, Capture, CaptureOptions, ClipboardCode, DWELL, DWELL_WITH_TEXT, DictationError, ForegroundApp, ForegroundProbe, InjectNote, Injection,
-    Injector, LIVE_CHUNK_SAMPLES, LIVE_SAMPLE_RATE_HZ, LevelFrame, LivePcm, MAX_EDIT_SELECTION_CHARS, MAX_RECORDING, MAX_RECORDING_STREAMING, MIN_RECORDING,
-    PARTIAL_THROTTLE, PCM_SAMPLE_RATE_HZ, PROBE_DEADLINE, PcmStream, Recording, RefineContext, RefineHints, Refined, Refiner, Segment, Segmenter,
-    SegmenterFactory, SelectionTiming, ServiceProbe, StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber, Transcriber, Transcript, Via,
-    max_recording,
+    AudioSource, Capture, CaptureOptions, ClipboardCode, DWELL, DWELL_WITH_TEXT, DictationError, ForegroundApp, ForegroundProbe, GateCancel, InjectNote,
+    Injection, Injector, InsertGate, InsertSession, Inserted, LIVE_CHUNK_SAMPLES, LIVE_SAMPLE_RATE_HZ, LevelFrame, LivePcm, MAX_EDIT_SELECTION_CHARS,
+    MAX_RECORDING, MAX_RECORDING_STREAMING, MIN_RECORDING, PARTIAL_THROTTLE, PCM_SAMPLE_RATE_HZ, PROBE_DEADLINE, PcmStream, Recording, RefineContext,
+    RefineHints, Refined, Refiner, Segment, Segmenter, SegmenterFactory, SelectionTiming, ServiceProbe, StreamEvent, StreamFinal, StreamingSession,
+    StreamingTranscriber, Transcriber, Transcript, Via, max_recording,
 };
 
 /// What a take is for (docs/dictation.md §19): dictating text, or rewriting the text selected in
@@ -307,6 +307,11 @@ pub enum DictationPhase {
         /// for): open / decode / flush failure, tap overrun, or the remainder's transcription.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         live_error: Option<String>,
+        /// Why a paste that was asked for left the text on the clipboard (docs/dictation.md §4.2;
+        /// `target_changed`: another window came to the front, §14.3). Absent for a paste, a
+        /// clipboard-only take, and from a core that did not send it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        clipboard_code: Option<ClipboardCode>,
     },
     /// The pipeline stopped short.
     Failed {
@@ -478,6 +483,7 @@ mod tests {
             mode: OutputMode::WholeTake,
             segments: None,
             live_error: None,
+            clipboard_code: None,
         };
         assert!(done.is_terminal());
         let json = serde_json::to_string(&done).unwrap();
@@ -505,10 +511,19 @@ mod tests {
             mode: OutputMode::StreamingFinal,
             segments: Some(vec![Segment { text: "你好。".into(), start_ms: 0, end_ms: 900 }]),
             live_error: Some("flush: asr: x".into()),
+            clipboard_code: None,
         };
         let json = serde_json::to_string(&streamed).unwrap();
         assert!(json.contains(r#""mode":"streaming_final","segments":[{"text":"你好。","start_ms":0,"end_ms":900}],"live_error":"flush: asr: x""#), "{json}");
         assert_eq!(serde_json::from_str::<DictationPhase>(&json).unwrap(), streamed);
+        // §14.3: a take whose window changed says why its text is on the clipboard.
+        let mut copied = done.clone();
+        if let DictationPhase::Done { via, clipboard_code, .. } = &mut copied {
+            (*via, *clipboard_code) = (Via::Clipboard, Some(ClipboardCode::TargetChanged));
+        }
+        let json = serde_json::to_string(&copied).unwrap();
+        assert!(json.ends_with(r#""mode":"whole_take","clipboard_code":"target_changed"}"#), "{json}");
+        assert_eq!(serde_json::from_str::<DictationPhase>(&json).unwrap(), copied);
         let processing = DictationPhase::Processing { stage: ProcessingStage::Refining, started_at: 9, stage_started_at: 9, preview: None };
         assert_eq!(serde_json::to_string(&processing).unwrap(), r#"{"phase":"processing","stage":"refining","started_at":9,"stage_started_at":9}"#);
         let finalizing = DictationPhase::Processing { stage: ProcessingStage::Finalizing, started_at: 9, stage_started_at: 9, preview: Some("你好".into()) };

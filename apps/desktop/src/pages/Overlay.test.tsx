@@ -3,6 +3,7 @@ import {
   MOCK_ASR_MS,
   MOCK_COPY_MS,
   MOCK_DICTATION_DWELL_MS,
+  MOCK_DICTATION_FAILED_DWELL_MS,
   MOCK_EDIT_TEXT,
   MOCK_DICTATION_TEXT,
   MOCK_FINALIZE_MS,
@@ -333,6 +334,51 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
       backend.simulateRefineFailure(null);
       await take();
       expect(screen.queryByTestId("pill-note")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("docs/dictation.md section 14.3: a take whose window changed says the text was copied and stays as long as a failure", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const backend = new MockBackend({ now: () => Date.now() });
+      renderApp({ path: "/overlay?state=live", backend });
+      await screen.findByTestId("overlay-window");
+      const take = async () => {
+        await act(async () => {
+          await backend.invoke("dictation_start");
+        });
+        await screen.findByRole("status");
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(MOCK_MIC_READY_MS + MOCK_METER_INTERVAL_MS * 2);
+        });
+        await act(async () => {
+          await backend.invoke("dictation_stop");
+        });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(MOCK_ASR_MS + MOCK_REFINE_MS);
+        });
+        const done = screen.getByRole("status");
+        expect(done).toHaveAttribute("data-state", "inserted");
+        return done;
+      };
+      backend.simulateWindowSwitch(true);
+      const copied = await take();
+      expect(copied).toHaveTextContent("窗口已切换，文字已复制");
+      // Longer than an ordinary take: the person has to paste it themselves.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MOCK_DICTATION_DWELL_MS + 100);
+      });
+      expect(screen.getByRole("status")).toHaveTextContent("窗口已切换，文字已复制");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MOCK_DICTATION_FAILED_DWELL_MS - MOCK_DICTATION_DWELL_MS);
+      });
+      expect(screen.getByTestId("overlay-window")).toHaveAttribute("data-state", "blank");
+      // The same window again: pasted, as usual.
+      backend.simulateWindowSwitch(false);
+      const pasted = await take();
+      expect(pasted).not.toHaveTextContent("窗口已切换");
     } finally {
       vi.useRealTimers();
     }

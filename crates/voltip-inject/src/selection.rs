@@ -1,6 +1,6 @@
 //! Reading the text selected in the foreground application (docs/dictation.md §19): save the
-//! clipboard, clear it, press the copy chord, wait for the application to put the selection on the
-//! clipboard, read it, put the previous clipboard text back. The decisions (chord per platform,
+//! clipboard (every format, §14.3), clear it, press the copy chord, wait for the application to
+//! put the selection on the clipboard, read it, put the previous clipboard content back. The decisions (chord per platform,
 //! ordering, what counts as "nothing selected", when the restore is skipped) live here over the
 //! same two ports as the paste ([`ClipboardPort`], [`KeystrokePort`]), so they run headless.
 
@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::InjectError;
+use crate::clip::ClipSnapshot;
 use crate::injector::{ClipboardPort, KeystrokePort};
 use crate::toolchain::{Chord, Key, Modifier};
 
@@ -114,8 +115,10 @@ impl ClipboardSelection {
     }
 
     /// Put `previous` back — only while the clipboard still holds what the copy produced
-    /// (`copied`) or nothing: a text the user copied meanwhile is left alone.
-    fn restore(&self, previous: Option<&str>, copied: Option<&str>) {
+    /// (`copied`) or nothing: a text the user copied meanwhile is left alone. Everything it held
+    /// comes back, an image or a file list too (docs/dictation.md §14.3); with nothing saved (an
+    /// empty or unreadable clipboard before) the clipboard is emptied again.
+    fn restore(&self, previous: Option<&ClipSnapshot>, copied: Option<&str>) {
         let current = match self.clipboard.read_text() {
             Ok(current) => current,
             Err(err) => {
@@ -133,9 +136,9 @@ impl ClipboardSelection {
             return;
         }
         let result = match previous {
-            Some(previous) => self.clipboard.write_text(previous),
-            None if current.is_some() => self.clipboard.clear(),
-            None => Ok(()),
+            Some(previous) if !previous.is_empty() => self.clipboard.restore(previous),
+            _ if current.is_some() => self.clipboard.clear(),
+            _ => Ok(()),
         };
         if let Err(err) = result {
             tracing::warn!(%err, "could not restore the clipboard after the selection copy");
@@ -145,8 +148,8 @@ impl ClipboardSelection {
 
 impl SelectionSource for ClipboardSelection {
     fn copy_selection(&self, held: &[Modifier]) -> Result<Option<String>, InjectError> {
-        let previous = match self.clipboard.read_text() {
-            Ok(previous) => previous,
+        let previous = match self.clipboard.snapshot() {
+            Ok(previous) => Some(previous),
             Err(err) => {
                 tracing::debug!(%err, "could not read the clipboard before the copy; nothing will be restored");
                 None
@@ -155,12 +158,12 @@ impl SelectionSource for ClipboardSelection {
         // Cleared first: a selection equal to the old clipboard text still shows up as a change.
         self.clipboard.clear()?;
         if let Err(err) = self.keys.press_chord(self.chord, held) {
-            self.restore(previous.as_deref(), None);
+            self.restore(previous.as_ref(), None);
             tracing::warn!(%err, chord = %self.chord, "the copy chord could not be pressed");
             return Err(InjectError::Keystroke(err.to_string()));
         }
         let copied = self.wait_for_text();
-        self.restore(previous.as_deref(), copied.as_deref());
+        self.restore(previous.as_ref(), copied.as_deref());
         // Only the length reaches the log, never the text.
         tracing::debug!(chord = %self.chord, chars = copied.as_deref().map(|t| t.chars().count()), "selection copy");
         Ok(copied)
@@ -286,6 +289,21 @@ mod tests {
         assert_eq!(clipboard.writes(), vec![CLEARED.to_string(), "x".into(), CLEARED.to_string()]);
     }
 
+    /// Regression (R01): the voice edit's copy saved the text alone and cleared the clipboard, so
+    /// an image or a file list the user had copied was gone after every edit. The whole clipboard
+    /// comes back now — after a copy, and after nothing was selected.
+    #[test]
+    fn regression_a_voice_edit_copy_keeps_an_image_on_the_clipboard() {
+        let image = vec![crate::ClipFormat::new("image/png", [0x89, b'P', b'N', b'G', 7])];
+        for selection in [Some("选中的话"), None] {
+            let clipboard = Arc::new(MemoryClipboard::holding_formats(None, image.clone()));
+            let before = clipboard.content();
+            let got = copier(&clipboard, App::with(&clipboard, selection)).copy_selection(&[]).unwrap();
+            assert_eq!(got.as_deref(), selection);
+            assert_eq!(clipboard.content(), before, "selection {selection:?}");
+        }
+    }
+
     /// A slow application (the copy lands after a few polls) is still read, and the copy returns
     /// as soon as the text shows. The bound is the one this test always had, 200 ms with the
     /// application's 40 ms in it, now timed from when the text showed: on main CI's Intel Mac
@@ -384,9 +402,10 @@ mod tests {
         let c = copier(&clipboard, App::with(&clipboard, None));
         // Simulate the user copying after the wait but before the restore.
         *clipboard.text.lock().unwrap() = Some("fresh".into());
-        c.restore(Some("old"), None);
+        let old = ClipSnapshot::of_text(Some("old"));
+        c.restore(Some(&old), None);
         assert_eq!(clipboard.current().as_deref(), Some("fresh"), "a text that is not ours is left alone");
-        c.restore(Some("old"), Some("fresh"));
+        c.restore(Some(&old), Some("fresh"));
         assert_eq!(clipboard.current().as_deref(), Some("old"), "our own copy is replaced by the previous text");
     }
 
@@ -421,7 +440,7 @@ mod tests {
         let c = copier(&clipboard, App::with(&clipboard, None));
         *clipboard.text.lock().unwrap() = None;
         *clipboard.fail_write.lock().unwrap() = Some(InjectError::Clipboard("gone".into()));
-        c.restore(Some("previous"), None);
+        c.restore(Some(&ClipSnapshot::of_text(Some("previous"))), None);
         assert_eq!(clipboard.current(), None);
     }
 

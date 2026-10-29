@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use enigo::{Direction, Enigo, Keyboard, Settings};
 
+use crate::clip::ClipSnapshot;
 use crate::injector::{ClipboardPort, Delivered, DeliveryError, KeystrokePort, check_display};
 use crate::toolchain::{Chord, Delivery, Key, Modifier};
 use crate::{FallbackCode, InjectError, InjectNote};
@@ -65,6 +66,51 @@ impl ClipboardPort for SystemClipboard {
 
     fn clear(&self) -> Result<(), InjectError> {
         self.with_handle(arboard::Clipboard::clear)
+    }
+
+    fn snapshot(&self) -> Result<ClipSnapshot, InjectError> {
+        #[cfg(target_os = "linux")]
+        return self.with_handle(crate::os_clip::linux::snapshot);
+        #[cfg(windows)]
+        return crate::os_clip::windows::snapshot();
+        #[cfg(target_os = "macos")]
+        return Ok(crate::os_clip::macos::snapshot());
+        #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
+        return Ok(ClipSnapshot::of_text(self.read_text()?.as_deref()));
+    }
+
+    fn restore(&self, snapshot: &ClipSnapshot) -> Result<(), InjectError> {
+        #[cfg(target_os = "linux")]
+        return self.with_handle(|clipboard| crate::os_clip::linux::restore(clipboard, snapshot));
+        #[cfg(windows)]
+        return crate::os_clip::windows::restore(snapshot);
+        #[cfg(target_os = "macos")]
+        return crate::os_clip::macos::restore(snapshot);
+        #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
+        return match snapshot.text() {
+            Some(text) => self.write_text(text),
+            None => self.clear(),
+        };
+    }
+
+    fn change_count(&self) -> Option<u64> {
+        #[cfg(windows)]
+        return crate::os_clip::windows::change_count();
+        #[cfg(target_os = "macos")]
+        return crate::os_clip::macos::change_count();
+        #[cfg(not(any(windows, target_os = "macos")))]
+        return None;
+    }
+
+    fn write_transient(&self, text: &str) -> Result<bool, InjectError> {
+        #[cfg(target_os = "linux")]
+        return self.with_handle(|clipboard| crate::os_clip::linux::write_transient(clipboard, text)).map(|()| true);
+        #[cfg(windows)]
+        return crate::os_clip::windows::write_transient(text);
+        #[cfg(target_os = "macos")]
+        return crate::os_clip::macos::write_transient(text);
+        #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
+        return self.write_text(text).map(|()| false);
     }
 }
 
