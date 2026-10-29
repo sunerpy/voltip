@@ -920,11 +920,11 @@ XGrabKey 覆盖面 `SessionKind::x11_grab()`：X11 全局有效；XWayland 仅�
 
 **剪贴板历史**。之后会被放回的听写文字，以及放回的内容，都带平台的排除标记，剪贴板历史和同步不记录它们：Windows 写注册格式 `ExcludeClipboardContentFromMonitorProcessing`、`CanIncludeInClipboardHistory` = 0、`CanUploadToCloudClipboard` = 0 和 Ditto 的 `Clipboard Viewer Ignore`；macOS 在第一个条目上加 `org.nspasteboard.TransientType`（遵守 nspasteboard.org 约定的剪贴板管理器不记录；系统本身没有剪贴板历史接口）；Linux 加 `x-kde-passwordManagerHint`（Klipper 认）。留给用户的文字是普通复制、不带标记：`clipboard_after = keep`、原剪贴板为空、粘贴不可用而文字留给用户手动粘贴（已写的带标记文字会重写一次），以及窗口切换后的复制。
 
-**归属**。放回前确认剪贴板仍是我们写的：平台有变更计数（Windows `GetClipboardSequenceNumber`、macOS `changeCount`）时比较写入后的计数，Linux 比较文本。用户在这期间复制了别的东西，就不动。两段之间用户复制了别的东西，会话结束后放回的就是这份新内容。上一次听写的放回还在等（两次间隔短于 `paste_delay_after`）时，新会话接过它保存的剪贴板，用户原来的内容只放回一次。原剪贴板为空，或只有与这次相同的一段文字时，没有需要放回的。
+**归属**。放回前确认剪贴板仍是我们写的：平台有变更计数（Windows `GetClipboardSequenceNumber`、macOS `changeCount`）时比较写入后的计数，Linux 比较文本。用户在这期间复制了别的东西，就不动。两段之间用户复制了别的东西，会话结束后放回的就是这份新内容。上一次听写的放回还在等（两次间隔短于 `paste_delay_after`）时，新会话接过它保存的剪贴板，用户原来的内容只放回一次。粘贴之后，原剪贴板为空或只有与这次相同的一段文字时，没有需要放回的，文字留在剪贴板上。取消时（送出前取消，或会话被取消）原剪贴板为空，就再清空它，取消的文字不留在剪贴板上；读不出剪贴板时（`ClipSnapshot::unread`）什么都不动，因为不知道里面原来有什么。
 
 **`clipboard_after`**（`EngineSettings`，设置 · 听写「插入后剪贴板」）：`restore`（恢复原内容，默认）| `keep`（保留识别结果：不放回，文字作为普通复制留在剪贴板）。
 
-**目标窗口**（`switched_window`，设置 · 听写「处理期间切换了窗口」：`copy_only`（只复制，默认）| `paste_here`（粘贴到当前窗口））。开始听写时前台探针（§18.2）报出的应用就是这次文字的目标。每次粘贴前（文字已在剪贴板、`paste_delay` 之后、发键之前）在单独线程上再问一次探针，至多 `PROBE_DEADLINE`，用 `paste::same_target`（§4.1 的同一规则：同一应用，两边都报出窗口时还要同一窗口）比较。不同、探针没有答复或报不出应用，都按换了窗口处理：这段不粘贴，原剪贴板放回，文字作为普通复制写上剪贴板；结局 `Done{via: clipboard, clipboard_code: target_changed}`，历史 `clipboard{reason: "开始听写时的窗口已不在前台，文字只复制到剪贴板", code: target_changed}`，胶囊「窗口已切换，文字已复制」停留 6 s（`DWELL_WITH_TEXT`）。`paste_here` 不检查，粘贴到此刻在前台的窗口；开始时探针没有报出应用（纯 Wayland、桌面本身、超时）也无从检查。语音编辑（§19）总是检查、不看这项设置：改写结果只该替换原来的选区。
+**目标窗口**（`switched_window`，设置 · 听写「处理期间切换了窗口」：`copy_only`（只复制，默认）| `paste_here`（粘贴到当前窗口））。开始听写时前台探针（§18.2）报出的应用就是这次文字的目标。插入方式为 `clipboard_only` 的听写本来只复制，不检查窗口：结局照常是 `Done{via: clipboard}`，没有 `clipboard_code`，历史 `inserted / clipboard`。每次粘贴前（文字已在剪贴板、`paste_delay` 之后、发键之前）在单独线程上再问一次探针，至多 `PROBE_DEADLINE`，用 `paste::same_target`（§4.1 的同一规则：同一应用，两边都报出窗口时还要同一窗口）比较。不同、探针没有答复或报不出应用，都按换了窗口处理：这段不粘贴，原剪贴板放回，文字作为普通复制写上剪贴板；结局 `Done{via: clipboard, clipboard_code: target_changed}`，历史 `clipboard{reason: "开始听写时的窗口已不在前台，文字只复制到剪贴板", code: target_changed}`，胶囊「窗口已切换，文字已复制」停留 6 s（`DWELL_WITH_TEXT`）。`paste_here` 不检查，粘贴到此刻在前台的窗口；开始时探针没有报出应用（纯 Wayland、桌面本身、超时）也无从检查。语音编辑（§19）总是检查、不看这项设置：改写结果只该替换原来的选区。
 
 **取消与送出的交接**（`InsertGate`）。每次 take 一个门，原子比较交换：送出开始 `Pending → Delivering`，取消 `Pending → Cancelled`，先到的一方决定结果。取消先到：什么都没送出，剪贴板放回，`Cancelled`，不写历史。送出先开始：取消得到 `TooLate`，这次照常结束，`Done` 和历史与没按取消时相同，只记一条 info 日志。`live_inject` 每句一个门（§12）。
 
@@ -935,9 +935,9 @@ XGrabKey 覆盖面 `SessionKind::x11_grab()`：X11 全局有效；XWayland 仅�
 | 开始时的窗口已不在前台（`copy_only`、语音编辑） | 放回原剪贴板，再把文字作为普通复制写上 | `Via::Clipboard`，`clipboard_code: target_changed` | `clipboard { reason, code: target_changed }` |
 | 工具运行失败（回落后仍失败）或超时 | 立即放回原剪贴板 | `InjectError::Keystroke` | `failed`（胶囊保留文本可复制） |
 | 剪贴板写入失败（无显示、合成器无 seat） | 不变 | `InjectError::Clipboard` / `NoDisplay` | `failed` |
-| 送出前取消 | 放回原剪贴板 | 无 | 无 |
+| 送出前取消 | 放回原剪贴板；原来为空就清空，读不出时不动 | 无 | 无 |
 
-测试：`injector.rs` 的单测用带格式和变更计数的内存剪贴板（图片 / 文件列表 / HTML 放回、两次粘贴只放回一次、用户再复制同一段文字、会话中途的复制、失败立即放回、标记）；核心 `engine.rs` 的「insert sessions, the gate and the target window」一组（取消在送出前后、窗口切换、`paste_here`、语音编辑、`live_inject` 中途切换、探针不答复）。真实剪贴板：`crates/voltip-inject/tests/real_display.rs@real_an_image_or_html_another_program_copied_comes_back_after_a_paste`（Xvfb，CI 的 `smoke-desktop`）；`tests/real_clipboard.rs` 在 Windows（CI 的 `hooks-windows`、`scripts/windows-remote.sh gate clipboard`）写入 Unicode 文本、HTML Format、DIB 和 `CF_HDROP`，在 macOS（CI 两台 Mac）写入三个条目，粘贴时检查标记，结束后逐字节比对每个格式。
+测试：`injector.rs` 的单测用带格式和变更计数的内存剪贴板（图片 / 文件列表 / HTML 放回、两次粘贴只放回一次、用户再复制同一段文字、会话中途的复制、失败立即放回、标记、取消时清空原本为空的剪贴板而读不出的不动）；核心 `engine.rs` 的「insert sessions, the gate and the target window」一组（取消在送出前后、窗口切换、`paste_here`、`clipboard_only` 不检查窗口、语音编辑、`live_inject` 中途切换、探针不答复），桌面命令层 `apps/desktop/src-tauri/tests/ipc.rs@regression_a_clipboard_only_take_says_nothing_about_a_window_switch`。真实剪贴板：`crates/voltip-inject/tests/real_display.rs@real_an_image_or_html_another_program_copied_comes_back_after_a_paste`（Xvfb，CI 的 `smoke-desktop`）；`tests/real_clipboard.rs` 在 Windows（CI 的 `hooks-windows`、`scripts/windows-remote.sh gate clipboard`）写入 Unicode 文本、HTML Format、DIB 和 `CF_HDROP`，在 macOS（CI 两台 Mac）写入三个条目，粘贴时检查标记，结束后逐字节比对每个格式。Windows 的剪贴板历史：2026-10-29 用户在 windows-local 上按测试步骤查过 <kbd>Win</kbd> <kbd>V</kbd>，临时文字不在历史里；那台机器没有装 Ditto，用户同意以 `real_clipboard.rs` 断言写入的 `Clipboard Viewer Ignore`（Ditto 认的格式）代替 Ditto 手查。
 
 Wayland 剪贴板：arboard `wayland-data-control`（wl-clipboard-rs；KDE 与 wlroots 提供 wlr / ext data-control）。合成器不提供时 arboard 自行回落到 X11（GNOME 走 XWayland 剪贴板）；两者都没有时（无 XWayland 的 GNOME、无 seat 的 headless weston）写入失败，即上表最后一行。
 
@@ -1759,8 +1759,8 @@ Rust：`voltip-protocol` `take_messages_roundtrip_and_are_validated`（含 `take
   - 设计稿上的「1 分钟后清空剪贴板」：Android 10 起后台应用读不到剪贴板，无法确认里面仍是这次的文字，清空可能删掉用户之后复制的内容。
   - 开始录音前不检查内置识别的额度：额度用完时这次录音以「今日内置识别额度已用完」结束，手机不保留录音（§26.8）。说话页在额度用完时不让开始录音（§27.7）。
   - 设置里「用量」一行的「新」标记。
-  - 真机验证：用户 2026-10-28 在真机上试过最初的版本，没有问题；收进边缘和「不复制」开关交给用户再验。厂商系统可能在后台关掉前台服务。Device Farm 没有语音输入，也没有带输入焦点的其他应用，手势粘贴的实际插入（微信、WhatsApp、Chrome、备忘录）、处理中切换窗口、密码框不粘贴在用户真机上验收。
-  - Google Play：麦克风类型的前台服务要在 Play 管理中心声明用途并附演示视频；手势粘贴的无障碍服务在上传带它的 AAB 之前另需「无障碍 API」声明（不是无障碍工具，用途为应用功能，不收集数据）和演示视频（打开应用 → 说明与同意 → 启用服务 → 滑动粘贴）。都由用户提交，见 docs/runbook.md「发布」。
+  - 真机验证：用户 2026-10-28 在真机上试过最初的版本；2026-10-29 在自己的手机上按验收清单测过 PR #199 的发布密钥签名包（`d004eefd…`，与合并后的源码相同），收进边缘、手势粘贴的实际插入（微信、WhatsApp、Chrome、备忘录）、处理中切换应用或输入框、密码框、识别失败、取消时不粘贴都没有问题，记录见 docs/mobile-rn.md §11。Device Farm 没有语音输入，也没有带输入焦点的其他应用，这些只在真机上验。厂商系统可能在后台关掉前台服务。
+  - Google Play：麦克风类型的前台服务要在 Play 管理中心声明用途并附演示视频；手势粘贴的无障碍服务在上传带它的 AAB 之前另需「无障碍 API」声明（不是无障碍工具，用途为应用功能，不收集数据）和演示视频（打开应用 → 说明与同意 → 启用服务 → 滑动粘贴）。0.2.1 的两项声明在 2026-10-29 经用户同意提交，演示视频在 Device Farm 的 Pixel 8 上录制；流程见 docs/runbook.md「发布」。
 - **门禁**：
   - TS `apps/mobile-rn/src/features/Usage.test.tsx`：「设置 › 悬浮球」6 条（逐项允许权限后才能开启；开启时交出字典里的文字并保存选项，说话方式下有收进边缘的说明；「不复制」只在打开开关后出现、关掉「显示识别结果」时开关不可用；系统没让它启动时提示；应用启动时恢复已开启的悬浮球及其选项并跟随应用的语言；没有原生端时设置里不显示）；「手势粘贴与空闲时自动收起」5 条（打开前先问，「暂不开启」不保存；同意后保存并在服务未连接时打开无障碍设置，随后显示需启用服务与受限设置的说明；服务已连接时同意只保存，关闭不再询问；自动收起的四个选项与说明；英文文字）。
   - `src/shell.test.tsx` 3 条：`shell.confirm` 不传 `cancelLabel` 时是「取消」、传了用自己的文字（两条 `regression:`），以及确认按钮的颜色。`src/backend/bubble.test.ts` 2 条：交出的文字齐全，含把手、读屏操作和手势粘贴的文字；读回原生端的状态，拒绝读不懂或缺 `showDiscard` 的状态，未提供的自动收起秒数按关闭。

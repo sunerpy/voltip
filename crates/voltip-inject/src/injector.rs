@@ -284,7 +284,8 @@ struct PasteSession {
     pending: Arc<Mutex<Option<Pending>>>,
     generations: Arc<AtomicU64>,
     after: AfterPaste,
-    /// What comes back; `None` before the first piece. An empty snapshot puts nothing back.
+    /// What comes back; `None` before the first piece. After a paste an empty snapshot puts
+    /// nothing back (the text stays for the user); a cancel empties a clipboard read empty.
     snapshot: Option<ClipSnapshot>,
     /// What the session wrote last, while it is on the clipboard.
     ours: Option<Ours>,
@@ -306,7 +307,7 @@ impl PasteSession {
             }
             Err(err) => {
                 tracing::debug!(%err, "could not read the clipboard before injecting; nothing will be put back");
-                ClipSnapshot::empty()
+                ClipSnapshot::unread()
             }
         }
     }
@@ -340,13 +341,31 @@ impl PasteSession {
         self.snapshot.as_ref().filter(|s| puts_back(s, text))
     }
 
-    /// Put the clipboard back now (the piece was called off or failed). Whether there was
-    /// anything to put back.
+    /// What a cancel puts back over `text`: the snapshot as after a paste, and also an empty
+    /// clipboard the session read before its first piece (docs/dictation.md §14.3: a cancel sends
+    /// nothing out, the dictation does not stay behind).
+    fn to_put_back_on_cancel(&self, text: &str) -> Option<ClipSnapshot> {
+        match &self.snapshot {
+            Some(snapshot) if snapshot.read_empty() => Some(ClipSnapshot::empty()),
+            _ => self.to_put_back(text).cloned(),
+        }
+    }
+
+    /// Put the clipboard back now (the piece failed). Whether there was anything to put back.
     fn put_back_now(&mut self) -> bool {
         let Some(ours) = self.ours.take() else { return false };
         let Some(snapshot) = self.to_put_back(&ours.text) else { return false };
         restore_if_ours(self.clipboard.as_ref(), snapshot, &ours);
         true
+    }
+
+    /// The piece was called off before its paste: the clipboard goes back at once, emptied again
+    /// when it was empty.
+    fn call_off(&mut self) {
+        let Some(ours) = self.ours.take() else { return };
+        if let Some(snapshot) = self.to_put_back_on_cancel(&ours.text) {
+            restore_if_ours(self.clipboard.as_ref(), &snapshot, &ours);
+        }
     }
 
     /// The end of the session: put the clipboard back once the last paste has had its delay.
@@ -358,7 +377,8 @@ impl PasteSession {
         if self.after == AfterPaste::Keep || (self.left_for_user && !aborted) {
             return;
         }
-        let Some(snapshot) = self.to_put_back(&ours.text).cloned() else { return };
+        let back = if aborted { self.to_put_back_on_cancel(&ours.text) } else { self.to_put_back(&ours.text).cloned() };
+        let Some(snapshot) = back else { return };
         let wait = self.last_paste.map_or(Duration::ZERO, |at| self.options.paste_delay_after.saturating_sub(at.elapsed()));
         if wait.is_zero() {
             restore_if_ours(self.clipboard.as_ref(), &snapshot, &ours);
@@ -406,7 +426,7 @@ impl InjectSession for PasteSession {
         self.ours = Some(Ours { text: text.clone(), seq: self.clipboard.change_count() });
         std::thread::sleep(self.options.paste_delay);
         if !may_deliver() {
-            self.put_back_now();
+            self.call_off();
             tracing::debug!(chars, "piece called off before the paste");
             return Ok(PieceOutcome::Cancelled);
         }
@@ -1135,6 +1155,48 @@ pub(crate) mod tests {
         session.finish();
         std::thread::sleep(RESTORE * 4);
         assert_eq!(clipboard.writes(), ["取消的", "原来的"].map(String::from), "write, restore; nothing at the finish");
+    }
+
+    /// Regression (2026-10-29 goal review): a piece called off over a clipboard that had been
+    /// empty left the dictation on it, though nothing went out. The cancel empties it again. A
+    /// clipboard that could not be read is left alone: it may have held anything.
+    #[test]
+    fn regression_a_piece_called_off_empties_a_clipboard_that_was_empty() {
+        let clipboard = Arc::new(MemoryClipboard::default().counted());
+        let injector = session_injector(&clipboard, Arc::new(RecordingKeys::default()), RESTORE);
+        let mut session = injector.clone().begin_session(AfterPaste::Restore);
+        assert_eq!(session.piece("取消的", &|| false).unwrap(), PieceOutcome::Cancelled);
+        assert_eq!(clipboard.current(), None, "empty again at once");
+        assert_eq!(clipboard.writes(), ["取消的", CLEARED].map(String::from));
+        session.abort();
+        assert_eq!(clipboard.writes().len(), 2, "nothing more at the abort");
+
+        let clipboard = Arc::new(MemoryClipboard::default().counted());
+        *clipboard.fail_read.lock().unwrap() = Some(InjectError::Clipboard("occupied".into()));
+        let injector = session_injector(&clipboard, Arc::new(RecordingKeys::default()), RESTORE);
+        let mut session = injector.clone().begin_session(AfterPaste::Restore);
+        assert_eq!(session.piece("取消的", &|| false).unwrap(), PieceOutcome::Cancelled);
+        session.abort();
+        assert_eq!(clipboard.writes(), ["取消的".to_string()], "an unread clipboard is not emptied");
+    }
+
+    /// A session cancelled after its pastes (`abort`) empties a clipboard that had been empty
+    /// too, once the last paste has had its delay; a finished one leaves the text for the user.
+    #[test]
+    fn regression_a_cancelled_session_empties_a_clipboard_that_was_empty() {
+        let clipboard = Arc::new(MemoryClipboard::default());
+        let injector = session_injector(&clipboard, Arc::new(RecordingKeys::default()), RESTORE);
+        let mut session = injector.clone().begin_session(AfterPaste::Restore);
+        session.piece("一句。", &|| true).unwrap();
+        session.abort();
+        wait_until(|| clipboard.current().is_none());
+        assert_eq!(clipboard.writes(), ["一句。", CLEARED].map(String::from));
+
+        let mut session = injector.clone().begin_session(AfterPaste::Restore);
+        session.piece("留下的。", &|| true).unwrap();
+        session.finish();
+        std::thread::sleep(RESTORE * 4);
+        assert_eq!(clipboard.current().as_deref(), Some("留下的。"));
     }
 
     /// An ended session delivers nothing more and leaves the clipboard alone.

@@ -261,7 +261,8 @@ scripts/build-android-rn.sh --unsigned  # 不签名：…_android_arm64-unsigned
      以及 R8 外提到合成类里的 `layoutInDisplayCutoutMode`）和 `StatusBarModule.setColor`；androidx `SplashScreen` 在
      Android 12 起的退出动画监听；Material Components 的 `MaterialDatePicker.onStart`、`BottomSheetDialog.onCreate`
      （react-native-screens 的表单面板用它）和 `DropdownMenuEndIconDelegate`；`expo-image-picker` 的
-     `ExpoCropImageActivity.onCreate`。这些库改用新接口后随升级消失。
+     `ExpoCropImageActivity.onCreate`。这些库改用新接口后随升级消失。2026-10-30 封闭测试换成 2001 (0.2.1) 之后，Play 的
+     「下一发布版本的待处理问题」只剩这一条 Android 15 无边框提示（指向 2001）；Android 16 的大屏提示和 DEX 1 % 的提示已经消失。
 4. 发布前扫描：APK 和 AAB 的每个条目都过 `voltip_scan_provider_keys`；JS 包是 Hermes 字节码，字符串表首尾相接，图标名
    （`task-outline` 等）会被误认成 `sk-…`，所以它改为扫描 Metro 打包前的源码（packager source map 的
    `sourcesContent`），并检查构建环境里的密钥值不在字节码中。`.env.build` 以外的生产主机名不得出现在源码树里
@@ -324,6 +325,8 @@ scripts/build-android-rn.sh --unsigned  # 不签名：…_android_arm64-unsigned
   Pixel 9 · Android 16、Galaxy A54 · Android 13、Pixel Tablet · Android 16 全部通过（第 5、6 轮）。冷启动 538 / 783 / 610 ms，
   首屏 3 s，TOTAL PSS 395,114 / 342,732 / 320,158 KB。横屏一轮、两台手机上模拟的折叠屏内屏、悬浮球（手势粘贴开与关时各录一次、
   5 秒空闲收成把手、按住 8 秒不收起、旋转后仍在屏幕内）都通过；整次运行里没有类缺失、方法缺失或原生库加载失败的日志。
+  Device Farm 没有折叠屏（2026-10-29 查过它的 105 台 Android 设备），折叠屏只按展开后的内屏尺寸（`wm size 1840x2208`）在手机上
+  模拟；用户 2026-10-29 同意以此代替真机折叠屏验收，折叠与展开之间的切换没有在真机上验过。
   Android 13 上状态栏与导航栏透明、图标深浅正确，API 29–34 不需要保留 `AppTheme` 的栏颜色。发现并修正的应用问题：手机横屏时
   底栏挡住了按住说话按钮（改为左侧的竖向标签栏，§5）。前几轮的失败都在脚本：横屏时找不到底栏里的标签、设置页保留了上次的
   滚动位置、5 秒自动收起在录音之前打开（把手上的滑动是拉出悬浮球）、启动器不随旋转转向、状态栏下的点击、滚动未停时的点击、
@@ -389,6 +392,12 @@ scripts/build-android-rn.sh --unsigned  # 不签名：…_android_arm64-unsigned
   （不在主线程）。是否已连接是进程里的 `connected`，`BubbleService` 把它报成 `BubbleStatus.accessibilityEnabled`。
   判定逻辑是不依赖 Android 的纯 Kotlin（`BubbleSwipeDecision`、`BubblePasteDecision`、`BubbleAutoStow`），由模块的
   JVM 测试覆盖（`build.gradle` 的 `testImplementation 'junit:junit:4.13.2'`）。
-- **真机验证**：本机没有模拟器（没有 KVM）。用户 2026-10-28 在真机上试过最初的版本，没有问题；之后加的收进边缘和
-  「不复制」开关交给用户再验。悬浮球与手势粘贴在 Device Farm 上的检查见 §7；实际粘贴进其他应用只能在用户的手机上验。
+- **真机验证**：本机没有模拟器（没有 KVM）。用户 2026-10-28 在真机上试过最初的版本，没有问题。2026-10-29 用户在自己的
+  手机上覆盖安装 PR #199 头 `8c89f6c0` 的发布密钥签名包（SHA-256 `d004eefd18e981d6d5d1def27878ac3fc94ac177a37d5435c076966a2bd1dc03`，
+  版本号仍显示 0.2.0；源码与合并后的 `74bd8cdd` 相同），按验收清单测过并确认没有问题：覆盖安装后配对、设置、历史都在，
+  检查更新显示已是最新；说话页发到电脑与在手机上识别；横屏与左侧标签栏；悬浮球照常说话复制、5 秒空闲收起而按住说话时
+  不收起；手势粘贴先出说明，「暂不开启」不开启，「同意并开启」进入系统无障碍设置，GitHub 安装包按「受限设置」说明能开启；
+  左右两侧内滑后粘贴进微信、WhatsApp、Chrome、备忘录；处理中切换应用或输入框、密码框、识别失败或没有说话、滑远取消、
+  不滑动松开、关闭服务后都只复制、不粘贴。0.2.1 的发布包（SHA-256 `6faea2ab…`）在 Device Farm 的 Pixel 8 · Android 15 上
+  录 Play 声明视频时又走了一遍开启服务与手势粘贴（粘贴进另一个应用的输入框）。悬浮球与手势粘贴在 Device Farm 上的检查见 §7。
   厂商系统的后台限制见 `docs/dictation.md` §20.12。

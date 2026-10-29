@@ -66,7 +66,7 @@ use super::{
 };
 use super::{steps, wav};
 use crate::audio_cache::{KeptAudio, KeptStatus, NewRecording};
-use crate::engines::{ChineseScript, FallbackTarget, LiveSource, ResolvedEngines, SwitchedWindow};
+use crate::engines::{ChineseScript, FallbackTarget, InjectMode, LiveSource, ResolvedEngines, SwitchedWindow};
 use crate::history::{EditRecord, HistoryEntry, Outcome};
 use crate::hotkey::Modifier;
 use crate::models::ModelManager;
@@ -718,6 +718,9 @@ struct Take {
     /// What the take does when the window in front changed (docs/dictation.md §14.3), taken at
     /// `start`.
     switched_window: SwitchedWindow,
+    /// How the take's text goes out (`EngineSettings.inject`), taken at `start`: a take that only
+    /// copies has no window to check.
+    inject_mode: InjectMode,
     /// The gate of the take's text while a pipeline delivers it (a whole take, a long take, a
     /// voice edit): a cancel decides there whether it still goes out.
     gate: Option<InsertGate>,
@@ -763,6 +766,7 @@ impl Take {
             clients: None,
             origin: UsageOrigin::ThisDevice,
             switched_window: SwitchedWindow::default(),
+            inject_mode: InjectMode::default(),
             gate: None,
         }
     }
@@ -790,6 +794,8 @@ pub struct DictationEngine {
     output_mode: OutputMode,
     /// `EngineSettings.switched_window` of the last configuration (docs/dictation.md §14.3).
     switched_window: SwitchedWindow,
+    /// `EngineSettings.inject` of the last configuration.
+    inject_mode: InjectMode,
     levels: broadcast::Sender<LevelFrame>,
     internal: mpsc::Sender<Internal>,
     status: DictationStatus,
@@ -1004,6 +1010,7 @@ impl DictationEngine {
             live_source: engines.live_source(),
             output_mode: engines.output_mode,
             switched_window: engines.switched_window,
+            inject_mode: engines.inject,
             levels,
             internal: tx,
             status: DictationStatus::default(),
@@ -1138,6 +1145,7 @@ impl DictationEngine {
         self.live_source = engines.live_source();
         self.output_mode = engines.output_mode;
         self.switched_window = engines.switched_window;
+        self.inject_mode = engines.inject;
         self.warm_streaming();
         self.warm_transcriber();
     }
@@ -1439,6 +1447,7 @@ impl DictationEngine {
         };
         self.take = Take::with_presets(mode, self.vocabulary.clone(), self.scenes.clone(), (self.refine_preset, self.presets.clone()), self.context_sharing);
         self.take.switched_window = self.switched_window;
+        self.take.inject_mode = self.inject_mode;
         let local = source.is_none();
         self.take.source = source;
         self.take.origin = origin;
@@ -1648,10 +1657,12 @@ impl DictationEngine {
 
     /// The take's language hint: the scene's (`auto` = none), else the engines'.
     /// The window this take's text must still go to (docs/dictation.md §14.3): the one in front
-    /// at its start, checked for a voice edit always and for a dictation unless the take runs with
-    /// `switched_window = paste_here`.
+    /// at its start, checked for a voice edit always and for a dictation that pastes unless the
+    /// take runs with `switched_window = paste_here`. A dictation with `inject = clipboard_only`
+    /// only copies, whatever window is in front.
     fn target(&self) -> Target {
-        let check = self.status.kind == TakeKind::Edit || self.take.switched_window == SwitchedWindow::CopyOnly;
+        let pastes = self.take.inject_mode == InjectMode::Paste && self.take.switched_window == SwitchedWindow::CopyOnly;
+        let check = self.status.kind == TakeKind::Edit || pastes;
         match (&self.take.app, &self.probe) {
             (Some(app), Some(probe)) if check => Target { expected: Some(app.clone()), probe: Some(probe.clone()) },
             _ => Target::none(),
@@ -7768,6 +7779,46 @@ mod tests {
         assert!(matches!(phase(&fx), DictationPhase::Done { via: Via::Paste, .. }), "{fx:?}");
         assert_eq!(r.injector.injected(), vec![FAKE_TRANSCRIPT.to_owned()]);
         assert!(r.injector.clipboard_copies().is_empty());
+    }
+
+    /// Regression (2026-10-29 goal review): with 仅复制到剪贴板 (`inject = clipboard_only`) a
+    /// window switch during processing still went through the target check, and the copy was
+    /// reported as 窗口已切换. A dictation that only copies has no window to check; a voice edit
+    /// still checks, whatever the inject mode.
+    #[tokio::test(start_paused = true)]
+    async fn regression_a_clipboard_only_dictation_says_nothing_about_a_window_switch() {
+        let clipboard_only = |refine_enabled| {
+            let settings = EngineSettings { inject: crate::InjectMode::ClipboardOnly, refine_enabled, ..EngineSettings::default() };
+            ResolvedEngines::resolve(&settings, &UserSecrets::default(), &TEST_BUILT_IN)
+        };
+        let probe = notepad();
+        let mut r = rig_probed_with(probe.clone(), FakeTranscriber::ok(FAKE_TRANSCRIPT), None, None, &clipboard_only(false), FakeInjector::clipboard(None));
+        r.start_probed().await;
+        probe.set_window(Some(8));
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { via: Via::Clipboard, clipboard_code: None, .. }), "{fx:?}");
+        assert!(matches!(&record(&fx).unwrap().outcome, Outcome::Inserted { via: Via::Clipboard }), "{fx:?}");
+        assert_eq!(r.injector.events(), [InsertEvent::Begin, InsertEvent::Piece(FAKE_TRANSCRIPT.into()), InsertEvent::Finish]);
+        assert!(r.injector.clipboard_copies().is_empty(), "no second copy for a changed window");
+
+        let probe = notepad();
+        let mut r = rig_probed_with(
+            probe.clone(),
+            FakeTranscriber::ok(INSTRUCTION),
+            Some(FakeRefiner::ok(REWRITE)),
+            None,
+            &clipboard_only(true),
+            FakeInjector::clipboard(None).with_selection(SELECTION),
+        );
+        r.start_edit_open(Vec::new()).await;
+        probe.set_window(Some(8));
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(
+            matches!(phase(&fx), DictationPhase::Done { via: Via::Clipboard, clipboard_code: Some(ClipboardCode::TargetChanged), text, .. } if text == REWRITE),
+            "a voice edit still checks: {fx:?}"
+        );
     }
 
     /// Regression (R02, §19): a voice edit whose window changed replaced the selection of whatever
