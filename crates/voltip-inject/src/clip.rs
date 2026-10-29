@@ -69,9 +69,20 @@ impl ClipSnapshot {
         Self { items: if formats.is_empty() { Vec::new() } else { vec![formats] }, complete: true }
     }
 
+    /// A clipboard that could not be read: nothing is known about what it held, so nothing is
+    /// put back over it — not even emptiness.
+    pub fn unread() -> Self {
+        Self { items: Vec::new(), complete: false }
+    }
+
     /// Nothing to put back.
     pub fn is_empty(&self) -> bool {
         self.items.iter().all(Vec::is_empty)
+    }
+
+    /// The clipboard was read and held nothing at all: a cancel empties it again.
+    pub fn read_empty(&self) -> bool {
+        self.is_empty() && self.complete
     }
 
     /// Bytes kept, over every item and format.

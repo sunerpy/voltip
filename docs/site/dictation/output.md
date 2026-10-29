@@ -30,7 +30,7 @@ A few kinds of content cannot be put back in full: on Windows, formats such as m
 
 Voltip inserts the text into the window you started in. If you switch to another window while it recognises or polishes, Voltip does not paste by default: it only copies the text, so that it does not land in the wrong place. The overlay shows **Window changed · text copied**, and you can paste it where you want with <kbd>Ctrl</kbd> <kbd>V</kbd> (<kbd>⌘</kbd> <kbd>V</kbd> on a Mac). With **Type as you speak**, the sentences after the switch are no longer typed one by one; they are copied together at the end.
 
-To paste into the window that is in front instead, set **If the window changes while processing**, under **Settings → Dictation**, to **Paste into current window**. Voice edit does not follow this setting: after a switch it always copies the rewrite only. Where Voltip cannot tell which window is in front when you start (on a pure Wayland session on Linux, for example), it pastes as usual.
+To paste into the window that is in front instead, set **If the window changes while processing**, under **Settings → Dictation**, to **Paste into current window**. Voice edit does not follow this setting: after a switch it always copies the rewrite only. Where Voltip cannot tell which window is in front when you start (on a pure Wayland session on Linux, for example), it pastes as usual. With **Copy to clipboard only**, the text is only copied anyway: switching windows changes nothing, and the overlay does not show this notice.
 
 ## Output modes
 

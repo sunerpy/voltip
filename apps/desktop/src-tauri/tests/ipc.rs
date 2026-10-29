@@ -1678,6 +1678,32 @@ fn paste_text_pastes_into_the_window_in_front_and_refuses_while_a_take_runs() {
     });
 }
 
+/// Regression (2026-10-29 goal review), through the command layer: with 仅复制到剪贴板 a window
+/// switch while the take was processing was reported as 窗口已切换. A take that only copies says
+/// nothing about the window (docs/dictation.md §14.3): `Done` via the clipboard without a code, and
+/// the history says inserted.
+#[test]
+fn regression_a_clipboard_only_take_says_nothing_about_a_window_switch() {
+    use voltip_core::dictation::Via;
+    let probe = Arc::new(fakes::FakeProbe::app("notepad.exe", "Notepad", None));
+    probe.set_window(Some(7));
+    let ports = DictationPorts { probe: Some(probe.clone()), injector: Arc::new(fakes::FakeInjector::clipboard(None)), ..fakes::ports() };
+    with_running_app_on(ports, move |_, webview, _| {
+        wait_state(webview, |s| s.identity.is_some());
+        let engines = voltip_core::EngineSettings { inject: InjectMode::ClipboardOnly, ..fake_engines() };
+        assert_eq!(invoke(webview, "settings_set_engines", json!({ "engines": engines })), Ok(Value::Null));
+        wait_state(webview, |s| s.engines.inject == InjectMode::ClipboardOnly);
+        assert_eq!(invoke(webview, "dictation_start", json!({})), Ok(Value::Null));
+        wait_state(webview, |s| matches!(s.dictation.phase, DictationPhase::Listening { ready: true, .. }));
+        probe.set_window(Some(8));
+        assert_eq!(invoke(webview, "dictation_stop", json!({})), Ok(Value::Null));
+        let st = wait_state(webview, |s| s.dictation.phase.is_terminal());
+        assert!(matches!(&st.dictation.phase, DictationPhase::Done { via: Via::Clipboard, clipboard_code: None, .. }), "{:?}", st.dictation.phase);
+        let st = wait_state(webview, |s| s.history_recent.len() == 1);
+        assert!(matches!(st.history_recent[0].outcome, voltip_core::history::Outcome::Inserted { via: Via::Clipboard }), "{:?}", st.history_recent[0].outcome);
+    });
+}
+
 /// `voltip_platform` snake_case contract the TypeScript schema mirrors.
 #[test]
 fn platform_queries_answer_not_applicable_on_a_host_without_gates() {
