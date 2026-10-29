@@ -1344,6 +1344,9 @@ pub trait ForegroundProbe: Send + Sync {
     /// 此刻有焦点的应用；阻塞但应当很快，核心在 spawn_blocking 上调用。
     /// Ok(None)：没有可命名的应用（纯 Wayland、桌面本身、Voltip 自己的窗口）。
     fn foreground(&self) -> Result<Option<ForegroundApp>, String>;
+    /// 核心最多等多久（开始听写时与粘贴前，§14.3），缺省 PROBE_DEADLINE；
+    /// 测试的 FakeProbe 有答复时给 10 s（繁忙的机器不会把及时的答复变成「没有答复」），挂起时仍是 PROBE_DEADLINE。
+    fn deadline(&self) -> Duration { PROBE_DEADLINE }
 }
 pub const PROBE_DEADLINE: Duration = Duration::from_millis(100);
 DictationPorts.probe: Option<Arc<dyn ForegroundProbe>>   // 桌面壳插入平台实现；手机壳与 fakes::ports() 为 None

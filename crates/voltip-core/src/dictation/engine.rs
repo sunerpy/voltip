@@ -21,7 +21,7 @@
 //! its `start`, and a vocabulary problem only ever falls back to the unmodified text.
 //!
 //! Scenes (§18): with a [`ForegroundProbe`] plugged in, `start` asks it (on a blocking thread, at
-//! most [`PROBE_DEADLINE`]) which application is in front before the device opens; the first
+//! most [`ForegroundProbe::deadline`]) which application is in front before the device opens; the first
 //! enabled scene matching it overrides the take's output mode, refine switch and style, language
 //! and Chinese script, and gives the refiner an instruction. The take's context (app + scene)
 //! rides on `DictationStatus.context` and into the history. No answer, no match: the globals.
@@ -57,8 +57,8 @@ use super::long::{self, EnergySegmenter};
 use super::ports::{
     AudioSource, Capture, CaptureOptions, ClipboardCode, DWELL, DWELL_WITH_TEXT, DictationError, ForegroundApp, ForegroundProbe, GateCancel, InjectNote,
     Injection, Injector, InsertGate, InsertSession, Inserted, LIVE_CHUNK_SAMPLES, LevelFrame, LivePcm, MAX_EDIT_SELECTION_CHARS, MAX_RECORDING, MIN_RECORDING,
-    PARTIAL_THROTTLE, PCM_SAMPLE_RATE_HZ, PROBE_DEADLINE, PcmStream, Recording, RefineContext, RefineHints, Refiner, Segment, Segmenter, SegmenterFactory,
-    SelectionTiming, ServiceProbe, StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber, Transcriber, Transcript, Via, max_recording,
+    PARTIAL_THROTTLE, PCM_SAMPLE_RATE_HZ, PcmStream, Recording, RefineContext, RefineHints, Refiner, Segment, Segmenter, SegmenterFactory, SelectionTiming,
+    ServiceProbe, StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber, Transcriber, Transcript, Via, max_recording,
 };
 use super::redecode::RedecodeStreaming;
 use super::{
@@ -1488,12 +1488,13 @@ impl DictationEngine {
     }
 
     /// Ask the probe which application is in front, on a blocking thread and for at most
-    /// [`PROBE_DEADLINE`]; [`Internal::Context`] follows in every case (no answer = `None`).
+    /// [`ForegroundProbe::deadline`]; [`Internal::Context`] follows in every case (no answer = `None`).
     fn spawn_probe(&self, probe: Arc<dyn ForegroundProbe>) {
         let session = self.status.session;
         let tx = self.internal.clone();
         tokio::spawn(async move {
-            let app = match tokio::time::timeout(PROBE_DEADLINE, tokio::task::spawn_blocking(move || probe.foreground())).await {
+            let deadline = probe.deadline();
+            let app = match tokio::time::timeout(deadline, tokio::task::spawn_blocking(move || probe.foreground())).await {
                 Ok(Ok(Ok(app))) => app,
                 Ok(Ok(Err(e))) => {
                     tracing::debug!(session, error = %e, "foreground probe failed; no scene");
@@ -1504,7 +1505,7 @@ impl DictationEngine {
                     None
                 }
                 Err(_) => {
-                    tracing::info!(session, deadline_ms = PROBE_DEADLINE.as_millis(), "foreground probe did not answer in time; no scene");
+                    tracing::info!(session, deadline_ms = deadline.as_millis(), "foreground probe did not answer in time; no scene");
                     None
                 }
             };
@@ -3536,11 +3537,11 @@ impl Target {
     }
 
     /// Whether the window in front now is still the expected one, asked right before the paste.
-    /// A probe that names nothing, fails or does not answer within [`PROBE_DEADLINE`] counts as
+    /// A probe that names nothing, fails or does not answer within [`ForegroundProbe::deadline`] counts as
     /// another window: the text is copied, never pasted blind.
     fn still_there(&self) -> bool {
         let (Some(expected), Some(probe)) = (&self.expected, &self.probe) else { return true };
-        let same = probe_now(probe, PROBE_DEADLINE).and_then(ForegroundApp::sanitized).is_some_and(|now| crate::paste::same_target(expected, &now));
+        let same = probe_now(probe, probe.deadline()).and_then(ForegroundApp::sanitized).is_some_and(|now| crate::paste::same_target(expected, &now));
         if !same {
             tracing::info!(app = %expected.app_id, "another window is in front now; the text is copied instead of pasted");
         }
@@ -3818,7 +3819,7 @@ async fn run_edit(job: EditJob) {
 
 #[cfg(test)]
 mod tests {
-    use super::super::ports::{MAX_RECORDING, MAX_RECORDING_STREAMING};
+    use super::super::ports::{MAX_RECORDING, MAX_RECORDING_STREAMING, PROBE_DEADLINE};
     use super::*;
     use crate::dictation::ClipboardCode;
     use crate::dictation::fakes::{
@@ -7829,6 +7830,8 @@ mod tests {
         }
         assert_eq!(r.injector.injected(), vec!["Hello world. ".to_owned()], "only the sentence before the switch was pasted");
         assert_eq!(r.injector.clipboard_copies(), vec!["How are you. Fine ".to_owned()]);
+        // The session ends on a blocking thread of its own once the take is over.
+        wait_until(|| r.injector.events().contains(&InsertEvent::Finish)).await;
         assert_eq!(
             r.injector.events(),
             [InsertEvent::Begin, InsertEvent::Piece("Hello world. ".into()), InsertEvent::CalledOff("How are you. ".into()), InsertEvent::Finish]

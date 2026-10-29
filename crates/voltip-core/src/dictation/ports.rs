@@ -533,9 +533,15 @@ impl ForegroundApp {
 /// platform's implementation (Win32 / X11 / AppKit); shells without one (the phone) plug in none.
 pub trait ForegroundProbe: Send + Sync {
     /// The focused application right now. Blocking but meant to be quick: the core calls it on a
-    /// blocking thread and waits at most [`PROBE_DEADLINE`]. `Ok(None)` when there is no
+    /// blocking thread and waits at most [`ForegroundProbe::deadline`]. `Ok(None)` when there is no
     /// application the shell can name (pure Wayland, the desktop itself, Voltip's own window).
     fn foreground(&self) -> Result<Option<ForegroundApp>, String>;
+
+    /// How long the core waits for [`ForegroundProbe::foreground`] before it treats the window in
+    /// front as unknown: [`PROBE_DEADLINE`].
+    fn deadline(&self) -> Duration {
+        PROBE_DEADLINE
+    }
 }
 
 /// Asks an OpenAI-compatible service which models it serves (`GET {base}/models`): the engines

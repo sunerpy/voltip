@@ -12,8 +12,8 @@ use parking_lot::Mutex;
 use super::engine::DictationPorts;
 use super::ports::{
     AudioSource, Capture, CaptureOptions, DictationError, ForegroundApp, ForegroundProbe, InjectNote, Injection, Injector, InsertSession, Inserted,
-    LIVE_CHUNK_SAMPLES, LevelFrame, LivePcm, PCM_SAMPLE_RATE_HZ, PcmStream, Recording, RefineHints, Refined, Refiner, Segment, SelectionTiming, StreamEvent,
-    StreamFinal, StreamingSession, StreamingTranscriber, Transcriber, Transcript, Via,
+    LIVE_CHUNK_SAMPLES, LevelFrame, LivePcm, PCM_SAMPLE_RATE_HZ, PROBE_DEADLINE, PcmStream, Recording, RefineHints, Refined, Refiner, Segment, SelectionTiming,
+    StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber, Transcriber, Transcript, Via,
 };
 use super::wav;
 use crate::hotkey::Modifier;
@@ -829,7 +829,16 @@ impl FakeProbe {
     }
 }
 
+/// How long the core waits for a [`FakeProbe`] that answers: long, so a busy test machine cannot
+/// turn its prompt answer into "no answer" (a hanging one is waited for [`PROBE_DEADLINE`], as a
+/// real probe is).
+pub const FAKE_PROBE_DEADLINE: Duration = Duration::from_secs(10);
+
 impl ForegroundProbe for FakeProbe {
+    fn deadline(&self) -> Duration {
+        if matches!(*self.reply.lock(), ProbeReply::Hang) { PROBE_DEADLINE } else { FAKE_PROBE_DEADLINE }
+    }
+
     fn foreground(&self) -> Result<Option<ForegroundApp>, String> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         let reply = self.reply.lock().clone();
