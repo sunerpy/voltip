@@ -1,12 +1,12 @@
 //! Missed releases of a hold-to-talk take (docs/dictation.md §29). A take held with a key ends
 //! when the key goes up, and the edge that says so can get lost: the system removed the hook in
 //! the meantime, a hook came back while the key was down, the window system kept the key-up. The
-//! shell remembers every press it forwarded (a chord's, the lone key's) until it forwards the
-//! release. While a take of a hold-type activation listens, it reads the key's physical state
-//! every [`POLL_EVERY`] (`voltip_hooks::is_down`), and two readings in a row that say "up" send
-//! the release the edge never brought, stamped with the first of them. A reading nobody can make
-//! (a Wayland session, a key the tables do not name) changes nothing: the take then ends as it
-//! always did.
+//! shell remembers every press it forwarded (a chord's, the lone key's), as the press of the take
+//! it started, until it forwards the release. While a take of a hold-type activation listens, it
+//! reads the key's physical state every [`POLL_EVERY`] (`voltip_hooks::is_down`), and two
+//! readings in a row that say "up" send the release the edge never brought, stamped with the
+//! first of them. A reading nobody can make (a Wayland session, a key the tables do not name)
+//! changes nothing: the take then ends as it always did.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,6 +20,8 @@ use crate::hotkey::{HotkeyRegistry, linux_session};
 
 /// How often a held key is read while its take waits for the release.
 pub const POLL_EVERY: Duration = Duration::from_millis(250);
+/// How long a press waits for the core to start the take it asks for, in milliseconds.
+pub const START_GRACE_MS: u64 = 2_000;
 
 /// Where a press came from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,6 +38,10 @@ struct Held {
     source: Source,
     key: HeldKey,
     purpose: TakeKind,
+    /// When the shell saw the press.
+    at_ms: u64,
+    /// The session of the take the press started, once one runs.
+    take: Option<u64>,
     /// When the key first read as up, of the readings in a row that say so.
     up_since: Option<u64>,
 }
@@ -50,6 +56,8 @@ pub struct Take<'a> {
     pub phase: &'a DictationPhase,
     /// What the current (or last) take is for.
     pub kind: TakeKind,
+    /// Its session (`DictationStatus.session`).
+    pub session: u64,
 }
 
 /// A release to send for a key that is up.
@@ -70,10 +78,10 @@ pub struct HeldKeys {
 }
 
 impl HeldKeys {
-    /// A press was forwarded; a press from the same source replaces the earlier one.
-    pub fn pressed(&mut self, source: Source, key: HeldKey, purpose: TakeKind) {
+    /// A press was forwarded at `at_ms`; a press from the same source replaces the earlier one.
+    pub fn pressed(&mut self, source: Source, key: HeldKey, purpose: TakeKind, at_ms: u64) {
         self.released(source);
-        self.held.push(Held { source, key, purpose, up_since: None });
+        self.held.push(Held { source, key, purpose, at_ms, take: None, up_since: None });
     }
 
     /// The release from `source` was forwarded (or the press became a chord).
@@ -86,26 +94,29 @@ impl HeldKeys {
         self.held.is_empty()
     }
 
-    /// One round of readings at `now_ms`: the releases to send. Only a take that a release ends
-    /// is checked (a `hold` or `hold_or_toggle` run that listens unlocked, or one processing); a
-    /// take that is over forgets every press.
+    /// One round of readings at `now_ms`: the releases to send. A press belongs to the first take
+    /// of its purpose that runs (listens or processes) within [`START_GRACE_MS`] of it, since the
+    /// core may start that take after a round: until then it waits, and after that it is
+    /// forgotten. A press whose take is over, or was followed by another, is forgotten too. A
+    /// press is read only while its take is one a release ends (a `hold` or `hold_or_toggle` run
+    /// that listens unlocked, or one processing).
     pub fn poll(&mut self, take: Take<'_>, now_ms: u64, mut read: impl FnMut(&HeldKey) -> Option<bool>) -> Vec<MissedRelease> {
-        match take.phase {
-            DictationPhase::Listening { locked: false, .. } | DictationPhase::Processing { .. } => {}
-            // The next press ends a locked run, not a release.
-            DictationPhase::Listening { locked: true, .. } => return Vec::new(),
-            _ => {
-                self.held.clear();
-                return Vec::new();
-            }
-        }
-        if take.activation == Activation::Toggle {
-            return Vec::new();
-        }
+        let running = matches!(take.phase, DictationPhase::Listening { .. } | DictationPhase::Processing { .. });
+        // The next press ends a locked run, not a release; in `toggle` a release does nothing.
+        let readable =
+            take.activation != Activation::Toggle && matches!(take.phase, DictationPhase::Listening { locked: false, .. } | DictationPhase::Processing { .. });
         let mut missed = Vec::new();
         self.held.retain_mut(|held| {
-            // The other kind's take runs: the core drops this key's edges anyway.
-            if held.purpose != take.kind {
+            // The other kind's take: the core drops this key's edges anyway.
+            let its_kind = running && held.purpose == take.kind;
+            let waited = now_ms.saturating_sub(held.at_ms) > START_GRACE_MS;
+            match held.take {
+                Some(session) if !its_kind || session != take.session => return false,
+                Some(_) => {}
+                None if its_kind && !waited => held.take = Some(take.session),
+                None => return !waited,
+            }
+            if !readable {
                 return true;
             }
             match (read(&held.key), held.up_since) {
@@ -217,18 +228,67 @@ mod tests {
     }
 
     fn take(activation: Activation, phase: &DictationPhase) -> Take<'_> {
-        Take { activation, phase, kind: TakeKind::Dictation }
+        take_of(activation, phase, 1)
+    }
+
+    fn take_of(activation: Activation, phase: &DictationPhase, session: u64) -> Take<'_> {
+        Take { activation, phase, kind: TakeKind::Dictation, session }
     }
 
     fn solo() -> HeldKey {
         HeldKey::Solo(SoloKey::RightCtrl)
     }
 
+    /// Regression (R03 load runs, 2026-10-30): a press is remembered before the core starts the
+    /// take it asks for, and a reading in between, while the core still said idle, forgot it:
+    /// that take's lost release was never sent (1 of 200 runs under full load). A press now waits
+    /// for its take, and belongs to it.
+    #[test]
+    fn regression_a_press_read_before_its_take_started_still_ends_that_take() {
+        let mut held = HeldKeys::default();
+        held.pressed(Source::Solo, solo(), TakeKind::Dictation, 0);
+        assert_eq!(held.poll(take_of(Activation::Hold, &DictationPhase::Idle, 0), 10, |_| panic!("not read while idle")), []);
+        assert!(!held.is_empty(), "kept for the take it asks for");
+        let phase = listening(false);
+        assert_eq!(held.poll(take_of(Activation::Hold, &phase, 1), 250, |_| Some(false)), []);
+        assert_eq!(
+            held.poll(take_of(Activation::Hold, &phase, 1), 500, |_| Some(false)),
+            [MissedRelease { source: Source::Solo, purpose: TakeKind::Dictation, at_ms: 250 }]
+        );
+    }
+
+    #[test]
+    fn a_press_waits_for_its_take_only_so_long_and_ends_with_it() {
+        let phase = listening(false);
+        let over = DictationPhase::Cancelled { injected_chars: 0 };
+        let read = |_: &HeldKey| Some(true);
+        // No take within the grace: forgotten.
+        let mut held = HeldKeys::default();
+        held.pressed(Source::Solo, solo(), TakeKind::Dictation, 0);
+        assert_eq!(held.poll(take_of(Activation::Hold, &DictationPhase::Idle, 0), START_GRACE_MS, read), []);
+        assert!(!held.is_empty());
+        assert_eq!(held.poll(take_of(Activation::Hold, &DictationPhase::Idle, 0), START_GRACE_MS + 1, read), []);
+        assert!(held.is_empty(), "its take never came");
+        // A take that starts after the grace is not the press's: never read for it.
+        held.pressed(Source::Solo, solo(), TakeKind::Dictation, 0);
+        assert_eq!(held.poll(take_of(Activation::Hold, &phase, 2), START_GRACE_MS + 1, |_| panic!("not its take")), []);
+        assert!(held.is_empty());
+        // Its take ends: forgotten, and so is a press whose take another one replaced.
+        held.pressed(Source::Solo, solo(), TakeKind::Dictation, 0);
+        assert_eq!(held.poll(take_of(Activation::Hold, &phase, 3), 100, read), []);
+        assert_eq!(held.poll(take_of(Activation::Hold, &over, 3), 200, |_| panic!("its take is over")), []);
+        assert!(held.is_empty());
+        held.pressed(Source::Solo, solo(), TakeKind::Dictation, 0);
+        assert_eq!(held.poll(take_of(Activation::Hold, &phase, 4), 100, read), []);
+        assert_eq!(held.poll(take_of(Activation::Hold, &phase, 5), 200, |_| panic!("another take")), []);
+        assert!(held.is_empty());
+    }
+
     #[test]
     fn a_key_read_up_twice_in_a_row_gets_its_release_at_the_first_reading() {
         let phase = listening(false);
         let mut held = HeldKeys::default();
-        held.pressed(Source::Solo, solo(), TakeKind::Dictation);
+        held.pressed(Source::Solo, solo(), TakeKind::Dictation, 0);
         assert_eq!(held.poll(take(Activation::Hold, &phase), 750, |_| Some(true)), []);
         assert_eq!(held.poll(take(Activation::Hold, &phase), 1000, |_| Some(false)), [], "one reading is not enough");
         assert_eq!(
@@ -238,7 +298,7 @@ mod tests {
         assert!(held.is_empty(), "sent once");
         // `hold_or_toggle` listening unlocked ends the same way, and so does a chord.
         let chord = HeldKey::Chord("Space".to_owned());
-        held.pressed(Source::Chord(TakeKind::Dictation), chord, TakeKind::Dictation);
+        held.pressed(Source::Chord(TakeKind::Dictation), chord, TakeKind::Dictation, 0);
         assert_eq!(held.poll(take(Activation::HoldOrToggle, &phase), 2000, |_| Some(false)), []);
         assert_eq!(
             held.poll(take(Activation::HoldOrToggle, &phase), 2250, |_| Some(false)),
@@ -250,19 +310,19 @@ mod tests {
     fn a_reading_that_says_down_or_nothing_starts_the_count_again() {
         let phase = listening(false);
         let mut held = HeldKeys::default();
-        held.pressed(Source::Solo, solo(), TakeKind::Dictation);
+        held.pressed(Source::Solo, solo(), TakeKind::Dictation, 0);
         for (at, reading) in [(0, Some(false)), (250, Some(true)), (500, Some(false)), (750, None), (1000, Some(false))] {
             assert_eq!(held.poll(take(Activation::Hold, &phase), at, |_| reading), [], "at {at}");
         }
         // Wayland: never a reading, never a release.
         let mut wayland = HeldKeys::default();
-        wayland.pressed(Source::Solo, solo(), TakeKind::Dictation);
+        wayland.pressed(Source::Solo, solo(), TakeKind::Dictation, 0);
         for at in 0..100 {
             assert_eq!(wayland.poll(take(Activation::Hold, &phase), at * 250, |_| None), []);
         }
         assert!(!wayland.is_empty());
         // A press again (auto-repeat, the key went down anew) forgets the reading before it.
-        held.pressed(Source::Solo, solo(), TakeKind::Dictation);
+        held.pressed(Source::Solo, solo(), TakeKind::Dictation, 0);
         assert_eq!(held.poll(take(Activation::Hold, &phase), 1250, |_| Some(false)), []);
     }
 
@@ -274,38 +334,44 @@ mod tests {
             Some(false)
         };
         let mut held = HeldKeys::default();
-        held.pressed(Source::Solo, solo(), TakeKind::Dictation);
+        held.pressed(Source::Solo, solo(), TakeKind::Dictation, 0);
         for at in [0, 250, 500] {
             // `hold_or_toggle` locked: the next press ends it, not a release.
             assert_eq!(held.poll(take(Activation::HoldOrToggle, &listening(true)), at, read), []);
             // `toggle`: a release does nothing.
             assert_eq!(held.poll(take(Activation::Toggle, &listening(false)), at, read), []);
-            // A voice edit runs: the dictation key's release would be dropped anyway.
-            let phase = listening(false);
-            let edit = Take { activation: Activation::Hold, phase: &phase, kind: TakeKind::Edit };
-            assert_eq!(held.poll(edit, at, read), []);
         }
-        assert_eq!(reads.get(), 0);
         assert!(!held.is_empty(), "kept for when the take is one a release ends");
+        // A voice edit runs: the dictation key's release would be dropped anyway.
+        let mut during_an_edit = HeldKeys::default();
+        during_an_edit.pressed(Source::Solo, solo(), TakeKind::Dictation, 0);
+        let phase = listening(false);
+        for at in [0, 250, 500] {
+            let edit = Take { activation: Activation::Hold, phase: &phase, kind: TakeKind::Edit, session: 2 };
+            assert_eq!(during_an_edit.poll(edit, at, read), []);
+        }
+        assert!(!during_an_edit.is_empty());
+        assert_eq!(reads.get(), 0);
     }
 
     #[test]
     fn a_release_the_shell_forwarded_or_a_take_that_ended_forgets_the_press() {
         let mut held = HeldKeys::default();
-        held.pressed(Source::Solo, solo(), TakeKind::Dictation);
-        held.pressed(Source::Chord(TakeKind::Edit), HeldKey::Chord("E".to_owned()), TakeKind::Edit);
+        held.pressed(Source::Solo, solo(), TakeKind::Dictation, 0);
+        held.pressed(Source::Chord(TakeKind::Edit), HeldKey::Chord("E".to_owned()), TakeKind::Edit, 0);
         held.released(Source::Solo);
         held.released(Source::Chord(TakeKind::Edit));
         assert!(held.is_empty());
         // Processing is still checked: a press that started nothing yet waits for its release.
-        held.pressed(Source::Solo, solo(), TakeKind::Dictation);
+        held.pressed(Source::Solo, solo(), TakeKind::Dictation, 0);
         let processing = DictationPhase::Processing { stage: voltip_core::ProcessingStage::Transcribing, started_at: 0, stage_started_at: 0, preview: None };
         assert_eq!(held.poll(take(Activation::Hold, &processing), 0, |_| Some(false)), []);
         assert_eq!(held.poll(take(Activation::Hold, &processing), 250, |_| Some(false)).len(), 1);
         // Idle, cancelled, done: the take is over, the press says nothing more.
         for over in [DictationPhase::Idle, DictationPhase::Cancelled { injected_chars: 0 }] {
-            held.pressed(Source::Solo, solo(), TakeKind::Dictation);
-            assert_eq!(held.poll(take(Activation::Hold, &over), 0, |_| panic!("not read")), []);
+            held.pressed(Source::Solo, solo(), TakeKind::Dictation, 0);
+            assert_eq!(held.poll(take(Activation::Hold, &listening(false)), 0, |_| Some(true)), []);
+            assert_eq!(held.poll(take(Activation::Hold, &over), 250, |_| panic!("not read")), []);
             assert!(held.is_empty());
         }
     }

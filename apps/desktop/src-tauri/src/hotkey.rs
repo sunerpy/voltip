@@ -317,7 +317,7 @@ impl HotkeyRegistry {
 
     /// A press went to the core: remember it until its release does.
     pub fn held_pressed(&self, source: held::Source, key: voltip_hooks::HeldKey, purpose: TakeKind) {
-        self.held.lock().pressed(source, key, purpose);
+        self.held.lock().pressed(source, key, purpose, now_ms());
         self.held_notify.notify_one();
     }
 
@@ -345,7 +345,8 @@ impl HotkeyRegistry {
     /// One round of readings against the take `bridge` reports: the releases to send.
     pub fn poll_held(&self, bridge: &Bridge, now_ms: u64) -> Vec<MissedRelease> {
         let state = bridge.state();
-        let take = held::Take { activation: state.settings.activation, phase: &state.dictation.phase, kind: state.dictation.kind };
+        let take =
+            held::Take { activation: state.settings.activation, phase: &state.dictation.phase, kind: state.dictation.kind, session: state.dictation.session };
         let reader = self.reader.lock().clone();
         self.held.lock().poll(take, now_ms, |key| reader.read(key))
     }
