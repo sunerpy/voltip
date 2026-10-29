@@ -19,10 +19,12 @@ use crate::catalogue::Engine;
 use crate::compute::{Compute, LocalDevice};
 use crate::transcriber::Recognizer;
 
-/// How long a take waits for a recogniser before it gives up (docs/dictation.md §29, measured):
-/// twice the slowest recognition of the longest input one call gets, so a take only gives up on a
-/// recogniser that is stuck, never on one that is merely busy.
-pub const LOCK_WAIT: Duration = Duration::from_secs(30);
+/// How long a take waits for a recogniser before it gives up (docs/dictation.md §29.8, measured):
+/// twice the slowest recognition of a 121 s input on the two machines measured (37.4 s, Qwen3-ASR
+/// 0.6B on the Windows build machine's CPU), rounded up to 5 s. Since a take is recognised in
+/// pieces of at most `max_piece`, a take only gives up on a recogniser that is stuck, never on one
+/// that is merely busy.
+pub const LOCK_WAIT: Duration = Duration::from_secs(75);
 
 /// Two GPU failures this close together turn the GPU off until Voltip restarts.
 pub const GPU_STRIKE_WINDOW: Duration = Duration::from_secs(10 * 60);
