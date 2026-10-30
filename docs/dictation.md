@@ -2503,7 +2503,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 ### 28.10 未做与偏离
 
 - 计划把读取器放在桌面 crate 里；实际放进单独的 `voltip-focus`，判定规则放进 `voltip-platform`：桌面 crate 的测试要构建整个应用，在托管的 Windows 与 macOS 上原生编译太慢，`voltip-hooks` 单独成 crate 也是这个原因（§28.3）。
-- `focus_macos` 只在 Apple 芯片腿上跑（与 event tap 相同），Intel 腿的时长离发版候选的 45 分钟门槛不远。
+- `focus_macos` 只在 Apple 芯片腿上跑（event tap 自 §29 起两台 Mac 都跑），Intel 腿的时长离发版候选的 45 分钟门槛不远。
 - 粘贴之前还不判断焦点控件能否编辑（docs/roadmap.md 第 2 条）；不可编辑时照常粘贴，再由插入确认报「没有写进去」。
 - Linux 上基于 Chromium 的应用和没有开启辅助功能的会话读不到，Windows 与 macOS 上只提供整段值的控件只能证明写入：这些情形都是「无法确认」，不出卡片。
 
@@ -2560,7 +2560,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 - **出错的实例不再用**：除了被录音自己的取消停下的推理（`RecognizeError.by_cancel`：transcribe.cpp 的 `Aborted`，以及 sherpa-onnx 和转写器在推理开始前看到的取消），任何错误都让下一次识别不再用出错的那个实例，而是重新加载（`model` 连同这个模型的其他实例一起丢掉；同一模型的其他空闲实例在别的错误后照常使用）。代价是出错后的下一次识别多一次加载；预热（§10.7）只在启动和改设置后进行。
 
 - **改用 CPU**：GPU 上出现 `device` 或 `memory` 时，这次录音以 `Compute { device: Cpu }` 加载并重试一次。10 分钟内第二次（`GPU_STRIKE_WINDOW`）之后，这次运行剩下的时间里本机模型都在 CPU 上（内存里的标志，重启 Voltip 恢复）。CPU 也失败时，错误是两次的说明合在一起：「显卡出错（…），改用 CPU 也失败（…）」。
-- **说明实际后端**：`Transcript.backend_note: Option<AsrNote>`（`gpu_failed_ran_on_cpu`：这一条改用 CPU；`gpu_off_until_restart`：显卡多次出错，重启前都用 CPU），进历史条目的可选字段 `asr_note`（旧条目没有这个字段照常读取）；历史详情的技术信息里显示「识别方式」。长录音取各段里最重的一条。
+- **说明实际后端**：`Transcript.backend_note: Option<AsrNote>`（`gpu_failed_ran_on_cpu`：这一条改用 CPU；`gpu_off_until_restart`：显卡多次出错，重启前都用 CPU），进历史条目的可选字段 `asr_note`（旧条目没有这个字段照常读取）；历史详情的技术信息里显示「识别方式」。长录音取各段里最重的一条，导入的文件（§31）也一样（`import::run::Recognized.note`）。
 - 默认从不因为本机失败把音频发到云端；候补模型另有规则。
 
 ### 29.6 取消与实例池（`crates/voltip-asr-local/src/pool.rs`）
@@ -2614,7 +2614,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 
 - Rust：`voltip-hooks` 的 `watch.rs`（`no_presses_no_judgement`、`three_presses_the_hook_missed_over_a_second_mean_it_is_gone`、`a_hook_that_still_hears_nothing_is_put_back_less_and_less_often`、`a_hook_put_back_starts_its_count_afresh` 等）；`voltip-platform` 的 `held_key.rs` 与 `SoloTracker::resumed`；三个平台钩子的真测试（见上）；桌面 `held.rs`（含 `regression_a_press_read_before_its_take_started_still_ends_that_take`）、`hotkey.rs`（`the_lone_key_status_follows_the_hook_s_health`、`regression_a_hook_whose_thread_ended_is_replaced`）、`tests/ipc.rs@regression_a_missed_release_stops_a_hold_take`。
 - `voltip-asr-local`：`pool.rs`（实例复用与上限、一次一个模型、被取消的实例不挡别的模型、驱逐、预热、10 分钟内第二次显卡错误）；`transcriber.rs`（`a_gpu_failure_is_tried_again_on_the_cpu_and_a_second_keeps_the_cpu`、`a_failed_cpu_retry_reports_both_failures`、`a_model_failure_drops_the_model_and_the_next_take_loads_it_again`、`regression_an_inference_error_drops_the_instance_that_failed`、`regression_a_cancelled_local_take_releases_the_model`、`regression_a_cancelled_sherpa_take_does_not_block_the_next`、`regression_a_cancelled_sherpa_take_holds_back_no_other_language_or_model`、`a_cancelled_take_stops_between_pieces`、`an_input_longer_than_the_model_takes_is_recognised_piece_by_piece`）；`segmenter.rs@an_input_longer_than_max_piece_is_cut_into_pieces_that_fit`；`gguf.rs@transcribe_cpp_errors_map_to_their_kind`、`gguf.rs@every_load_copies_the_weights_into_memory`；真模型（`tests/real.rs`，`#[ignore]`）：`real_sherpa_long_inputs_are_recognised_like_their_pieces`、`real_gguf_long_inputs_are_recognised_like_their_pieces`（60 s 与 121 s：转写器的文字等于逐段识别再拼接的文字，字数不少于样音单独识别的 80%）、`real_a_cancelled_gguf_take_frees_the_model_after_its_piece`、`real_a_loaded_gguf_model_leaves_its_file_free_to_move_and_delete`；`catalogue.rs@every_whole_take_model_has_a_max_piece`。
-- 核心：`asr_note` 进历史（`an_asr_note_round_trips_and_older_entries_read_without`、`the_recogniser_s_backend_note_reaches_the_history`、`a_long_take_keeps_its_segments_backend_note`）。
+- 核心：`asr_note` 进历史（`an_asr_note_round_trips_and_older_entries_read_without`、`the_recogniser_s_backend_note_reaches_the_history`、`a_long_take_keeps_its_segments_backend_note`、`a_segment_the_cpu_took_over_from_the_graphics_card_marks_the_entry`）。
 - `make lint` 的 `check-no-device-event-filter.sh`；`scripts/measure` 的 Python 单测（`make verify` 的 `measure-helpers`，含 `--estimate`：`test_a_model_not_measured_on_a_machine_counts_with_its_estimate_there`）；许可清单（`release-helpers`：`test_every_component_transcribe_cpp_vendors_carries_its_text`、`test_a_component_transcribe_cpp_vendors_that_the_notices_do_not_know_fails`）。
 - 真机：Linux 上 `tests/real.rs` 全部真模型测试（0.6B、1.7B、SenseVoice、Paraformer、实时识别、VAD）；Windows 构建机的 `gate test`、`gate clippy`、`gate real`；托管 CI 的两台 Mac、`hooks-windows`、`windows-cross`（`make windows-x64`，Vulkan）、`windows-native`、`android` 与 `smoke-desktop`；本机 `make linux-x64`（Vulkan）。
 - 依赖时间和线程的测试在满载下（每个逻辑 CPU 一个空转循环）各跑 200 次：`HookWatch`、`held_key` 与 `solo_key`、`held.rs` 与 `hotkey.rs`、`regression_a_missed_release_stops_a_hold_take`、`transcriber.rs` 与 `pool.rs` 的全部测试。第一轮 `regression_a_missed_release_stops_a_hold_take` 有 1 次失败（§29.4 的按下被提前清掉），修正后它与 `held.rs` 各再跑 300 次无失败。

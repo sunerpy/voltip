@@ -688,6 +688,7 @@ fn imported_history_entry() -> HistoryEntry {
         text: "今天我们讨论一下进度。下周发布。".into(),
         refined: true,
         asr_model: "whisper-large-v3".into(),
+        asr_note: None,
         refine_model: Some("llama-3.3-70b-versatile".into()),
         duration_ms: 9_500,
         asr_ms: 1_800,
