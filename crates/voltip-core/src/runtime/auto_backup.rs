@@ -2,6 +2,10 @@
 //! desktop shell asks for before an update installs, and what `UiState.auto_backup` shows. The one
 //! before a replacing import is written in that import's own step (`runtime/backup.rs`).
 //!
+//! The names carry this computer's [`auto::device_tag`] (user decision D23, 2026-10-30): the folder
+//! may be shared with other computers through a sync service, and the newest backup the weekly one
+//! waits on, the five kept and what `UiState.auto_backup` names are this computer's alone.
+//!
 //! Every automatic backup is made of the runtime's own lists and identity, never of the bridge's
 //! cache, which follows the core's events and may be a step behind: the lists are copied on the
 //! core task, after every command queued before the backup. The history comes from its database on
@@ -21,7 +25,7 @@ use voltip_protocol::Platform;
 
 use super::{CoreEvent, Runtime};
 use crate::backup::auto::{
-    self, AutoBackupFailure, AutoBackupView, AutoFile, AutoKind, AutoReply, DAY_MS, NOTICE_FILE_NAME, default_folder, local_now, weekly_due,
+    self, AutoBackupFailure, AutoBackupView, AutoFile, AutoKind, AutoReply, DAY_MS, NOTICE_FILE_NAME, default_folder, device_tag, local_now, weekly_due,
 };
 use crate::backup::{BackupError, ExportInput, ExportSummary};
 use crate::dictation::DictationPhase;
@@ -174,10 +178,17 @@ impl Runtime {
         self.settings.backup.folder.as_deref().map_or_else(|| default_folder(&self.config.data_dir), PathBuf::from)
     }
 
+    /// This computer's tag in its automatic backups' names (user decision D23): from the identity
+    /// it has now.
+    pub(super) fn auto_device(&self) -> String {
+        device_tag(&self.identity.keypair.public)
+    }
+
     /// `UiState.auto_backup`.
     pub(super) fn auto_view(&self) -> AutoBackupView {
         AutoBackupView {
             available: self.config.auto_backup,
+            device: self.auto_device(),
             folder: self.auto_folder().display().to_string(),
             default_folder: default_folder(&self.config.data_dir).display().to_string(),
             custom: self.settings.backup.folder.is_some(),
@@ -236,12 +247,13 @@ impl Runtime {
         }
     }
 
-    /// Look at `folder` on a blocking thread.
+    /// Look at `folder` on a blocking thread, for this computer's automatic backups.
     fn start_scan(&mut self, folder: PathBuf) {
         self.auto.scanning = true;
         let tx = self.auto.tx.clone();
+        let device = self.auto_device();
         tokio::task::spawn_blocking(move || {
-            let result = auto::list(&folder);
+            let result = auto::list(&folder, Some(&device));
             let _ = tx.blocking_send(AutoInbound::Scanned { folder, result });
         });
     }
@@ -262,6 +274,7 @@ impl Runtime {
         let Some((kind, reply)) = self.auto.waiting.pop_front() else { return };
         self.auto.writing = true;
         let folder = self.auto_folder();
+        let device = self.auto_device();
         let lists = self.auto_lists();
         let history_db = self.config.data_dir.join(HISTORY_DB_FILE_NAME);
         let data_dir = self.config.data_dir.clone();
@@ -269,7 +282,7 @@ impl Runtime {
         let stamp = local_now();
         tokio::task::spawn_blocking(move || {
             let started = Instant::now();
-            let result = auto::write_auto(kind, &folder, &history_db, &lists.input(), stamp);
+            let result = auto::write_auto(kind, &folder, &device, &history_db, &lists.input(), stamp);
             let took = started.elapsed();
             if let (AutoKind::Update, Err(e)) = (kind, &result) {
                 leave_notice(&data_dir, &AutoBackupFailure { kind, at_ms: super::now_ms(), detail: failure_detail(e) });
@@ -377,7 +390,7 @@ impl Runtime {
         let lists = self.auto_lists();
         let history_db = self.config.data_dir.join(HISTORY_DB_FILE_NAME);
         let started = Instant::now();
-        let result = auto::write_auto(kind, &self.auto_folder(), &history_db, &lists.input(), local_now());
+        let result = auto::write_auto(kind, &self.auto_folder(), &self.auto_device(), &history_db, &lists.input(), local_now());
         let took = ms(started.elapsed());
         match result {
             Ok((file, summary)) => {
@@ -410,7 +423,7 @@ mod tests {
     use tokio::sync::mpsc::Receiver;
 
     use super::*;
-    use crate::backup::auto::{AUTO_BACKUP_DIR, DAY_MS, WEEK_MS, auto_name, list};
+    use crate::backup::auto::{AUTO_BACKUP_DIR, AUTO_KEEP, DAY_MS, DEVICE_TAG_LEN, WEEK_MS, auto_name, list};
     use crate::runtime::{AppCore, Inbox};
     use crate::settings::BackupSettings;
     use crate::vocabulary::{DictionaryDraft, EntrySource};
@@ -446,6 +459,17 @@ mod tests {
             self.dir.path().join(AUTO_BACKUP_DIR)
         }
 
+        /// This computer's tag, read off the fingerprint its identity shows (user decision D23).
+        fn tag(&self) -> String {
+            let fingerprint = self.rt.identity.public().fingerprint;
+            fingerprint.chars().filter(char::is_ascii_hexdigit).take(DEVICE_TAG_LEN).collect::<String>().to_ascii_lowercase()
+        }
+
+        /// This computer's automatic backups in `folder`, newest first.
+        fn own(&self, folder: &Path) -> Vec<AutoFile> {
+            list(folder, Some(&self.tag())).unwrap()
+        }
+
         /// What the core hears next about automatic backups (a scan or a write on its thread).
         async fn next(&mut self) -> AutoInbound {
             tokio::time::timeout(Duration::from_secs(30), self.inbox.auto_rx.recv()).await.expect("an answer within 30 s").expect("the core holds the sender")
@@ -464,12 +488,13 @@ mod tests {
         }
     }
 
-    /// A file named as an automatic backup made `age_ms` before now (local time, as the names are).
-    fn made_ago(folder: &Path, kind: AutoKind, age_ms: u64) -> PathBuf {
+    /// A file named as `device`'s automatic backup made `age_ms` before now (local time, as the
+    /// names are).
+    fn made_ago(folder: &Path, device: &str, kind: AutoKind, age_ms: u64) -> PathBuf {
         std::fs::create_dir_all(folder).unwrap();
         let at = crate::now_ms() - age_ms;
         let stamp = chrono::Local.timestamp_millis_opt(i64::try_from(at).unwrap()).unwrap().naive_local();
-        let path = folder.join(auto_name(kind, stamp, 1));
+        let path = folder.join(auto_name(kind, stamp, device, 1));
         std::fs::write(&path, b"{}").unwrap();
         path
     }
@@ -485,13 +510,15 @@ mod tests {
         rig.rt.backup_tick_at(t0 + AUTO_WEEKLY_DELAY.as_millis() as u64 - 1_000);
         assert!(rig.idle(), "not before the minute is up");
         rig.tick_and_answer(t0 + AUTO_WEEKLY_DELAY.as_millis() as u64).await;
-        let files = list(&rig.default_folder()).unwrap();
+        let files = list(&rig.default_folder(), None).unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].kind, AutoKind::Weekly);
+        assert!(files[0].name.ends_with(&format!("-weekly-{}.voltip-backup", rig.tag())), "this computer's tag: {}", files[0].name);
         let backup = crate::backup::read(&files[0].path).unwrap();
         assert_eq!(backup.manifest.device, "书房");
         let view = rig.rt.auto_view();
         assert!(view.available && !view.custom);
+        assert_eq!(view.device, rig.tag());
         assert_eq!(view.folder, rig.default_folder().display().to_string());
         assert_eq!(view.default_folder, view.folder);
         assert_eq!(view.last, Some(files[0].view()));
@@ -507,16 +534,15 @@ mod tests {
     /// only the weekly backup waits its minute.
     #[tokio::test]
     async fn regression_the_latest_backup_is_known_right_after_start() {
-        let dir = tempfile::tempdir().unwrap();
-        let recent = made_ago(&dir.path().join(AUTO_BACKUP_DIR), AutoKind::Update, 8 * DAY_MS);
-        let mut rig = rig_in(dir, BackupSettings::default(), true);
+        let mut rig = rig(BackupSettings::default());
+        let recent = made_ago(&rig.default_folder(), &rig.tag(), AutoKind::Update, 8 * DAY_MS);
         let t0 = rig.started();
         rig.tick_and_answer(t0 + 1_000).await;
         assert_eq!(rig.rt.auto_view().last.map(|l| l.name), recent.file_name().map(|n| n.to_string_lossy().into_owned()));
         rig.rt.backup_tick_at(t0 + 59_000);
         assert!(rig.idle(), "eight days old, yet the weekly one waits its minute");
         rig.tick_and_answer(t0 + AUTO_WEEKLY_DELAY.as_millis() as u64).await;
-        assert_eq!(list(&rig.default_folder()).unwrap().len(), 2);
+        assert_eq!(rig.own(&rig.default_folder()).len(), 2);
     }
 
     /// A backup written while the folder is looked at stays the newest: the listing that comes
@@ -541,9 +567,8 @@ mod tests {
     /// A backup made two days ago is new enough: the weekly one waits until it is a week old.
     #[tokio::test]
     async fn the_weekly_backup_waits_until_the_newest_one_is_a_week_old() {
-        let dir = tempfile::tempdir().unwrap();
-        let recent = made_ago(&dir.path().join(AUTO_BACKUP_DIR), AutoKind::Update, 2 * DAY_MS);
-        let mut rig = rig_in(dir, BackupSettings::default(), true);
+        let mut rig = rig(BackupSettings::default());
+        let recent = made_ago(&rig.default_folder(), &rig.tag(), AutoKind::Update, 2 * DAY_MS);
         let t0 = rig.started();
         rig.tick_and_answer(t0 + 60_000).await;
         assert_eq!(rig.rt.auto_view().last.map(|l| l.name), recent.file_name().map(|n| n.to_string_lossy().into_owned()));
@@ -551,7 +576,45 @@ mod tests {
         rig.rt.backup_tick_at(t0 + 4 * DAY_MS);
         assert!(rig.idle(), "two days old, then six: not due");
         rig.tick_and_answer(t0 + 5 * DAY_MS + 60_000).await;
-        assert_eq!(list(&rig.default_folder()).unwrap().len(), 2, "a week old: the weekly one");
+        assert_eq!(rig.own(&rig.default_folder()).len(), 2, "a week old: the weekly one");
+    }
+
+    /// Regression (user decision D23, 2026-10-30): with the folder shared through a sync service,
+    /// another computer's fresh backup postponed this computer's weekly one, the page named the
+    /// other computer's backup as the latest, and writing here deleted the other's. Now this
+    /// computer looks at, counts and deletes its own alone.
+    #[tokio::test]
+    async fn regression_another_computers_backups_neither_postpone_nor_crowd_out_this_ones() {
+        let mut rig = rig(BackupSettings::default());
+        let folder = rig.default_folder();
+        let here = rig.tag();
+        let there = if here == "3d9f2b10" { "5b0fe291" } else { "3d9f2b10" };
+        let theirs: Vec<PathBuf> = (0..6).map(|day| made_ago(&folder, there, AutoKind::Weekly, day * DAY_MS + 3_600_000)).collect();
+        let mine = made_ago(&folder, &here, AutoKind::Update, 9 * DAY_MS);
+        let t0 = rig.started();
+        rig.tick_and_answer(t0 + 1_000).await;
+        assert_eq!(rig.rt.auto_view().last.map(|l| l.name), mine.file_name().map(|n| n.to_string_lossy().into_owned()), "this computer's newest");
+        rig.tick_and_answer(t0 + AUTO_WEEKLY_DELAY.as_millis() as u64).await;
+        let own = rig.own(&folder);
+        assert_eq!(own.len(), 2, "due: this computer's newest is nine days old, the other's an hour");
+        assert_eq!(own[0].kind, AutoKind::Weekly);
+        assert_eq!(rig.rt.auto_view().last, Some(own[0].view()));
+        // This computer at five: its oldest goes, none of the other's.
+        for day in 10..13 {
+            made_ago(&folder, &here, AutoKind::Weekly, day * DAY_MS);
+        }
+        let (reply, answer) = AutoReply::channel();
+        rig.rt.request_auto_backup(AutoKind::Update, Some(reply));
+        let written = rig.next().await;
+        rig.rt.on_auto_backup(written, t0 + 61_000);
+        answer.await.unwrap().unwrap();
+        let own = rig.own(&folder);
+        assert_eq!(own.len(), AUTO_KEEP);
+        assert!(mine.exists(), "nine days old: among this computer's newest five");
+        for path in &theirs {
+            assert!(path.exists(), "another computer's backup stays: {}", path.display());
+        }
+        assert_eq!(list(&folder, Some(there)).unwrap().len(), theirs.len());
     }
 
     /// Switched off, there is no weekly backup, however old the newest one is.
@@ -563,12 +626,12 @@ mod tests {
         rig.rt.backup_tick_at(t0 + 61_000);
         rig.rt.backup_tick_at(t0 + 30 * DAY_MS);
         assert!(rig.idle());
-        assert_eq!(list(&rig.default_folder()).unwrap(), Vec::new());
+        assert_eq!(list(&rig.default_folder(), None).unwrap(), Vec::new());
         // On again: due at the next tick.
         rig.rt.handle_command(CoreCommand::SetBackupWeekly(true)).await;
         assert!(rig.rt.settings.backup.weekly);
         rig.tick_and_answer(t0 + 30 * DAY_MS + 1_000).await;
-        assert_eq!(list(&rig.default_folder()).unwrap().len(), 1);
+        assert_eq!(rig.own(&rig.default_folder()).len(), 1);
     }
 
     /// Another folder is looked at anew; the backups go there from then on, and the old folder
@@ -579,7 +642,7 @@ mod tests {
         let t0 = rig.started();
         rig.tick_and_answer(t0 + 60_000).await;
         rig.tick_and_answer(t0 + 61_000).await;
-        assert_eq!(list(&rig.default_folder()).unwrap().len(), 1);
+        assert_eq!(rig.own(&rig.default_folder()).len(), 1);
         let synced = rig.dir.path().join("同步盘").join("Voltip");
         rig.rt.handle_command(CoreCommand::SetBackupFolder(Some(synced.clone()))).await;
         assert_eq!(rig.rt.settings.backup.folder.as_deref(), Some(synced.to_str().unwrap()));
@@ -588,8 +651,8 @@ mod tests {
         assert_eq!((view.folder, view.last), (synced.display().to_string(), None), "not looked at yet");
         rig.tick_and_answer(t0 + 62_000).await;
         rig.tick_and_answer(t0 + 63_000).await;
-        assert_eq!(list(&synced).unwrap().len(), 1, "the new folder has none: the weekly one goes there");
-        assert_eq!(list(&rig.default_folder()).unwrap().len(), 1, "the old one keeps its backup");
+        assert_eq!(rig.own(&synced).len(), 1, "the new folder has none: the weekly one goes there");
+        assert_eq!(rig.own(&rig.default_folder()).len(), 1, "the old one keeps its backup");
         // Back to the default: its backup is a minute old.
         rig.rt.handle_command(CoreCommand::SetBackupFolder(None)).await;
         assert_eq!(rig.rt.settings.backup.folder, None);
@@ -622,7 +685,7 @@ mod tests {
         assert!(rig.idle(), "not again within a day");
         std::fs::remove_file(&blocker).unwrap();
         rig.tick_and_answer(failed_at + DAY_MS).await;
-        assert_eq!(list(&folder).unwrap().len(), 1);
+        assert_eq!(rig.own(&folder).len(), 1);
         assert_eq!(rig.rt.auto_view().failure, None, "gone once one succeeds");
     }
 
@@ -680,7 +743,7 @@ mod tests {
         let update = rig.next().await;
         rig.rt.on_auto_backup(update, t0 + 63_000);
         assert_eq!(answer.await.unwrap().unwrap().kind, AutoKind::Update);
-        let kinds: Vec<AutoKind> = list(&rig.default_folder()).unwrap().iter().map(|f| f.kind).collect();
+        let kinds: Vec<AutoKind> = rig.own(&rig.default_folder()).iter().map(|f| f.kind).collect();
         assert!(kinds.contains(&AutoKind::Weekly) && kinds.contains(&AutoKind::Update), "{kinds:?}");
     }
 

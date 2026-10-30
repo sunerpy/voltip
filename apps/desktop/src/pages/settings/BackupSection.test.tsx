@@ -297,7 +297,7 @@ describe("Settings · 隐私与历史 · 自动备份 (docs/dictation.md section
       now: () => NOW,
       autoBackup: {
         last: {
-          name: "voltip-auto-20250924-154640-weekly.voltip-backup",
+          name: "voltip-auto-20250924-154640-weekly-a7c4198e.voltip-backup",
           at_ms: NOW,
           kind: "weekly",
         },
@@ -307,8 +307,17 @@ describe("Settings · 隐私与历史 · 自动备份 (docs/dictation.md section
     const section = await screen.findByTestId("privacy-auto-backup");
     expect(section).toHaveTextContent("自动备份");
     expect(section).toHaveTextContent("更新安装前和替换导入前也会自动备份一份");
-    expect(section).toHaveTextContent("自动备份只保留最近 5 份");
+    expect(section).toHaveTextContent("每台电脑只保留自己最近 5 份自动备份");
     expect(section).toHaveTextContent("备份文件未加密，放在同步盘中会随同步上传");
+    // User decision D23 (2026-10-30): what a synced folder is for, and that each computer manages
+    // its own backups there, named by this computer's tag.
+    const sync = within(section).getByTestId("auto-backup-sync");
+    expect(sync).toHaveTextContent("即使这台电脑损坏、丢失或重装系统，备份仍会保留");
+    expect(sync).toHaveTextContent("Voltip 不会在电脑之间同步数据，换电脑时请在新电脑上导入备份");
+    expect(sync).toHaveTextContent(
+      "多台电脑可以共用同一个文件夹，每台电脑只管理文件名中带有自己标记的自动备份，不会改动其他电脑的备份",
+    );
+    expect(sync).toHaveTextContent("这台电脑的标记：a7c4198e");
     expect(within(section).getByTestId("auto-backup-folder")).toHaveTextContent(MOCK_BACKUPS_DIR);
     expect(section).toHaveTextContent("默认");
     expect(within(section).queryByRole("button", { name: "恢复默认位置" })).toBeNull();
@@ -400,7 +409,7 @@ describe("Settings · 隐私与历史 · 自动备份 (docs/dictation.md section
     done = await screen.findByRole("dialog", { name: "导入完成" });
     const [snapshot] = backend.autoBackups;
     expect(snapshot?.kind).toBe("import");
-    expect(snapshot?.name).toMatch(/^voltip-auto-\d{8}-\d{6}-import\.voltip-backup$/);
+    expect(snapshot?.name).toMatch(/^voltip-auto-\d{8}-\d{6}-import-a7c4198e\.voltip-backup$/);
     expect(within(done).getByTestId("backup-snapshot")).toHaveTextContent(
       `替换前的内容已自动备份到：${MOCK_BACKUPS_DIR}/${snapshot?.name ?? ""}`,
     );
@@ -444,7 +453,7 @@ describe("Settings · 隐私与历史 · 自动备份 (docs/dictation.md section
       now: () => NOW,
       autoBackup: {
         last: {
-          name: "voltip-auto-20250924-154640-update.voltip-backup",
+          name: "voltip-auto-20250924-154640-update-a7c4198e.voltip-backup",
           at_ms: NOW,
           kind: "update",
         },
@@ -454,6 +463,20 @@ describe("Settings · 隐私与历史 · 自动备份 (docs/dictation.md section
     renderApp({ path: "/settings/privacy", backend, systemLanguage: "en-US" });
     const section = await screen.findByTestId("privacy-auto-backup");
     expect(section).toHaveTextContent("Automatic backups");
+    expect(section).toHaveTextContent(
+      "Each computer keeps only its own latest 5 automatic backups",
+    );
+    const sync = within(section).getByTestId("auto-backup-sync");
+    expect(sync).toHaveTextContent(
+      "In a synced folder, the backups are kept even if this computer breaks, is lost or is reinstalled.",
+    );
+    expect(sync).toHaveTextContent(
+      "Voltip does not sync data between computers: on a new computer, import a backup.",
+    );
+    expect(sync).toHaveTextContent(
+      "Several computers can share one folder; each manages only the automatic backups whose names carry its own tag and leaves the other computers' backups alone.",
+    );
+    expect(sync).toHaveTextContent("This computer's tag: a7c4198e");
     expect(within(section).getByRole("switch", { name: "Back up every week" })).toBeInTheDocument();
     expect(within(section).getByTestId("auto-backup-last")).toHaveTextContent(
       `${shown(NOW, "en")} (before an update)`,

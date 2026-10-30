@@ -566,6 +566,9 @@ export const MOCK_CHOSEN_MODELS_DIR = "/data/Voltip/models";
 export const MOCK_BACKUPS_DIR = "~/.local/share/voltip/backups";
 /** The folder the preview's 自动备份位置 dialog answers with. */
 export const MOCK_CHOSEN_BACKUPS_DIR = "/data/Sync/Voltip";
+/** The preview computer's tag in its automatic backups' names: the start of `desktopIdentity()`'s
+ *  fingerprint, lower case, as `voltip_core::backup::auto::device_tag` makes it (user decision D23). */
+export const MOCK_DEVICE_TAG = "a7c4198e";
 
 /** The real catalogue's files, name and size (`voltip_asr_local::catalogue`). */
 const MOCK_MODEL_FILES: Record<string, readonly (readonly [string, number])[]> = {
@@ -1346,6 +1349,7 @@ export class MockBackend implements Backend {
           ? emptyAutoBackup()
           : {
               available: true,
+              device: MOCK_DEVICE_TAG,
               folder: settings.backup.folder ?? MOCK_BACKUPS_DIR,
               default_folder: MOCK_BACKUPS_DIR,
               custom: settings.backup.folder !== null,
@@ -1787,7 +1791,11 @@ export class MockBackend implements Backend {
       this.emitAutoBackup({ failure, ...(kind === "update" ? { notice: failure } : {}) });
       return { kind: "failed", detail: this.autoBackupFailure };
     }
-    const file: AutoBackupFile = { name: autoBackupName(kind, at), at_ms: at, kind };
+    const file: AutoBackupFile = {
+      name: autoBackupName(kind, at, MOCK_DEVICE_TAG),
+      at_ms: at,
+      kind,
+    };
     this.autoBackups.unshift(file);
     this.autoBackups.splice(AUTO_BACKUP_KEEP);
     this.emitAutoBackup({ last: file, failure: null });
@@ -6218,13 +6226,14 @@ function sampleBackupId(n: number): string {
   return `00000000-0000-4000-9000-${String(n).padStart(12, "0")}`;
 }
 
-/** `voltip-auto-20261030-152000-weekly.voltip-backup`: an automatic backup's name as the core
- *  writes it (`voltip_core::backup::auto::auto_name`), in local time (docs/dictation.md §4.6.1). */
-function autoBackupName(kind: AutoBackupKind, atMs: number): string {
+/** `voltip-auto-20261030-152000-weekly-a7c4198e.voltip-backup`: an automatic backup's name as the
+ *  core writes it (`voltip_core::backup::auto::auto_name`), in local time, with the tag of the
+ *  computer that wrote it (docs/dictation.md §4.6.1, user decision D23). */
+function autoBackupName(kind: AutoBackupKind, atMs: number, device: string): string {
   const d = new Date(atMs);
   const date = `${d.getFullYear()}${twoDigits(d.getMonth() + 1)}${twoDigits(d.getDate())}`;
   const time = `${twoDigits(d.getHours())}${twoDigits(d.getMinutes())}${twoDigits(d.getSeconds())}`;
-  return `voltip-auto-${date}-${time}-${kind}.${BACKUP_EXTENSION}`;
+  return `voltip-auto-${date}-${time}-${kind}-${device}.${BACKUP_EXTENSION}`;
 }
 
 /** `7` → `07`. */

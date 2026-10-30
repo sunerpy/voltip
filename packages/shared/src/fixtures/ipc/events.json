@@ -123,6 +123,7 @@
     },
     "auto_backup": {
       "available": false,
+      "device": "",
       "folder": "",
       "default_folder": "",
       "custom": false,
@@ -5571,11 +5572,12 @@
   {
     "type": "auto_backup",
     "available": true,
+    "device": "02d449a3",
     "folder": "D:\\同步盘\\Voltip 备份",
     "default_folder": "C:\\Users\\me\\AppData\\Roaming\\voltip\\Voltip\\data\\backups",
     "custom": true,
     "last": {
-      "name": "voltip-auto-20261030-152000-weekly.voltip-backup",
+      "name": "voltip-auto-20261030-152000-weekly-02d449a3.voltip-backup",
       "at_ms": 1758700600000,
       "kind": "weekly"
     },
@@ -5593,6 +5595,7 @@
   {
     "type": "auto_backup",
     "available": true,
+    "device": "02d449a3",
     "folder": "C:\\Users\\me\\AppData\\Roaming\\voltip\\Voltip\\data\\backups",
     "default_folder": "C:\\Users\\me\\AppData\\Roaming\\voltip\\Voltip\\data\\backups",
     "custom": false,
@@ -5603,6 +5606,7 @@
   {
     "type": "auto_backup",
     "available": false,
+    "device": "",
     "folder": "",
     "default_folder": "",
     "custom": false,

@@ -852,7 +852,7 @@ mod tests {
 
     fn written() -> AutoOutcome {
         Ok(voltip_core::backup::auto::AutoBackupFile {
-            name: "voltip-auto-20261030-152000-update.voltip-backup".into(),
+            name: "voltip-auto-20261030-152000-update-a7c4198e.voltip-backup".into(),
             at_ms: 1_793_000_000_000,
             kind: AutoKind::Update,
         })
@@ -916,7 +916,7 @@ mod tests {
             backup_then_install(
                 || core.backup_auto(AutoKind::Update),
                 move || {
-                    let kinds: Vec<AutoKind> = voltip_core::backup::auto::list(&seen).unwrap().iter().map(|f| f.kind).collect();
+                    let kinds: Vec<AutoKind> = voltip_core::backup::auto::list(&seen, None).unwrap().iter().map(|f| f.kind).collect();
                     assert_eq!(kinds, [AutoKind::Update], "written before the installer starts");
                     Ok(())
                 },

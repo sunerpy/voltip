@@ -255,7 +255,7 @@ async fn a_part_that_cannot_be_written_is_reported_and_the_rest_restored() {
 
 /// The automatic backups in `dir`'s default folder (docs/dictation.md §4.6.1).
 fn auto_backups(dir: &std::path::Path) -> Vec<backup::auto::AutoFile> {
-    backup::auto::list(&dir.join(AUTO_BACKUP_DIR)).unwrap()
+    backup::auto::list(&dir.join(AUTO_BACKUP_DIR), None).unwrap()
 }
 
 /// What `dir`'s history holds, newest first.

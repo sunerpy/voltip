@@ -158,9 +158,10 @@ export function BackupSection() {
 
 /** Settings · 隐私与历史 · 自动备份 (docs/dictation.md §4.6.1): the weekly switch, where the
  *  automatic backups go (更改… through the shell's folder dialog and a trial file, 打开文件夹,
- *  恢复默认位置), the newest one, and the last failure until one is written. The backups before an
- *  update and before a replacing import have no switch. The webview never names a folder. Nothing
- *  where the app makes no automatic backups (the phone). */
+ *  恢复默认位置) and what a synced folder there does (user decision D23: each computer manages its
+ *  own backups, named by its tag), this computer's newest one, and the last failure until one is
+ *  written. The backups before an update and before a replacing import have no switch. The webview
+ *  never names a folder. Nothing where the app makes no automatic backups (the phone). */
 function AutoBackupSection() {
   const { backend } = useBackend();
   const shell = useShell();
@@ -234,6 +235,9 @@ function AutoBackupSection() {
               </span>
               <span className="text-fg-subtle">
                 {t("settings.brief.privacy.backup.auto.folderHelp")}
+              </span>
+              <span className="text-fg-subtle" data-testid="auto-backup-sync">
+                {t("settings.brief.privacy.backup.auto.sync", { device: auto.device })}
               </span>
             </span>
           }>

@@ -74,7 +74,7 @@ describe("backup and migration (docs/dictation.md section 4.6)", () => {
     // docs/dictation.md §4.6.1: a replacing import names the backup it made first.
     const replaced = imports[1];
     expect(replaced?.kind === "done" && replaced.report.snapshot).toBe(
-      "C:\\Users\\me\\AppData\\Roaming\\voltip\\Voltip\\data\\backups\\voltip-auto-20261030-152000-import.voltip-backup",
+      "C:\\Users\\me\\AppData\\Roaming\\voltip\\Voltip\\data\\backups\\voltip-auto-20261030-152000-import-02d449a3.voltip-backup",
     );
     expect(done.report.snapshot).toBeUndefined();
     expect(imports.slice(2).map((o) => o.kind === "failed" && o.code)).toEqual([

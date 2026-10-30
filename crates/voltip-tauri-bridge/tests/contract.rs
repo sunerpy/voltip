@@ -1169,16 +1169,19 @@ fn models_location() -> ModelsLocationView {
     }
 }
 
-/// The automatic backups (docs/dictation.md §4.6.1): a folder of the user's with a weekly backup in
-/// it, the failure of the one before an update, and its notice on home.
+/// The automatic backups (docs/dictation.md §4.6.1): a folder of the user's with this computer's
+/// weekly backup in it (its tag in the name, user decision D23), the failure of the one before an
+/// update, and its notice on home.
 fn auto_backup() -> AutoBackupView {
     let failure = AutoBackupFailure { kind: AutoKind::Update, at_ms: AT_MS - 60_000, detail: "Access is denied. (os error 5)".into() };
+    let device = voltip_core::backup::auto::device_tag(&DESKTOP_KEY);
     AutoBackupView {
         available: true,
+        last: Some(AutoBackupFile { name: format!("voltip-auto-20261030-152000-weekly-{device}.voltip-backup"), at_ms: AT_MS, kind: AutoKind::Weekly }),
+        device,
         folder: "D:\\同步盘\\Voltip 备份".into(),
         default_folder: "C:\\Users\\me\\AppData\\Roaming\\voltip\\Voltip\\data\\backups".into(),
         custom: true,
-        last: Some(AutoBackupFile { name: "voltip-auto-20261030-152000-weekly.voltip-backup".into(), at_ms: AT_MS, kind: AutoKind::Weekly }),
         failure: Some(failure.clone()),
         notice: Some(failure),
     }
@@ -3323,7 +3326,10 @@ fn backup_fixture_matches_serde_output() {
                 report: ImportReport {
                     mode: ImportMode::Replace,
                     parts: vec![unavailable],
-                    snapshot: Some("C:\\Users\\me\\AppData\\Roaming\\voltip\\Voltip\\data\\backups\\voltip-auto-20261030-152000-import.voltip-backup".into()),
+                    snapshot: Some(format!(
+                        "C:\\Users\\me\\AppData\\Roaming\\voltip\\Voltip\\data\\backups\\voltip-auto-20261030-152000-import-{}.voltip-backup",
+                        voltip_core::backup::auto::device_tag(&DESKTOP_KEY)
+                    )),
                 },
             },
             ImportOutcome::failed(ImportFailure::Expired),

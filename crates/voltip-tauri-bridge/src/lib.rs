@@ -2200,6 +2200,9 @@ mod tests {
         let worker = bridge.clone();
         let file = tokio::task::spawn_blocking(move || worker.backup_auto(AutoKind::Update)).await.unwrap().expect("written");
         assert_eq!(file.kind, AutoKind::Update);
+        let device = bridge.state().auto_backup.device;
+        assert_eq!(device.len(), voltip_core::backup::auto::DEVICE_TAG_LEN);
+        assert!(file.name.ends_with(&format!("-update-{device}.voltip-backup")), "this computer's tag (D23): {}", file.name);
         let written = voltip_core::backup::read(&bridge.backup_folder().join(&file.name)).unwrap();
         assert_eq!(written.dictionary.iter().map(|d| d.term.as_str()).collect::<Vec<_>>(), ["Voltip"]);
         for _ in 0..60 {

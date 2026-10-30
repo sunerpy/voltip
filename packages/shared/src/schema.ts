@@ -1992,6 +1992,9 @@ export type AutoBackupFailure = z.infer<typeof autoBackupFailureSchema>;
  *  the app makes none (the phone). */
 export const autoBackupViewSchema = z.object({
   available: z.boolean(),
+  /** This computer's tag in its automatic backups' names (user decision D23): the ones it keeps
+   *  and counts; other computers may share the folder. Empty before the core says. */
+  device: z.string().default(""),
   folder: z.string(),
   default_folder: z.string(),
   custom: z.boolean(),
@@ -2002,6 +2005,7 @@ export const autoBackupViewSchema = z.object({
 export type AutoBackupView = z.infer<typeof autoBackupViewSchema>;
 export const emptyAutoBackup = (): AutoBackupView => ({
   available: false,
+  device: "",
   folder: "",
   default_folder: "",
   custom: false,

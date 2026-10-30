@@ -3051,7 +3051,7 @@ export const en: Messages = {
           },
           auto: {
             title: "Automatic backups",
-            note: "A backup is also made before an update installs and before an import replaces data. Only the latest {keep} automatic backups are kept and older ones are deleted; backups you export yourself are left alone. Backup files are not encrypted: in a synced folder, they are uploaded with it.",
+            note: "A backup is also made before an update installs and before an import replaces data. Each computer keeps only its own latest {keep} automatic backups and deletes older ones; backups you export yourself are left alone. Backup files are not encrypted: in a synced folder, they are uploaded with it.",
             weekly: "Back up every week",
             weeklyHelp:
               "Every 7 days, backs up the history, the dictionary, the rules, the scenes and the AI presets.",
@@ -3059,6 +3059,7 @@ export const en: Messages = {
             default: "Default",
             custom: "Custom",
             folderHelp: "Backups already in the previous folder stay where they are.",
+            sync: "In a synced folder, the backups are kept even if this computer breaks, is lost or is reinstalled. Voltip does not sync data between computers: on a new computer, import a backup. Several computers can share one folder; each manages only the automatic backups whose names carry its own tag and leaves the other computers' backups alone. This computer's tag: {device}",
             change: "Change…",
             chooseTitle: "Choose where automatic backups are saved",
             open: "Open folder",

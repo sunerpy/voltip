@@ -1255,16 +1255,25 @@ describe("release facts", () => {
     const { auto_backup: _none, ...oldState } = baseState();
     const parsed = uiStateSchema.parse(oldState);
     expect(parsed.auto_backup).toEqual(emptyAutoBackup());
+    expect(parsed.auto_backup.device).toBe("");
     const view = {
       available: true,
+      device: "a7c4198e",
       folder: "/sync/Voltip",
       default_folder: "/data/backups",
       custom: true,
-      last: { name: "voltip-auto-20261030-152000-update.voltip-backup", at_ms: 1, kind: "update" },
+      last: {
+        name: "voltip-auto-20261030-152000-update-a7c4198e.voltip-backup",
+        at_ms: 1,
+        kind: "update",
+      },
     };
     const event = uiEventSchema.parse({ type: "auto_backup", ...view });
     const next = applyEvent(parsed, event);
     expect(next.auto_backup).toEqual({ ...view, failure: null, notice: null });
+    // A view from before user decision D23 names no tag.
+    const { device: _untagged, ...untagged } = view;
+    expect(uiEventSchema.parse({ type: "auto_backup", ...untagged })).toMatchObject({ device: "" });
     expect(
       uiEventSchema.safeParse({
         type: "auto_backup",

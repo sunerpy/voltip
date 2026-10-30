@@ -4,6 +4,7 @@ import { type MockBackupFile } from "./backup-merge";
 import {
   MOCK_BACKUPS_DIR,
   MOCK_CHOSEN_BACKUPS_DIR,
+  MOCK_DEVICE_TAG,
   MOCK_UPDATE_CHECK_MS,
   MOCK_UPDATE_TICK_MS,
   MOCK_UPDATE_TICKS,
@@ -186,6 +187,7 @@ describe("MockBackend automatic backups (docs/dictation.md section 4.6.1)", () =
     const backend = new MockBackend({ now: () => NOW });
     expect(backend.peek().auto_backup).toEqual({
       available: true,
+      device: MOCK_DEVICE_TAG,
       folder: MOCK_BACKUPS_DIR,
       default_folder: MOCK_BACKUPS_DIR,
       custom: false,
@@ -245,9 +247,18 @@ describe("MockBackend automatic backups (docs/dictation.md section 4.6.1)", () =
     await expect(phone.backupFolderOpen()).rejects.toThrow("手机端不提供自动备份");
   });
 
-  it("names each backup as the core does and keeps the newest five; a failure stays until one is written", async () => {
+  it("names each backup as the core does, with this computer's tag, and keeps the newest five; a failure stays until one is written", async () => {
     let now = NOW;
     const backend = new MockBackend({ now: () => now });
+    // User decision D23: the tag is the start of the desktop identity's fingerprint, lower case.
+    const fingerprint = backend.peek().identity?.fingerprint ?? "";
+    expect(MOCK_DEVICE_TAG).toBe(
+      fingerprint
+        .replaceAll(/[^0-9A-F]/g, "")
+        .slice(0, 8)
+        .toLowerCase(),
+    );
+    expect(backend.peek().auto_backup.device).toBe("a7c4198e");
     for (let i = 0; i < AUTO_BACKUP_KEEP + 2; i += 1) {
       backend.simulateWeeklyBackup();
       now += 60_000;
@@ -255,7 +266,7 @@ describe("MockBackend automatic backups (docs/dictation.md section 4.6.1)", () =
     expect(backend.autoBackups).toHaveLength(AUTO_BACKUP_KEEP);
     expect(
       backend.autoBackups.every((b) =>
-        /^voltip-auto-\d{8}-\d{6}-weekly\.voltip-backup$/.test(b.name),
+        /^voltip-auto-\d{8}-\d{6}-weekly-a7c4198e\.voltip-backup$/.test(b.name),
       ),
     ).toBe(true);
     expect(backend.peek().auto_backup.last).toEqual(backend.autoBackups[0]);

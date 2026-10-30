@@ -2,24 +2,30 @@
 //! Voltip itself once a week, before an update installs and before a replacing import, into the
 //! automatic backups' folder (`<data dir>/backups`, or the folder `Settings.backup.folder` names).
 //!
-//! A file is an automatic backup by its name alone: `voltip-auto-<yyyyMMdd-HHmmss>-<kind>`, in
-//! local time, with [`BACKUP_EXTENSION`] (and `-2`, `-3`… before it when the second is taken).
-//! [`prune`] keeps the newest [`AUTO_KEEP`] of the three kinds together, ordered by the time in
-//! their names, and never touches a file of any other name, a backup the user exported into the
-//! same folder included. Everything here is a plain function of the folder and the clock it is
-//! handed; the runtime decides when (`runtime/auto_backup.rs`).
+//! A file is an automatic backup by its name alone: `voltip-auto-<yyyyMMdd-HHmmss>-<kind>-<device>`,
+//! in local time, with [`BACKUP_EXTENSION`] (and `-2`, `-3`… before it when the second is taken).
+//! `<device>` is the [`device_tag`] of the computer that wrote it (user decision D23, 2026-10-30):
+//! several computers may keep their backups in one synced folder, and each manages its own alone.
+//! [`prune`] keeps a computer's newest [`AUTO_KEEP`], its three kinds together, ordered by the time
+//! in their names, and never touches another computer's or a file of any other name, a backup the
+//! user exported into the same folder included. Everything here is a plain function of the folder
+//! and the clock it is handed; the runtime decides when (`runtime/auto_backup.rs`).
 
 use std::path::{Path, PathBuf};
 
 use chrono::{NaiveDate, NaiveDateTime, TimeZone as _, Timelike as _};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
+use voltip_crypto::PublicKey;
 
 use super::{BACKUP_EXTENSION, BackupError, ExportInput, ExportSummary, export};
 
 /// The folder under the data directory the automatic backups go to by default.
 pub const AUTO_BACKUP_DIR: &str = "backups";
-/// The automatic backups kept, the three kinds together (user decision 2026-10-28).
+/// The automatic backups each computer keeps, its three kinds together (user decision 2026-10-28).
 pub const AUTO_KEEP: usize = 5;
+/// The hex digits of a [`device_tag`].
+pub const DEVICE_TAG_LEN: usize = 8;
 /// How old the newest automatic backup may be before the weekly one is due.
 pub const WEEK_MS: u64 = 7 * DAY_MS;
 /// A day: a failed weekly backup is not tried again sooner, and a newest backup more than this far
@@ -98,14 +104,17 @@ pub struct AutoBackupFailure {
 pub struct AutoBackupView {
     /// This app makes automatic backups (the desktop).
     pub available: bool,
+    /// This computer's [`device_tag`]: the automatic backups whose names carry it are the ones it
+    /// keeps and counts; the folder may hold other computers' too.
+    pub device: String,
     /// Where they go: `Settings.backup.folder`, or [`default_folder`].
     pub folder: String,
     /// [`default_folder`].
     pub default_folder: String,
     /// `folder` is one the user chose.
     pub custom: bool,
-    /// The newest automatic backup in `folder`; `None` before the folder was looked at, or when it
-    /// holds none.
+    /// This computer's newest automatic backup in `folder`; `None` before the folder was looked at,
+    /// or when it holds none of this computer's.
     pub last: Option<AutoBackupFile>,
     /// The last automatic backup failed (the weekly one or the one before an update); gone once
     /// one succeeds or the folder changes.
@@ -148,15 +157,41 @@ impl std::fmt::Debug for AutoReply {
     }
 }
 
-/// An automatic backup's name: `stamp` (local time) and `kind`, and `-same` when `same` > 1.
-pub fn auto_name(kind: AutoKind, stamp: NaiveDateTime, same: u32) -> String {
-    let same = if same > 1 { format!("-{same}") } else { String::new() };
-    format!("{PREFIX}{}-{}{same}.{BACKUP_EXTENSION}", stamp.format(STAMP), kind.as_str())
+/// This computer's mark in its automatic backups' names (user decision D23, 2026-10-30): the first
+/// [`DEVICE_TAG_LEN`] hex digits of its device identity's fingerprint (SHA-256 of the public key,
+/// the device list's `A7:C4:19:8E · …`), in lower case.
+pub fn device_tag(public_key: &PublicKey) -> String {
+    let digest = Sha256::digest(public_key.as_bytes());
+    digest[..DEVICE_TAG_LEN / 2].iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// What an automatic backup's name says: its local time, its kind and its `-N` (1 without one);
-/// `None` for any other name.
-pub fn parse_auto_name(name: &str) -> Option<(NaiveDateTime, AutoKind, u32)> {
+/// `text` is a [`device_tag`]: [`DEVICE_TAG_LEN`] lower-case hex digits.
+fn is_device_tag(text: &str) -> bool {
+    text.len() == DEVICE_TAG_LEN && text.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// What an automatic backup's name says.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AutoName {
+    /// Its local time, to the second.
+    pub stamp: NaiveDateTime,
+    /// Why it was made.
+    pub kind: AutoKind,
+    /// The [`device_tag`] of the computer that wrote it.
+    pub device: String,
+    /// Its `-N`; 1 without one.
+    pub same: u32,
+}
+
+/// An automatic backup's name: `stamp` (local time), `kind` and `device`, and `-same` when
+/// `same` > 1.
+pub fn auto_name(kind: AutoKind, stamp: NaiveDateTime, device: &str, same: u32) -> String {
+    let same = if same > 1 { format!("-{same}") } else { String::new() };
+    format!("{PREFIX}{}-{}-{device}{same}.{BACKUP_EXTENSION}", stamp.format(STAMP), kind.as_str())
+}
+
+/// What an automatic backup's name says; `None` for any other name.
+pub fn parse_auto_name(name: &str) -> Option<AutoName> {
     let rest = name.strip_prefix(PREFIX)?.strip_suffix(BACKUP_EXTENSION)?.strip_suffix('.')?;
     let (date, rest) = rest.split_at_checked(8)?;
     let (time, rest) = rest.strip_prefix('-')?.split_at_checked(6)?;
@@ -170,13 +205,17 @@ pub fn parse_auto_name(name: &str) -> Option<(NaiveDateTime, AutoKind, u32)> {
     let (year, month, day) = (digits(&date[..4])?, digits(&date[4..6])?, digits(&date[6..])?);
     let (hour, minute, second) = (digits(&time[..2])?, digits(&time[2..4])?, digits(&time[4..])?);
     let stamp = NaiveDate::from_ymd_opt(i32::try_from(year).ok()?, month, day)?.and_hms_opt(hour, minute, second)?;
-    let (word, same) = match rest.split_once('-') {
+    let (word, rest) = rest.split_once('-')?;
+    let (device, same) = match rest.split_once('-') {
         // Written by `auto_name` alone: 2 or more, without a leading zero.
-        Some((word, n)) if !n.starts_with('0') => (word, digits(n).filter(|n| *n >= 2)?),
+        Some((device, n)) if !n.starts_with('0') => (device, digits(n).filter(|n| *n >= 2)?),
         Some(_) => return None,
         None => (rest, 1),
     };
-    Some((stamp, AutoKind::parse(word)?, same))
+    if !is_device_tag(device) {
+        return None;
+    }
+    Some(AutoName { stamp, kind: AutoKind::parse(word)?, device: device.to_owned(), same })
 }
 
 /// An automatic backup in a folder.
@@ -192,6 +231,8 @@ pub struct AutoFile {
     pub at_ms: u64,
     /// Why it was made.
     pub kind: AutoKind,
+    /// The [`device_tag`] of the computer that wrote it.
+    pub device: String,
     /// The `-N` of its name; 1 without one.
     pub same: u32,
 }
@@ -215,9 +256,9 @@ pub fn local_now() -> NaiveDateTime {
     chrono::Local::now().naive_local()
 }
 
-/// The automatic backups in `folder`, newest first (by the time in their names, then the `-N`).
-/// A folder that is not there holds none.
-pub fn list(folder: &Path) -> std::io::Result<Vec<AutoFile>> {
+/// The automatic backups in `folder`, newest first (by the time in their names, then the `-N`):
+/// the ones `device` wrote, or every computer's for `None`. A folder that is not there holds none.
+pub fn list(folder: &Path, device: Option<&str>) -> std::io::Result<Vec<AutoFile>> {
     let entries = match std::fs::read_dir(folder) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -231,18 +272,22 @@ pub fn list(folder: &Path) -> std::io::Result<Vec<AutoFile>> {
             continue;
         }
         let Some(name) = entry.file_name().to_str().map(str::to_owned) else { continue };
-        let Some((stamp, kind, same)) = parse_auto_name(&name) else { continue };
-        files.push(AutoFile { path: entry.path(), name, stamp, at_ms: local_ms(stamp), kind, same });
+        let Some(AutoName { stamp, kind, device: by, same }) = parse_auto_name(&name) else { continue };
+        if device.is_some_and(|device| device != by) {
+            continue;
+        }
+        files.push(AutoFile { path: entry.path(), name, stamp, at_ms: local_ms(stamp), kind, device: by, same });
     }
     files.sort_by(|a, b| (b.stamp, b.same, &b.name).cmp(&(a.stamp, a.same, &a.name)));
     Ok(files)
 }
 
-/// Delete all but the newest `keep` automatic backups in `folder`; `written`, the one just made,
-/// is never deleted, whatever its name says (a clock that went back). Returns what was deleted; a
-/// file that cannot be deleted is logged and left.
-pub fn prune(folder: &Path, keep: usize, written: Option<&Path>) -> Vec<PathBuf> {
-    let files = match list(folder) {
+/// Delete all but the newest `keep` automatic backups `device` wrote in `folder`; `written`, the
+/// one just made, is never deleted, whatever its name says (a clock that went back). Another
+/// computer's backups and every other file stay. Returns what was deleted; a file that cannot be
+/// deleted is logged and left.
+pub fn prune(folder: &Path, device: &str, keep: usize, written: Option<&Path>) -> Vec<PathBuf> {
+    let files = match list(folder, Some(device)) {
         Ok(files) => files,
         Err(e) => {
             tracing::warn!(error = %e, "the automatic backups could not be listed; none deleted");
@@ -275,12 +320,13 @@ pub fn weekly_due(newest_ms: Option<u64>, now_ms: u64) -> bool {
 }
 
 /// Write an automatic backup of `kind` of `input` and the history in `history_db` into `folder`
-/// (created when missing) under the name `stamp` gives it, through [`export`]'s `.part`; then
-/// [`prune`] the folder to [`AUTO_KEEP`]. An existing file is never replaced: the next free `-N`
-/// is taken.
+/// (created when missing) under the name `stamp` and `device` give it, through [`export`]'s
+/// `.part`; then [`prune`] `device`'s backups there to [`AUTO_KEEP`]. An existing file is never
+/// replaced: the next free `-N` is taken.
 pub fn write_auto(
     kind: AutoKind,
     folder: &Path,
+    device: &str,
     history_db: &Path,
     input: &ExportInput<'_>,
     stamp: NaiveDateTime,
@@ -288,16 +334,16 @@ pub fn write_auto(
     // The time a file is known by is the one its name says, to the second.
     let stamp = stamp.with_nanosecond(0).unwrap_or(stamp);
     std::fs::create_dir_all(folder).map_err(|e| BackupError::Write(e.to_string()))?;
-    let (path, name, same) = free_name(kind, folder, stamp)?;
+    let (path, name, same) = free_name(kind, folder, device, stamp)?;
     let summary = export(&path, history_db, input)?;
-    prune(folder, AUTO_KEEP, Some(&path));
-    Ok((AutoFile { path, name, stamp, at_ms: local_ms(stamp), kind, same }, summary))
+    prune(folder, device, AUTO_KEEP, Some(&path));
+    Ok((AutoFile { path, name, stamp, at_ms: local_ms(stamp), kind, device: device.to_owned(), same }, summary))
 }
 
-/// The first name of `kind` at `stamp` nothing in `folder` has.
-fn free_name(kind: AutoKind, folder: &Path, stamp: NaiveDateTime) -> Result<(PathBuf, String, u32), BackupError> {
+/// The first name of `kind` at `stamp` by `device` nothing in `folder` has.
+fn free_name(kind: AutoKind, folder: &Path, device: &str, stamp: NaiveDateTime) -> Result<(PathBuf, String, u32), BackupError> {
     for same in 1..=MAX_SAME_SECOND {
-        let name = auto_name(kind, stamp, same);
+        let name = auto_name(kind, stamp, device, same);
         let path = folder.join(&name);
         if std::fs::symlink_metadata(&path).is_err() {
             return Ok((path, name, same));
@@ -313,6 +359,10 @@ mod tests {
     use crate::dictation::fakes::history_entry;
     use crate::history::{HISTORY_DB_FILE_NAME, HistoryStore};
 
+    /// This computer's tag, and another computer's sharing the folder.
+    const HERE: &str = "a7c4198e";
+    const THERE: &str = "3d9f2b10";
+
     fn at(text: &str) -> NaiveDateTime {
         NaiveDateTime::parse_from_str(text, "%Y-%m-%d %H:%M:%S").unwrap()
     }
@@ -321,47 +371,70 @@ mod tests {
         ExportInput { app_version: "0.3.0", device, platform: None, created_at_ms: 1_793_000_000_000, dictionary: &[], rules: &[], scenes: &[], presets: &[] }
     }
 
-    /// The name says the local time, to the second, and the kind; ASCII, so a folder sorted by name
-    /// in any file manager or sync service lists the automatic backups in time order.
+    fn parsed(stamp: NaiveDateTime, kind: AutoKind, device: &str, same: u32) -> Option<AutoName> {
+        Some(AutoName { stamp, kind, device: device.into(), same })
+    }
+
+    /// The name says the local time, to the second, the kind and the computer (user decision D23,
+    /// 2026-10-30); ASCII, so a folder sorted by name in any file manager or sync service lists the
+    /// automatic backups in time order.
     #[test]
-    fn a_name_says_its_time_and_kind_and_reads_back() {
+    fn a_name_says_its_time_kind_and_computer_and_reads_back() {
         let stamp = at("2026-10-30 07:05:09");
-        assert_eq!(auto_name(AutoKind::Weekly, stamp, 1), "voltip-auto-20261030-070509-weekly.voltip-backup");
-        assert_eq!(auto_name(AutoKind::Update, stamp, 1), "voltip-auto-20261030-070509-update.voltip-backup");
-        assert_eq!(auto_name(AutoKind::Import, stamp, 2), "voltip-auto-20261030-070509-import-2.voltip-backup");
+        assert_eq!(auto_name(AutoKind::Weekly, stamp, HERE, 1), "voltip-auto-20261030-070509-weekly-a7c4198e.voltip-backup");
+        assert_eq!(auto_name(AutoKind::Update, stamp, HERE, 1), "voltip-auto-20261030-070509-update-a7c4198e.voltip-backup");
+        assert_eq!(auto_name(AutoKind::Import, stamp, HERE, 2), "voltip-auto-20261030-070509-import-a7c4198e-2.voltip-backup");
+        // A tag of digits alone is still the tag, and a `-N` after it still the `-N`.
         for kind in [AutoKind::Weekly, AutoKind::Update, AutoKind::Import] {
-            for same in [1, 2, 37] {
-                let name = auto_name(kind, stamp, same);
-                assert!(name.is_ascii(), "{name}");
-                assert_eq!(parse_auto_name(&name), Some((stamp, kind, same)), "{name}");
+            for device in [HERE, THERE, "12345678"] {
+                for same in [1, 2, 37] {
+                    let name = auto_name(kind, stamp, device, same);
+                    assert!(name.is_ascii(), "{name}");
+                    assert_eq!(parse_auto_name(&name), parsed(stamp, kind, device, same), "{name}");
+                }
             }
         }
-        // Earlier sorts first by name too.
-        assert!(auto_name(AutoKind::Weekly, at("2026-10-29 23:59:59"), 1) < auto_name(AutoKind::Import, at("2026-10-30 00:00:00"), 1));
+        // Earlier sorts first by name too, whichever computer wrote it.
+        assert!(auto_name(AutoKind::Weekly, at("2026-10-29 23:59:59"), THERE, 1) < auto_name(AutoKind::Import, at("2026-10-30 00:00:00"), HERE, 1));
     }
 
     /// Only the pattern is an automatic backup: a manual export, a half-written file, another
-    /// kind, a date that does not exist or a changed case are not.
+    /// kind, a date that does not exist, a changed case, or a name without its computer's tag
+    /// (the form before user decision D23, which no release wrote) are not.
     #[test]
     fn any_other_name_is_not_an_automatic_backup() {
         for name in [
             "Voltip 备份 2026-10-30.voltip-backup",
-            "voltip-auto-20261030-070509-weekly.voltip-backup.part",
-            "voltip-auto-20261030-070509-weekly.json",
-            "voltip-auto-20261030-070509-monthly.voltip-backup",
+            "voltip-auto-20261030-070509-weekly-a7c4198e.voltip-backup.part",
+            "voltip-auto-20261030-070509-weekly-a7c4198e.json",
+            "voltip-auto-20261030-070509-monthly-a7c4198e.voltip-backup",
+            "voltip-auto-20261030-070509-a7c4198e.voltip-backup",
             "voltip-auto-20261030-070509.voltip-backup",
-            "voltip-auto-20261332-070509-weekly.voltip-backup",
-            "voltip-auto-20261030-250000-weekly.voltip-backup",
-            "voltip-auto-2026103-070509-weekly.voltip-backup",
-            "voltip-auto-20261030-070509-weekly-0.voltip-backup",
-            "voltip-auto-20261030-070509-weekly-x.voltip-backup",
-            "voltip-auto-20261030-070509-weekly-.voltip-backup",
-            "VOLTIP-AUTO-20261030-070509-WEEKLY.voltip-backup",
-            "my-voltip-auto-20261030-070509-weekly.voltip-backup",
+            "voltip-auto-20261332-070509-weekly-a7c4198e.voltip-backup",
+            "voltip-auto-20261030-250000-weekly-a7c4198e.voltip-backup",
+            "voltip-auto-2026103-070509-weekly-a7c4198e.voltip-backup",
+            "voltip-auto-20261030-070509-weekly-a7c4198e-0.voltip-backup",
+            "voltip-auto-20261030-070509-weekly-a7c4198e-1.voltip-backup",
+            "voltip-auto-20261030-070509-weekly-a7c4198e-02.voltip-backup",
+            "voltip-auto-20261030-070509-weekly-a7c4198e-x.voltip-backup",
+            "voltip-auto-20261030-070509-weekly-a7c4198e-.voltip-backup",
+            "voltip-auto-20261030-070509-weekly-a7c4198e-2-3.voltip-backup",
+            "VOLTIP-AUTO-20261030-070509-WEEKLY-A7C4198E.voltip-backup",
+            "my-voltip-auto-20261030-070509-weekly-a7c4198e.voltip-backup",
+            // The computer's tag: eight lower-case hex digits, nothing else.
+            "voltip-auto-20261030-070509-weekly.voltip-backup",
+            "voltip-auto-20261030-070509-weekly-2.voltip-backup",
+            "voltip-auto-20261030-070509-weekly-A7C4198E.voltip-backup",
+            "voltip-auto-20261030-070509-weekly-a7c4198.voltip-backup",
+            "voltip-auto-20261030-070509-weekly-a7c4198e0.voltip-backup",
+            "voltip-auto-20261030-070509-weekly-a7c4198g.voltip-backup",
+            "voltip-auto-20261030-070509-weekly--a7c4198e.voltip-backup",
+            "voltip-auto-20261030-070509-weekly-a7c4198é.voltip-backup",
+            "voltip-auto-20261030-070509-weekly-书房电脑.voltip-backup",
             // Eight bytes that are not eight digits: read without slicing into a character.
-            "voltip-auto-2026年1-070509-weekly.voltip-backup",
-            "voltip-auto-20261030-0é509-weekly.voltip-backup",
-            "voltip-auto-20261030-070509-weekly-二.voltip-backup",
+            "voltip-auto-2026年1-070509-weekly-a7c4198e.voltip-backup",
+            "voltip-auto-20261030-0é509-weekly-a7c4198e.voltip-backup",
+            "voltip-auto-20261030-070509-weekly-a7c4198e-二.voltip-backup",
             "",
         ] {
             assert_eq!(parse_auto_name(name), None, "{name}");
@@ -374,9 +447,28 @@ mod tests {
     fn a_names_time_is_the_instant_it_was_written() {
         let now_ms = 1_793_000_000_123;
         let local = chrono::Local.timestamp_millis_opt(i64::try_from(now_ms).unwrap()).unwrap().naive_local();
-        let name = auto_name(AutoKind::Weekly, local, 1);
-        let (stamp, _, _) = parse_auto_name(&name).unwrap();
+        let name = auto_name(AutoKind::Weekly, local, HERE, 1);
+        let stamp = parse_auto_name(&name).unwrap().stamp;
         assert_eq!(local_ms(stamp), now_ms - 123, "to the second");
+    }
+
+    /// User decision D23 (2026-10-30): a computer's tag is the start of the fingerprint the device
+    /// list shows for it, lower case: the first four bytes of SHA-256 of its public key.
+    #[test]
+    fn a_computers_tag_is_the_start_of_its_fingerprint() {
+        // SHA-256 of 32 zero bytes is 66687aad f862bd77 …
+        assert_eq!(device_tag(&PublicKey([0; 32])), "66687aad");
+        for key in [PublicKey([0; 32]), PublicKey([7; 32]), voltip_crypto::StaticKeypair::generate().unwrap().public] {
+            let tag = device_tag(&key);
+            assert_eq!(tag.len(), DEVICE_TAG_LEN);
+            assert!(tag.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)), "{tag}");
+            let fingerprint: String = key.fingerprint().chars().filter(char::is_ascii_hexdigit).take(DEVICE_TAG_LEN).collect();
+            assert_eq!(tag, fingerprint.to_ascii_lowercase());
+            // What it names reads back as that computer's.
+            let name = auto_name(AutoKind::Weekly, at("2026-10-30 07:05:09"), &tag, 1);
+            assert_eq!(parse_auto_name(&name).map(|n| n.device), Some(tag));
+        }
+        assert_ne!(device_tag(&PublicKey([0; 32])), device_tag(&PublicKey([7; 32])));
     }
 
     /// docs/dictation.md §4.6.1: due when there is no automatic backup, exactly a week after the
@@ -409,55 +501,88 @@ mod tests {
         files.iter().map(|f| f.name.as_str()).collect()
     }
 
-    /// The listing holds the automatic backups alone, newest first; a folder that is not there
-    /// holds none.
+    /// The listing holds the automatic backups alone, newest first: one computer's, or every
+    /// computer's; a folder that is not there holds none.
     #[test]
-    fn a_folder_lists_its_automatic_backups_newest_first() {
+    fn a_folder_lists_one_computers_automatic_backups_newest_first() {
         let dir = tempfile::tempdir().unwrap();
-        assert_eq!(list(&dir.path().join("not-there")).unwrap(), Vec::new());
-        touch(dir.path(), "voltip-auto-20261001-090000-weekly.voltip-backup");
-        touch(dir.path(), "voltip-auto-20261030-070509-import.voltip-backup");
-        touch(dir.path(), "voltip-auto-20261030-070509-import-2.voltip-backup");
-        touch(dir.path(), "voltip-auto-20261015-120000-update.voltip-backup");
+        assert_eq!(list(&dir.path().join("not-there"), Some(HERE)).unwrap(), Vec::new());
+        touch(dir.path(), "voltip-auto-20261001-090000-weekly-a7c4198e.voltip-backup");
+        touch(dir.path(), "voltip-auto-20261030-070509-import-a7c4198e.voltip-backup");
+        touch(dir.path(), "voltip-auto-20261030-070509-import-a7c4198e-2.voltip-backup");
+        touch(dir.path(), "voltip-auto-20261015-120000-update-a7c4198e.voltip-backup");
+        touch(dir.path(), "voltip-auto-20261031-080000-weekly-3d9f2b10.voltip-backup");
+        touch(dir.path(), "voltip-auto-20261002-080000-update-3d9f2b10.voltip-backup");
+        touch(dir.path(), "voltip-auto-20261101-080000-weekly.voltip-backup");
         touch(dir.path(), "Voltip 备份 2026-10-30.voltip-backup");
-        touch(dir.path(), "voltip-auto-20261031-000000-weekly.voltip-backup.part");
-        std::fs::create_dir(dir.path().join("voltip-auto-20261101-000000-weekly.voltip-backup")).unwrap();
-        let found = list(dir.path()).unwrap();
+        touch(dir.path(), "voltip-auto-20261031-000000-weekly-a7c4198e.voltip-backup.part");
+        std::fs::create_dir(dir.path().join("voltip-auto-20261101-000000-weekly-a7c4198e.voltip-backup")).unwrap();
+        let found = list(dir.path(), Some(HERE)).unwrap();
         assert_eq!(
             names(&found),
             [
-                "voltip-auto-20261030-070509-import-2.voltip-backup",
-                "voltip-auto-20261030-070509-import.voltip-backup",
-                "voltip-auto-20261015-120000-update.voltip-backup",
-                "voltip-auto-20261001-090000-weekly.voltip-backup",
+                "voltip-auto-20261030-070509-import-a7c4198e-2.voltip-backup",
+                "voltip-auto-20261030-070509-import-a7c4198e.voltip-backup",
+                "voltip-auto-20261015-120000-update-a7c4198e.voltip-backup",
+                "voltip-auto-20261001-090000-weekly-a7c4198e.voltip-backup",
             ]
         );
         let newest = &found[0];
-        assert_eq!((newest.kind, newest.same, newest.stamp), (AutoKind::Import, 2, at("2026-10-30 07:05:09")));
+        assert_eq!((newest.kind, newest.same, newest.stamp, newest.device.as_str()), (AutoKind::Import, 2, at("2026-10-30 07:05:09"), HERE));
         assert_eq!(newest.path, dir.path().join(&newest.name));
         assert_eq!(newest.at_ms, local_ms(newest.stamp));
+        assert_eq!(
+            names(&list(dir.path(), Some(THERE)).unwrap()),
+            ["voltip-auto-20261031-080000-weekly-3d9f2b10.voltip-backup", "voltip-auto-20261002-080000-update-3d9f2b10.voltip-backup"]
+        );
+        let every = list(dir.path(), None).unwrap();
+        assert_eq!(every.len(), 6, "both computers' together");
+        assert_eq!(every[0].name, "voltip-auto-20261031-080000-weekly-3d9f2b10.voltip-backup");
     }
 
-    /// docs/dictation.md §4.6.1: the three kinds together keep the newest five; a manual backup,
-    /// a half-written file and any other file in the folder stay.
+    /// docs/dictation.md §4.6.1: the three kinds together keep this computer's newest five; a
+    /// manual backup, a half-written file and any other file in the folder stay.
     #[test]
-    fn prune_keeps_the_newest_five_and_touches_nothing_else() {
+    fn prune_keeps_this_computers_newest_five_and_touches_nothing_else() {
         let dir = tempfile::tempdir().unwrap();
-        let old: Vec<PathBuf> = (1..=7).map(|day| touch(dir.path(), &format!("voltip-auto-202610{day:02}-090000-weekly.voltip-backup"))).collect();
-        let update = touch(dir.path(), "voltip-auto-20261008-100000-update.voltip-backup");
+        let old: Vec<PathBuf> = (1..=7).map(|day| touch(dir.path(), &format!("voltip-auto-202610{day:02}-090000-weekly-{HERE}.voltip-backup"))).collect();
+        let update = touch(dir.path(), &format!("voltip-auto-20261008-100000-update-{HERE}.voltip-backup"));
         let manual = touch(dir.path(), "Voltip 备份 2026-10-01.voltip-backup");
-        let part = touch(dir.path(), "voltip-auto-20261001-000000-weekly.voltip-backup.part");
+        let part = touch(dir.path(), &format!("voltip-auto-20261001-000000-weekly-{HERE}.voltip-backup.part"));
         let notes = touch(dir.path(), "notes.txt");
-        let removed = prune(dir.path(), AUTO_KEEP, None);
+        let untagged = touch(dir.path(), "voltip-auto-20260901-090000-weekly.voltip-backup");
+        let removed = prune(dir.path(), HERE, AUTO_KEEP, None);
         assert_eq!(removed, old[..3].to_vec(), "the three oldest go");
-        let kept = list(dir.path()).unwrap();
+        let kept = list(dir.path(), Some(HERE)).unwrap();
         assert_eq!(kept.len(), AUTO_KEEP);
         assert_eq!(kept[0].path, update, "the kinds count together");
-        for other in [&manual, &part, &notes] {
+        for other in [&manual, &part, &notes, &untagged] {
             assert!(other.exists(), "{}", other.display());
         }
-        assert_eq!(prune(dir.path(), AUTO_KEEP, None), Vec::<PathBuf>::new(), "five is five");
-        assert_eq!(prune(&dir.path().join("not-there"), AUTO_KEEP, None), Vec::<PathBuf>::new());
+        assert_eq!(prune(dir.path(), HERE, AUTO_KEEP, None), Vec::<PathBuf>::new(), "five is five");
+        assert_eq!(prune(&dir.path().join("not-there"), HERE, AUTO_KEEP, None), Vec::<PathBuf>::new());
+    }
+
+    /// Regression (user decision D23, 2026-10-30): two computers sharing one synced folder kept the
+    /// newest five of both together, so the one that backed up more deleted the other's. Each
+    /// computer now deletes its own alone, however many the other has, older or newer.
+    #[test]
+    fn regression_another_computers_backups_are_neither_counted_nor_deleted() {
+        let dir = tempfile::tempdir().unwrap();
+        let theirs: Vec<PathBuf> = (1..=9).map(|day| touch(dir.path(), &format!("voltip-auto-202610{day:02}-120000-weekly-{THERE}.voltip-backup"))).collect();
+        let newer = touch(dir.path(), &format!("voltip-auto-20261031-120000-update-{THERE}.voltip-backup"));
+        let mine: Vec<PathBuf> = (20..=25).map(|day| touch(dir.path(), &format!("voltip-auto-202610{day}-090000-weekly-{HERE}.voltip-backup"))).collect();
+        let removed = prune(dir.path(), HERE, AUTO_KEEP, None);
+        assert_eq!(removed, [mine[0].clone()], "six of this computer's: its oldest goes, and nothing else");
+        for path in theirs.iter().chain([&newer]) {
+            assert!(path.exists(), "another computer's backup stays: {}", path.display());
+        }
+        assert_eq!(list(dir.path(), Some(HERE)).unwrap().len(), AUTO_KEEP);
+        assert_eq!(list(dir.path(), Some(THERE)).unwrap().len(), 10, "the other computer prunes its own when it writes");
+        // The other computer's turn: its own go, this one's stay.
+        let removed = prune(dir.path(), THERE, AUTO_KEEP, None);
+        assert_eq!(removed, theirs[..5].to_vec());
+        assert_eq!(list(dir.path(), Some(HERE)).unwrap().len(), AUTO_KEEP);
     }
 
     /// A clock that went back names the backup just written older than the five there: it stays
@@ -465,17 +590,18 @@ mod tests {
     #[test]
     fn prune_never_deletes_the_backup_just_written() {
         let dir = tempfile::tempdir().unwrap();
-        let ahead: Vec<PathBuf> = (1..=5).map(|day| touch(dir.path(), &format!("voltip-auto-202711{day:02}-090000-weekly.voltip-backup"))).collect();
-        let written = touch(dir.path(), "voltip-auto-20261030-090000-weekly.voltip-backup");
-        let removed = prune(dir.path(), AUTO_KEEP, Some(&written));
+        let ahead: Vec<PathBuf> = (1..=5).map(|day| touch(dir.path(), &format!("voltip-auto-202711{day:02}-090000-weekly-{HERE}.voltip-backup"))).collect();
+        let written = touch(dir.path(), &format!("voltip-auto-20261030-090000-weekly-{HERE}.voltip-backup"));
+        let removed = prune(dir.path(), HERE, AUTO_KEEP, Some(&written));
         assert_eq!(removed, [ahead[0].clone()]);
         assert!(written.exists());
-        assert_eq!(list(dir.path()).unwrap().len(), AUTO_KEEP);
+        assert_eq!(list(dir.path(), Some(HERE)).unwrap().len(), AUTO_KEEP);
     }
 
     /// docs/dictation.md §4.6.1: an automatic backup is the manual backup's file under the
-    /// automatic name, in a folder made when missing; the folder then keeps five, and a name taken
-    /// already gets the next `-N` instead of replacing the file.
+    /// automatic name with this computer's tag, in a folder made when missing; the folder then
+    /// keeps five of this computer's, and a name taken already gets the next `-N` instead of
+    /// replacing the file.
     #[test]
     fn an_automatic_backup_is_a_whole_backup_and_never_replaces_one() {
         let data = tempfile::tempdir().unwrap();
@@ -487,27 +613,32 @@ mod tests {
         let folder = data.path().join("同步盘").join(AUTO_BACKUP_DIR);
         let stamp = at("2026-10-30 07:05:09");
 
-        let (file, summary) = write_auto(AutoKind::Weekly, &folder, &db, &input("书房"), stamp).unwrap();
-        assert_eq!(file.name, "voltip-auto-20261030-070509-weekly.voltip-backup");
+        let (file, summary) = write_auto(AutoKind::Weekly, &folder, HERE, &db, &input("书房"), stamp).unwrap();
+        assert_eq!(file.name, "voltip-auto-20261030-070509-weekly-a7c4198e.voltip-backup");
         assert_eq!((file.kind, file.stamp, file.same, file.path.clone()), (AutoKind::Weekly, stamp, 1, folder.join(&file.name)));
+        assert_eq!(file.device, HERE);
         assert_eq!(summary.counts.history, 2);
         let backup = crate::backup::read(&file.path).unwrap();
         assert_eq!((backup.manifest.device.as_str(), backup.history.len()), ("书房", 2));
         assert!(!folder.join(format!("{}.part", file.name)).exists());
 
         let first = std::fs::read(&file.path).unwrap();
-        let (again, _) = write_auto(AutoKind::Weekly, &folder, &db, &input("客厅"), stamp).unwrap();
-        assert_eq!(again.name, "voltip-auto-20261030-070509-weekly-2.voltip-backup");
+        let (again, _) = write_auto(AutoKind::Weekly, &folder, HERE, &db, &input("客厅"), stamp).unwrap();
+        assert_eq!(again.name, "voltip-auto-20261030-070509-weekly-a7c4198e-2.voltip-backup");
         assert_eq!(std::fs::read(&file.path).unwrap(), first, "the first one is as it was");
+        // Another computer writing in the same second takes its own name.
+        let (theirs, _) = write_auto(AutoKind::Weekly, &folder, THERE, &db, &input("客厅"), stamp).unwrap();
+        assert_eq!(theirs.name, "voltip-auto-20261030-070509-weekly-3d9f2b10.voltip-backup");
 
         for day in 1..=6 {
-            touch(&folder, &format!("voltip-auto-202609{day:02}-090000-weekly.voltip-backup"));
+            touch(&folder, &format!("voltip-auto-202609{day:02}-090000-weekly-{HERE}.voltip-backup"));
         }
-        let (latest, _) = write_auto(AutoKind::Import, &folder, &db, &input("书房"), at("2026-10-31 08:00:00")).unwrap();
-        let kept = list(&folder).unwrap();
+        let (latest, _) = write_auto(AutoKind::Import, &folder, HERE, &db, &input("书房"), at("2026-10-31 08:00:00")).unwrap();
+        let kept = list(&folder, Some(HERE)).unwrap();
         assert_eq!(kept.len(), AUTO_KEEP);
         assert_eq!(kept[0], latest);
         assert!(kept.iter().any(|k| k.path == file.path) && kept.iter().any(|k| k.path == again.path));
+        assert!(theirs.path.exists(), "not one of this computer's five");
     }
 
     /// A folder that cannot be made, or a file in its place, fails with the system's reason and
@@ -516,9 +647,15 @@ mod tests {
     fn an_automatic_backup_that_cannot_be_written_says_why() {
         let data = tempfile::tempdir().unwrap();
         let blocker = touch(data.path(), "a file");
-        let err =
-            write_auto(AutoKind::Weekly, &blocker.join(AUTO_BACKUP_DIR), &data.path().join(HISTORY_DB_FILE_NAME), &input("书房"), at("2026-10-30 07:05:09"))
-                .unwrap_err();
+        let err = write_auto(
+            AutoKind::Weekly,
+            &blocker.join(AUTO_BACKUP_DIR),
+            HERE,
+            &data.path().join(HISTORY_DB_FILE_NAME),
+            &input("书房"),
+            at("2026-10-30 07:05:09"),
+        )
+        .unwrap_err();
         assert!(matches!(&err, BackupError::Write(why) if !why.is_empty()), "{err:?}");
         assert_eq!(std::fs::read(&blocker).unwrap(), b"{}");
     }

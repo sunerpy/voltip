@@ -690,11 +690,13 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     // weekly one, and the backup before an update that failed named until closed.
     expect(parsed.auto_backup).toEqual({
       available: true,
+      // User decision D23: this computer's tag, the start of the sample desktop key's fingerprint.
+      device: "02d449a3",
       folder: "D:\\同步盘\\Voltip 备份",
       default_folder: "C:\\Users\\me\\AppData\\Roaming\\voltip\\Voltip\\data\\backups",
       custom: true,
       last: {
-        name: "voltip-auto-20261030-152000-weekly.voltip-backup",
+        name: "voltip-auto-20261030-152000-weekly-02d449a3.voltip-backup",
         at_ms: 1758700600000,
         kind: "weekly",
       },
