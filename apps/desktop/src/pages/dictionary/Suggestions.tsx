@@ -12,12 +12,10 @@ import {
   Button,
   Card,
   EmptyState,
-  Icon,
   IconButton,
   Panel,
   Table,
   type TableColumn,
-  cx,
   useI18n,
   useNow,
   useUiState,
@@ -25,6 +23,8 @@ import {
 import { type ReactNode, useId } from "react";
 import { useRouter } from "../../app/router";
 import { useBacktest } from "../history/useBacktest";
+import { IgnoredList } from "./IgnoredList";
+import { Line, Pair, ROW_BAND } from "./parts";
 import {
   type RowAction,
   type SuggestionsView,
@@ -66,50 +66,6 @@ function undoFailureText(failure: UndoFailure, t: TFunction): string {
   return failure.kind === "failed"
     ? t("dictionary.suggestions.undoFailed.failed", { message: failure.message })
     : t(`dictionary.suggestions.undoFailed.${failure.kind}`);
-}
-
-type Tone = "info" | "warn" | "danger" | "busy";
-
-/** One line of a row's details: an icon for its tone, the text (it names the user's words), and
- *  optionally a link to what it is about. */
-function Line({
-  tone,
-  text,
-  link,
-}: {
-  tone: Tone;
-  text: string;
-  link?: { label: string; onClick: () => void };
-}) {
-  const color =
-    tone === "danger" ? "text-danger" : tone === "warn" ? "text-warning" : "text-fg-muted";
-  return (
-    <div className="flex items-start gap-2.5" data-tone={tone}>
-      {tone === "busy" ? (
-        <span
-          aria-hidden
-          className="mt-0.5 inline-block size-3.5 shrink-0 animate-spin rounded-pill border-2 border-primary/30 border-t-primary"
-        />
-      ) : (
-        <Icon
-          name={tone === "info" ? "info" : "alert"}
-          size={14}
-          className={cx("mt-0.5 shrink-0", color)}
-        />
-      )}
-      <p className={cx("min-w-0", tone === "warn" || tone === "danger" ? color : "text-fg")}>
-        <span data-user-text>{text}</span>
-        {link !== undefined && (
-          <button
-            type="button"
-            className="ml-1 font-medium text-accent-text hover:text-accent-text-hover"
-            onClick={link.onClick}>
-            {link.label}
-          </button>
-        )}
-      </p>
-    </div>
-  );
 }
 
 /** The recognised text around the heard words, with those words lit. */
@@ -301,7 +257,8 @@ export interface SuggestionsPanelProps {
 
 /** 学习建议 (docs/dictation.md §16.10): the pairs AI polish changed in the recent takes that the
  *  dictionary does not correct yet, most frequent first. 加入词典 and 忽略 go to the shell, which
- *  checks and saves them; a row acted on stays in place with its 撤销 until the page closes. */
+ *  checks and saves them; a row acted on stays in place with its 撤销 until the page closes. The
+ *  ignored pairs follow under 已忽略. */
 export function SuggestionsPanel({ view, onShowEntry }: SuggestionsPanelProps) {
   const { t, locale } = useI18n();
   const { navigate } = useRouter();
@@ -316,17 +273,7 @@ export function SuggestionsPanel({ view, onShowEntry }: SuggestionsPanelProps) {
       mono: false,
       // The header and a short pair stay whole when the window is narrow.
       minWidth: 160,
-      cell: (s) => (
-        <span className="flex min-w-0 items-center gap-1.5" data-testid="suggestion-pair">
-          <span data-user-text className="min-w-0 truncate text-fg-muted">
-            {s.heard}
-          </span>
-          <span className="shrink-0 text-fg-subtle">→</span>
-          <span data-user-text className="min-w-0 truncate font-medium text-fg">
-            {s.polished}
-          </span>
-        </span>
-      ),
+      cell: (s) => <Pair heard={s.heard} polished={s.polished} testId="suggestion-pair" />,
     },
     {
       id: "count",
@@ -407,7 +354,7 @@ export function SuggestionsPanel({ view, onShowEntry }: SuggestionsPanelProps) {
     const decided =
       action?.kind === "accepted" || action?.kind === "kept" || action?.kind === "ignored";
     return (
-      <div className="flex flex-col gap-2 bg-inset px-3 py-2.5 text-[12px] leading-[18px]">
+      <div className={ROW_BAND}>
         {message !== undefined && <div role="status">{message}</div>}
         {open && <Details row={row} decided={decided} />}
       </div>
@@ -496,6 +443,7 @@ export function SuggestionsPanel({ view, onShowEntry }: SuggestionsPanelProps) {
           </div>
         )}
       </Panel>
+      <IgnoredList />
     </>
   );
 }

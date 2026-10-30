@@ -1002,9 +1002,26 @@ fn learning_suggestions_run_through_the_command_layer() {
         assert!(invoke(webview, "vocabulary_suggestion_accept", json!({ "heard": "世界", "polished": "World", "historyId": "nope" })).is_err());
 
         let ignore = json!({ "heard": "世界", "polished": "World" });
+        let before = voltip_core::now_ms();
         assert_eq!(invoke(webview, "vocabulary_suggestion_ignore", ignore.clone()), Ok(Value::Null));
         wait_state(webview, |s| s.vocabulary_ignored.len() == 1);
         assert_eq!(invoke(webview, "vocabulary_suggestions", json!({})).unwrap()["total"], 0, "ignored");
+        // 已忽略 reads the pairs and when each was ignored from the state a page mounts with; 取消忽略
+        // works for a pair no take has.
+        let other = json!({ "heard": "集成", "polished": "继承" });
+        assert_eq!(invoke(webview, "vocabulary_suggestion_ignore", other.clone()), Ok(Value::Null));
+        wait_state(webview, |s| s.vocabulary_ignored.len() == 2);
+        let state = invoke(webview, "core_state", json!({})).unwrap();
+        let listed = state["vocabulary_ignored"].as_array().cloned().unwrap_or_default();
+        assert_eq!(
+            listed.iter().map(|p| (p["heard"].as_str().unwrap_or_default(), p["polished"].as_str().unwrap_or_default())).collect::<Vec<_>>(),
+            [("世界", "World"), ("集成", "继承")],
+            "{state}"
+        );
+        let after = voltip_core::now_ms();
+        assert!(listed.iter().all(|p| p["at_ms"].as_u64().is_some_and(|at| (before..=after).contains(&at))), "{listed:?}");
+        assert_eq!(invoke(webview, "vocabulary_suggestion_unignore", other), Ok(Value::Null));
+        wait_state(webview, |s| s.vocabulary_ignored.len() == 1);
         assert_eq!(invoke(webview, "vocabulary_suggestion_unignore", ignore), Ok(Value::Null));
         wait_state(webview, |s| s.vocabulary_ignored.is_empty());
         assert_eq!(invoke(webview, "vocabulary_suggestions", json!({})).unwrap()["total"], 1);

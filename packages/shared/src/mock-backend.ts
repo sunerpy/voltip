@@ -78,6 +78,7 @@ import {
   type EngineSettings,
   type EngineStatus,
   type HistoryEntry,
+  type IgnoredPair,
   type HotkeyEdgeArgs,
   type InjectPreflight,
   type PasteFailure,
@@ -309,6 +310,9 @@ export interface MockBackendOptions {
    *  like a first run of the core. Ignored by the phone role (the phone has neither). */
   dictionary?: DictionaryEntry[];
   rules?: ReplacementRule[];
+  /** Initial pairs the learning suggestions leave out (忽略, docs/dictation.md §16.10), oldest
+   *  first as the core keeps them; empty like a first run. Ignored by the phone role. */
+  vocabularyIgnored?: IgnoredPair[];
   /** Initial scenes (docs/dictation.md §18); empty like a first run. Ignored by the phone role. */
   scenes?: Scene[];
   /** Initial custom presets (docs/dictation.md §21); empty like a first run. Ignored by the phone
@@ -1324,7 +1328,7 @@ export class MockBackend implements Backend {
             },
       dictionary: [...(options.dictionary ?? [])],
       rules: [...(options.rules ?? [])],
-      vocabulary_ignored: [],
+      vocabulary_ignored: [...(options.vocabularyIgnored ?? [])],
       // The desktop's list always holds the built-in scenes, appended off after the user's (§18.10).
       scenes: [...(options.scenes ?? [])],
       presets: [...(options.presets ?? [])],

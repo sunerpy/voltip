@@ -1908,6 +1908,48 @@ mod tests {
         bridge.shutdown();
     }
 
+    /// docs/dictation.md §16.10, 已忽略: the ignored pairs are in the state with when each was
+    /// ignored, oldest first, also after a restart; 取消忽略 of a pair no take has takes it out of
+    /// the state, and the suggestions answer it no longer filters.
+    #[tokio::test]
+    async fn the_ignored_list_is_in_the_state_with_its_times() {
+        async fn until(bridge: &Bridge, rx: &mut broadcast::Receiver<UiEvent>, done: impl Fn(&UiState) -> bool) {
+            for _ in 0..60 {
+                if done(&bridge.state()) {
+                    return;
+                }
+                let _ = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await;
+            }
+            panic!("the state never got there");
+        }
+        let dir = tempfile::tempdir().unwrap();
+        voltip_core::SettingsStore::new(dir.path())
+            .save(&voltip_core::Settings { relay_enabled: false, engines: voltip_core::dictation::fakes::fake_engines(), ..Default::default() })
+            .unwrap();
+        let bridge = Bridge::start(CoreConfig::new(dir.path().to_path_buf()), Arc::new(MemorySecretStore::new())).unwrap();
+        let mut rx = bridge.events();
+        until(&bridge, &mut rx, |s| s.identity.is_some()).await;
+        let before = voltip_core::now_ms();
+        for (heard, polished) in [("集成", "继承"), ("非", "飞")] {
+            bridge.dispatch(UiCommand::VocabularySuggestionIgnore { heard: heard.into(), polished: polished.into() }).unwrap();
+        }
+        until(&bridge, &mut rx, |s| s.vocabulary_ignored.len() == 2).await;
+        let after = voltip_core::now_ms();
+        let list = bridge.state().vocabulary_ignored;
+        assert_eq!(list.iter().map(|p| (p.heard.as_str(), p.polished.as_str())).collect::<Vec<_>>(), [("集成", "继承"), ("非", "飞")]);
+        assert!(list.iter().all(|p| (before..=after).contains(&p.at_ms)), "{list:?}");
+        bridge.shutdown();
+
+        let bridge = Bridge::start(CoreConfig::new(dir.path().to_path_buf()), Arc::new(MemorySecretStore::new())).unwrap();
+        let mut rx = bridge.events();
+        until(&bridge, &mut rx, |s| s.identity.is_some() && s.vocabulary_ignored.len() == 2).await;
+        assert_eq!(bridge.state().vocabulary_ignored, list, "read back after a restart");
+        bridge.dispatch(UiCommand::VocabularySuggestionUnignore { heard: "集成".into(), polished: "继承".into() }).unwrap();
+        until(&bridge, &mut rx, |s| s.vocabulary_ignored.len() == 1).await;
+        assert_eq!(bridge.state().vocabulary_ignored, [list[1].clone()]);
+        bridge.shutdown();
+    }
+
     /// The time `vocabulary_suggestions` takes over a full window of polished takes (docs/dictation.md
     /// §16.10 records the numbers): 2000 takes of about 100 characters and 2000 of about 900 (close to
     /// the comparison's cell limit), each asked once (read and compared) and again (the cache). A

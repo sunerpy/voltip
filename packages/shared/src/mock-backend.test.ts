@@ -4044,6 +4044,20 @@ describe("MockBackend learning suggestions (docs/dictation.md section 16.10)", (
     backend.destroy();
   });
 
+  it("starts from the ignored pairs it is given, oldest first; 取消忽略 works for a pair no take has", async () => {
+    const ignored = [
+      { heard: "集成", polished: "继承", at_ms: T - 86_400_000 },
+      { heard: "非", polished: "飞", at_ms: T - 60_000 },
+    ];
+    const backend = new MockBackend({ now: () => T, history: rows, vocabularyIgnored: ignored });
+    expect(backend.peek().vocabulary_ignored).toEqual(ignored);
+    expect(await heard(backend)).toEqual(["维他命"]);
+    await backend.invoke("vocabulary_suggestion_unignore", { heard: "集成", polished: "继承" });
+    expect(backend.peek().vocabulary_ignored).toEqual([ignored[1]]);
+    expect(await heard(backend)).toEqual(["维他命"]);
+    backend.destroy();
+  });
+
   it("忽略 and 取消忽略 ride on the ignored list; the rules' hints; history off is its own answer", async () => {
     const backend = new MockBackend({ now: () => T, history: rows });
     const events = collect(backend);

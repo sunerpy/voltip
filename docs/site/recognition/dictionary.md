@@ -96,15 +96,16 @@ To let AI tools such as Claude Code or Codex analyse the history with your proje
 **Suggestions**, at the top of the Dictionary page, lists the spellings AI polish corrected in your recent history: what was recognised, what it was polished to, how many times and when last, the most frequent first. Spellings the dictionary already corrects and pairs you ignored are left out. Voltip compares the recognised text with the polished text character by character; no AI is used and nothing is sent anywhere.
 
 <ScreenFigure src="/screens/dictionary-suggestions-en-light.webp" width="1440" height="900"
-  alt="Suggestions on the Dictionary page: two pairs AI polish changed; the expanded row shows the recognised text it came from, the entry it would create and how many entries adding it would change."
-  caption="Expand a row to see what adding it would change before you add it." />
+  alt="Suggestions on the Dictionary page: two pairs AI polish changed. One row is expanded and shows the recognised text it came from, the entry it would create and how many entries adding it would change; the other is ignored and listed below under Ignored (1), with when it was ignored and Stop ignoring."
+  caption="Expand a row to see what adding it would change before you add it; an ignored pair can be brought back from Ignored." />
 
 - **Add to dictionary** adds the recognised spelling as a heard-as form: to the entry that already has the right spelling, or to a new entry. When a replacement rule would change the right spelling, or the spelling belongs to another entry, Voltip says why and saves nothing.
-- **Ignore** keeps the pair off the list.
-- After adding or ignoring, the row stays where it was, and **Undo** takes it back. Once you leave the dictionary page, it can no longer be undone.
+- **Ignore** keeps the pair off the list and moves it to **Ignored** below.
+- After adding or ignoring, the row stays where it was, and **Undo** takes it back. Once you leave the dictionary page, adding can no longer be undone; an ignored pair can be brought back from **Ignored**.
 - Expand a row to see the recognised text it appeared in, and how many of your recent entries adding it would change. Voltip warns when the spelling is a single character, which can change other words by mistake.
+- **Ignored (n)** lists the pairs you ignored, the most recent first, with when you ignored each. **Stop ignoring** puts a pair back among the suggestions. The list stays after you leave the page or restart Voltip.
 
-Suggestions come from the history: while history is off, the view only says that history needs to be on, and dictations without AI polish are not compared. Chinese is compared character by character: when 非书 was polished to 飞书, the pair listed is 非 → 飞. Suggestions are available on the computer only.
+Suggestions come from the history: while history is off, the view only says that history needs to be on, and dictations without AI polish and imported audio or video files are not compared. Chinese is compared character by character: when 非书 was polished to 飞书, the pair listed is 非 → 飞. Suggestions are available on the computer only.
 
 ## Simplified and Traditional Chinese
 

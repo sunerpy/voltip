@@ -1238,7 +1238,8 @@ export const zhCN = {
       explainTitle: "从 AI 润色的改动中学习",
       explain:
         "比较最近记录的识别原文和 AI 润色后的文字，列出「识别成 A、润色改成 B」的写法，按出现次数排列。加入词典后，识别完成时就会直接纠正。只逐字比较，不调用 AI。",
-      undoNote: "加入或忽略后可以立即撤销；离开词典页后无法撤销。",
+      undoNote:
+        "加入或忽略后可以立即撤销。离开词典页后，加入词典不能再撤销，忽略的写法可以在「已忽略」中取消忽略。",
       list: "学习建议",
       table: "学习建议",
       column: { pair: "识别结果 → 润色结果", count: "次数", last: "最近一次" },
@@ -1308,6 +1309,17 @@ export const zhCN = {
       },
       skipped: "{n} 条过长，未比较",
       more: "显示前 {shown} 组 · 共 {total} 组",
+      /** 已忽略: the pairs 忽略 left out, newest first, each with 取消忽略. */
+      ignoredList: {
+        title: "已忽略（{n}）",
+        table: "已忽略",
+        column: { pair: "识别结果 → 润色结果", at: "忽略时间" },
+        unignore: "取消忽略",
+        row: "取消忽略：{heard} → {polished}",
+        showAll: "显示全部（{n}）",
+        showLess: "收起",
+        failed: "无法取消忽略：{message}",
+      },
     },
   },
   rules: {

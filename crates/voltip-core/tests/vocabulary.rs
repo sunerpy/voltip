@@ -261,3 +261,30 @@ async fn learning_suggestions_through_the_core() {
     assert!(ignored(&mut node).await.is_empty());
     node.handle.send(CoreCommand::Shutdown).await.unwrap();
 }
+
+/// docs/dictation.md §16.10, 已忽略: each ignored pair comes with when it was ignored, oldest first;
+/// ignoring a pair again moves it to the end with the new time; 取消忽略 takes out that pair only,
+/// whether or not a take still has it (this history is empty).
+#[tokio::test]
+async fn the_ignored_list_holds_each_pair_with_when_it_was_ignored() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut node = start(dir.path(), Arc::new(FakeInjector::paste()));
+    assert!(ignored(&mut node).await.is_empty());
+    let before = voltip_core::now_ms();
+    let mut lists = Vec::new();
+    for (heard, polished) in [("非", "飞"), ("集成", "继承"), ("非", "飞")] {
+        node.handle.send(CoreCommand::SuggestionIgnore { heard: heard.into(), polished: polished.into() }).await.unwrap();
+        lists.push(ignored(&mut node).await);
+    }
+    let after = voltip_core::now_ms();
+    let pairs = |list: &[IgnoredPair]| list.iter().map(|p| format!("{} → {}", p.heard, p.polished)).collect::<Vec<_>>();
+    assert_eq!(pairs(&lists[1]), ["非 → 飞", "集成 → 继承"], "oldest first");
+    let last = &lists[2];
+    assert_eq!(pairs(last), ["集成 → 继承", "非 → 飞"], "ignored again: to the end");
+    assert!(last.iter().all(|p| (before..=after).contains(&p.at_ms)), "{last:?}");
+    assert!(last[1].at_ms >= lists[0][0].at_ms, "with the new time");
+
+    node.handle.send(CoreCommand::SuggestionUnignore { heard: "集成".into(), polished: "继承".into() }).await.unwrap();
+    assert_eq!(ignored(&mut node).await, [last[1].clone()], "the other pair stays");
+    node.handle.send(CoreCommand::Shutdown).await.unwrap();
+}

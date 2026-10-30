@@ -426,6 +426,20 @@ describe("Dictionary page · learning suggestions (docs/dictation.md §16.10)", 
     await user.click(await screen.findByRole("tab", { name }));
   }
 
+  /** The rows of 已忽略: pair and when it was ignored. */
+  function ignoredRows(name = "已忽略"): string[][] {
+    return within(screen.getByRole("table", { name }))
+      .getAllByRole("row")
+      .slice(1)
+      .filter((r) => r.querySelector("[data-testid='ignored-pair']") !== null)
+      .map((r) =>
+        within(r)
+          .getAllByRole("cell")
+          .slice(0, 2)
+          .map((c) => c.textContent ?? ""),
+      );
+  }
+
   it("the page has two views; 学习建议 counts what the clean-up changed and lists it, most frequent first", async () => {
     const user = userEvent.setup();
     renderApp({ path: "/dictionary", backend: learning() });
@@ -452,7 +466,7 @@ describe("Dictionary page · learning suggestions (docs/dictation.md §16.10)", 
     ]);
     expect(screen.getByTestId("suggestions-explain")).toHaveTextContent("只逐字比较，不调用 AI");
     expect(screen.getByTestId("suggestions-explain")).toHaveTextContent(
-      "加入或忽略后可以立即撤销；离开词典页后无法撤销。",
+      "加入或忽略后可以立即撤销。离开词典页后，加入词典不能再撤销，忽略的写法可以在「已忽略」中取消忽略。",
     );
     expect(screen.getByTestId("suggestions-footer")).toHaveTextContent(
       "最近 5 条记录 · 4 条经过 AI 润色",
@@ -737,14 +751,107 @@ describe("Dictionary page · learning suggestions (docs/dictation.md §16.10)", 
     ).toBeInTheDocument();
   });
 
+  it("忽略 puts the pair on 已忽略（n） with when it was ignored, and 取消忽略 there makes it a suggestion again", async () => {
+    const user = userEvent.setup();
+    const backend = learning({ now: () => Date.now() });
+    renderApp({ path: "/dictionary", backend });
+    await openSuggestions(user);
+    await screen.findByRole("table", { name: "学习建议" });
+    expect(screen.queryByRole("table", { name: "已忽略" })).toBeNull();
+
+    await user.click(within(rowOf("非")).getByRole("button", { name: "忽略：非 → 飞" }));
+    const ignored = await screen.findByRole("table", { name: "已忽略" });
+    expect(screen.getByRole("tabpanel", { name: /^学习建议/ })).toContainElement(ignored);
+    expect(screen.getByText("已忽略（1）")).toBeInTheDocument();
+    expect(ignoredRows()).toEqual([["非→飞", "刚刚"]]);
+    expect(within(rowOf("非")).getByRole("button", { name: "撤销：非 → 飞" })).toBeEnabled();
+
+    await user.click(within(ignored).getByRole("button", { name: "取消忽略：非 → 飞" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("table", { name: "已忽略" })).toBeNull();
+    });
+    expect(backend.peek().vocabulary_ignored).toEqual([]);
+    // The row offers 加入词典 and 忽略 again, not a 撤销 that has nothing left to undo.
+    expect(
+      await within(rowOf("非")).findByRole("button", { name: "加入词典：非 → 飞" }),
+    ).toBeEnabled();
+    expect(within(rowOf("非")).queryByRole("button", { name: "撤销：非 → 飞" })).toBeNull();
+    expect(shownPairs().map((p) => p[0])).toEqual([
+      "非→飞",
+      "维他命→Voltip",
+      "库伯内特斯→Kubernetes",
+    ]);
+  });
+
+  it("pairs ignored earlier are listed newest first, five until 显示全部, and stay out of the suggestions", async () => {
+    const user = userEvent.setup();
+    const pairs = [
+      { heard: "非", polished: "飞", at_ms: AT - 50 * HOUR },
+      ...[1, 2, 3, 4, 5, 6].map((i) => ({
+        heard: `听成${i}`,
+        polished: `写成${i}`,
+        at_ms: AT - (7 - i) * HOUR,
+      })),
+    ];
+    renderApp({ path: "/dictionary", backend: learning({ vocabularyIgnored: pairs }) });
+    await openSuggestions(user, /^学习建议（2）$/);
+    expect(shownPairs().map((p) => p[0])).toEqual(["维他命→Voltip", "库伯内特斯→Kubernetes"]);
+    expect(screen.getByText("已忽略（7）")).toBeInTheDocument();
+    const five = [
+      ["听成6→写成6", "1 小时前"],
+      ["听成5→写成5", "2 小时前"],
+      ["听成4→写成4", "3 小时前"],
+      ["听成3→写成3", "4 小时前"],
+      ["听成2→写成2", "5 小时前"],
+    ];
+    expect(ignoredRows()).toEqual(five);
+    const all = screen.getByRole("button", { name: "显示全部（7）" });
+    expect(all).toHaveAttribute("aria-expanded", "false");
+    await user.click(all);
+    expect(ignoredRows()).toEqual([...five, ["听成1→写成1", "6 小时前"], ["非→飞", "2 天前"]]);
+    const less = screen.getByRole("button", { name: "收起" });
+    expect(less).toHaveAttribute("aria-expanded", "true");
+    await user.click(less);
+    expect(ignoredRows()).toEqual(five);
+  });
+
+  it("a 取消忽略 that fails says why and leaves the pair on 已忽略", async () => {
+    const user = userEvent.setup();
+    const backend = learning({
+      vocabularyIgnored: [{ heard: "非", polished: "飞", at_ms: AT - HOUR }],
+    });
+    const invoke = backend.invoke.bind(backend);
+    vi.spyOn(backend, "invoke").mockImplementation(async (name, ...args) => {
+      if (name === "vocabulary_suggestion_unignore") throw new Error("disk full");
+      await invoke(name, ...args);
+    });
+    renderApp({ path: "/dictionary", backend });
+    await openSuggestions(user);
+    const ignored = await screen.findByRole("table", { name: "已忽略" });
+    await user.click(within(ignored).getByRole("button", { name: "取消忽略：非 → 飞" }));
+    expect(await within(ignored).findByRole("status")).toHaveTextContent("无法取消忽略：disk full");
+    expect(ignoredRows()).toEqual([["非→飞", "1 小时前"]]);
+    expect(within(ignored).getByRole("button", { name: "取消忽略：非 → 飞" })).toBeEnabled();
+    expect(backend.peek().vocabulary_ignored).toHaveLength(1);
+  });
+
   it("the English view reads the same", async () => {
     const user = userEvent.setup();
-    renderApp({ path: "/dictionary", backend: learning(), systemLanguage: "en-US" });
+    const backend = learning({
+      vocabularyIgnored: [{ heard: "集成", polished: "继承", at_ms: AT - HOUR }],
+    });
+    renderApp({ path: "/dictionary", backend, systemLanguage: "en-US" });
     await user.click(await screen.findByRole("tab", { name: "Suggestions (3)" }));
     expect(screen.getByRole("table", { name: "Suggestions" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add to dictionary: 非 → 飞" })).toBeEnabled();
     expect(screen.getByTestId("suggestions-footer")).toHaveTextContent(
       "Last 5 entries · 4 polished",
     );
+    expect(screen.getByTestId("suggestions-explain")).toHaveTextContent(
+      "Once you leave the dictionary page, adding can no longer be undone; ignored pairs can be brought back from Ignored.",
+    );
+    expect(screen.getByText("Ignored (1)")).toBeInTheDocument();
+    expect(ignoredRows("Ignored")).toEqual([["集成→继承", "1 hour ago"]]);
+    expect(screen.getByRole("button", { name: "Stop ignoring: 集成 → 继承" })).toBeEnabled();
   });
 });

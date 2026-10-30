@@ -1221,7 +1221,7 @@ export const en: Messages = {
       explain:
         "Compares the recognised text of recent history entries with the polished text and lists the words recognised as A and polished to B, most frequent first. Once a pair is in the dictionary, it is corrected right after recognition. The comparison is character by character; no AI is used.",
       undoNote:
-        "Adding or ignoring can be undone right away; once you leave the dictionary page it cannot.",
+        "Adding or ignoring can be undone right away. Once you leave the dictionary page, adding can no longer be undone; ignored pairs can be brought back from Ignored.",
       list: "Suggestions",
       table: "Suggestions",
       column: { pair: "Recognised → polished", count: "Count", last: "Last seen" },
@@ -1292,6 +1292,16 @@ export const en: Messages = {
       },
       skipped: "{n} too long to compare",
       more: "Showing the first {shown} of {total}",
+      ignoredList: {
+        title: "Ignored ({n})",
+        table: "Ignored",
+        column: { pair: "Recognised → polished", at: "Ignored" },
+        unignore: "Stop ignoring",
+        row: "Stop ignoring: {heard} → {polished}",
+        showAll: "Show all ({n})",
+        showLess: "Show less",
+        failed: "Could not stop ignoring: {message}",
+      },
     },
   },
   rules: {

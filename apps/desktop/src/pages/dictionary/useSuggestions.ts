@@ -40,19 +40,23 @@ interface State {
   actions: ReadonlyMap<string, RowAction>;
   /** The row whose details are open. */
   expanded: string | undefined;
+  /** The ignored pairs' keys as last seen, to notice one that 取消忽略 took off the list. */
+  ignored: ReadonlySet<string> | undefined;
 }
 
 type Step =
   | { type: "answer"; answer: SuggestionsAnswer }
   | { type: "failed"; message: string }
   | { type: "act"; key: string; action: RowAction | undefined }
-  | { type: "expand"; key: string | undefined };
+  | { type: "expand"; key: string | undefined }
+  | { type: "ignored"; keys: ReadonlySet<string> };
 
 const INITIAL: State = {
   load: { kind: "loading" },
   rows: [],
   actions: new Map(),
   expanded: undefined,
+  ignored: undefined,
 };
 
 /** The answer's rows, with each row acted on that it no longer has back at its place. */
@@ -91,6 +95,13 @@ function reduce(state: State, step: Step): State {
     }
     case "expand":
       return { ...state, expanded: step.key };
+    case "ignored": {
+      // A pair taken off the ignored list (取消忽略 in 已忽略) is no longer 已忽略 on its row either.
+      const actions = new Map(state.actions);
+      for (const key of state.ignored ?? [])
+        if (!step.keys.has(key) && actions.get(key)?.kind === "ignored") actions.delete(key);
+      return { ...state, actions, ignored: step.keys };
+    }
   }
 }
 
@@ -112,8 +123,9 @@ export interface SuggestionsView {
 /** The dictionary's learning suggestions (`vocabulary_suggestions`, docs/dictation.md §16.10) and
  *  what the user did with them. The dictionary page holds it, so switching views keeps the rows
  *  and their 撤销; it ends with the page, as the undo records the shell keeps for it are not shown
- *  again. Asked again whenever a list they are made from changes: the dictionary, the rules, the
- *  ignored pairs, the history or whether history is recorded. */
+ *  again (an ignored pair stays on 已忽略, where 取消忽略 takes it back). Asked again whenever a
+ *  list they are made from changes: the dictionary, the rules, the ignored pairs, the history or
+ *  whether history is recorded. */
 export function useSuggestions(): SuggestionsView {
   const { backend } = useBackend();
   const {
@@ -142,6 +154,9 @@ export function useSuggestions(): SuggestionsView {
     // Each list the suggestions are made from is a reason to ask again.
     // oxlint-disable-next-line react/exhaustive-effect-dependencies
   }, [backend, dictionary, rules, ignored, recent, total, recording]);
+  useEffect(() => {
+    dispatch({ type: "ignored", keys: new Set(ignored.map(suggestionKey)) });
+  }, [ignored]);
 
   const act = (key: string, action: RowAction | undefined) => {
     dispatch({ type: "act", key, action });
