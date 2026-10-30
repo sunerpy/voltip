@@ -3,7 +3,7 @@
 //!
 //! A take leases an instance of the model, language and compute it needs ([`Key`]) and gives it
 //! back when it is done. An instance a cancelled take still holds is busy until the piece in
-//! progress ends: neither engine stops a run once it has begun (transcribe.cpp 0.2.3 looks at a
+//! progress ends: neither engine stops a run once it has begun (transcribe.cpp 0.4.1 looks at a
 //! cancel only before a Qwen3-ASR run). So sherpa-onnx may have two instances ([`cap`]), and a
 //! take that finds every instance busy waits at most its lock wait instead of queueing behind them. One model at a time: an idle
 //! instance of another model is dropped before a new one loads, and a busy one is waited for.

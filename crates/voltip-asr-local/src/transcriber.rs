@@ -21,7 +21,7 @@
 //! longer than the model's `max_piece` is cut where it pauses ([`crate::segmenter::pieces`]),
 //! recognised piece by piece on one instance and put together like a long take's segments. A
 //! take that is cancelled sets its [`Abort`] and starts no further piece; the piece in progress
-//! runs to its end (transcribe.cpp 0.2.3 looks at a cancel only before a Qwen3-ASR run, sherpa-onnx
+//! runs to its end (transcribe.cpp 0.4.1 looks at a cancel only before a Qwen3-ASR run, sherpa-onnx
 //! not at all), on the one transcribe.cpp instance or, for sherpa-onnx, on an instance of its own
 //! while the next take uses a second one.
 
@@ -1144,10 +1144,10 @@ mod tests {
 
     /// Regression (R04, 2026-10-30): a take cancelled while transcribe.cpp ran kept the one
     /// recogniser until its whole inference ended, and the next take waited behind it.
-    /// transcribe.cpp 0.2.3 looks at a cancel only before a Qwen3-ASR run, so the run in progress
-    /// still ends as it would have; but a take is recognised in pieces of at most `max_piece`, and
-    /// a cancelled one starts no further piece. The next take gets the same instance as soon as
-    /// the piece in progress is done, not after the rest of the cancelled take.
+    /// transcribe.cpp (0.2.3 and 0.4.1) looks at a cancel only before a Qwen3-ASR run, so the run
+    /// in progress still ends as it would have; but a take is recognised in pieces of at most
+    /// `max_piece`, and a cancelled one starts no further piece. The next take gets the same
+    /// instance as soon as the piece in progress is done, not after the rest of the cancelled take.
     #[tokio::test]
     async fn regression_a_cancelled_local_take_releases_the_model() {
         let dir = tempfile::tempdir().unwrap();

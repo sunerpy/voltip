@@ -11,9 +11,10 @@ to travel with the binary:
   and dev dependencies excluded; the three desktop targets, or aarch64-linux-android for the app);
 - the npm packages in the web frontend's production dependency tree, from `pnpm licenses list`,
   with the licence file each package ships (the three fonts are OFL-1.1);
-- the native libraries that ship inside or beside the desktop binary: transcribe.cpp and ggml (from
-  the transcribe-cpp-sys sources), sherpa-onnx, ONNX Runtime and the Khronos Vulkan loader (texts in
-  scripts/release/licenses/). The Android app links none of them;
+- the native libraries that ship inside or beside the desktop binary: transcribe.cpp and what it
+  vendors (ggml, miniz, Silero VAD's segment logic; texts from the transcribe-cpp-sys sources),
+  sherpa-onnx, ONNX Runtime and the Khronos Vulkan loader (texts in scripts/release/licenses/). The
+  Android app links none of them;
 - the artwork copied into the source, which every app's interface carries: the vendors' marks from
   LobeHub Icons (packages/shared/src/provider-marks.ts, text in scripts/release/licenses/).
 
@@ -91,12 +92,35 @@ def package_licence_text(paths: list[str]) -> str | None:
     return None
 
 
+# What transcribe.cpp vendors, by the name its THIRD-PARTY-LICENSES.md table gives: (licence, where it
+# comes from, its licence file in the transcribe-cpp-sys sources).
+TRANSCRIBE_VENDORED = {
+    "ggml": ("MIT", "https://github.com/ggml-org/ggml (vendored by transcribe.cpp)", "ggml/LICENSE"),
+    "miniz": ("MIT", "https://github.com/richgel999/miniz (vendored by transcribe.cpp)", "src/third_party/miniz/LICENSE"),
+    "Silero VAD": ("MIT", "https://github.com/snakers4/silero-vad (its segment logic, translated by transcribe.cpp)", "src/third_party/silero_vad/LICENSE"),
+}
+
+
+def transcribe_vendored(transcribe_dir: Path) -> list[str]:
+    """The components transcribe.cpp's THIRD-PARTY-LICENSES.md table names, in its order."""
+    names = []
+    for line in (transcribe_dir / "THIRD-PARTY-LICENSES.md").read_text(encoding="utf-8").splitlines():
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")] if line.startswith("|") else []
+        if cells and cells[0] not in ("Component", "") and not set(cells[0]) <= set("-: "):
+            names.append(cells[0])
+    return names
+
+
 def native_components(transcribe_dir: Path | None) -> list[tuple[str, str, str, str]]:
     """(name, licence, where it comes from, text) for the libraries no package manager lists."""
     out = []
     if transcribe_dir is not None:
         out.append(("transcribe.cpp", "MIT", "https://github.com/handy-computer/transcribe.cpp (the transcribe-cpp-sys crate)", (transcribe_dir / "LICENSE").read_text(encoding="utf-8").strip()))
-        out.append(("ggml", "MIT", "https://github.com/ggml-org/ggml (vendored by transcribe.cpp)", (transcribe_dir / "ggml" / "LICENSE").read_text(encoding="utf-8").strip()))
+        for name in transcribe_vendored(transcribe_dir):
+            if name not in TRANSCRIBE_VENDORED:
+                raise Failure(f"transcribe.cpp vendors {name} (its THIRD-PARTY-LICENSES.md), which these notices do not carry yet")
+            licence, origin, path = TRANSCRIBE_VENDORED[name]
+            out.append((name, licence, origin, (transcribe_dir / path).read_text(encoding="utf-8").strip()))
     out.append(("sherpa-onnx (prebuilt shared libraries)", "Apache-2.0", "https://github.com/k2-fsa/sherpa-onnx", "The licence text is the sherpa-onnx-sys crate's, under the Apache License 2.0 in the Rust section below."))
     ort = (LICENSES / "onnxruntime-LICENSE.txt").read_text(encoding="utf-8").strip()
     ort_notices = (LICENSES / "onnxruntime-ThirdPartyNotices.txt").read_text(encoding="utf-8").strip()

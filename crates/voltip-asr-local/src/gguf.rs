@@ -1,14 +1,14 @@
 //! The [`RecognizerLoader`] for [`Engine::TranscribeCpp`]: transcribe.cpp (ggml) over a Qwen3-ASR
 //! GGUF, through the `transcribe-cpp` crate. The only module that names that binding.
 //!
-//! Verified 2026-09-25 (docs/dictation.md §10): `transcribe-cpp = "=0.2.3"` with
-//! `default-features = false` builds from source with cmake on Linux (39 s) and cross-compiles to
-//! `x86_64-pc-windows-msvc` under cargo-xwin, statically — no runtime DLL. `Model::load` then
-//! `Model::session()`; `Session::run(&[f32] /* 16 kHz mono */, &RunOptions)` returns the
-//! `Transcript`. The `Session` keeps the model resident, so one is held per loaded entry. The
-//! Qwen3 family does not take a language hint (`RunOptions.language` stays `None`; the model
-//! detects the language itself), and it does not stream. Measured here: Qwen3-ASR-0.6B Q6_K loads
-//! in 0.64 s and transcribes 16 s of Chinese in 1.56 s.
+//! `transcribe-cpp = "=0.4.1"` (docs/dictation.md §10, §29) with `default-features = false` builds
+//! from source with cmake and cross-compiles to `x86_64-pc-windows-msvc` under cargo-xwin,
+//! statically — no runtime DLL. `Model::load_with` then `Model::session_with()`;
+//! `Session::run(&[f32] /* 16 kHz mono */, &RunOptions)` returns the `Transcript`. The `Session`
+//! keeps the model resident, so one is held per loaded entry. Voltip passes no language hint
+//! (`RunOptions.language` stays `None`; the model detects the language itself) and no vocabulary,
+//! and the family does not stream. Measured with 0.2.3 (2026-09-25): Qwen3-ASR-0.6B Q6_K loads in
+//! 0.64 s and transcribes 16 s of Chinese in 1.56 s.
 
 use std::path::Path;
 
@@ -78,18 +78,25 @@ pub(crate) fn gpus() -> Vec<GpuInfo> {
 /// the first GPU. `None` means no GPU could be found for `gpu`.
 fn model_options(compute: &Compute) -> Option<ModelOptions> {
     match compute.device {
-        LocalDevice::Auto => Some(ModelOptions::default()),
-        LocalDevice::Cpu => Some(ModelOptions { backend: Backend::Cpu, device: None }),
+        LocalDevice::Auto => Some(load_options(Backend::Auto, None)),
+        LocalDevice::Cpu => Some(CPU_ONLY),
         LocalDevice::Gpu => {
             let gpus = gpu_devices();
             let wanted = compute.gpu.as_deref();
             let device = gpus.iter().find(|d| Some(d.name.as_str()) == wanted).or_else(|| gpus.first()).cloned()?;
-            Some(ModelOptions { backend: Backend::Auto, device: Some(device) })
+            Some(load_options(Backend::Auto, Some(device)))
         }
     }
 }
 
-const CPU_ONLY: ModelOptions = ModelOptions { backend: Backend::Cpu, device: None };
+/// Every load's options. The weights are copied into memory (`no_mmap`): transcribe.cpp maps the
+/// GGUF by default since 0.4, and Windows can neither delete nor move a mapped file, while the
+/// store removes and moves model files without unloading the model first.
+const fn load_options(backend: Backend, device: Option<transcribe_cpp::Device>) -> ModelOptions {
+    ModelOptions { backend, device, no_mmap: true }
+}
+
+const CPU_ONLY: ModelOptions = load_options(Backend::Cpu, None);
 
 /// Loads Qwen3-ASR GGUF sessions from an installed model directory.
 #[derive(Clone, Copy, Debug, Default)]
@@ -142,13 +149,13 @@ impl Recognizer for Gguf {
             resampled = resample_to_model_rate(samples, sample_rate)?;
             &resampled
         };
-        // docs/dictation.md §29: a cancelled take's token. transcribe.cpp 0.2.3 looks at it before a
-        // Qwen3-ASR run only (that family runs in one shot); a family that polls it between decode
-        // steps stops there.
+        // docs/dictation.md §29: a cancelled take's token. transcribe.cpp (0.4.1 as 0.2.3) looks at
+        // it before a Qwen3-ASR run only (that family runs in one shot); a family that polls it
+        // between decode steps stops there.
         let token = CancelToken::new();
         self.session.set_cancel_token(&token);
         abort.on_abort(move || token.cancel());
-        // No language hint: unsupported by the Qwen3 family (the call would be refused).
+        // No language hint: the model detects the language (docs/dictation.md §17).
         let result = self.session.run(pcm, &RunOptions::default());
         self.session.clear_cancel_token();
         let transcript = result.map_err(|e| RecognizeError::new(failure(&e), e.to_string()))?;
@@ -169,7 +176,7 @@ pub fn failure(error: &transcribe_cpp::Error) -> LocalFailure {
         E::OutOfMemory(_) => LocalFailure::Memory,
         E::ModelLoad(_) | E::ModelFileNotFound(_) => LocalFailure::Model,
         E::InputTooLong(_) => LocalFailure::InputTooLong,
-        E::Aborted { .. } | E::OutputTruncated { .. } => LocalFailure::Aborted,
+        E::Aborted { .. } | E::OutputTruncated { .. } | E::OutputRepetition { .. } => LocalFailure::Aborted,
         _ => LocalFailure::Other,
     }
 }
@@ -232,6 +239,11 @@ mod tests {
             (E::InputTooLong("too long".into()), LocalFailure::InputTooLong),
             (E::Aborted { message: "abort".into(), partial: None }, LocalFailure::Aborted),
             (E::OutputTruncated { message: "budget".into(), partial: None }, LocalFailure::Aborted),
+            // 0.4: a decode that starts repeating itself stops early; its transcript is cut short
+            // as a truncated one is.
+            (E::OutputRepetition { message: "loop".into(), partial: None }, LocalFailure::Aborted),
+            (E::InputTooShort("short".into()), LocalFailure::Other),
+            (E::UnsupportedRole("vad".into()), LocalFailure::Other),
             (E::Busy("busy".into()), LocalFailure::Other),
             (E::Other("?".into()), LocalFailure::Other),
             (E::InvalidArgument("x".into()), LocalFailure::Other),
@@ -239,6 +251,19 @@ mod tests {
         for (error, kind) in cases {
             assert_eq!(failure(&error), kind, "{error}");
         }
+    }
+
+    /// Regression (transcribe-cpp 0.4.1, 2026-10-30): the library maps the GGUF into memory unless
+    /// told not to, and Windows can neither delete nor move a file that is mapped. Nothing unloads
+    /// a model before the store removes it or moves the model folder (`ModelStore::remove`,
+    /// `relocate`), so every load copies the weights, as 0.2.3 always did.
+    #[test]
+    fn regression_every_load_copies_the_weights_so_the_files_can_be_moved_or_deleted() {
+        for device in [LocalDevice::Auto, LocalDevice::Cpu] {
+            let options = model_options(&Compute { device, ..Compute::default() }).unwrap();
+            assert!(options.no_mmap, "{device:?} maps the model file");
+        }
+        assert!(CPU_ONLY.no_mmap && load_options(Backend::Auto, None).no_mmap);
     }
 
     /// A missing file is a load error with the entry's id, not a panic (no model needed).

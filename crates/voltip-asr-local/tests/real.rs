@@ -482,17 +482,21 @@ fn real_streaming_hotwords_cost_and_effect() {
     }
 }
 
-/// docs/dictation.md §16: the default local tier cannot take a vocabulary prompt. transcribe.cpp
-/// 0.2.3 builds the Qwen3-ASR chat prompt with an empty system turn and advertises no
-/// `InitialPrompt` feature (whisper only); the Whisper run extension — the crate's one prompt
-/// knob — is refused for this family.
+/// docs/dictation.md §16.3: what the default local tier could take as context. transcribe.cpp 0.2.3
+/// built the Qwen3-ASR chat prompt with an empty system turn; 0.4.1 advertises a vocabulary and a
+/// context prompt, both put into that system turn, which Voltip does not pass (yet). Neither
+/// advertises the `InitialPrompt` feature (whisper only), and the Whisper run extension is refused
+/// for this family.
 #[test]
 #[ignore = "needs VOLTIP_LOCAL_GGUF (a downloaded Qwen3-ASR Q6_K gguf) and VOLTIP_LOCAL_SAMPLE_WAV"]
-fn real_qwen3_gguf_takes_no_vocabulary_prompt() {
+fn real_qwen3_gguf_takes_no_whisper_initial_prompt() {
+    use transcribe_cpp::Feature;
     let gguf = PathBuf::from(std::env::var("VOLTIP_LOCAL_GGUF").expect("VOLTIP_LOCAL_GGUF"));
     let model = transcribe_cpp::Model::load(&gguf).unwrap();
-    println!("arch={} variant={} initial_prompt={}", model.arch(), model.variant(), model.supports(transcribe_cpp::Feature::InitialPrompt));
-    assert!(!model.supports(transcribe_cpp::Feature::InitialPrompt), "Qwen3-ASR in transcribe.cpp 0.2.3 takes no prompt");
+    let [initial, vocabulary, context] = [Feature::InitialPrompt, Feature::Vocabulary, Feature::ContextPrompt].map(|f| model.supports(f));
+    println!("arch={} variant={} initial_prompt={initial} vocabulary={vocabulary} context_prompt={context}", model.arch(), model.variant());
+    assert!(!initial, "Qwen3-ASR takes no Whisper initial prompt");
+    assert!(vocabulary && context, "transcribe.cpp 0.4.1 advertises a vocabulary and a context prompt for Qwen3-ASR");
     let (samples, _) = voltip_asr_local::decode_wav(&sample_wav()).unwrap();
     let mut session = model.session().unwrap();
     let options = transcribe_cpp::RunOptions {
@@ -901,7 +905,33 @@ async fn real_gguf_long_inputs_are_recognised_like_their_pieces() {
     long_inputs_are_recognised_like_their_pieces(e, root.path(), None).await;
 }
 
-/// docs/dictation.md §29: transcribe.cpp 0.2.3 looks at a cancel only before a Qwen3-ASR run, so a
+/// docs/dictation.md §29: transcribe.cpp 0.4.1 maps the GGUF unless told not to, and Windows can
+/// neither move nor delete a mapped file; the store does both (`relocate`, `remove`) while the
+/// model may be in memory. The loader copies the weights, so with the model loaded its file can be
+/// renamed and deleted, and the recogniser still works (on Linux unlinking always works; the
+/// Windows build machine's `gate real` is where this test means something).
+#[test]
+#[ignore = "needs VOLTIP_LOCAL_GGUF (Qwen3-ASR GGUF) and VOLTIP_LOCAL_SAMPLE_WAV"]
+fn real_a_loaded_gguf_model_leaves_its_file_free_to_move_and_delete() {
+    let gguf = PathBuf::from(std::env::var("VOLTIP_LOCAL_GGUF").expect("VOLTIP_LOCAL_GGUF"));
+    let id = if gguf.to_string_lossy().contains("1.7B") { "qwen3-asr-1.7b" } else { "qwen3-asr-0.6b" };
+    let e = entry(id).unwrap();
+    let root = tempfile::tempdir().unwrap();
+    // A link (or a copy): what is renamed and deleted below is never the input itself.
+    stage(root.path(), e, |_| gguf.clone());
+    let (samples, rate) = voltip_asr_local::decode_wav(&sample_wav()).unwrap();
+    let mut recognizer = DefaultLoader.load(e, &root.path().join(e.id), None, &Compute::default()).unwrap();
+    let first = recognizer.transcribe(rate, &samples, &Abort::new()).unwrap();
+    let file = root.path().join(e.id).join(e.files()[0].name);
+    let moved = file.with_extension("moved");
+    std::fs::rename(&file, &moved).expect("the loaded model's file can be moved");
+    std::fs::remove_file(&moved).expect("the loaded model's file can be deleted");
+    let again = recognizer.transcribe(rate, &samples, &Abort::new()).unwrap();
+    println!("model={id} first={first} after_delete={again}");
+    assert_eq!(first, again, "the model in memory recognises as before");
+}
+
+/// docs/dictation.md §29: transcribe.cpp 0.4.1 looks at a cancel only before a Qwen3-ASR run, so a
 /// cancelled take's piece in progress ends as it would have; a cancelled take starts no further
 /// piece, though, and the next take gets the model right after that piece, long before the rest of
 /// the cancelled take would have been recognised.

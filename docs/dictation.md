@@ -1136,7 +1136,7 @@ live_inject     ：每个 committed 句子 / tail / 补齐的 remainder：句子
 - **词表**（glossary）= 启用词条的 `term`，按词典顺序、去重，受 16.1 上限约束；误识别写法**永远不**进词表（否则把识别往错误写法上引）。
   - **云端 ASR**：非空时作为 OpenAI 兼容 multipart 的可选 `prompt` 字段发送，值为 `", "` 连接的词表；为空时不发该字段。vLLM 的 Qwen3-ASR 把 `prompt` 清洗后放进 system 轮作为上下文（vLLM `qwen3_asr.py` `get_generation_prompt`），这正是 Qwen3-ASR 的上下文偏置用法；Whisper 类端点把它当作前文提示。
   - **LLM 润色**：`voltip_refine::system_prompt(style, language, glossary)` 在词表非空时追加一段「用户词典」块（每行一个词，要求逐字保留写法、明显指向某词的同音误识别改成词典写法、不确定就保留）；为空时提示词与之前逐字相同。
-  - **本地引擎**：不下发。transcribe.cpp 0.2.3 的 Qwen3-ASR 用空 system 轮拼 chat 提示（`transcribe-cpp-sys-0.2.3/src/arch/qwen3_asr/model.cpp` `build_prompt_tokens`），不声明 `Feature::InitialPrompt`，唯一的 prompt 旋钮（Whisper 运行扩展）会被拒绝——实测见 16.8；SenseVoice / Paraformer 在 sherpa-onnx 里没有热词；流式 Zipformer 的热词实测见 16.8，结论是**不开**。本地引擎因此只有识别后的词典纠正。
+  - **本地引擎**：不下发。transcribe.cpp 0.2.3 的 Qwen3-ASR 用空 system 轮拼 chat 提示（`transcribe-cpp-sys-0.2.3/src/arch/qwen3_asr/model.cpp` `build_prompt_tokens`）；0.4.1（§29）起它声明 `Feature::Vocabulary` 与 `Feature::ContextPrompt`，词表和上下文提示都放进这个 system 轮，Voltip 升级时没有接上（不改变用户可见的行为），把个人词典交给本机模型要另行评估。两个版本都不声明 `Feature::InitialPrompt`，Whisper 运行扩展会被拒绝——实测见 16.8；SenseVoice / Paraformer 在 sherpa-onnx 里没有热词；流式 Zipformer 的热词实测见 16.8，结论是**不开**。本地引擎因此只有识别后的词典纠正。
 - 端口：`Transcriber::transcribe(wav, language, glossary: &[String])`、`Refiner::refine(text, hints: &RefineHints)`（词表在 `hints.glossary`；同一结构还带本次的语言、风格与场景上下文，§18.5）；引擎持有编译好的 `Arc<Vocabulary>` 快照（词典 / 规则每次变更由运行时替换），每次运行在开始时取用当时的快照。
 - `HistoryEntry.vocabulary?: { corrections: [{ id, count }], rules: [{ id, count }] }`：本次触发了哪些词条 / 规则（只记 id 与次数；都没触发时不上 wire，旧 `history.json` 照常读取）。
 - **失败回退**：词典与规则的执行包在 `catch_unwind` 里；任何失败（输入超限、输出膨胀、panic）记 `warn` 并使用该步之前的文本，本次运行照常完成。
@@ -1206,7 +1206,7 @@ Rust：`vocabulary` 单测（上限、校验、字面 vs 正则、大小写、�
 
 样音内容是「我想创建一个 good idea 吧……集成在 Teams 里面……」。Qwen3-ASR 0.6B（本地默认档）把 good idea 听成「谷歌IDR」，流式 Zipformer 把「集成」听成「提成」——正好是词典纠正要解决的两类问题（`heard_as = ["谷歌IDR"] → term = "good idea"`）。
 
-- **Qwen3-ASR GGUF 没有上下文入口**（`crates/voltip-asr-local/tests/real.rs@real_qwen3_gguf_takes_no_vocabulary_prompt`）：`Model::supports(Feature::InitialPrompt) = false`；带 `RunExtension::Whisper { initial_prompt }` 的 `run` 返回 `InvalidArgument("run: invalid argument (status 1)")`。
+- **Qwen3-ASR GGUF 没有上下文入口**（transcribe.cpp 0.2.3；`crates/voltip-asr-local/tests/real.rs@real_qwen3_gguf_takes_no_whisper_initial_prompt`）：`Model::supports(Feature::InitialPrompt) = false`；带 `RunExtension::Whisper { initial_prompt }` 的 `run` 返回 `InvalidArgument("run: invalid argument (status 1)")`。0.4.1 起另有词表与上下文提示（§16.3），同一测试在 0.4.1 上照样得到上面两个结果。
 - **流式 Zipformer 热词**（`crates/voltip-asr-local/tests/real.rs@real_streaming_hotwords_cost_and_effect`；2 线程，100 ms 一块，三遍共 480 块；`modeling_unit = bpe`，`bpe.vocab` 由目录里的 `bpe.model` 现场导出，中文热词按字加空格 `集 成`）：
 
 | 配置 | 加载 | 每块平均 / p95 / 最大 | 「提成 → 集成」 | 其他变化 |
