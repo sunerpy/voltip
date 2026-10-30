@@ -774,9 +774,10 @@ fn sorted(mut names: Vec<String>) -> Vec<String> {
 const PENDING_TYPESCRIPT: &[&str] = &[];
 
 /// Commands of the shared contract (schema.ts, the fixtures) that only the desktop shell registers:
-/// the local speech service, the MCP service, the recording cache, the result cards and the import
-/// of audio and video files run on a computer only (docs/dictation.md §23.6, §25, §26, §28, §31), so
-/// the phone offers no command for them and an invoke is "not found".
+/// the local speech service, the MCP service, the recording cache, the result cards, the import of
+/// audio and video files and the dictionary's learning suggestions run on a computer only
+/// (docs/dictation.md §16.10, §23.6, §25, §26, §28, §31), so the phone offers no command for them and
+/// an invoke is "not found".
 const DESKTOP_ONLY: &[&str] = &[
     "settings_set_serve",
     "serve_copy_token",
@@ -804,6 +805,13 @@ const DESKTOP_ONLY: &[&str] = &[
     "import_remove",
     "imports_state",
     "import_pick",
+    // The dictionary's learning suggestions and the rules' hints (docs/dictation.md §16.10).
+    "vocabulary_suggestions",
+    "vocabulary_suggestion_accept",
+    "vocabulary_suggestion_undo",
+    "vocabulary_suggestion_ignore",
+    "vocabulary_suggestion_unignore",
+    "rules_warnings",
 ];
 
 #[test]
@@ -824,7 +832,8 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
         "schema.ts CommandArgs keys != Rust COMMANDS (beyond the declared PENDING_TYPESCRIPT set)"
     );
     // The desktop's own queries (the result card's, docs/dictation.md §28; `imports_state` and
-    // `import_pick`, §31) are "not found" here; the desktop's test checks them.
+    // `import_pick`, §31; the learning suggestions' and `rules_warnings`, §16.10) are "not found"
+    // here; the desktop's test checks them.
     for name in typescript_literal_invokes().into_iter().filter(|n| !DESKTOP_ONLY.contains(&n.as_str())) {
         assert!(rust.contains(&name), "tauri-backend.ts invokes unknown command {name}");
     }

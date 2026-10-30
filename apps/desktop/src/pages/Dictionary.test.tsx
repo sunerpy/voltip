@@ -1,5 +1,5 @@
 import { type DictionaryEntry, type HistoryEntry, type ReplacementRule } from "@voltip/shared";
-import { MockBackend, sampleDevices } from "@voltip/shared/mock";
+import { MockBackend, type MockBackendOptions, sampleDevices } from "@voltip/shared/mock";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderApp } from "../test/render";
@@ -340,5 +340,411 @@ describe("Dictionary page · entries an AI tool wrote (docs/dictation.md §25)",
     // so the entry and its filter are waited for, not read at once.
     expect(await within(table).findByText("External tool · Codex")).toBeInTheDocument();
     expect(await screen.findByRole("radio", { name: "External tools" })).toBeInTheDocument();
+  });
+});
+
+describe("Dictionary page · learning suggestions (docs/dictation.md §16.10)", () => {
+  // The history's times are relative to the real clock: the page reads 「2 小时前」 from `useNow`.
+  const AT = Date.now();
+  const HOUR = 3_600_000;
+  const SA = "00000000-0000-4000-8000-0000000000b1";
+  const SB = "00000000-0000-4000-8000-0000000000b2";
+  const SC = "00000000-0000-4000-8000-0000000000b3";
+  const SD = "00000000-0000-4000-8000-0000000000b4";
+  const SE = "00000000-0000-4000-8000-0000000000b5";
+  const FEI = "00000000-0000-4000-8000-000000000004";
+  const BACK = "00000000-0000-4000-9000-0000000000c1";
+
+  function take(id: string, atMs: number, raw: string, text: string, refined = true): HistoryEntry {
+    return {
+      id,
+      at_ms: atMs,
+      raw_text: raw,
+      text,
+      refined,
+      asr_model: "Qwen/Qwen3-ASR-1.7B",
+      duration_ms: 1000,
+      asr_ms: 300,
+      outcome: { kind: "inserted", via: "paste" },
+      starred: false,
+      mode: "whole_take",
+      kind: "dictation",
+    };
+  }
+
+  /** Newest first: 非 → 飞 twice, 维他命 → Voltip (an entry already has that spelling), 库伯内特斯 →
+   *  Kubernetes, and a take not polished whose final text keeps 「非」. */
+  function takes(): HistoryEntry[] {
+    return [
+      take(SA, AT - 2 * HOUR, "发到非书群", "发到飞书群。"),
+      take(SB, AT - 3 * HOUR, "又是非书", "又是飞书。"),
+      take(SE, AT - 4 * HOUR, "这个非常好", "这个非常好", false),
+      take(SC, AT - 5 * HOUR, "用维他命测了一下", "用 Voltip 测了一下。"),
+      take(SD, AT - 72 * HOUR, "库伯内特斯部署", "Kubernetes 部署"),
+    ];
+  }
+
+  function learning(options: Partial<MockBackendOptions> = {}) {
+    return new MockBackend({
+      devices: sampleDevices(1_758_700_000),
+      now: () => NOW,
+      dictionary: dictionary(),
+      history: takes(),
+      ...options,
+    });
+  }
+
+  function suggestionTable(): HTMLElement {
+    return screen.getByRole("table", { name: "学习建议" });
+  }
+
+  /** The table's suggestion rows (not the detail rows under them): pair, count, last time. */
+  function shownPairs(): string[][] {
+    return within(suggestionTable())
+      .getAllByRole("row")
+      .slice(1)
+      .filter((r) => r.querySelector("[data-testid='suggestion-pair']") !== null)
+      .map((r) =>
+        within(r)
+          .getAllByRole("cell")
+          .slice(0, 3)
+          .map((c) => c.textContent ?? ""),
+      );
+  }
+
+  function rowOf(heard: string): HTMLElement {
+    const row = within(suggestionTable())
+      .getAllByRole("row")
+      .find((r) =>
+        r.querySelector("[data-testid='suggestion-pair']")?.textContent?.startsWith(`${heard}→`),
+      );
+    if (row === undefined) throw new Error(`no row for ${heard}`);
+    return row;
+  }
+
+  async function openSuggestions(user: ReturnType<typeof userEvent.setup>, name = /^学习建议/) {
+    await user.click(await screen.findByRole("tab", { name }));
+  }
+
+  it("the page has two views; 学习建议 counts what the clean-up changed and lists it, most frequent first", async () => {
+    const user = userEvent.setup();
+    renderApp({ path: "/dictionary", backend: learning() });
+    const tabs = await screen.findByRole("tablist", { name: "词典视图" });
+    const entries = within(tabs).getByRole("tab", { name: "词条" });
+    expect(entries).toHaveAttribute("aria-selected", "true");
+    const suggestions = await within(tabs).findByRole("tab", { name: "学习建议（3）" });
+    expect(suggestions).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("tabpanel", { name: "词条" })).toContainElement(
+      screen.getByRole("table", { name: "词条表" }),
+    );
+    // The arrow keys move between the views, as a tab list's do.
+    entries.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(suggestions).toHaveFocus();
+    expect(suggestions).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByRole("table", { name: "词条表" })).toBeNull();
+    const panel = screen.getByRole("tabpanel", { name: "学习建议（3）" });
+    expect(panel).toContainElement(suggestionTable());
+    expect(shownPairs()).toEqual([
+      ["非→飞", "2", "2 小时前"],
+      ["维他命→Voltip", "1", "5 小时前"],
+      ["库伯内特斯→Kubernetes", "1", "3 天前"],
+    ]);
+    expect(screen.getByTestId("suggestions-explain")).toHaveTextContent("只逐字比较，不调用 AI");
+    expect(screen.getByTestId("suggestions-explain")).toHaveTextContent(
+      "加入或忽略后可以立即撤销；离开词典页后无法撤销。",
+    );
+    expect(screen.getByTestId("suggestions-footer")).toHaveTextContent(
+      "最近 5 条记录 · 4 条经过 AI 润色",
+    );
+    await user.keyboard("{Home}");
+    expect(entries).toHaveFocus();
+    await user.keyboard("{End}");
+    expect(suggestions).toHaveFocus();
+    // 新建词条 (and Ctrl N) goes back to the entries.
+    await user.click(screen.getByRole("button", { name: /新建词条/ }));
+    expect(entries).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("add-row")).toBeInTheDocument();
+  });
+
+  it("regression: 学习建议 takes the page's whole width, and the test panel comes back with the entries", async () => {
+    // The real app at its default 1152 × 720 window (2026-10-30): beside the test panel the pair
+    // column was cut to 「维… → Vol…」 and its header ran into 次数.
+    const user = userEvent.setup();
+    renderApp({ path: "/dictionary", backend: learning() });
+    await user.type(await screen.findByLabelText("识别文本"), "又是非书");
+    await openSuggestions(user, /^学习建议（3）$/);
+    const page = screen.getByTestId("page-dictionary");
+    expect(screen.queryByLabelText("识别文本")).toBeNull();
+    expect(page.querySelector(".grid")?.className).not.toMatch(/lg:grid-cols-/);
+    expect(fixedSizeOffenders(page)).toEqual([]);
+    const header = within(suggestionTable()).getByRole("columnheader", {
+      name: "识别结果 → 润色结果",
+    });
+    expect(header.style.minWidth).toBe("160px");
+    await user.click(screen.getByRole("tab", { name: "词条" }));
+    expect(screen.getByLabelText("识别文本")).toHaveValue("又是非书");
+    expect(page.querySelector(".grid")?.className).toMatch(
+      /lg:grid-cols-\[minmax\(0,1fr\)_minmax\(280px,360px\)\]/,
+    );
+  });
+
+  it("加入词典 saves the pair, the row stays in place with 撤销, and 撤销 takes it back even after switching views", async () => {
+    const user = userEvent.setup();
+    const backend = learning();
+    renderApp({ path: "/dictionary", backend });
+    await openSuggestions(user, /^学习建议（3）$/);
+    // Into the entry with that spelling.
+    await user.click(screen.getByRole("button", { name: "加入词典：维他命 → Voltip" }));
+    await waitFor(() => {
+      expect(backend.peek().dictionary[0]?.heard_as).toEqual(["沃提普", "维他命"]);
+    });
+    expect(within(rowOf("维他命")).getByText("已加入词典")).toBeInTheDocument();
+    expect(await screen.findByRole("tab", { name: "学习建议（2）" })).toBeInTheDocument();
+    // A new entry, from the take the pair was first seen in.
+    await user.click(screen.getByRole("button", { name: "加入词典：库伯内特斯 → Kubernetes" }));
+    await waitFor(() => {
+      expect(backend.peek().dictionary.at(-1)).toMatchObject({
+        term: "Kubernetes",
+        heard_as: ["库伯内特斯"],
+        enabled: true,
+        source: { kind: "history", history_id: SD },
+      });
+    });
+    expect(await screen.findByRole("tab", { name: "学习建议（1）" })).toBeInTheDocument();
+    // The rows stay where they were while the page is open.
+    expect(shownPairs().map((r) => r[0])).toEqual([
+      "非→飞",
+      "维他命→Voltip",
+      "库伯内特斯→Kubernetes",
+    ]);
+    // 撤销 still works after a look at the entries.
+    await user.click(screen.getByRole("tab", { name: "词条" }));
+    expect(
+      within(screen.getByRole("table", { name: "词条表" })).getByText("Kubernetes"),
+    ).toBeInTheDocument();
+    await openSuggestions(user, /^学习建议（1）$/);
+    await user.click(screen.getByRole("button", { name: "撤销：维他命 → Voltip" }));
+    await waitFor(() => {
+      expect(backend.peek().dictionary[0]?.heard_as).toEqual(["沃提普"]);
+    });
+    expect(
+      await within(rowOf("维他命")).findByRole("button", { name: "加入词典：维他命 → Voltip" }),
+    ).toBeEnabled();
+    expect(await screen.findByRole("tab", { name: "学习建议（2）" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "撤销：库伯内特斯 → Kubernetes" }));
+    await waitFor(() => {
+      expect(backend.peek().dictionary.map((e) => e.term)).toEqual([
+        "Voltip",
+        "good idea",
+        "fetchUser",
+      ]);
+    });
+    expect(await screen.findByRole("tab", { name: "学习建议（3）" })).toBeInTheDocument();
+  });
+
+  it("撤销 that comes too late says why and leaves the entry", async () => {
+    const user = userEvent.setup();
+    const backend = learning();
+    vi.spyOn(backend, "vocabularySuggestionUndo").mockResolvedValueOnce({ kind: "changed" });
+    renderApp({ path: "/dictionary", backend });
+    await openSuggestions(user, /^学习建议（3）$/);
+    await user.click(screen.getByRole("button", { name: "加入词典：维他命 → Voltip" }));
+    await user.click(await screen.findByRole("button", { name: "撤销：维他命 → Voltip" }));
+    expect(await screen.findByText("无法撤销：词条已被修改。")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "撤销：维他命 → Voltip" })).toBeNull();
+    expect(within(rowOf("维他命")).getByText("已加入词典")).toBeInTheDocument();
+    expect(backend.peek().dictionary[0]?.heard_as).toEqual(["沃提普", "维他命"]);
+  });
+
+  it("忽略 leaves a pair out for good, and 撤销 brings it back", async () => {
+    const user = userEvent.setup();
+    const backend = learning();
+    renderApp({ path: "/dictionary", backend });
+    await openSuggestions(user, /^学习建议（3）$/);
+    await user.click(screen.getByRole("button", { name: "忽略：非 → 飞" }));
+    await waitFor(() => {
+      expect(backend.peek().vocabulary_ignored).toMatchObject([{ heard: "非", polished: "飞" }]);
+    });
+    expect(within(rowOf("非")).getByText("已忽略")).toBeInTheDocument();
+    expect(await screen.findByRole("tab", { name: "学习建议（2）" })).toBeInTheDocument();
+    expect(shownPairs().map((r) => r[0])).toEqual([
+      "非→飞",
+      "维他命→Voltip",
+      "库伯内特斯→Kubernetes",
+    ]);
+    await user.click(screen.getByRole("button", { name: "撤销：非 → 飞" }));
+    await waitFor(() => {
+      expect(backend.peek().vocabulary_ignored).toEqual([]);
+    });
+    expect(await within(rowOf("非")).findByRole("button", { name: "忽略：非 → 飞" })).toBeEnabled();
+    expect(await screen.findByRole("tab", { name: "学习建议（3）" })).toBeInTheDocument();
+  });
+
+  it("a row's details show the takes it came from and what the entry would change before it is saved", async () => {
+    const user = userEvent.setup();
+    const backend = learning();
+    const backtest = vi.spyOn(backend, "vocabularyBacktest");
+    renderApp({ path: "/dictionary", backend });
+    await openSuggestions(user, /^学习建议（3）$/);
+    const details = screen.getByRole("button", { name: "详情：非 → 飞" });
+    expect(details).toHaveAttribute("aria-expanded", "false");
+    await user.click(details);
+    expect(details).toHaveAttribute("aria-expanded", "true");
+    const box = screen.getByTestId("suggestion-details");
+    expect(
+      within(within(box).getByRole("list", { name: "识别原文中的例子" }))
+        .getAllByRole("listitem")
+        .map((li) => li.textContent),
+    ).toEqual(["发到非书群", "又是非书"]);
+    expect(box).toHaveTextContent("将新建词条「飞」，曾听成「非」。");
+    expect(box).toHaveTextContent("「非」只有 1 个字，容易误改其他词语。");
+    // The backtest the history page's card runs, over the recent takes, none left out.
+    expect(
+      await within(box).findByText("加入后，最近 5 条记录中有 3 条会被改动。"),
+    ).toBeInTheDocument();
+    expect(
+      within(box).getByText("其中 1 条的最终文本仍为「非」，可能是正确用法。"),
+    ).toBeInTheDocument();
+    expect(backtest).toHaveBeenLastCalledWith({
+      draft: {
+        kind: "dictionary",
+        id: null,
+        entry: { term: "飞", heard_as: ["非"], enabled: true },
+      },
+    });
+    // One row's details at a time; this one merges into the entry with that spelling.
+    await user.click(screen.getByRole("button", { name: "详情：维他命 → Voltip" }));
+    expect(details).toHaveAttribute("aria-expanded", "false");
+    const other = screen.getByTestId("suggestion-details");
+    expect(other).toHaveTextContent("将把「维他命」加入词条「Voltip」的曾听成写法（现有 1 个）。");
+    expect(
+      await within(other).findByText("加入后，最近 5 条记录中有 1 条会被改动。"),
+    ).toBeInTheDocument();
+    expect(other).not.toHaveTextContent("容易误改");
+    await user.click(screen.getByRole("button", { name: "详情：维他命 → Voltip" }));
+    expect(screen.queryByTestId("suggestion-details")).toBeNull();
+  });
+
+  it("a pair the dictionary or a rule refuses says why and leads to what is in the way", async () => {
+    const user = userEvent.setup();
+    const back: ReplacementRule = {
+      id: BACK,
+      name: "改回去",
+      kind: "literal",
+      pattern: "Kubernetes",
+      replacement: "库伯内特斯",
+      case_sensitive: true,
+      enabled: true,
+      created_at_ms: NOW,
+      updated_at_ms: NOW,
+      source: { kind: "manual" },
+      pending: false,
+    };
+    const backend = learning({
+      dictionary: [...dictionary(), entry(FEI, "飞", [], { enabled: false })],
+      rules: [back],
+    });
+    renderApp({ path: "/dictionary", backend });
+    await openSuggestions(user, /^学习建议（3）$/);
+    await user.click(screen.getByRole("button", { name: "加入词典：非 → 飞" }));
+    expect(await screen.findByText("词条「飞」已停用，启用后才能加入。")).toBeInTheDocument();
+    expect(backend.peek().dictionary.find((e) => e.id === FEI)?.heard_as).toEqual([]);
+    // The row keeps its buttons: 忽略 is still a way out.
+    expect(within(rowOf("非")).getByRole("button", { name: "忽略：非 → 飞" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "查看词条" }));
+    expect(screen.getByRole("tab", { name: "词条" })).toHaveAttribute("aria-selected", "true");
+    const table = screen.getByRole("table", { name: "词条表" });
+    const selected = within(table)
+      .getAllByRole("row")
+      .find((r) => r.getAttribute("aria-selected") === "true");
+    expect(selected).toHaveTextContent("飞");
+    await openSuggestions(user, /^学习建议（3）$/);
+    await user.click(screen.getByRole("button", { name: "加入词典：库伯内特斯 → Kubernetes" }));
+    expect(
+      await screen.findByText(
+        "替换规则「改回去」会把「Kubernetes」改成「库伯内特斯」，加入词典后也不会生效。",
+      ),
+    ).toBeInTheDocument();
+    expect(backend.peek().dictionary.map((e) => e.term)).not.toContain("Kubernetes");
+    await user.click(screen.getByRole("button", { name: "打开替换规则" }));
+    expect(await screen.findByTestId("page-rules")).toBeInTheDocument();
+  });
+
+  it("regression: a failed answer, a failed action or a failed backtest is reported and not swallowed", async () => {
+    const user = userEvent.setup();
+    const backend = learning();
+    const answers = vi
+      .spyOn(backend, "vocabularySuggestions")
+      .mockRejectedValue(new Error("core down"));
+    vi.spyOn(backend, "vocabularySuggestionAccept").mockRejectedValueOnce(new Error("not now"));
+    vi.spyOn(backend, "vocabularyBacktest").mockRejectedValue(new Error("busy"));
+    renderApp({ path: "/dictionary", backend });
+    await openSuggestions(user, /^学习建议$/);
+    expect(await screen.findByText("无法读取学习建议：core down")).toBeInTheDocument();
+    // The next change asks again.
+    answers.mockRestore();
+    await act(async () => {
+      await backend.invoke("vocabulary_suggestion_ignore", { heard: "无", polished: "关" });
+    });
+    await user.click(await screen.findByRole("button", { name: "加入词典：非 → 飞" }));
+    expect(await screen.findByText("操作失败：not now")).toBeInTheDocument();
+    expect(within(rowOf("非")).getByRole("button", { name: "加入词典：非 → 飞" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "详情：非 → 飞" }));
+    expect(await screen.findByText("无法计算影响范围：busy")).toBeInTheDocument();
+  });
+
+  it("with history recording off, 学习建议 says it needs the history and leads to its setting", async () => {
+    const user = userEvent.setup();
+    renderApp({
+      path: "/dictionary",
+      backend: learning({ settings: { history: { enabled: false, keep: 2000 } } }),
+    });
+    await openSuggestions(user, /^学习建议$/);
+    expect(screen.getByText("需要开启历史记录")).toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: "学习建议" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "打开隐私设置" }));
+    expect(await screen.findByTestId("settings-content")).toHaveAttribute(
+      "data-section",
+      "privacy",
+    );
+  });
+
+  it("without polished takes, 学习建议 says the clean-up is what it learns from", async () => {
+    const user = userEvent.setup();
+    renderApp({
+      path: "/dictionary",
+      backend: learning({ history: [take(SA, AT - HOUR, "发到非书群", "发到非书群", false)] }),
+    });
+    await openSuggestions(user, /^学习建议$/);
+    expect(await screen.findByText("最近的记录里没有经过 AI 润色的听写")).toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: "学习建议" })).toBeNull();
+  });
+
+  it("when the dictionary already corrects everything polished, 学习建议 says there is nothing new", async () => {
+    const user = userEvent.setup();
+    renderApp({
+      path: "/dictionary",
+      backend: learning({
+        dictionary: [entry(VOLTIP, "Voltip", ["沃提普", "维他命"])],
+        history: [take(SC, AT - HOUR, "用维他命测了一下", "用 Voltip 测了一下。")],
+      }),
+    });
+    await openSuggestions(user, /^学习建议$/);
+    expect(await screen.findByText("暂无学习建议")).toBeInTheDocument();
+    expect(
+      screen.getByText("最近 1 条经过 AI 润色的记录里，没有新的写法可以加入词典。"),
+    ).toBeInTheDocument();
+  });
+
+  it("the English view reads the same", async () => {
+    const user = userEvent.setup();
+    renderApp({ path: "/dictionary", backend: learning(), systemLanguage: "en-US" });
+    await user.click(await screen.findByRole("tab", { name: "Suggestions (3)" }));
+    expect(screen.getByRole("table", { name: "Suggestions" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add to dictionary: 非 → 飞" })).toBeEnabled();
+    expect(screen.getByTestId("suggestions-footer")).toHaveTextContent(
+      "Last 5 entries · 4 polished",
+    );
   });
 });

@@ -1561,6 +1561,139 @@ export const vocabularyBacktestSchema = z.object({
 });
 export type VocabularyBacktest = z.infer<typeof vocabularyBacktestSchema>;
 
+// ---------------- learning suggestions (docs/dictation.md §16.10) ----------------
+
+/** `voltip_core::vocabulary::MAX_SUGGESTIONS`: the most suggestions one call returns. */
+export const MAX_SUGGESTIONS = 200;
+/** `MAX_IGNORED`: the most pairs the ignored list keeps; past it the oldest is dropped. */
+export const MAX_IGNORED = 2000;
+
+/** One pair the learning suggestions leave out because the user chose 忽略 (`IgnoredPair`,
+ *  `UiState.vocabulary_ignored`, oldest first). */
+export const ignoredPairSchema = z.object({
+  heard: z.string(),
+  polished: z.string(),
+  at_ms: z.number().nonnegative(),
+});
+export type IgnoredPair = z.infer<typeof ignoredPairSchema>;
+
+/** A snippet of a suggestion: the recognised text around what was heard (`…` marks a cut). */
+export const pairExampleSchema = z.object({
+  history_id: z.string(),
+  snippet: z.string(),
+});
+export type PairExample = z.infer<typeof pairExampleSchema>;
+
+/** One suggestion (`Suggestion`): what the recogniser wrote, what the polished text has instead,
+ *  how often, the newest take, and up to three snippets, newest first. */
+export const suggestionSchema = z.object({
+  heard: z.string(),
+  polished: z.string(),
+  count: z.number().int().nonnegative(),
+  last_at_ms: z.number().nonnegative(),
+  examples: z.array(pairExampleSchema),
+});
+export type Suggestion = z.infer<typeof suggestionSchema>;
+
+/** What `vocabulary_suggestions` answers: `history_off` while history recording is off; else the
+ *  takes looked at, the polished ones among them, those too long to compare, the suggestions in
+ *  all and the first of them, most frequent first. */
+export const suggestionsAnswerSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("history_off") }),
+  z.object({
+    status: z.literal("ready"),
+    scanned: z.number().int().nonnegative(),
+    refined: z.number().int().nonnegative(),
+    skipped: z.number().int().nonnegative(),
+    total: z.number().int().nonnegative(),
+    pairs: z.array(suggestionSchema),
+  }),
+]);
+export type SuggestionsAnswer = z.infer<typeof suggestionsAnswerSchema>;
+
+/** How an entry stands in the way of 加入词典 (`EntryClash`): what was heard is its right
+ *  spelling, or one of its mis-hearings already; the right spelling is one of its mis-hearings;
+ *  the entry with that spelling is off, or lists `MAX_HEARD_AS` mis-hearings already. */
+export const ENTRY_CLASHES = [
+  "heard_is_term",
+  "heard_taken",
+  "term_taken",
+  "disabled",
+  "too_many",
+] as const;
+export const entryClashSchema = z.enum(ENTRY_CLASHES);
+export type EntryClash = z.infer<typeof entryClashSchema>;
+
+/** Why 加入词典 changed nothing (`Refusal`): a rule that runs rewrites the right spelling (into
+ *  `becomes`), an entry is in the way, the dictionary is full, or the core's own text. */
+export const suggestionRefusalSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("rule"), rule_id: z.string(), name: z.string(), becomes: z.string() }),
+  z.object({
+    kind: z.literal("entry"),
+    entry_id: z.string(),
+    term: z.string(),
+    clash: entryClashSchema,
+  }),
+  z.object({ kind: z.literal("full"), max: z.number().int().nonnegative() }),
+  z.object({ kind: z.literal("failed"), message: z.string() }),
+]);
+export type SuggestionRefusal = z.infer<typeof suggestionRefusalSchema>;
+
+/** What 撤销 sends back (`SuggestionUndo`): the accept, the entry it created or added to, and
+ *  that entry's mis-hearings before. The core keeps it in memory only. */
+export const suggestionUndoSchema = z.object({
+  id: z.string(),
+  entry_id: z.string(),
+  term: z.string(),
+  created: z.boolean(),
+  previous_heard_as: z.array(z.string()),
+});
+export type SuggestionUndo = z.infer<typeof suggestionUndoSchema>;
+
+/** What `vocabulary_suggestion_accept` answers. */
+export const acceptOutcomeSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("accepted"), undo: suggestionUndoSchema }),
+  z.object({ kind: z.literal("refused"), refusal: suggestionRefusalSchema }),
+]);
+export type AcceptOutcome = z.infer<typeof acceptOutcomeSchema>;
+
+/** What `vocabulary_suggestion_undo` answers: done; unknown to the core (undone already, or the
+ *  app restarted); the entry deleted or changed since; or the core's text. */
+export const undoOutcomeSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("undone") }),
+  z.object({ kind: z.literal("expired") }),
+  z.object({ kind: z.literal("gone") }),
+  z.object({ kind: z.literal("changed") }),
+  z.object({ kind: z.literal("failed"), message: z.string() }),
+]);
+export type UndoOutcome = z.infer<typeof undoOutcomeSchema>;
+
+/** A hint the rules page shows beside a rule (`RuleWarning`, `rules_warnings`): another rule finds
+ *  the same, another turns its replacement back, or it turns an entry's right spelling into one
+ *  of its mis-hearings. Only rules that run and entries that are on count. */
+export const ruleWarningSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("duplicate"),
+    rule_id: z.string(),
+    other_id: z.string(),
+    other_name: z.string(),
+  }),
+  z.object({
+    kind: z.literal("inverse"),
+    rule_id: z.string(),
+    other_id: z.string(),
+    other_name: z.string(),
+  }),
+  z.object({
+    kind: z.literal("undoes_entry"),
+    rule_id: z.string(),
+    entry_id: z.string(),
+    term: z.string(),
+    heard: z.string(),
+  }),
+]);
+export type RuleWarning = z.infer<typeof ruleWarningSchema>;
+
 /** What a voice edit worked on (`voltip_core::EditRecord`, docs/dictation.md §19.5): the
  *  instruction as sent to the LLM (after the dictionary corrections) and the selection it rewrote.
  *  The result is the entry's `text`, the instruction as recognised its `raw_text`. */
@@ -2865,6 +2998,9 @@ export const uiStateSchema = z.object({
   /** The personal dictionary and the replacement rules (§16), in order; `[]` on the phone. */
   dictionary: z.array(dictionaryEntrySchema).default(() => []),
   rules: z.array(replacementRuleSchema).default(() => []),
+  /** The pairs the learning suggestions leave out (§16.10); `[]` until one is ignored, and on the
+   *  phone. */
+  vocabulary_ignored: z.array(ignoredPairSchema).default(() => []),
   /** The scenes (§18), in matching order; `[]` on the phone. */
   scenes: z.array(sceneSchema).default(() => []),
   /** The custom presets (§21), in the order they were made; `[]` on the phone. The built-in
@@ -2943,6 +3079,8 @@ export const uiEventSchema = z.discriminatedUnion("type", [
     entries: z.array(dictionaryEntrySchema),
   }),
   z.object({ type: z.literal("rules"), rules: z.array(replacementRuleSchema) }),
+  /** The pairs the learning suggestions leave out, whole, after every change (§16.10). */
+  z.object({ type: z.literal("vocabulary_ignored"), pairs: z.array(ignoredPairSchema) }),
   /** The whole scene list after every change (§18). */
   z.object({ type: z.literal("scenes"), scenes: z.array(sceneSchema) }),
   /** The custom presets, whole (§21). */
@@ -3082,6 +3220,14 @@ export type VocabularyBacktestArgs = {
   draft: BacktestDraft;
   historyId?: string | null;
   limit?: number | null;
+};
+
+/** `vocabulary_suggestion_accept` arguments (docs/dictation.md §16.10): the pair, and the history
+ *  entry of its first example (the new entry's source). */
+export type SuggestionAcceptArgs = {
+  heard: string;
+  polished: string;
+  historyId: string;
 };
 
 /** `scenes_update` arguments (docs/dictation.md §18.6). */
@@ -3325,6 +3471,17 @@ export interface CommandArgs {
   /** Query (§16.9): what an unsaved entry or rule would change in the recent takes
    *  (`Backend.vocabularyBacktest`, the history page's quick-fix card). */
   vocabulary_backtest: VocabularyBacktestArgs;
+  /** Query (§16.10): the dictionary's learning suggestions (`Backend.vocabularySuggestions`). */
+  vocabulary_suggestions: { limit?: number | null };
+  /** Query: 加入词典 on a suggestion; answers with the undo or why nothing changed. */
+  vocabulary_suggestion_accept: SuggestionAcceptArgs;
+  /** Query: 撤销 of an accepted suggestion (the undo's `id`). */
+  vocabulary_suggestion_undo: { id: string };
+  /** 忽略 on a suggestion / its 撤销; the core re-emits `vocabulary_ignored`. */
+  vocabulary_suggestion_ignore: { heard: string; polished: string };
+  vocabulary_suggestion_unignore: { heard: string; polished: string };
+  /** Query (§16.10): the rules page's hints (`Backend.rulesWarnings`). */
+  rules_warnings: undefined;
   /** Scenes (docs/dictation.md §18.6): append, replace, delete, reorder (every id in the new
    *  order). A draft wrong on its own rejects the call with the core's message; a clash with the
    *  list (duplicate name, cap, unknown id) comes back as an `error` event. */
@@ -3443,6 +3600,10 @@ export type QueryCommand =
   | "rules_export"
   | "vocabulary_preview"
   | "vocabulary_backtest"
+  | "vocabulary_suggestions"
+  | "vocabulary_suggestion_accept"
+  | "vocabulary_suggestion_undo"
+  | "rules_warnings"
   | "recent_apps"
   | "history_query"
   | "history_entry"
@@ -3490,6 +3651,10 @@ export const QUERY_COMMANDS: readonly QueryCommand[] = [
   "rules_export",
   "vocabulary_preview",
   "vocabulary_backtest",
+  "vocabulary_suggestions",
+  "vocabulary_suggestion_accept",
+  "vocabulary_suggestion_undo",
+  "rules_warnings",
   "recent_apps",
   "history_query",
   "history_entry",
@@ -3638,6 +3803,8 @@ export function applyEvent(state: UiState, event: UiEvent): UiState {
       return { ...state, dictionary: event.entries };
     case "rules":
       return { ...state, rules: event.rules };
+    case "vocabulary_ignored":
+      return { ...state, vocabulary_ignored: event.pairs };
     case "scenes":
       return { ...state, scenes: event.scenes };
     case "presets":

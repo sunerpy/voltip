@@ -1280,6 +1280,18 @@
       "pending": true
     }
   ],
+  "vocabulary_ignored": [
+    {
+      "heard": "集成",
+      "polished": "继承",
+      "at_ms": 1758614200000
+    },
+    {
+      "heard": "提成",
+      "polished": "集成",
+      "at_ms": 1758700600000
+    }
+  ],
   "scenes": [
     {
       "id": "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f",

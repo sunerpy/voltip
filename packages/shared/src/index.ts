@@ -10,6 +10,7 @@ export * from "./fallback";
 export * from "./preset-drafts";
 export * from "./vocabulary-drafts";
 export * from "./quick-fix";
+export * from "./suggestions";
 export * from "./scene-drafts";
 export * from "./history-stats";
 export * from "./audio-cache";

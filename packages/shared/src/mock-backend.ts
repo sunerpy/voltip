@@ -66,8 +66,15 @@ import {
   type VocabularyBacktest,
   type VocabularyBacktestArgs,
   type VocabularyPreview,
+  type AcceptOutcome,
+  type RuleWarning,
+  type SuggestionAcceptArgs,
+  type SuggestionsAnswer,
+  type UndoOutcome,
   BACKTEST_LIMIT,
   MAX_BACKTEST_LIMIT,
+  MAX_IGNORED,
+  MAX_SUGGESTIONS,
   type EngineSettings,
   type EngineStatus,
   type HistoryEntry,
@@ -238,7 +245,9 @@ import {
   previewVocabulary,
   validateDictionaryDraft,
   validateRuleDraft,
+  validateSuggestionPair,
 } from "./vocabulary";
+import { acceptSuggestion, ruleWarnings, suggestVocabulary } from "./suggestions";
 
 export interface MockPeer {
   /** Milliseconds after `waiting_for_peer` until the simulated phone joins. */
@@ -1202,6 +1211,11 @@ export class MockBackend implements Backend {
   /** The whole history, newest first: what the core keeps in `history.sqlite3`. The state holds
    *  its newest `HISTORY_RECENT` and the total, as `UiState` does (docs/dictation.md §4.4). */
   private history: HistoryEntry[] = [];
+  /** The accepted suggestions 撤销 can still take back (docs/dictation.md §16.10), oldest first. */
+  private readonly suggestionUndos = new Map<
+    string,
+    { before?: DictionaryEntry; after: DictionaryEntry }
+  >();
 
   constructor(options: MockBackendOptions = {}) {
     this.ttlSecs = options.ttlSecs ?? 120;
@@ -1310,6 +1324,7 @@ export class MockBackend implements Backend {
             },
       dictionary: [...(options.dictionary ?? [])],
       rules: [...(options.rules ?? [])],
+      vocabulary_ignored: [],
       // The desktop's list always holds the built-in scenes, appended off after the user's (§18.10).
       scenes: [...(options.scenes ?? [])],
       presets: [...(options.presets ?? [])],
@@ -1415,6 +1430,75 @@ export class MockBackend implements Backend {
     const exclude = args.historyId == null ? undefined : uuidArg(args.historyId);
     const takes = recentTextsOf(this.history, limit);
     return backtestVocabulary(this.state.dictionary, takes, args.draft, exclude);
+  }
+
+  /** `vocabulary_suggestions` (docs/dictation.md §16.10) with the core's semantics over the newest
+   *  recognised takes in memory; `history_off` while history recording is off. */
+  async vocabularySuggestions(limit?: number): Promise<SuggestionsAnswer> {
+    await Promise.resolve();
+    const max = limit ?? MAX_SUGGESTIONS;
+    if (!Number.isInteger(max) || max < 1 || max > MAX_SUGGESTIONS) {
+      throw new Error(`vocabulary_suggestions: limit 1–${MAX_SUGGESTIONS}`);
+    }
+    if (!this.state.settings.history.enabled) return { status: "history_off" };
+    const takes = recentTextsOf(this.history, MAX_BACKTEST_LIMIT);
+    const { dictionary, rules, vocabulary_ignored: ignored } = this.state;
+    return suggestVocabulary(dictionary, rules, takes, ignored, max);
+  }
+
+  /** 加入词典 on a suggestion, as the core checks and saves it; the undo is kept in memory. */
+  async vocabularySuggestionAccept(args: SuggestionAcceptArgs): Promise<AcceptOutcome> {
+    await Promise.resolve();
+    const [heard, polished] = validateSuggestionPair(args.heard, args.polished);
+    const historyId = uuidArg(args.historyId);
+    const { dictionary, rules } = this.state;
+    const now = this.now();
+    const result = acceptSuggestion(dictionary, rules, heard, polished, historyId, now, () =>
+      this.uuid(),
+    );
+    if ("kind" in result) return { kind: "refused", refusal: result };
+    checkDictionary(result.dictionary);
+    this.emit({ type: "dictionary", entries: result.dictionary });
+    const id = this.uuid();
+    this.suggestionUndos.set(id, { before: result.before, after: result.after });
+    for (const old of this.suggestionUndos.keys()) {
+      if (this.suggestionUndos.size <= MAX_SUGGESTION_UNDOS) break;
+      this.suggestionUndos.delete(old);
+    }
+    return {
+      kind: "accepted",
+      undo: {
+        id,
+        entry_id: result.after.id,
+        term: result.after.term,
+        created: result.before === undefined,
+        previous_heard_as: result.before?.heard_as ?? [],
+      },
+    };
+  }
+
+  /** 撤销 of an accepted suggestion: once, while the entry is as the accept left it. */
+  async vocabularySuggestionUndo(id: string): Promise<UndoOutcome> {
+    await Promise.resolve();
+    const record = this.suggestionUndos.get(uuidArg(id));
+    if (record === undefined) return { kind: "expired" };
+    this.suggestionUndos.delete(id);
+    const current = this.state.dictionary.find((e) => e.id === record.after.id);
+    if (current === undefined) return { kind: "gone" };
+    if (JSON.stringify(current) !== JSON.stringify(record.after)) return { kind: "changed" };
+    const { before } = record;
+    const entries =
+      before === undefined
+        ? this.state.dictionary.filter((e) => e.id !== record.after.id)
+        : this.state.dictionary.map((e) => (e.id === before.id ? before : e));
+    this.emit({ type: "dictionary", entries });
+    return { kind: "undone" };
+  }
+
+  /** `rules_warnings`: the rules page's hints with the core's semantics. */
+  async rulesWarnings(): Promise<RuleWarning[]> {
+    await Promise.resolve();
+    return ruleWarnings(this.state.rules, this.state.dictionary);
   }
 
   /** `rules_export`: the rules as the core's TOML text. */
@@ -2554,6 +2638,19 @@ export class MockBackend implements Backend {
         return;
       }
       this.commitDictionary(this.state.dictionary.filter((e) => e.id !== id));
+    },
+    vocabulary_suggestion_ignore: (args) => {
+      const { heard, polished } = required(args);
+      const [h, p] = validateSuggestionPair(heard, polished);
+      const others = this.state.vocabulary_ignored.filter((i) => i.heard !== h || i.polished !== p);
+      const pairs = [...others, { heard: h, polished: p, at_ms: this.now() }].slice(-MAX_IGNORED);
+      this.emit({ type: "vocabulary_ignored", pairs });
+    },
+    vocabulary_suggestion_unignore: (args) => {
+      const { heard, polished } = required(args);
+      const [h, p] = validateSuggestionPair(heard, polished);
+      const pairs = this.state.vocabulary_ignored.filter((i) => i.heard !== h || i.polished !== p);
+      this.emit({ type: "vocabulary_ignored", pairs });
     },
     dictionary_reorder: (args) => {
       const { ids } = required(args);
@@ -5803,6 +5900,9 @@ function required<T>(args: T | undefined): T {
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** `voltip_core::vocabulary::MAX_UNDOS`: the accepted suggestions 撤销 can still take back. */
+const MAX_SUGGESTION_UNDOS = 100;
 
 /** An id argument as the bridge parses it: a UUID, or the command is refused. */
 function uuidArg(id: string): string {

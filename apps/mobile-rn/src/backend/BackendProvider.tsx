@@ -101,6 +101,7 @@ export const EMPTY: UiState = {
   models_location: emptyModelsLocation(),
   dictionary: [],
   rules: [],
+  vocabulary_ignored: [],
   scenes: [],
   presets: [],
   hardware: { cpu_threads: 0, gpus: [] },

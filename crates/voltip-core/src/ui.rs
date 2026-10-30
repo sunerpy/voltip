@@ -91,6 +91,12 @@ pub enum UiEvent {
         /// Rules in order.
         rules: Vec<ReplacementRule>,
     },
+    /// The pairs the dictionary's learning suggestions leave out (docs/dictation.md §16.10), full
+    /// replacement, oldest first.
+    VocabularyIgnored {
+        /// The ignored pairs.
+        pairs: Vec<crate::vocabulary::IgnoredPair>,
+    },
     /// Scenes, full replacement, in matching order (docs/dictation.md §18).
     Scenes {
         /// Scenes in order.
@@ -521,6 +527,10 @@ pub struct UiState {
     /// Replacement rules in execution order (docs/dictation.md §16).
     #[serde(default)]
     pub rules: Vec<ReplacementRule>,
+    /// The pairs the dictionary's learning suggestions leave out (docs/dictation.md §16.10); empty
+    /// (and left off the wire) until the user ignores one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vocabulary_ignored: Vec<crate::vocabulary::IgnoredPair>,
     /// Scenes in matching order (docs/dictation.md §18).
     #[serde(default)]
     pub scenes: Vec<Scene>,
@@ -607,6 +617,7 @@ impl Default for UiState {
             models_location: crate::models_location::ModelsLocationView::default(),
             dictionary: Vec::new(),
             rules: Vec::new(),
+            vocabulary_ignored: Vec::new(),
             scenes: Vec::new(),
             presets: Vec::new(),
             phone_take: None,
@@ -711,6 +722,10 @@ impl UiState {
             CoreEvent::Rules(rules) => {
                 self.rules = rules.clone();
                 UiEvent::Rules { rules }
+            }
+            CoreEvent::VocabularyIgnored(pairs) => {
+                self.vocabulary_ignored = pairs.clone();
+                UiEvent::VocabularyIgnored { pairs }
             }
             CoreEvent::Scenes(scenes) => {
                 self.scenes = scenes.clone();

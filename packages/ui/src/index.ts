@@ -16,6 +16,7 @@ export * from "./components/ConnectivityCheck";
 export * from "./components/IconButton";
 export * from "./components/Toggle";
 export * from "./components/Segmented";
+export * from "./components/Tabs";
 export * from "./components/Input";
 export * from "./components/Select";
 export * from "./components/Menu";

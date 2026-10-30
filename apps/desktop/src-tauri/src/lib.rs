@@ -56,7 +56,7 @@ pub const DEV_DATA_DIR_ENV: &str = "VOLTIP_DEV_DATA_DIR";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 146] = [
+pub const COMMANDS: [&str; 152] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -158,8 +158,14 @@ pub const COMMANDS: [&str; 146] = [
     "rules_reorder",
     "rules_import",
     "rules_export",
+    "rules_warnings",
     "vocabulary_preview",
     "vocabulary_backtest",
+    "vocabulary_suggestions",
+    "vocabulary_suggestion_accept",
+    "vocabulary_suggestion_undo",
+    "vocabulary_suggestion_ignore",
+    "vocabulary_suggestion_unignore",
     "scenes_add",
     "scenes_update",
     "scenes_remove",
@@ -1009,6 +1015,55 @@ async fn vocabulary_backtest(
     history_read(&bridge, move |b| b.vocabulary_backtest(&draft, history_id, limit)).await
 }
 
+/// Query (docs/dictation.md §16.10): the dictionary's learning suggestions over the newest
+/// recognised takes, at most `limit` (200 unless given), or `history_off` while history recording
+/// is off. Reads the database and compares the texts, so it runs off the main thread.
+#[tauri::command]
+async fn vocabulary_suggestions(bridge: tauri::State<'_, Bridge>, limit: Option<usize>) -> Result<voltip_core::vocabulary::SuggestionsAnswer, String> {
+    history_read(&bridge, move |b| b.vocabulary_suggestions(limit)).await
+}
+
+/// How long 加入词典 and 撤销 on a learning suggestion wait for the core's answer.
+const SUGGESTION_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// 加入词典 on a learning suggestion (docs/dictation.md §16.10): a new entry from history entry
+/// `history_id`, or `heard` added to the entry with that spelling. Answers with what 撤销 needs, or
+/// why nothing changed; a pair that is not one is refused here.
+#[tauri::command]
+async fn vocabulary_suggestion_accept(
+    bridge: tauri::State<'_, Bridge>,
+    heard: String,
+    polished: String,
+    history_id: uuid::Uuid,
+) -> Result<voltip_core::vocabulary::AcceptOutcome, String> {
+    Ok(bridge.vocabulary_suggestion_accept(heard, polished, history_id, SUGGESTION_WAIT).await?)
+}
+
+/// 撤销 of an accepted suggestion, while the entry is still as the accept left it.
+#[tauri::command]
+async fn vocabulary_suggestion_undo(bridge: tauri::State<'_, Bridge>, id: uuid::Uuid) -> Result<voltip_core::vocabulary::UndoOutcome, String> {
+    Ok(bridge.vocabulary_suggestion_undo(id, SUGGESTION_WAIT).await?)
+}
+
+/// 忽略 on a learning suggestion: the pair is left out from now on.
+#[tauri::command]
+fn vocabulary_suggestion_ignore(bridge: tauri::State<'_, Bridge>, heard: String, polished: String) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::VocabularySuggestionIgnore { heard, polished })?)
+}
+
+/// 撤销 of an 忽略: the pair is suggested again.
+#[tauri::command]
+fn vocabulary_suggestion_unignore(bridge: tauri::State<'_, Bridge>, heard: String, polished: String) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::VocabularySuggestionUnignore { heard, polished })?)
+}
+
+/// Query (docs/dictation.md §16.10): the rules page's hints — duplicate rules, rules that turn each
+/// other back, and rules that undo a dictionary entry.
+#[tauri::command]
+fn rules_warnings(bridge: tauri::State<'_, Bridge>) -> Vec<voltip_core::vocabulary::RuleWarning> {
+    bridge.rules_warnings()
+}
+
 /// Append a scene (docs/dictation.md §18.6). A draft that is wrong on its own (no app, a bad
 /// language code, over a limit) is refused here; a clash with the list comes back as an `error` event.
 #[tauri::command]
@@ -1699,6 +1754,12 @@ pub fn build_app<R: Runtime>(
             rules_export,
             vocabulary_preview,
             vocabulary_backtest,
+            vocabulary_suggestions,
+            vocabulary_suggestion_accept,
+            vocabulary_suggestion_undo,
+            vocabulary_suggestion_ignore,
+            vocabulary_suggestion_unignore,
+            rules_warnings,
             scenes_add,
             scenes_update,
             scenes_remove,

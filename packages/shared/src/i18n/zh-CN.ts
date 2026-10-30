@@ -1225,6 +1225,90 @@ export const zhCN = {
       failed: "试运行失败：{message}",
     },
     add: { term: "正确写法", heard: "曾听成（可选）", add: "加入" },
+    /** The page's two views (docs/dictation.md §16.10). */
+    tabs: {
+      label: "词典视图",
+      entries: "词条",
+      suggestions: "学习建议",
+      suggestionsCount: "学习建议（{n}）",
+    },
+    /** 学习建议 (docs/dictation.md §16.10): what AI polish changed in the history's recognised
+     *  text, offered for the dictionary. */
+    suggestions: {
+      explainTitle: "从 AI 润色的改动中学习",
+      explain:
+        "比较最近记录的识别原文和 AI 润色后的文字，列出「识别成 A、润色改成 B」的写法，按出现次数排列。加入词典后，识别完成时就会直接纠正。只逐字比较，不调用 AI。",
+      undoNote: "加入或忽略后可以立即撤销；离开词典页后无法撤销。",
+      list: "学习建议",
+      table: "学习建议",
+      column: { pair: "识别结果 → 润色结果", count: "次数", last: "最近一次" },
+      accept: "加入词典",
+      ignore: "忽略",
+      accepted: "已加入词典",
+      ignored: "已忽略",
+      undo: "撤销",
+      row: {
+        accept: "加入词典：{heard} → {polished}",
+        ignore: "忽略：{heard} → {polished}",
+        undo: "撤销：{heard} → {polished}",
+        details: "详情：{heard} → {polished}",
+      },
+      examples: "识别原文中的例子",
+      willCreate: "将新建词条「{term}」，曾听成「{heard}」。",
+      willAdd: "将把「{heard}」加入词条「{term}」的曾听成写法（现有 {n} 个）。",
+      computing: "正在计算影响范围…",
+      impact: "加入后，最近 {scanned} 条记录中有 {n} 条会被改动。",
+      impactNone: "加入后，最近 {scanned} 条记录都不会被改动。",
+      kept: "其中 {n} 条的最终文本仍为「{heard}」，可能是正确用法。",
+      impactFailed: "无法计算影响范围：{message}",
+      short: "「{heard}」只有 1 个字，容易误改其他词语。",
+      shortLatin: {
+        one: "「{heard}」只有 {n} 个字母，容易误改其他词语。",
+        other: "「{heard}」只有 {n} 个字母，容易误改其他词语。",
+      },
+      /** Why 加入词典 changed nothing (`SuggestionRefusal`). */
+      refusal: {
+        rule: "替换规则「{name}」会把「{polished}」改成「{becomes}」，加入词典后也不会生效。",
+        heardIsTerm: "「{heard}」是词条「{term}」的正确写法，不能作为曾听成写法。",
+        heardTaken: "「{heard}」已是词条「{term}」的曾听成写法。",
+        termTaken: "「{polished}」已是词条「{term}」的曾听成写法，不能作为正确写法。",
+        disabled: "词条「{term}」已停用，启用后才能加入。",
+        tooMany: "词条「{term}」的曾听成写法已达 {max} 个。",
+        full: "词典最多 {max} 个词条，已达到上限。",
+        failed: "无法加入词典：{message}",
+      },
+      /** Why 撤销 changed nothing (`UndoOutcome`). */
+      undoFailed: {
+        expired: "无法撤销：撤销记录已失效。",
+        gone: "无法撤销：词条已被删除。",
+        changed: "无法撤销：词条已被修改。",
+        failed: "无法撤销：{message}",
+      },
+      actionFailed: "操作失败：{message}",
+      showEntry: "查看词条",
+      openRules: "打开替换规则",
+      loading: "正在比较历史记录…",
+      loadFailed: "无法读取学习建议：{message}",
+      empty: {
+        historyOffTitle: "需要开启历史记录",
+        historyOff: "学习建议来自历史记录。开启历史记录后，新的听写会参与比较。",
+        openPrivacy: "打开隐私设置",
+        noPolishedTitle: "最近的记录里没有经过 AI 润色的听写",
+        noPolished:
+          "学习建议比较识别原文和 AI 润色后的文字。开启 AI 润色并听写几次后，这里会列出润色改动过的写法。",
+        noneTitle: "暂无学习建议",
+        none: {
+          one: "最近 {n} 条经过 AI 润色的记录里，没有新的写法可以加入词典。",
+          other: "最近 {n} 条经过 AI 润色的记录里，没有新的写法可以加入词典。",
+        },
+      },
+      footer: {
+        one: "最近 {n} 条记录 · {refined} 条经过 AI 润色",
+        other: "最近 {n} 条记录 · {refined} 条经过 AI 润色",
+      },
+      skipped: "{n} 条过长，未比较",
+      more: "显示前 {shown} 组 · 共 {total} 组",
+    },
   },
   rules: {
     title: "替换规则",
@@ -1345,6 +1429,13 @@ export const zhCN = {
       copiedResult: "已复制试运行结果",
       fallback: "无法处理，已显示原文：{reason}",
       failed: "试运行失败：{message}",
+    },
+    /** The hints under a rule (docs/dictation.md §16.10, `RuleWarning`). */
+    warnings: {
+      label: "规则提示：{name}",
+      duplicate: "与规则「{name}」重复：匹配内容相同，只有排在前面的一条会命中。",
+      inverse: "与规则「{name}」互为反向替换，文字可能被改回原样。",
+      undoesEntry: "会把词条「{term}」的正确写法改回「{heard}」，抵消词典的纠正。",
     },
   },
   /** docs/dictation.md §25: what an AI tool wrote, as a toast says it. */

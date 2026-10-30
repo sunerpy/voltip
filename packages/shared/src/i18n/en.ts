@@ -1210,6 +1210,89 @@ export const en: Messages = {
       failed: "The preview failed: {message}",
     },
     add: { term: "Right spelling", heard: "Heard as (optional)", add: "Add" },
+    tabs: {
+      label: "Dictionary views",
+      entries: "Entries",
+      suggestions: "Suggestions",
+      suggestionsCount: "Suggestions ({n})",
+    },
+    suggestions: {
+      explainTitle: "Learn from what AI polish changed",
+      explain:
+        "Compares the recognised text of recent history entries with the polished text and lists the words recognised as A and polished to B, most frequent first. Once a pair is in the dictionary, it is corrected right after recognition. The comparison is character by character; no AI is used.",
+      undoNote:
+        "Adding or ignoring can be undone right away; once you leave the dictionary page it cannot.",
+      list: "Suggestions",
+      table: "Suggestions",
+      column: { pair: "Recognised → polished", count: "Count", last: "Last seen" },
+      accept: "Add to dictionary",
+      ignore: "Ignore",
+      accepted: "Added to the dictionary",
+      ignored: "Ignored",
+      undo: "Undo",
+      row: {
+        accept: "Add to dictionary: {heard} → {polished}",
+        ignore: "Ignore: {heard} → {polished}",
+        undo: "Undo: {heard} → {polished}",
+        details: "Details: {heard} → {polished}",
+      },
+      examples: "In the recognised text",
+      willCreate: "Creates the entry “{term}”, heard as “{heard}”.",
+      willAdd: "Adds “{heard}” to the heard-as forms of “{term}” ({n} now).",
+      computing: "Checking the effect…",
+      impact: "Once added, {n} of the last {scanned} entries would change.",
+      impactNone: "Once added, none of the last {scanned} entries would change.",
+      kept: "In {n} of them the final text kept “{heard}”, so it may be correct there.",
+      impactFailed: "Could not check the effect: {message}",
+      short: "“{heard}” is a single character and can change other words by mistake.",
+      shortLatin: {
+        one: "“{heard}” is a single letter and can change other words by mistake.",
+        other: "“{heard}” has only {n} letters and can change other words by mistake.",
+      },
+      refusal: {
+        rule: "The rule “{name}” turns “{polished}” into “{becomes}”, so the entry would have no effect.",
+        heardIsTerm:
+          "“{heard}” is the right spelling of “{term}”, so it cannot be a heard-as form.",
+        heardTaken: "“{heard}” is already a heard-as form of “{term}”.",
+        termTaken:
+          "“{polished}” is already a heard-as form of “{term}”, so it cannot be a right spelling.",
+        disabled: "The entry “{term}” is disabled; enable it first.",
+        tooMany: "“{term}” already has {max} heard-as forms.",
+        full: "The dictionary holds up to {max} entries and is full.",
+        failed: "Could not add to the dictionary: {message}",
+      },
+      undoFailed: {
+        expired: "Cannot undo: the undo is no longer available.",
+        gone: "Cannot undo: the entry was deleted.",
+        changed: "Cannot undo: the entry was changed.",
+        failed: "Cannot undo: {message}",
+      },
+      actionFailed: "That did not work: {message}",
+      showEntry: "Show the entry",
+      openRules: "Open the rules",
+      loading: "Comparing the history…",
+      loadFailed: "Could not read the suggestions: {message}",
+      empty: {
+        historyOffTitle: "History is off",
+        historyOff:
+          "Suggestions come from the history. Once history is on, new dictations are compared.",
+        openPrivacy: "Open privacy settings",
+        noPolishedTitle: "No dictation in recent history was polished",
+        noPolished:
+          "Suggestions compare the recognised text with the polished text. Turn on AI polish and dictate a few times, and the words it changed appear here.",
+        noneTitle: "No suggestions",
+        none: {
+          one: "The last polished entry has nothing new for the dictionary.",
+          other: "The last {n} polished entries have nothing new for the dictionary.",
+        },
+      },
+      footer: {
+        one: "The last entry · {refined} polished",
+        other: "Last {n} entries · {refined} polished",
+      },
+      skipped: "{n} too long to compare",
+      more: "Showing the first {shown} of {total}",
+    },
   },
   rules: {
     title: "Replacement rules",
@@ -1332,6 +1415,14 @@ export const en: Messages = {
       copiedResult: "Copied the test-run result",
       fallback: "Could not process; showing the original: {reason}",
       failed: "Test run failed: {message}",
+    },
+    warnings: {
+      label: "Rule hints: {name}",
+      duplicate:
+        "Finds the same text as the rule “{name}”; only the one higher in the list gets hits.",
+      inverse: "The rule “{name}” makes the opposite replacement, so the text can be changed back.",
+      undoesEntry:
+        "Turns the right spelling “{term}” of a dictionary entry back into “{heard}”, undoing its correction.",
     },
   },
   /** docs/dictation.md §25: what an AI tool wrote, as a toast says it. */

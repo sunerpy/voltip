@@ -63,6 +63,10 @@ describe("BackendProvider", () => {
       updateStatus: inner.updateStatus.bind(inner),
       vocabularyPreview: inner.vocabularyPreview.bind(inner),
       vocabularyBacktest: inner.vocabularyBacktest.bind(inner),
+      vocabularySuggestions: inner.vocabularySuggestions.bind(inner),
+      vocabularySuggestionAccept: inner.vocabularySuggestionAccept.bind(inner),
+      vocabularySuggestionUndo: inner.vocabularySuggestionUndo.bind(inner),
+      rulesWarnings: inner.rulesWarnings.bind(inner),
       rulesExport: inner.rulesExport.bind(inner),
       recentApps: inner.recentApps.bind(inner),
       historyQuery: inner.historyQuery.bind(inner),
@@ -139,6 +143,14 @@ describe("BackendProvider", () => {
       vocabularyPreview: () =>
         Promise.resolve({ corrected: "", output: "", corrections: [], rules: [] }),
       vocabularyBacktest: () => Promise.resolve({ scanned: 0, matched: 0, kept: 0, examples: [] }),
+      vocabularySuggestions: () => Promise.resolve({ status: "history_off" as const }),
+      vocabularySuggestionAccept: () =>
+        Promise.resolve({
+          kind: "refused" as const,
+          refusal: { kind: "failed" as const, message: "core down" },
+        }),
+      vocabularySuggestionUndo: () => Promise.resolve({ kind: "expired" as const }),
+      rulesWarnings: () => Promise.resolve([]),
       rulesExport: () => Promise.resolve("version = 1\n"),
       recentApps: () => Promise.resolve([]),
       historyQuery: () => Promise.resolve({ entries: [], matching: 0, total: 0 }),

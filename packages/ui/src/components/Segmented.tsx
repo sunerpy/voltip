@@ -2,6 +2,13 @@ import { cx } from "../cx";
 import { usePresentation } from "../presentation/PresentationProvider";
 import { TOUCH_CONTROL, TOUCH_TARGET_Y } from "../presentation/touch";
 
+/** The track and its segments, shared with `Tabs` (a switch between views drawn the same way). */
+export const SEGMENT_TRACK =
+  "inline-flex items-center rounded-control border border-field-edge bg-field p-0.5";
+export const SEGMENT_ITEM = "h-full rounded-[5px] px-3 whitespace-nowrap transition-colors";
+/** A selected segment of the `soft` variant. */
+export const SEGMENT_SOFT_SELECTED = "bg-surface text-fg shadow-[0_0_0_1px_var(--border)]";
+
 export interface SegmentedOption<V extends string> {
   value: V;
   label: string;
@@ -38,7 +45,7 @@ export function Segmented<V extends string>({
       role="radiogroup"
       aria-label={label}
       className={cx(
-        "inline-flex items-center rounded-control border border-field-edge bg-field p-0.5",
+        SEGMENT_TRACK,
         size === "sm" ? "h-7" : "h-8",
         touch && cx(TOUCH_CONTROL, "select-none"),
         className,
@@ -57,12 +64,10 @@ export function Segmented<V extends string>({
               onChange(opt.value);
             }}
             className={cx(
-              "h-full rounded-[5px] px-3 whitespace-nowrap transition-colors",
+              SEGMENT_ITEM,
               size === "sm" ? "text-[11px]" : "text-[12px]",
               mono && "mono",
-              selected &&
-                variant === "soft" &&
-                "bg-surface text-fg shadow-[0_0_0_1px_var(--border)]",
+              selected && variant === "soft" && SEGMENT_SOFT_SELECTED,
               selected && variant === "ink" && "bg-primary text-primary-fg",
               !selected && "text-fg-muted hover:text-fg",
               opt.disabled && "cursor-not-allowed opacity-40 hover:text-fg-muted",

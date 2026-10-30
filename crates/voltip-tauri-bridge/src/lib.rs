@@ -18,10 +18,14 @@ use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
 use voltip_core::backup::{self, BackupError, BackupParts, ExportInput, ExportSummary, ImportFailure, ImportOutcome, ImportReply, OpenOutcome};
 use voltip_core::dictation::LevelFrame;
+use voltip_core::history::MAX_RECENT_TEXTS;
 use voltip_core::paste::{PasteFailure, PasteOutcome, PasteTarget};
 use voltip_core::presets::{MAX_PRESET_TRY_CHARS, PresetDraft, PresetId, PresetTrial, clean_preset_prompt, validate_preset_draft};
 use voltip_core::scenes::{MAX_RECENT_APPS, validate_scene_draft_with};
 use voltip_core::ui::{UiEvent, UiState};
+use voltip_core::vocabulary::{
+    AcceptOutcome, MAX_SUGGESTIONS, Reply, RuleWarning, Suggestions, SuggestionsAnswer, UndoOutcome, rule_warnings, suggestions, validate_pair,
+};
 use voltip_core::vocabulary::{BACKTEST_LIMIT, Backtest, BacktestDraft, MAX_BACKTEST_LIMIT, backtest};
 use voltip_core::vocabulary::{export_rules_toml, parse_rules_toml, preview, validate_dictionary_draft, validate_rule_draft};
 use voltip_core::{
@@ -375,6 +379,20 @@ pub enum UiCommand {
         /// UUIDs.
         ids: Vec<String>,
     },
+    /// 忽略 on a learning suggestion (docs/dictation.md §16.10): leave the pair out from now on.
+    VocabularySuggestionIgnore {
+        /// What the recogniser wrote.
+        heard: String,
+        /// What the polished text has instead.
+        polished: String,
+    },
+    /// 撤销 of an 忽略: suggest the pair again.
+    VocabularySuggestionUnignore {
+        /// What the recogniser wrote.
+        heard: String,
+        /// What the polished text has instead.
+        polished: String,
+    },
     /// Append a replacement rule.
     RulesAdd {
         /// The rule (snake_case inside).
@@ -689,6 +707,14 @@ impl UiCommand {
             }
             Self::DictionaryRemove { id } => CoreCommand::DictionaryRemove(parse_id(&id)?),
             Self::DictionaryReorder { ids } => CoreCommand::DictionaryReorder(parse_ids(&ids)?),
+            Self::VocabularySuggestionIgnore { heard, polished } => {
+                let (heard, polished) = validate_pair(&heard, &polished).map_err(bad)?;
+                CoreCommand::SuggestionIgnore { heard, polished }
+            }
+            Self::VocabularySuggestionUnignore { heard, polished } => {
+                let (heard, polished) = validate_pair(&heard, &polished).map_err(bad)?;
+                CoreCommand::SuggestionUnignore { heard, polished }
+            }
             Self::RulesAdd { rule } => CoreCommand::RuleAdd(validate_rule_draft(&rule).map_err(bad)?),
             Self::RulesUpdate { id, rule } => CoreCommand::RuleUpdate { id: parse_id(&id)?, draft: validate_rule_draft(&rule).map_err(bad)? },
             Self::RulesRemove { id } => CoreCommand::RuleRemove(parse_id(&id)?),
@@ -842,6 +868,20 @@ pub struct Bridge {
     /// The backup `backup_open` read, under its preview's token, until `backup_import` takes it,
     /// `backup_discard` drops it or another file is opened.
     opened_backup: Arc<Mutex<Option<OpenedBackup>>>,
+    /// The learning suggestions last computed (docs/dictation.md §16.10).
+    suggestions: Arc<SuggestionsCache>,
+}
+
+/// The learning suggestions last computed and what they were computed from (docs/dictation.md
+/// §16.10): the event pump counts every change to the dictionary, the rules, the history and the
+/// ignored list, and a count other than the one the list was computed at makes it stale.
+#[derive(Default)]
+struct SuggestionsCache {
+    /// Changes so far.
+    generation: AtomicU64,
+    /// The suggestions (at most [`MAX_SUGGESTIONS`]) and the generation they were computed at; the
+    /// lock is held while they are computed, so callers at the same time compute once.
+    last: Mutex<Option<(u64, Suggestions)>>,
 }
 
 /// A backup `backup_open` read (docs/dictation.md §4.6) and the token its preview names it by.
@@ -896,8 +936,9 @@ impl Bridge {
             scenes_need_apps,
             data_dir,
             opened_backup: Arc::default(),
+            suggestions: Arc::default(),
         };
-        tokio::spawn(pump(core_events, state, tx));
+        tokio::spawn(pump(core_events, state, tx, bridge.suggestions.clone()));
         Ok((bridge, first))
     }
 
@@ -1041,6 +1082,82 @@ impl Bridge {
         backtest(&dictionary, &history, draft, exclude).map_err(bad)
     }
 
+    /// `vocabulary_suggestions` (docs/dictation.md §16.10): the learning suggestions over the newest
+    /// [`MAX_RECENT_TEXTS`] recognised takes, at most `limit` of them (default and most
+    /// [`MAX_SUGGESTIONS`]); [`SuggestionsAnswer::HistoryOff`] while history recording is off. The
+    /// answer is computed once and kept until the dictionary, the rules, the history or the ignored
+    /// list change. Blocks on SQLite and the comparison: the shells call it off the main thread.
+    pub fn vocabulary_suggestions(&self, limit: Option<usize>) -> Result<SuggestionsAnswer, BridgeError> {
+        let limit = limit.unwrap_or(MAX_SUGGESTIONS);
+        if !(1..=MAX_SUGGESTIONS).contains(&limit) {
+            return Err(BridgeError::BadArgument(format!("vocabulary_suggestions: limit 1–{MAX_SUGGESTIONS}")));
+        }
+        let mut last = self.suggestions.last.lock();
+        if !self.state.lock().settings.history.enabled {
+            return Ok(SuggestionsAnswer::HistoryOff);
+        }
+        // The count first, the lists after: a change in between makes the answer stale at once
+        // rather than kept under the new count.
+        let generation = self.suggestions.generation.load(Ordering::Acquire);
+        let mut answer = match &*last {
+            Some((at, kept)) if *at == generation => kept.clone(),
+            _ => {
+                let (dictionary, rules, ignored) = {
+                    let state = self.state.lock();
+                    (state.dictionary.clone(), state.rules.clone(), state.vocabulary_ignored.clone())
+                };
+                let history = self.history.recent_texts(MAX_RECENT_TEXTS)?;
+                let fresh = suggestions(&dictionary, &rules, &history, &ignored, MAX_SUGGESTIONS);
+                *last = Some((generation, fresh.clone()));
+                fresh
+            }
+        };
+        answer.pairs.truncate(limit);
+        Ok(SuggestionsAnswer::Ready(answer))
+    }
+
+    /// `vocabulary_suggestion_accept` (docs/dictation.md §16.10): add `heard` → `polished` to the
+    /// dictionary, as an entry from history entry `history_id` or to the entry with that spelling,
+    /// and wait at most `within` for the core's answer. A pair that is not one is refused here.
+    pub async fn vocabulary_suggestion_accept(
+        &self,
+        heard: String,
+        polished: String,
+        history_id: Uuid,
+        within: Duration,
+    ) -> Result<AcceptOutcome, BridgeError> {
+        let (heard, polished) = validate_pair(&heard, &polished).map_err(bad)?;
+        let (reply, answer) = Reply::channel();
+        self.handle.send(CoreCommand::SuggestionAccept { heard, polished, history_id, reply }).await?;
+        Self::answer(answer, within).await
+    }
+
+    /// `vocabulary_suggestion_undo`: take the accept `id` names back, waiting at most `within`.
+    pub async fn vocabulary_suggestion_undo(&self, id: Uuid, within: Duration) -> Result<UndoOutcome, BridgeError> {
+        let (reply, answer) = Reply::channel();
+        self.handle.send(CoreCommand::SuggestionUndo { id, reply }).await?;
+        Self::answer(answer, within).await
+    }
+
+    /// The core's answer to a command with a [`Reply`], or [`CoreError::NotRunning`] when none
+    /// comes within `within`.
+    async fn answer<T>(answer: tokio::sync::oneshot::Receiver<T>, within: Duration) -> Result<T, BridgeError> {
+        match tokio::time::timeout(within, answer).await {
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(_)) | Err(_) => {
+                tracing::warn!("a vocabulary suggestion command got no answer in time");
+                Err(BridgeError::Core(CoreError::NotRunning))
+            }
+        }
+    }
+
+    /// `rules_warnings` (docs/dictation.md §16.10): the rules page's hints over the cached rules
+    /// and dictionary.
+    pub fn rules_warnings(&self) -> Vec<RuleWarning> {
+        let state = self.state.lock();
+        rule_warnings(&state.rules, &state.dictionary)
+    }
+
     /// `rules_export` (docs/dictation.md §16.5): the cached rules as TOML text.
     pub fn rules_export(&self) -> Result<String, BridgeError> {
         let rules = self.state.lock().rules.clone();
@@ -1178,9 +1295,15 @@ impl Bridge {
     }
 }
 
-async fn pump(mut core_events: mpsc::Receiver<CoreEvent>, state: Arc<Mutex<UiState>>, tx: broadcast::Sender<UiEvent>) {
+async fn pump(mut core_events: mpsc::Receiver<CoreEvent>, state: Arc<Mutex<UiState>>, tx: broadcast::Sender<UiEvent>, suggestions: Arc<SuggestionsCache>) {
     while let Some(ev) = core_events.recv().await {
+        let changes_suggestions = matches!(ev, CoreEvent::Dictionary(_) | CoreEvent::Rules(_) | CoreEvent::History { .. } | CoreEvent::VocabularyIgnored(_));
         let ui = state.lock().apply(ev);
+        // After the state holds the change: a computation that reads the new count reads the new
+        // lists too.
+        if changes_suggestions {
+            suggestions.generation.fetch_add(1, Ordering::AcqRel);
+        }
         // No subscribers yet is fine: the webview asks for `core_state` when it mounts.
         let _ = tx.send(ui);
     }
@@ -1673,6 +1796,167 @@ mod tests {
         assert_eq!(bridge.state().dictionary.len(), 1);
         assert_eq!(bridge.vocabulary_backtest(&draft, None, None).unwrap().matched, 0);
         bridge.shutdown();
+    }
+
+    /// docs/dictation.md §16.10: `vocabulary_suggestions` reads the newest recognised takes and
+    /// keeps its answer until the dictionary, the rules, the history or the ignored list change;
+    /// 加入词典 and 撤销 go through the core and answer; history recording turned off is an answer
+    /// of its own, not an empty list; a pair that is not one is refused here; the rules page's
+    /// hints come from the cached lists.
+    #[tokio::test]
+    async fn learning_suggestions_follow_the_lists_and_the_history() {
+        use voltip_core::vocabulary::{RuleStore, SuggestionsAnswer, UndoOutcome};
+        async fn until(bridge: &Bridge, rx: &mut broadcast::Receiver<UiEvent>, done: impl Fn(&UiState) -> bool) {
+            for _ in 0..60 {
+                if done(&bridge.state()) {
+                    return;
+                }
+                let _ = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await;
+            }
+            panic!("the state never got there");
+        }
+        let dir = tempfile::tempdir().unwrap();
+        voltip_core::SettingsStore::new(dir.path())
+            .save(&voltip_core::Settings { relay_enabled: false, engines: voltip_core::dictation::fakes::fake_engines(), ..Default::default() })
+            .unwrap();
+        let feishu = |name: &str| RuleDraft {
+            name: name.into(),
+            kind: voltip_core::RuleKind::Literal,
+            pattern: "非书".into(),
+            replacement: "飞书".into(),
+            case_sensitive: true,
+            enabled: true,
+        };
+        // The rule fired in the second take and was not changed since.
+        let rule_id = RuleStore::open(dir.path()).0.add(&feishu("非书 → 飞书"), 1).unwrap();
+        let takes =
+            [("用维他命测了一下", "用 Voltip 测了一下。", false), ("发到非书群，跑千问", "发到飞书群，跑 Qwen。", true), ("又是非书", "又是飞书。", false)];
+        let ids: Vec<Uuid> = takes.iter().map(|_| Uuid::new_v4()).collect();
+        {
+            let mut store = voltip_core::history::HistoryStore::open(dir.path());
+            for (i, (raw, text, fired)) in takes.iter().enumerate().rev() {
+                let vocabulary = fired.then(|| serde_json::json!({ "rules": [{ "id": rule_id, "count": 1 }] }));
+                let entry: HistoryEntry = serde_json::from_value(serde_json::json!({
+                    "id": ids[i], "at_ms": 1_758_700_000_000_u64 - i as u64, "raw_text": raw, "text": text, "refined": true,
+                    "asr_model": "fake", "duration_ms": 1000, "asr_ms": 100, "outcome": { "kind": "inserted", "via": "paste" },
+                    "vocabulary": vocabulary,
+                }))
+                .unwrap();
+                store.push(entry, voltip_core::history::MAX_ENTRIES).unwrap();
+            }
+        }
+        let bridge = Bridge::start(CoreConfig::new(dir.path().to_path_buf()), Arc::new(MemorySecretStore::new())).unwrap();
+        let mut rx = bridge.events();
+        until(&bridge, &mut rx, |s| s.identity.is_some() && s.rules.len() == 1 && s.history_total == 3).await;
+        let ready = |answer: SuggestionsAnswer| match answer {
+            SuggestionsAnswer::Ready(s) => s,
+            other => panic!("{other:?}"),
+        };
+        let heard = |bridge: &Bridge| ready(bridge.vocabulary_suggestions(None).unwrap()).pairs.into_iter().map(|p| p.heard).collect::<Vec<_>>();
+        let first = ready(bridge.vocabulary_suggestions(None).unwrap());
+        assert_eq!(first.pairs.iter().map(|p| p.heard.as_str()).collect::<Vec<_>>(), ["维他命", "千问", "非"], "the rule's own change is left out");
+        assert_eq!((first.scanned, first.refined, first.skipped, first.total), (3, 3, 0, 3));
+        let one = ready(bridge.vocabulary_suggestions(Some(1)).unwrap());
+        assert_eq!((one.pairs.len(), one.total), (1, 3));
+        for limit in [0, MAX_SUGGESTIONS + 1] {
+            let err = String::from(bridge.vocabulary_suggestions(Some(limit)).unwrap_err());
+            assert!(err.starts_with("vocabulary_suggestions: limit"), "{err}");
+        }
+
+        // 加入词典 and 撤销: the dictionary changes, and the answer with it.
+        let wait = Duration::from_secs(20);
+        let AcceptOutcome::Accepted { undo } = bridge.vocabulary_suggestion_accept("维他命".into(), "Voltip".into(), ids[0], wait).await.unwrap() else {
+            panic!("accepted")
+        };
+        until(&bridge, &mut rx, |s| s.dictionary.len() == 1).await;
+        assert_eq!(bridge.state().dictionary[0].source, EntrySource::History { history_id: ids[0] });
+        assert_eq!(heard(&bridge), ["千问", "非"]);
+        assert_eq!(bridge.vocabulary_suggestion_undo(undo.id, wait).await.unwrap(), UndoOutcome::Undone);
+        until(&bridge, &mut rx, |s| s.dictionary.is_empty()).await;
+        assert_eq!(heard(&bridge), ["维他命", "千问", "非"]);
+        assert_eq!(bridge.vocabulary_suggestion_undo(undo.id, wait).await.unwrap(), UndoOutcome::Expired, "once");
+        let err = String::from(bridge.vocabulary_suggestion_accept(" ".into(), "Voltip".into(), ids[0], wait).await.unwrap_err());
+        assert!(err.contains("不能为空"), "{err}");
+
+        // The rule changed after the take: that take no longer counts.
+        bridge.dispatch(UiCommand::RulesUpdate { id: rule_id.to_string(), rule: feishu("非书 → 飞书") }).unwrap();
+        until(&bridge, &mut rx, |s| s.rules.first().is_some_and(|r| r.updated_at_ms > 1)).await;
+        assert_eq!(heard(&bridge), ["维他命", "非"]);
+        // A take deleted from the history no longer counts.
+        bridge.dispatch(UiCommand::HistoryDelete { id: ids[0].to_string() }).unwrap();
+        until(&bridge, &mut rx, |s| s.history_total == 2).await;
+        assert_eq!(heard(&bridge), ["非"]);
+        // 忽略 and its 撤销.
+        bridge.dispatch(UiCommand::VocabularySuggestionIgnore { heard: "非".into(), polished: "飞".into() }).unwrap();
+        until(&bridge, &mut rx, |s| s.vocabulary_ignored.len() == 1).await;
+        assert!(heard(&bridge).is_empty());
+        bridge.dispatch(UiCommand::VocabularySuggestionUnignore { heard: "非".into(), polished: "飞".into() }).unwrap();
+        until(&bridge, &mut rx, |s| s.vocabulary_ignored.is_empty()).await;
+        assert_eq!(heard(&bridge), ["非"]);
+        assert!(bridge.dispatch(UiCommand::VocabularySuggestionIgnore { heard: "同".into(), polished: "同".into() }).is_err(), "refused here");
+
+        // The rules page's hints: a second rule that finds what the first finds.
+        bridge.dispatch(UiCommand::RulesAdd { rule: feishu("非书 2") }).unwrap();
+        until(&bridge, &mut rx, |s| s.rules.len() == 2).await;
+        let second = bridge.state().rules[1].id;
+        assert_eq!(bridge.rules_warnings().iter().map(RuleWarning::rule_id).collect::<Vec<_>>(), [rule_id, second]);
+
+        // History recording off: an answer of its own.
+        bridge.dispatch(UiCommand::SettingsSetHistory { enabled: false, keep: voltip_core::HistorySettings::default().keep }).unwrap();
+        until(&bridge, &mut rx, |s| !s.settings.history.enabled).await;
+        assert_eq!(bridge.vocabulary_suggestions(None).unwrap(), SuggestionsAnswer::HistoryOff);
+        bridge.shutdown();
+    }
+
+    /// The time `vocabulary_suggestions` takes over a full window of polished takes (docs/dictation.md
+    /// §16.10 records the numbers): 2000 takes of about 100 characters and 2000 of about 900 (close to
+    /// the comparison's cell limit), each asked once (read and compared) and again (the cache). A
+    /// measurement, not a gate; run it alone, on an idle machine:
+    /// `cargo test -p voltip-tauri-bridge --release --lib -- --ignored timing_learning_suggestions --nocapture`.
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "a measurement, run by hand (docs/dictation.md §16.10)"]
+    async fn timing_learning_suggestions_over_2000_takes() {
+        use voltip_core::vocabulary::SuggestionsAnswer;
+        for (label, repeat) in [("about 100 characters", 2), ("about 900 characters", 19)] {
+            let dir = tempfile::tempdir().unwrap();
+            voltip_core::SettingsStore::new(dir.path())
+                .save(&voltip_core::Settings { relay_enabled: false, engines: voltip_core::dictation::fakes::fake_engines(), ..Default::default() })
+                .unwrap();
+            {
+                let mut store = voltip_core::history::HistoryStore::open(dir.path());
+                for i in 0..2000_u64 {
+                    let raw = format!("第{i}次：把维他命的安装包发到非书群里，然后用库伯内特斯部署到测试集群，再跑一遍千问的回归。").repeat(repeat);
+                    let text = format!("第 {i} 次：把 Voltip 的安装包发到飞书群里，然后用 Kubernetes 部署到测试集群，再跑一遍 Qwen 的回归。").repeat(repeat);
+                    let entry: HistoryEntry = serde_json::from_value(serde_json::json!({
+                        "id": Uuid::new_v4(), "at_ms": 1_758_700_000_000_u64 + i, "raw_text": raw, "text": text, "refined": true,
+                        "asr_model": "fake", "duration_ms": 1000, "asr_ms": 100, "outcome": { "kind": "inserted", "via": "paste" },
+                    }))
+                    .unwrap();
+                    store.push(entry, voltip_core::history::MAX_ENTRIES).unwrap();
+                }
+            }
+            let bridge = Bridge::start(CoreConfig::new(dir.path().to_path_buf()), Arc::new(MemorySecretStore::new())).unwrap();
+            let mut rx = bridge.events();
+            for _ in 0..60 {
+                if bridge.state().identity.is_some() && bridge.state().history_total == 2000 {
+                    break;
+                }
+                let _ = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await;
+            }
+            let started = std::time::Instant::now();
+            let first = bridge.vocabulary_suggestions(None).unwrap();
+            let cold = started.elapsed();
+            let started = std::time::Instant::now();
+            let again = bridge.vocabulary_suggestions(None).unwrap();
+            let cached = started.elapsed();
+            assert_eq!(first, again);
+            let SuggestionsAnswer::Ready(answer) = first else { panic!("history is on") };
+            eprintln!(
+                "vocabulary_suggestions, 2000 takes of {label}: first {cold:?}, cached {cached:?} (scanned {}, refined {}, skipped {}, pairs {})",
+                answer.scanned, answer.refined, answer.skipped, answer.total
+            );
+            bridge.shutdown();
+        }
     }
 
     /// docs/dictation.md §18.6: `recent_apps` answers from the cached history — a take on the fakes
