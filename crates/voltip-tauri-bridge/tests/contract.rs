@@ -686,7 +686,7 @@ fn imported_history_entry() -> HistoryEntry {
         refine_ms: Some(1_200),
         refine_failure: None,
         refine_error: None,
-        outcome: Outcome::Inserted { via: Via::Clipboard },
+        outcome: Outcome::Inserted { via: Via::Clipboard, check: None },
         starred: false,
         mode: OutputMode::WholeTake,
         segments: Some(vec![

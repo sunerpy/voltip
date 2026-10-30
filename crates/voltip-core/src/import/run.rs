@@ -273,7 +273,7 @@ pub async fn run(job: Job, mut partial: Partial, report: Report) -> Outcome {
         refine_failure,
         refine_error,
         // In the history, pasted nowhere: the interface shows 导入 for an entry with a `file`.
-        outcome: Delivered::Inserted { via: Via::Clipboard },
+        outcome: Delivered::Inserted { via: Via::Clipboard, check: None },
         starred: false,
         mode: OutputMode::WholeTake,
         segments: Some(segments),
@@ -527,7 +527,7 @@ mod tests {
         assert_eq!(entry.duration_ms, 25_000);
         assert_eq!((entry.refined, entry.refine_model.as_deref(), entry.preset.as_ref()), (false, None, None));
         assert_eq!(entry.asr_model, "whisper-1", "the chosen model, when the client names none");
-        assert_eq!(entry.outcome, Delivered::Inserted { via: Via::Clipboard }, "in the history, pasted nowhere");
+        assert_eq!(entry.outcome, Delivered::Inserted { via: Via::Clipboard, check: None }, "in the history, pasted nowhere");
         assert_eq!(entry.origin, None);
         let recognizing: Vec<ImportState> = states(&reports).into_iter().filter(|s| matches!(s, ImportState::Recognizing { .. })).collect();
         assert_eq!(recognizing, (0..=3).map(|done| ImportState::Recognizing { done, total: 3 }).collect::<Vec<_>>());
