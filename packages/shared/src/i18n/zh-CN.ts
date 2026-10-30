@@ -1658,6 +1658,9 @@ export const zhCN = {
     manual: {
       toggle: "手动下载",
       lede: "无法在应用中下载时，可以用浏览器下载下面的文件，放进这个文件夹，再点「检查并导入」。",
+      /** A model that comes as one package (docs/dictation.md §29.12). */
+      ledePackage:
+        "无法在应用中下载时，可以用浏览器下载下面的模型包，不用解压，直接放进这个文件夹，再点「检查并导入」。",
       folder: "放入文件夹",
       copyFolder: "复制路径",
       folderCopied: "已复制路径",
@@ -1758,6 +1761,12 @@ export const zhCN = {
     removed: "已删除 · {name}",
     activated: "已切换 · 本地识别 · {name}",
     failedPrefix: "失败原因",
+    /** Why the package a model comes in could not be used (docs/dictation.md §29.12). */
+    package: {
+      broken: "模型包已损坏或不完整，请重新下载",
+      missing: "模型包里缺少文件：{files}",
+      mismatched: "模型包里的文件与这个模型不符：{files}",
+    },
   },
   devices: {
     sync: {
@@ -2905,7 +2914,8 @@ export const zhCN = {
         licenceHelp:
           "Voltip 以这个许可证开源发布；安装包里的 THIRD-PARTY-NOTICES.txt 列出它包含的第三方组件及其许可证。",
         models: "本地模型来源",
-        modelsHelp: "模型文件从这些 Hugging Face 仓库下载，各自遵循其发布页上的许可证。",
+        modelsHelp:
+          "模型文件从这些仓库下载（Hugging Face，或 GitHub 上的发布包），各自遵循其发布页上的许可证。",
         modelsNone: "目录中没有本地模型",
         update: "更新",
         updateHelp: "更新源与自动更新开关在「通用」分组。",

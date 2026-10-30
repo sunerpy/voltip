@@ -22,7 +22,8 @@
 //!   before a local whole-take transcription when `vad_trim` is on (docs/dictation.md §12).
 //!
 //! Nothing here knows a production hostname: the optional first-choice mirror comes from the
-//! build-time `VOLTIP_MODEL_BASE_URL`; the public sources are huggingface.co and hf-mirror.com.
+//! build-time `VOLTIP_MODEL_BASE_URL`; the public sources are huggingface.co and hf-mirror.com, and
+//! for the streaming model the sherpa-onnx release on GitHub (docs/dictation.md §29.12).
 //! Desktop only: the mobile shell does not depend on this crate.
 
 #![forbid(unsafe_code)]
@@ -44,7 +45,7 @@ pub mod transcriber;
 pub mod vad;
 
 pub use catalogue::{
-    CATALOGUE, Capability, DEFAULT_MODEL_ID, Engine, ModelEntry, ModelFile, STREAMING_MODEL_ID, Tier, VAD_MODEL_ID, entry, streaming_entry, vad_entry,
+    CATALOGUE, Capability, DEFAULT_MODEL_ID, Engine, ModelEntry, ModelFile, Package, STREAMING_MODEL_ID, Tier, VAD_MODEL_ID, entry, streaming_entry, vad_entry,
 };
 pub use compute::{Compute, GpuInfo, HardwareInfo, LocalDevice, hardware};
 pub use pool::{GPU_STRIKE_WINDOW, LOCK_WAIT};
@@ -52,7 +53,8 @@ pub use relocate::STAGING_SUFFIX;
 pub use root::ModelsRoot;
 pub use segmenter::{VadSegmenter, VadSegmenterFactory};
 pub use store::{
-    CATALOGUE_VERSION, DISK_HEADROOM, FreeSpace, ImportError, MANIFEST_FILE, Manifest, ModelStore, SlowSourcePolicy, Source, StoreError, bytes_to_fetch,
+    CATALOGUE_VERSION, DISK_HEADROOM, FreeSpace, ImportError, MANIFEST_FILE, Manifest, ModelStore, RELEASE_BASE_URL, SlowSourcePolicy, Source, StoreError,
+    bytes_to_fetch, release_base,
 };
 pub use streaming::{LocalStreamingTranscriber, StreamingLoader, StreamingRecognizer};
 pub use transcriber::{Abort, BUSY, DefaultLoader, LocalFailure, LocalTranscriber, MIN_INPUT, RecognizeError, Recognizer, RecognizerLoader, decode_wav};

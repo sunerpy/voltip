@@ -1656,6 +1656,8 @@ export const en: Messages = {
     manual: {
       toggle: "Download by hand",
       lede: "If the app cannot download the model, download these files in a browser, put them in this folder, then choose Check and import.",
+      ledePackage:
+        "If the app cannot download the model, download this package in a browser and put it in this folder as it is, without unpacking it, then choose Check and import.",
       folder: "Folder",
       copyFolder: "Copy path",
       folderCopied: "Path copied",
@@ -1760,6 +1762,11 @@ export const en: Messages = {
     removed: "Deleted · {name}",
     activated: "Switched · local recognition · {name}",
     failedPrefix: "Reason",
+    package: {
+      broken: "The model package is damaged or incomplete. Download it again.",
+      missing: "Files missing from the model package: {files}",
+      mismatched: "Files in the model package that don't match this model: {files}",
+    },
   },
   devices: {
     sync: {
@@ -2961,7 +2968,7 @@ export const en: Messages = {
           "Voltip is open source under this license; THIRD-PARTY-NOTICES.txt in the installed package lists the third-party components it includes and their licenses.",
         models: "Local model sources",
         modelsHelp:
-          "Model files download from these Hugging Face repositories, each under the license on its page.",
+          "Model files download from these repositories (on Hugging Face, or a release package on GitHub), each under the license on its page.",
         modelsNone: "No local models in the catalogue",
         update: "Updates",
         updateHelp: "The update source and the automatic update switch are under General.",

@@ -78,6 +78,7 @@ import {
   type LiveSegment,
   type LiveText,
   type ModelInstallState,
+  type PackageProblem,
   type ModelState,
   type ModelsLocationView,
   type MutationCommand,
@@ -560,20 +561,35 @@ const MOCK_MODEL_FILES: Record<string, readonly (readonly [string, number])[]> =
   ],
 };
 
-/** A catalogue row with its directory and its files' public addresses, as the core reports them. */
+/** The models that come as one release package of their files (docs/dictation.md §29.12): the
+ *  package's path under github.com. */
+const MOCK_MODEL_PACKAGES: Record<string, string> = {
+  [MOCK_STREAMING_MODEL_ID]:
+    "k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05.tar.bz2",
+};
+
+/** A catalogue row with its directory and its files' public addresses (or its package's), as the
+ *  core reports them. */
 function withFiles(
   row: Omit<ModelState, "active" | "state" | "dir" | "files">,
 ): Omit<ModelState, "active" | "state"> {
+  const pkg = MOCK_MODEL_PACKAGES[row.id];
   return {
     ...row,
     dir: `${MOCK_MODELS_ROOT}/${row.id}`,
     files: (MOCK_MODEL_FILES[row.id] ?? []).map(([name, size]) => ({
       name,
       size_bytes: size,
-      urls: ["https://huggingface.co", "https://hf-mirror.com"].map(
-        (base) => `${base}/${row.repo}/resolve/main/${name}`,
-      ),
+      urls:
+        pkg === undefined
+          ? ["https://huggingface.co", "https://hf-mirror.com"].map(
+              (base) => `${base}/${row.repo}/resolve/main/${name}`,
+            )
+          : [],
     })),
+    ...(pkg === undefined
+      ? {}
+      : { package: { name: pkg.split("/").at(-1) ?? pkg, urls: [`https://github.com/${pkg}`] } }),
   };
 }
 
@@ -3474,12 +3490,16 @@ export class MockBackend implements Backend {
 
   // ---- local model simulation (docs/dictation.md §10) -------------------------------------------
 
-  /** The core's test hook: a download that failed mid-way (network, checksum). The `.part` files
-   *  stay, so `model_download` on the same id is the retry. */
-  simulateModelFailed(id: string, message: string) {
+  /** The core's test hook: a download that failed mid-way (network, checksum), or whose package
+   *  could not be used (`pkg`, docs/dictation.md §29.12). The `.part` files stay, so
+   *  `model_download` on the same id is the retry. */
+  simulateModelFailed(id: string, message: string, pkg?: PackageProblem) {
     if (!this.catalogueRow(id)) return;
     this.stopModelTimer(id);
-    this.setModelState(id, { kind: "failed", message });
+    this.setModelState(
+      id,
+      pkg === undefined ? { kind: "failed", message } : { kind: "failed", message, package: pkg },
+    );
   }
 
   private catalogueRow(id: string) {
@@ -3535,6 +3555,8 @@ export class MockBackend implements Backend {
       return;
     this.stopModelTimer(id);
     const total = row.size_bytes;
+    // A model that comes as a package downloads the package (docs/dictation.md §29.12).
+    const file = row.package?.name ?? MOCK_MODEL_FILE;
     const tick = (n: number) => {
       if (n > MOCK_MODEL_TICKS) {
         this.setModelState(id, { kind: "verifying" });
@@ -3551,7 +3573,7 @@ export class MockBackend implements Backend {
         kind: "downloading",
         received: Math.round((total * n) / MOCK_MODEL_TICKS),
         total,
-        file: MOCK_MODEL_FILE,
+        file,
       });
       this.laterModel(id, () => {
         tick(n + 1);
@@ -3562,7 +3584,7 @@ export class MockBackend implements Backend {
       kind: "downloading",
       received: 0,
       total,
-      file: MOCK_MODEL_FILE,
+      file,
     });
     this.laterModel(id, () => {
       tick(1);
@@ -3886,8 +3908,13 @@ export class MockBackend implements Backend {
   }
 
   modelLinkOpen(id: string, file: string, source: number): Promise<void> {
-    const url = this.state.models.find((m) => m.id === id)?.files.find((f) => f.name === file)
-      ?.urls[source];
+    const model = this.state.models.find((m) => m.id === id);
+    // `file` may name the package the model comes in (docs/dictation.md §29.12).
+    const urls =
+      model?.package?.name === file
+        ? model.package.urls
+        : model?.files.find((f) => f.name === file)?.urls;
+    const url = urls?.[source];
     if (url === undefined)
       return Promise.reject(new Error(`model_link_open: ${id} ${file} ${source}`));
     this.modelLinksOpened.push(url);

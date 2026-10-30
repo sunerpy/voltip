@@ -940,6 +940,7 @@ mod tests {
             repo: "example/model".into(),
             dir: String::new(),
             files: Vec::new(),
+            package: None,
             active: true,
             state: crate::ModelInstallState::Verifying,
         };

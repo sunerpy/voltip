@@ -55,8 +55,8 @@ pub use history::{
 };
 pub use hotkey::{DEFAULT_EDIT_HOTKEY, DEFAULT_HOTKEY, Hotkey, HotkeyError, Modifier, SoloKey, SoloLoss};
 pub use models::{
-    CAPABILITY_OFFLINE, CAPABILITY_STREAMING, CAPABILITY_VAD, CancelToken, DEFAULT_LOCAL_MODEL_ID, ModelFileView, ModelImportError, ModelInstallState,
-    ModelManager, ModelState, ProgressSink, RelocateCommit, RelocateProgress, Relocated,
+    CAPABILITY_OFFLINE, CAPABILITY_STREAMING, CAPABILITY_VAD, CancelToken, DEFAULT_LOCAL_MODEL_ID, ModelDownloadError, ModelFileView, ModelImportError,
+    ModelInstallState, ModelManager, ModelPackageView, ModelState, PackageProblem, ProgressSink, RelocateCommit, RelocateProgress, Relocated,
 };
 pub use presets::{BuiltinPreset, CustomPreset, PresetDraft, PresetError, PresetId, PresetRef, PresetTrial, PresetTryOutcome, TakePreset};
 pub use providers::{

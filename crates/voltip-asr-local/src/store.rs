@@ -2,10 +2,11 @@
 //! a `manifest.json` once everything is verified, and `<file>.part` while a download is in flight.
 //!
 //! Download: sources are tried in order (`VOLTIP_MODEL_BASE_URL` mirror when the build has one,
-//! huggingface.co, hf-mirror.com); each file streams into `<file>.part` with a `Range` header when a
-//! partial file exists, then its sha256 is checked and only then is it flushed to the disk and
-//! renamed into place (the manifest the same way), so a crash never leaves a final name over blocks
-//! that did not reach the disk. A wrong hash is a failure that keeps the `.part` for the retry
+//! huggingface.co, hf-mirror.com; for a model published as a release package, the mirror and then
+//! the package, docs/dictation.md §29.12); each file streams into `<file>.part` with a `Range`
+//! header when a partial file exists, then its sha256 is checked and only then is it flushed to the
+//! disk and renamed into place (the manifest the same way), so a crash never leaves a final name
+//! over blocks that did not reach the disk. A wrong hash is a failure that keeps the `.part` for the retry
 //! (which re-checks it and starts over when it is still wrong). Cancellation stops between chunks
 //! and keeps the `.part` too. Before the first byte, the bytes still missing plus
 //! [`DISK_HEADROOM`] must fit in the free space of the library's file system.
@@ -17,7 +18,7 @@
 //! failure never fails the model they came with (the feature is fail-open).
 
 use std::collections::BTreeMap;
-use std::io::{Read as _, Seek as _, SeekFrom};
+use std::io::{Read, Seek as _, SeekFrom, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
@@ -28,10 +29,11 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use tokio::io::AsyncWriteExt as _;
 use voltip_core::{
-    CancelToken, ModelFileView, ModelImportError, ModelInstallState, ModelManager, ModelState, ProgressSink, RelocateCommit, RelocateProgress, Relocated,
+    CancelToken, ModelDownloadError, ModelFileView, ModelImportError, ModelInstallState, ModelManager, ModelPackageView, ModelState, PackageProblem,
+    ProgressSink, RelocateCommit, RelocateProgress, Relocated,
 };
 
-use crate::catalogue::{CATALOGUE, ModelEntry, ModelFile};
+use crate::catalogue::{CATALOGUE, ModelEntry, ModelFile, Package};
 use crate::root::ModelsRoot;
 
 /// Name of the per-model manifest.
@@ -40,6 +42,11 @@ pub const MANIFEST_FILE: &str = "manifest.json";
 pub const CATALOGUE_VERSION: u32 = 1;
 /// Build-time first-choice mirror (`<base>/<repo>/<file>`); absent from source and docs.
 pub const MODEL_BASE_URL_ENV: &str = "VOLTIP_MODEL_BASE_URL";
+/// Build-time host for the model packages (`<base>/<package path>`, docs/dictation.md §29.12) in
+/// place of GitHub: a mirror of its releases, or a test server.
+pub const MODEL_RELEASE_BASE_URL_ENV: &str = "VOLTIP_MODEL_RELEASE_BASE_URL";
+/// Where the model packages are published when the build names no other host.
+pub const RELEASE_BASE_URL: &str = "https://github.com";
 /// TCP connect deadline per attempt.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 /// A source that sends nothing for this long is abandoned for the next one.
@@ -124,34 +131,54 @@ pub struct Manifest {
     pub files: BTreeMap<String, String>,
 }
 
-/// Where a file may be fetched from.
+/// Where a model's files may be fetched from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Source {
-    /// `<base>/<repo>/<file>` (a plain mirror of the repo trees).
+    /// `<base>/<repo>/<file>` (a plain mirror of the repo trees): every model, file by file.
     Base(String),
-    /// `<base>/<repo>/resolve/main/<file>` (Hugging Face and its mirrors).
+    /// `<base>/<repo>/resolve/main/<file>` (Hugging Face and its mirrors): the models published
+    /// there, file by file.
     HfResolve(String),
+    /// `<base>/<package path>` (GitHub releases): the models published as one package
+    /// ([`ModelEntry::package`], docs/dictation.md §29.12).
+    Release(String),
 }
 
 impl Source {
-    /// The URL of `file` in `repo`.
-    pub fn url(&self, repo: &str, file: &str) -> String {
+    /// The URL of `file` of `entry` at this source, when it serves the model file by file.
+    pub fn file_url(&self, entry: &ModelEntry, file: &str) -> Option<String> {
         match self {
-            Self::Base(base) => format!("{}/{repo}/{file}", base.trim_end_matches('/')),
-            Self::HfResolve(base) => format!("{}/{repo}/resolve/main/{file}", base.trim_end_matches('/')),
+            Self::Base(base) => Some(format!("{}/{}/{file}", base.trim_end_matches('/'), entry.repo)),
+            Self::HfResolve(base) if entry.package.is_none() => Some(format!("{}/{}/resolve/main/{file}", base.trim_end_matches('/'), entry.repo)),
+            Self::HfResolve(_) | Self::Release(_) => None,
         }
     }
 
-    /// The documented order: the build's mirror (if any), huggingface.co, hf-mirror.com.
+    /// The URL of `entry`'s package at this source, when it serves one.
+    pub fn package_url(&self, entry: &ModelEntry) -> Option<String> {
+        match (self, entry.package) {
+            (Self::Release(base), Some(package)) => Some(format!("{}/{}", base.trim_end_matches('/'), package.path)),
+            _ => None,
+        }
+    }
+
+    /// The documented order: the build's mirror (if any), huggingface.co, hf-mirror.com, the
+    /// GitHub releases.
     pub fn defaults() -> Vec<Self> {
-        let mut sources = Vec::with_capacity(3);
+        let mut sources = Vec::with_capacity(4);
         if let Some(base) = option_env!("VOLTIP_MODEL_BASE_URL").map(str::trim).filter(|b| !b.is_empty()) {
             sources.push(Self::Base(base.to_owned()));
         }
         sources.push(Self::HfResolve("https://huggingface.co".into()));
         sources.push(Self::HfResolve("https://hf-mirror.com".into()));
+        sources.push(Self::Release(release_base().to_owned()));
         sources
     }
+}
+
+/// The host of the model packages: the build's `VOLTIP_MODEL_RELEASE_BASE_URL`, else GitHub.
+pub fn release_base() -> &'static str {
+    option_env!("VOLTIP_MODEL_RELEASE_BASE_URL").map(str::trim).filter(|b| !b.is_empty()).unwrap_or(RELEASE_BASE_URL)
 }
 
 /// Why [`ModelStore::import`] did not install a model.
@@ -191,6 +218,11 @@ pub enum StoreError {
         /// Measured rate over the last window.
         kib_per_sec: u64,
     },
+    /// The package a model comes in cannot be used (docs/dictation.md §29.12): it does not unpack,
+    /// or a file of the model is missing from it or not the catalogue's. A downloaded package is
+    /// deleted; the next download fetches it again.
+    #[error("模型包无法使用：{}", package_problem(.0))]
+    Package(PackageProblem),
     /// The downloaded file's sha256 is not the catalogue's.
     #[error("sha256 mismatch: {file}")]
     Checksum {
@@ -223,6 +255,15 @@ pub enum StoreError {
     Busy(&'static str),
 }
 
+/// A [`PackageProblem`] in words (the log and the command line; the card has its own words).
+fn package_problem(problem: &PackageProblem) -> String {
+    match problem {
+        PackageProblem::Broken => "压缩包损坏或不完整".to_owned(),
+        PackageProblem::Missing { files } => format!("包里没有 {}", files.join("、")),
+        PackageProblem::Mismatched { files } => format!("包里的 {} 不是这个模型的文件", files.join("、")),
+    }
+}
+
 /// Whole decimal megabytes, rounded down (what is free).
 fn megabytes(bytes: &u64) -> u64 {
     bytes / 1_000_000
@@ -236,6 +277,16 @@ fn megabytes_up(bytes: &u64) -> u64 {
 impl From<StoreError> for String {
     fn from(value: StoreError) -> Self {
         value.to_string()
+    }
+}
+
+impl From<StoreError> for ModelDownloadError {
+    fn from(value: StoreError) -> Self {
+        let package = match &value {
+            StoreError::Package(problem) => Some(problem.clone()),
+            _ => None,
+        };
+        Self { message: value.to_string(), package }
     }
 }
 
@@ -373,13 +424,15 @@ impl ModelStore {
         state.dir = dir.to_string_lossy().into_owned();
         state.files =
             entry.files().iter().map(|f| ModelFileView { name: f.name.to_owned(), size_bytes: f.size, urls: self.public_urls(entry, f.name) }).collect();
+        // The package's official address: a build's own release host is never shown either.
+        state.package = entry.package.map(|p| ModelPackageView { name: p.file_name().to_owned(), urls: vec![format!("{RELEASE_BASE_URL}/{}", p.path)] });
         state
     }
 
     /// Where `file` of `entry` can be downloaded by hand: the Hugging Face sources in their order.
     /// A build's own mirror (`Source::Base`) is a host the interface never shows.
     pub fn public_urls(&self, entry: &ModelEntry, file: &str) -> Vec<String> {
-        self.sources.iter().filter(|s| matches!(s, Source::HfResolve(_))).map(|s| s.url(entry.repo, file)).collect()
+        self.sources.iter().filter(|s| matches!(s, Source::HfResolve(_))).filter_map(|s| s.file_url(entry, file)).collect()
     }
 
     /// The auxiliary entries that are not installed yet.
@@ -469,6 +522,22 @@ impl ModelStore {
         self.refuse_while_moving().map_err(ImportError::Store)?;
         let dir = self.dir(id);
         progress(ModelInstallState::Verifying);
+        // The package a model comes in, put into its folder (docs/dictation.md §29.12), is unpacked
+        // first. It is the person's file: one that cannot be used stays for them to replace.
+        if let Some(package) = entry.package {
+            let archive = dir.join(package.file_name());
+            if tokio::fs::metadata(&archive).await.is_ok_and(|m| m.is_file()) {
+                let wanted: Vec<&'static ModelFile> =
+                    entry.files().iter().filter(|f| !std::fs::metadata(dir.join(f.name)).is_ok_and(|m| m.len() == f.size)).collect();
+                let (from, into) = (archive.clone(), dir.clone());
+                tokio::task::spawn_blocking(move || unpack(&from, package.dir, &wanted, &into, &CancelToken::new()))
+                    .await
+                    .map_err(|e| ImportError::Store(StoreError::Io(e.to_string())))?
+                    .map_err(ImportError::Store)?;
+                tracing::info!(model = id, "model files unpacked from the package put into its folder");
+                remove_if_present(&archive).await;
+            }
+        }
         let check_dir = dir.clone();
         let (missing, mismatched) = tokio::task::spawn_blocking(move || -> Result<(Vec<String>, Vec<String>), StoreError> {
             let (mut missing, mut mismatched) = (Vec::new(), Vec::new());
@@ -527,6 +596,11 @@ impl ModelStore {
             self.fetch_file(&client, entry, file, &dir, progress, cancel).await?;
             manifest.files.insert(file.name.to_owned(), file.sha256.to_owned());
         }
+        if let Some(package) = entry.package {
+            // Every file is in place: a package a cancel left whole, or part of one, is not needed.
+            remove_if_present(&dir.join(package.file_name())).await;
+            remove_if_present(&dir.join(format!("{}.part", package.file_name()))).await;
+        }
         manifest.downloaded_at = now_secs();
         write_manifest(&dir, &manifest).await?;
         tracing::info!(model = entry.id, dir = %dir.display(), "model installed");
@@ -541,15 +615,21 @@ impl ModelStore {
         if missing == 0 {
             return Ok(());
         }
-        let needed = missing.saturating_add(DISK_HEADROOM);
+        self.check_room(dir, missing, entry.id)
+    }
+
+    /// Refuse to write `bytes` more into `dir` when they, plus [`DISK_HEADROOM`], do not fit. A
+    /// disk that cannot say how much is free does not refuse.
+    fn check_room(&self, dir: &Path, bytes: u64, what: &str) -> Result<(), StoreError> {
+        let needed = bytes.saturating_add(DISK_HEADROOM);
         match self.free_space.at(dir) {
             Ok(available) if available < needed => {
-                tracing::warn!(model = entry.id, needed, available, "not enough free space for the download");
+                tracing::warn!(what, needed, available, "not enough free space for the download");
                 Err(StoreError::NoSpace { needed, available })
             }
             Ok(_) => Ok(()),
             Err(e) => {
-                tracing::warn!(model = entry.id, error = %e, "free space unknown; downloading anyway");
+                tracing::warn!(what, error = %e, "free space unknown; downloading anyway");
                 Ok(())
             }
         }
@@ -598,60 +678,132 @@ impl ModelStore {
                 Err(e) => return Err(e),
             }
         }
-        let mut last_error = String::from("没有可用的下载源");
-        let mut complete = false;
+        // The sources that have the file: on its own, or in the package the model comes in.
+        let usable: Vec<&Source> = self.sources.iter().filter(|s| s.file_url(entry, file.name).is_some() || s.package_url(entry).is_some()).collect();
+        let mut last_error = StoreError::Download("没有可用的下载源".into());
         // First pass: a source with another one behind it may be dropped for being slow. Second
         // pass: the sources dropped that way, patiently — a slow source that is the only one that
         // works still finishes the download.
         let mut slow_ones = Vec::new();
-        'passes: for pass in 0..2 {
-            let order: Vec<usize> = if pass == 0 { (0..self.sources.len()).collect() } else { std::mem::take(&mut slow_ones) };
-            for index in order {
+        for pass in 0..2 {
+            let order: Vec<usize> = if pass == 0 { (0..usable.len()).collect() } else { std::mem::take(&mut slow_ones) };
+            for position in order {
                 if cancel.is_cancelled() {
                     return Err(StoreError::Cancelled);
                 }
-                let url = self.sources[index].url(entry.repo, file.name);
-                let slow = (pass == 0 && index + 1 < self.sources.len()).then_some(self.slow);
-                match self.stream(client, &url, &part, file, &mut received, progress, cancel, slow).await {
+                let source = usable[position];
+                let slow = (pass == 0 && position + 1 < usable.len()).then_some(self.slow);
+                if let (Some(url), Some(package)) = (source.package_url(entry), entry.package) {
+                    // Every file still missing comes out of the package, checked.
+                    let fetched = self.fetch_package(client, entry, package, &url, dir, progress, cancel, slow).await;
+                    // Unpacking writes `<file>.part`s of its own: what a file source resumes is on disk.
+                    received = tokio::fs::metadata(&part).await.map(|m| m.len()).unwrap_or(0).min(file.size);
+                    match fetched {
+                        Ok(()) => return Ok(()),
+                        Err(e @ (StoreError::Cancelled | StoreError::NoSpace { .. })) => return Err(e),
+                        Err(e @ StoreError::TooSlow { .. }) => {
+                            tracing::info!(model = entry.id, source = %redact(&url), error = %e, "package source too slow; trying the next one");
+                            slow_ones.push(position);
+                            last_error = StoreError::Download(e.to_string());
+                        }
+                        Err(e @ StoreError::Package(_)) => {
+                            tracing::warn!(model = entry.id, source = %redact(&url), error = %e, "the package cannot be used; trying the next source");
+                            last_error = e;
+                        }
+                        Err(e) => {
+                            tracing::warn!(model = entry.id, source = %redact(&url), error = %e, "package source failed; trying the next one");
+                            last_error = StoreError::Download(e.to_string());
+                        }
+                    }
+                    continue;
+                }
+                let Some(url) = source.file_url(entry, file.name) else { continue };
+                match self.stream(client, &url, &part, Body::file(file), &mut received, progress, cancel, slow).await {
                     Ok(()) => {
-                        complete = true;
-                        break 'passes;
+                        progress(ModelInstallState::Verifying);
+                        return verify_and_rename(&part, &final_path, file).await;
                     }
                     Err(StoreError::Cancelled) => return Err(StoreError::Cancelled),
                     Err(e @ StoreError::TooSlow { .. }) => {
                         tracing::info!(file = file.name, source = %redact(&url), error = %e, received, "source too slow; trying the next one");
-                        slow_ones.push(index);
-                        last_error = e.to_string();
+                        slow_ones.push(position);
+                        last_error = StoreError::Download(e.to_string());
                     }
                     Err(e) => {
                         tracing::warn!(file = file.name, source = %redact(&url), error = %e, received, "source failed; trying the next one");
-                        last_error = e.to_string();
+                        last_error = StoreError::Download(e.to_string());
                     }
                 }
             }
         }
-        if !complete {
-            return Err(StoreError::Download(last_error));
-        }
-        progress(ModelInstallState::Verifying);
-        verify_and_rename(&part, &final_path, file).await
+        Err(last_error)
     }
 
-    /// Stream `url` into `part`, resuming at `*received`. `Ok` means the file is complete on disk.
+    /// Fetch `entry`'s package from `url` and take every file of the model that is not in place yet
+    /// out of it (docs/dictation.md §29.12). `Ok`: each of them is under its final name, its size
+    /// and sha256 the catalogue's. The package downloads into `<package>.part`, resuming with a
+    /// `Range` request like a file, and takes its own name once whole. A package that cannot be
+    /// used is deleted. One that a cancel or the disk stopped while it was being unpacked stays,
+    /// and the next download unpacks it without fetching it again; the install deletes it.
+    #[allow(clippy::too_many_arguments)]
+    async fn fetch_package(
+        &self,
+        client: &reqwest::Client,
+        entry: &ModelEntry,
+        package: Package,
+        url: &str,
+        dir: &Path,
+        progress: &ProgressSink,
+        cancel: &CancelToken,
+        slow: Option<SlowSourcePolicy>,
+    ) -> Result<(), StoreError> {
+        let archive = dir.join(package.file_name());
+        if !tokio::fs::metadata(&archive).await.is_ok_and(|m| m.is_file()) {
+            let part = dir.join(format!("{}.part", package.file_name()));
+            let mut received = tokio::fs::metadata(&part).await.map(|m| m.len()).unwrap_or(0);
+            let body = Body { name: package.file_name(), size: None, limit: entry.size_bytes().saturating_mul(2), also_needs: bytes_to_fetch(entry, dir) };
+            self.stream(client, url, &part, body, &mut received, progress, cancel, slow).await?;
+            let (from, to) = (part, archive.clone());
+            tokio::task::spawn_blocking(move || publish(&from, &to)).await.map_err(|e| StoreError::Io(e.to_string()))??;
+        }
+        progress(ModelInstallState::Verifying);
+        let wanted: Vec<&'static ModelFile> = entry.files().iter().filter(|f| !std::fs::metadata(dir.join(f.name)).is_ok_and(|m| m.len() == f.size)).collect();
+        let (from, into, stop) = (archive.clone(), dir.to_path_buf(), cancel.clone());
+        let unpacked =
+            tokio::task::spawn_blocking(move || unpack(&from, package.dir, &wanted, &into, &stop)).await.map_err(|e| StoreError::Io(e.to_string()))?;
+        match &unpacked {
+            Ok(()) => tracing::info!(model = entry.id, "model files unpacked from its package"),
+            Err(e @ StoreError::Package(_)) => tracing::warn!(model = entry.id, error = %e, "deleting a package that cannot be used"),
+            Err(e) => tracing::info!(model = entry.id, error = %e, "unpacking stopped; the package stays for the next try"),
+        }
+        if matches!(unpacked, Ok(()) | Err(StoreError::Package(_))) {
+            remove_if_present(&archive).await;
+        }
+        unpacked
+    }
+
+    /// Stream `url` into `part`, resuming at `*received`. `Ok` means the body is complete on disk.
     #[allow(clippy::too_many_arguments)]
     async fn stream(
         &self,
         client: &reqwest::Client,
         url: &str,
         part: &Path,
-        file: &ModelFile,
+        body: Body<'_>,
         received: &mut u64,
         progress: &ProgressSink,
         cancel: &CancelToken,
         slow: Option<SlowSourcePolicy>,
     ) -> Result<(), StoreError> {
-        let report = |received: u64| progress(ModelInstallState::Downloading { received, total: file.size, file: file.name.to_owned() });
-        report(*received);
+        // A model file's size is the catalogue's; a package's is the server's, and its progress
+        // waits for the answer.
+        let mut total = body.size;
+        let report = |received: u64, total: Option<u64>| {
+            if let Some(total) = total {
+                progress(ModelInstallState::Downloading { received, total, file: body.name.to_owned() });
+            }
+        };
+        report(*received, total);
         let mut request = client.get(url);
         if *received > 0 {
             request = request.header(reqwest::header::RANGE, format!("bytes={}-", *received));
@@ -660,34 +812,49 @@ impl ModelStore {
             r = request.send() => r.map_err(|e| StoreError::Download(e.to_string()))?,
             () = cancel.cancelled() => return Err(StoreError::Cancelled),
         };
+        let content_range =
+            response.headers().get(reqwest::header::CONTENT_RANGE).and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("bytes ")).map(str::to_owned);
         match response.status() {
             reqwest::StatusCode::PARTIAL_CONTENT => {
                 // Trust the offset only when the server confirms it.
-                let confirmed = response
-                    .headers()
-                    .get(reqwest::header::CONTENT_RANGE)
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|v| v.strip_prefix("bytes "))
-                    .and_then(|v| v.split('-').next())
-                    .and_then(|v| v.parse::<u64>().ok());
+                let confirmed = content_range.as_deref().and_then(|v| v.split('-').next()).and_then(|v| v.parse::<u64>().ok());
                 if confirmed != Some(*received) {
-                    tracing::warn!(file = file.name, ?confirmed, received = *received, "server resumed from a different offset; starting over");
+                    tracing::warn!(file = body.name, ?confirmed, received = *received, "server resumed from a different offset; starting over");
                     truncate(part, 0).await?;
                     *received = 0;
                     return Err(StoreError::Download("range offset mismatch".into()));
                 }
+                total = total.or_else(|| content_range.as_deref().and_then(|v| v.rsplit('/').next()).and_then(|v| v.parse().ok()));
             }
             reqwest::StatusCode::OK => {
                 if *received > 0 {
-                    tracing::info!(file = file.name, "server ignored the range; starting over");
+                    tracing::info!(file = body.name, "server ignored the range; starting over");
                     truncate(part, 0).await?;
                     *received = 0;
-                    report(0);
+                    report(0, total);
                 }
+                total = total.or_else(|| response.content_length());
             }
-            reqwest::StatusCode::RANGE_NOT_SATISFIABLE if *received == file.size => return Ok(()),
+            reqwest::StatusCode::RANGE_NOT_SATISFIABLE if body.size.is_some_and(|size| *received == size) => return Ok(()),
+            // A package already whole on disk: the server answers `bytes */<its size>`.
+            reqwest::StatusCode::RANGE_NOT_SATISFIABLE
+                if body.size.is_none()
+                    && *received > 0
+                    && content_range.as_deref().and_then(|v| v.strip_prefix("*/")).and_then(|v| v.parse::<u64>().ok()) == Some(*received) =>
+            {
+                return Ok(());
+            }
             status => return Err(StoreError::Download(format!("HTTP {status}"))),
         }
+        if body.size.is_none() {
+            // The package's size is known now: what is left of it, and what the install writes
+            // besides it, must fit on the disk.
+            if let Some(total) = total {
+                self.check_room(part.parent().unwrap_or(part), total.saturating_sub(*received).saturating_add(body.also_needs), body.name)?;
+            }
+            report(*received, total);
+        }
+        let limit = total.unwrap_or(body.limit);
         let mut out = tokio::fs::OpenOptions::new().create(true).append(true).open(part).await?;
         // Rolling throughput window (see `SlowSourcePolicy`): start instant and byte count.
         let mut window = (Instant::now(), *received);
@@ -700,15 +867,16 @@ impl ModelStore {
                 }
             };
             let Some(chunk) = chunk else { break };
-            if *received + chunk.len() as u64 > file.size {
+            if *received + chunk.len() as u64 > limit {
                 out.flush().await?;
                 truncate(part, 0).await?;
                 *received = 0;
-                return Err(StoreError::Download(format!("{} is longer than the catalogue says", file.name)));
+                let said = if body.size.is_some() { "the catalogue says" } else { "the server said" };
+                return Err(StoreError::Download(format!("{} is longer than {said}", body.name)));
             }
             out.write_all(&chunk).await?;
             *received += chunk.len() as u64;
-            report(*received);
+            report(*received, total);
             if let Some(policy) = slow {
                 let elapsed = window.0.elapsed();
                 if elapsed >= policy.window {
@@ -723,7 +891,10 @@ impl ModelStore {
             }
         }
         out.flush().await?;
-        if *received == file.size { Ok(()) } else { Err(StoreError::Download(format!("connection closed after {} of {} bytes", *received, file.size))) }
+        match total {
+            Some(total) if *received != total => Err(StoreError::Download(format!("connection closed after {} of {total} bytes", *received))),
+            _ => Ok(()),
+        }
     }
 
     /// Delete the model directory: files, `.part`s and manifest.
@@ -748,8 +919,8 @@ impl ModelManager for ModelStore {
         Self::scan(self)
     }
 
-    async fn download(&self, id: &str, progress: ProgressSink, cancel: CancelToken) -> Result<ModelInstallState, String> {
-        Self::download(self, id, progress, cancel).await.map_err(String::from)
+    async fn download(&self, id: &str, progress: ProgressSink, cancel: CancelToken) -> Result<ModelInstallState, ModelDownloadError> {
+        Self::download(self, id, progress, cancel).await.map_err(ModelDownloadError::from)
     }
 
     fn remove(&self, id: &str) -> Result<(), String> {
@@ -759,6 +930,7 @@ impl ModelManager for ModelStore {
     async fn import(&self, id: &str, progress: ProgressSink) -> Result<ModelInstallState, ModelImportError> {
         Self::import(self, id, progress).await.map_err(|e| match e {
             ImportError::Incomplete { missing, mismatched } => ModelImportError::Incomplete { missing, mismatched },
+            ImportError::Store(e @ StoreError::Package(_)) => ModelImportError::Package(e.into()),
             ImportError::Store(e) => ModelImportError::Failed(String::from(e)),
         })
     }
@@ -861,6 +1033,149 @@ async fn truncate(path: &Path, len: u64) -> Result<(), StoreError> {
     Ok(())
 }
 
+/// Delete `path` when it is there (best effort: what cannot be deleted is logged).
+async fn remove_if_present(path: &Path) {
+    match tokio::fs::remove_file(path).await {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => tracing::warn!(path = %path.display(), error = %e, "could not delete a leftover download"),
+    }
+}
+
+/// What [`ModelStore::stream`] fetches: a model file, or the package a model comes in.
+#[derive(Clone, Copy, Debug)]
+struct Body<'a> {
+    /// The name progress reports.
+    name: &'a str,
+    /// A model file's catalogue size; `None` for a package, whose size the server says.
+    size: Option<u64>,
+    /// The most bytes taken when the server does not say the size.
+    limit: u64,
+    /// A package: what the install writes besides it, checked against the free space together
+    /// with what is left of the package once the server says its size.
+    also_needs: u64,
+}
+
+impl<'a> Body<'a> {
+    /// One file of a model.
+    fn file(file: &'a ModelFile) -> Self {
+        Self { name: file.name, size: Some(file.size), limit: file.size, also_needs: 0 }
+    }
+}
+
+/// A reader that fails once `cancel` fires: unpacking stops at its next read.
+struct Interruptible<R> {
+    inner: R,
+    cancel: CancelToken,
+}
+
+impl<R: Read> Read for Interruptible<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.cancel.is_cancelled() {
+            return Err(std::io::Error::other("cancelled"));
+        }
+        self.inner.read(buf)
+    }
+}
+
+/// Take `wanted` out of the tar.bz2 at `archive`, whose `folder` holds the model's files, into
+/// `dir` (docs/dictation.md §29.12): each streams into `<file>.part` while its sha256 is computed
+/// and takes its final name when its size and sha256 are the catalogue's. Members elsewhere in the
+/// package, and anything but regular files, are skipped; nothing is written under a name the
+/// package chose. A `.part` that does not verify is deleted, and the rest of the package is read
+/// to tell a damaged package from one that holds another file. A cancel stops it at the next read.
+/// Blocking.
+fn unpack(archive: &Path, folder: &str, wanted: &[&ModelFile], dir: &Path, cancel: &CancelToken) -> Result<(), StoreError> {
+    if wanted.is_empty() {
+        return Ok(());
+    }
+    let reader = Interruptible { inner: std::fs::File::open(archive)?, cancel: cancel.clone() };
+    let mut tar = tar::Archive::new(bzip2::read::MultiBzDecoder::new(reader));
+    // A read that fails is the package's fault, unless a cancel made it fail.
+    let broken = |e: std::io::Error| {
+        if cancel.is_cancelled() {
+            return StoreError::Cancelled;
+        }
+        tracing::warn!(archive = %archive.display(), error = %e, "the package does not unpack");
+        StoreError::Package(PackageProblem::Broken)
+    };
+    let mut left: Vec<&ModelFile> = wanted.to_vec();
+    let mut members = tar.entries().map_err(broken)?;
+    while let Some(member) = members.next() {
+        let mut member = member.map_err(broken)?;
+        if !member.header().entry_type().is_file() {
+            continue;
+        }
+        let path = member.path().map_err(broken)?.into_owned();
+        let Some(index) = left.iter().position(|f| is_member(&path, folder, f.name)) else { continue };
+        let file = left.remove(index);
+        let part = dir.join(format!("{}.part", file.name));
+        let written = if member.size() == file.size {
+            write_member(&mut member, &part, file.size, &broken).and_then(|digest| {
+                if digest == file.sha256 {
+                    publish(&part, &dir.join(file.name)).map(|()| true).map_err(StoreError::from)
+                } else {
+                    tracing::warn!(file = file.name, expected = file.sha256, actual = %digest, "sha256 mismatch in the package");
+                    Ok(false)
+                }
+            })
+        } else {
+            tracing::warn!(file = file.name, size = member.size(), expected = file.size, "a file in the package is not of the catalogue size");
+            Ok(false)
+        };
+        match written {
+            Ok(true) if left.is_empty() => return Ok(()),
+            Ok(true) => {}
+            Ok(false) => {
+                let _ = std::fs::remove_file(&part);
+                // Another file, or a damaged package? Every byte of the rest says which.
+                drop(member);
+                for rest in members {
+                    std::io::copy(&mut rest.map_err(broken)?, &mut std::io::sink()).map_err(broken)?;
+                }
+                std::io::copy(&mut tar.into_inner(), &mut std::io::sink()).map_err(broken)?;
+                return Err(StoreError::Package(PackageProblem::Mismatched { files: vec![file.name.to_owned()] }));
+            }
+            Err(e) => {
+                let _ = std::fs::remove_file(&part);
+                return Err(e);
+            }
+        }
+    }
+    Err(StoreError::Package(PackageProblem::Missing { files: left.iter().map(|f| f.name.to_owned()).collect() }))
+}
+
+/// Whether the package member at `path` is `name` directly inside `folder` (a leading `./` aside).
+fn is_member(path: &Path, folder: &str, name: &str) -> bool {
+    let mut parts = path.components().filter(|c| !matches!(c, std::path::Component::CurDir));
+    matches!(
+        (parts.next(), parts.next(), parts.next()),
+        (Some(std::path::Component::Normal(d)), Some(std::path::Component::Normal(n)), None) if d == folder && n == name
+    )
+}
+
+/// Copy one package member of `size` bytes into `part` and return its sha256 (lower-case hex).
+fn write_member(member: &mut impl Read, part: &Path, size: u64, broken: &impl Fn(std::io::Error) -> StoreError) -> Result<String, StoreError> {
+    let mut out = std::fs::File::create(part)?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 1 << 16];
+    let mut copied = 0u64;
+    loop {
+        let n = member.read(&mut buf).map_err(broken)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+        out.write_all(&buf[..n])?;
+        copied += n as u64;
+    }
+    if copied != size {
+        // The package ended inside the file.
+        return Err(StoreError::Package(PackageProblem::Broken));
+    }
+    Ok(hex_lower(&hasher.finalize()))
+}
+
 /// sha256 of `part` on a blocking thread; on a match the file takes its final name ([`publish`]).
 async fn verify_and_rename(part: &Path, final_path: &Path, file: &ModelFile) -> Result<(), StoreError> {
     let path = part.to_path_buf();
@@ -909,17 +1224,40 @@ mod tests {
 
     #[test]
     fn sources_build_the_documented_urls_in_order() {
-        let repo = "csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09";
-        assert_eq!(Source::Base("https://mirror.example.test/".into()).url(repo, "tokens.txt"), format!("https://mirror.example.test/{repo}/tokens.txt"));
+        let paraformer = crate::catalogue::entry("paraformer-zh").unwrap();
+        let repo = paraformer.repo;
         assert_eq!(
-            Source::HfResolve("https://huggingface.co".into()).url(repo, "model.int8.onnx"),
+            Source::Base("https://mirror.example.test/".into()).file_url(paraformer, "tokens.txt").unwrap(),
+            format!("https://mirror.example.test/{repo}/tokens.txt")
+        );
+        assert_eq!(
+            Source::HfResolve("https://huggingface.co".into()).file_url(paraformer, "model.int8.onnx").unwrap(),
             format!("https://huggingface.co/{repo}/resolve/main/model.int8.onnx")
         );
+        assert_eq!(Source::Release("https://github.com".into()).file_url(paraformer, "tokens.txt"), None, "a release host serves packages only");
+        assert_eq!(Source::Release("https://github.com".into()).package_url(paraformer), None, "Paraformer has no package");
+        // The streaming model (§29.12): the build's mirror file by file, then sherpa-onnx's release
+        // package; Hugging Face no longer has it.
+        let streaming = crate::catalogue::streaming_entry();
+        assert_eq!(
+            Source::Base("https://mirror.example.test".into()).file_url(streaming, "tokens.txt").unwrap(),
+            format!("https://mirror.example.test/{}/tokens.txt", streaming.repo)
+        );
+        assert_eq!(Source::HfResolve("https://huggingface.co".into()).file_url(streaming, "tokens.txt"), None);
+        assert_eq!(Source::HfResolve("https://hf-mirror.com".into()).package_url(streaming), None);
+        assert_eq!(
+            Source::Release("https://github.com/".into()).package_url(streaming).unwrap(),
+            "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05.tar.bz2"
+        );
         let defaults = Source::defaults();
-        let public: Vec<&Source> = defaults.iter().rev().take(2).collect();
-        assert_eq!(public[1], &Source::HfResolve("https://huggingface.co".into()), "huggingface.co before its mirror");
-        assert_eq!(public[0], &Source::HfResolve("https://hf-mirror.com".into()));
-        assert!(defaults.len() == 2 || matches!(defaults[0], Source::Base(_)), "an optional build mirror comes first");
+        let public: Vec<&Source> = defaults.iter().rev().take(3).collect();
+        assert_eq!(public[2], &Source::HfResolve("https://huggingface.co".into()), "huggingface.co before its mirror");
+        assert_eq!(public[1], &Source::HfResolve("https://hf-mirror.com".into()));
+        assert_eq!(public[0], &Source::Release(release_base().into()), "the release host last");
+        assert_eq!(RELEASE_BASE_URL, "https://github.com");
+        assert_eq!(release_base(), option_env!("VOLTIP_MODEL_RELEASE_BASE_URL").map_or(RELEASE_BASE_URL, str::trim));
+        assert_eq!(MODEL_RELEASE_BASE_URL_ENV, "VOLTIP_MODEL_RELEASE_BASE_URL");
+        assert!(defaults.len() == 3 || matches!(defaults[0], Source::Base(_)), "an optional build mirror comes first");
         assert_eq!(MODEL_BASE_URL_ENV, "VOLTIP_MODEL_BASE_URL");
         assert_eq!(redact("https://h.test/a/b?token=x"), "https://h.test/a/b");
         assert_eq!(hex_lower(&[0, 255, 16]), "00ff10");

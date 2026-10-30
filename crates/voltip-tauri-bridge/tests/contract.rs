@@ -33,9 +33,10 @@ use voltip_core::{
     Activation, AppRef, BuiltIn, BuiltinScene, CAPABILITY_OFFLINE, CAPABILITY_STREAMING, ChineseScript, ClipboardAfter, ContextSharing, DeviceConnection,
     DeviceView, DictationPhase, DictationStatus, DictionaryDraft, DictionaryEntry, EditRecord, EngineSettings, EngineStatus, EntrySource, FallbackModel,
     FallbackSettings, HistoryEntry, HistoryHits, HistoryPage, HistoryQuery, HistoryStats, HistoryStatsBucket, ImportMode, InjectMode, LiveText, LocalDevice,
-    Locale, ModelFileView, ModelInstallState, ModelState, Outcome, OutputMode, ProbeFailure, ProbeOutcome, ProbeReport, ProviderId, ProviderSettings,
-    RefineFailure, RelaySource, RelayStatus, ReplacementRule, ResolvedEngines, RuleDraft, RuleKind, Scene, SceneDraft, SceneMatch, SceneOverrides, SceneRef,
-    Segment, ServiceKind, Settings, SoloKey, SoloLoss, SwitchedWindow, TakeContext, TakeKind, ThemeId, UserSecrets, VocabularyHit, VocabularyHits,
+    Locale, ModelFileView, ModelInstallState, ModelPackageView, ModelState, Outcome, OutputMode, PackageProblem, ProbeFailure, ProbeOutcome, ProbeReport,
+    ProviderId, ProviderSettings, RefineFailure, RelaySource, RelayStatus, ReplacementRule, ResolvedEngines, RuleDraft, RuleKind, Scene, SceneDraft,
+    SceneMatch, SceneOverrides, SceneRef, Segment, ServiceKind, Settings, SoloKey, SoloLoss, SwitchedWindow, TakeContext, TakeKind, ThemeId, UserSecrets,
+    VocabularyHit, VocabularyHits,
 };
 use voltip_core::{EntryOrigin, FailureKind, OriginKind, RelayFailure};
 use voltip_crypto::{PublicKey, SafetyCode};
@@ -95,6 +96,8 @@ const QWEN_BYTES: u64 = 690_417_824;
 const SENSE_VOICE_BYTES: u64 = 239_549_735;
 const PARAFORMER_BYTES: u64 = 227_405_559;
 const STREAMING_BYTES: u64 = 169_347_218;
+/// The sherpa-onnx release package the streaming model comes in (docs/dictation.md §29.12).
+const STREAMING_PACKAGE: &str = "sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05";
 const LIVE_COMMITTED: &str = "把 fetchUser 改成 async，";
 const LIVE_CURRENT: &str = "然后加上错误";
 const MODELS_DIR: &str = "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models";
@@ -956,6 +959,7 @@ fn models_installed_and_downloading() -> Vec<ModelState> {
             repo: "handy-computer/Qwen3-ASR-0.6B-gguf".into(),
             dir: format!("{MODELS_DIR}\\{QWEN_ID}"),
             files: model_files("handy-computer/Qwen3-ASR-0.6B-gguf", &[("Qwen3-ASR-0.6B-Q6_K.gguf", 690_417_824)]),
+            package: None,
             active: true,
             state: ModelInstallState::Installed { path: format!("{MODELS_DIR}\\{QWEN_ID}"), installed_at: TRUSTED_AT },
         },
@@ -972,6 +976,7 @@ fn models_installed_and_downloading() -> Vec<ModelState> {
             repo: "csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17".into(),
             dir: format!("{MODELS_DIR}\\{SENSE_VOICE_ID}"),
             files: model_files("csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17", &[("model.int8.onnx", 239_233_841), ("tokens.txt", 315_894)]),
+            package: None,
             active: false,
             state: ModelInstallState::NotInstalled,
         },
@@ -988,6 +993,7 @@ fn models_installed_and_downloading() -> Vec<ModelState> {
             repo: "csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09".into(),
             dir: format!("{MODELS_DIR}\\{PARAFORMER_ID}"),
             files: model_files("csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09", &[("model.int8.onnx", 227_330_205), ("tokens.txt", 75_354)]),
+            package: None,
             active: false,
             state: ModelInstallState::Downloading { received: 104_857_600, total: 227_330_205, file: "model.int8.onnx".into() },
         },
@@ -1003,16 +1009,20 @@ fn models_installed_and_downloading() -> Vec<ModelState> {
             recommended: false,
             repo: "csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05".into(),
             dir: format!("{MODELS_DIR}\\{STREAMING_ID}"),
-            files: model_files(
-                "csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05",
-                &[
-                    ("encoder.int8.onnx", 155_278_641),
-                    ("decoder.onnx", 11_309_084),
-                    ("joiner.int8.onnx", 2_581_422),
-                    ("tokens.txt", 58_806),
-                    ("bpe.model", 119_265),
-                ],
-            ),
+            // Published as a package (docs/dictation.md §29.12): its files list no address of their own.
+            files: [
+                ("encoder.int8.onnx", 155_278_641),
+                ("decoder.onnx", 11_309_084),
+                ("joiner.int8.onnx", 2_581_422),
+                ("tokens.txt", 58_806),
+                ("bpe.model", 119_265),
+            ]
+            .map(|(name, size_bytes)| ModelFileView { name: name.into(), size_bytes, urls: Vec::new() })
+            .to_vec(),
+            package: Some(ModelPackageView {
+                name: format!("{STREAMING_PACKAGE}.tar.bz2"),
+                urls: vec![format!("https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/{STREAMING_PACKAGE}.tar.bz2")],
+            }),
             active: false,
             state: ModelInstallState::Installed { path: format!("{MODELS_DIR}\\{STREAMING_ID}"), installed_at: TRUSTED_AT },
         },
@@ -1041,9 +1051,29 @@ fn models_other_states() -> Vec<ModelState> {
             state: ModelInstallState::ImportIncomplete { missing: vec!["tokens.txt".into()], mismatched: vec!["model.int8.onnx".into()] },
             ..base[1].clone()
         },
-        ModelState { active: true, state: ModelInstallState::Failed { message: "sha256 mismatch: model.int8.onnx".into() }, ..base[2].clone() },
-        ModelState { state: ModelInstallState::Downloading { received: 52_428_800, total: 155_278_641, file: "encoder.int8.onnx".into() }, ..base[3].clone() },
+        ModelState { active: true, state: ModelInstallState::Failed { message: "sha256 mismatch: model.int8.onnx".into(), package: None }, ..base[2].clone() },
+        // The streaming model downloads as a package (docs/dictation.md §29.12).
+        ModelState {
+            state: ModelInstallState::Downloading { received: 52_428_800, total: 133_895_136, file: format!("{STREAMING_PACKAGE}.tar.bz2") },
+            ..base[3].clone()
+        },
     ]
+}
+
+/// A package that could not be used (docs/dictation.md §29.12), each problem once.
+fn models_package_failed() -> Vec<ModelState> {
+    let streaming = models_installed_and_downloading().remove(3);
+    [
+        PackageProblem::Broken,
+        PackageProblem::Missing { files: vec!["tokens.txt".into()] },
+        PackageProblem::Mismatched { files: vec!["decoder.onnx".into(), "bpe.model".into()] },
+    ]
+    .into_iter()
+    .map(|problem| ModelState {
+        state: ModelInstallState::Failed { message: "模型包无法使用：压缩包损坏或不完整".into(), package: Some(problem) },
+        ..streaming.clone()
+    })
+    .collect()
 }
 
 /// The live preview while listening (docs/dictation.md §11): one committed sentence, one in progress.
@@ -2012,6 +2042,7 @@ fn all_events() -> Vec<UiEvent> {
         // The model library: every `ModelInstallState` variant across these three lists.
         models_event(models_installed_and_downloading()),
         models_event(models_other_states()),
+        models_event(models_package_failed()),
         models_event(models_not_installed()),
         models_event(Vec::new()),
         // Every updater state the settings page discriminates on, in the order the shell publishes

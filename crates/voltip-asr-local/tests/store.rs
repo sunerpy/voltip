@@ -71,6 +71,7 @@ fn catalogue() -> &'static [ModelEntry] {
         description: "test",
         recommended: true,
         repo: REPO,
+        package: None,
         files,
         max_piece: Duration::from_secs(119),
     };
@@ -86,6 +87,7 @@ fn catalogue() -> &'static [ModelEntry] {
         description: "test",
         recommended: false,
         repo: AUX_REPO,
+        package: None,
         files: aux_files,
         max_piece: Duration::ZERO,
     };
@@ -180,7 +182,10 @@ async fn fresh_download_verifies_writes_the_manifest_and_reports_progress() {
     manager.remove("tiny").unwrap();
     assert!(!dir.path().join("tiny").exists());
     assert_eq!(manager.scan()[0].state, ModelInstallState::NotInstalled);
-    assert_eq!(manager.download("ghost", Arc::new(|_| {}), CancelToken::new()).await, Err("目录中没有 ghost".to_owned()));
+    assert_eq!(
+        manager.download("ghost", Arc::new(|_| {}), CancelToken::new()).await,
+        Err(voltip_core::ModelDownloadError { message: "目录中没有 ghost".to_owned(), package: None })
+    );
 }
 
 #[tokio::test]

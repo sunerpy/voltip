@@ -791,6 +791,110 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     }
   });
 
+  it("regression: section 29.12 the 实时预览 model downloads by hand as its release package, put into the folder as it is, and a package that cannot be used is named", async () => {
+    // User decision D21 (2026-10-30): the model's Hugging Face repository is gone; its files come
+    // in sherpa-onnx's release package.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    try {
+      const { backend } = renderApp({ path: "/speech" });
+      await openTab(user, "识别设置");
+      const card = within(screen.getByTestId("live-preview")).getByRole("article", {
+        name: "实时预览",
+      });
+      const panel = within(card).getByTestId("manual-download");
+      await user.click(within(panel).getByRole("button", { name: "手动下载" }));
+      expect(panel).toHaveTextContent(
+        "无法在应用中下载时，可以用浏览器下载下面的模型包，不用解压，直接放进这个文件夹，再点「检查并导入」。",
+      );
+      const name =
+        "sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05.tar.bz2";
+      const url = `https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/${name}`;
+      const rows = within(panel).getAllByTestId("manual-download-file");
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toHaveTextContent(name);
+      expect(panel).not.toHaveTextContent("huggingface.co");
+      await user.click(
+        within(rows[0] as HTMLElement).getByRole("button", { name: `在浏览器中打开：${url}` }),
+      );
+      expect(backend.modelLinksOpened).toEqual([url]);
+      await user.click(
+        within(rows[0] as HTMLElement).getByRole("button", { name: `复制链接：${url}` }),
+      );
+      expect(writeText).toHaveBeenCalledWith(url);
+      // A package that cannot be used: the card says why in the interface's words.
+      act(() => {
+        backend.simulateModelFailed(
+          MOCK_STREAMING_MODEL_ID,
+          "模型包无法使用：包里没有 tokens.txt",
+          {
+            kind: "missing",
+            files: ["tokens.txt"],
+          },
+        );
+      });
+      expect(within(card).getByTestId("model-failure")).toHaveTextContent(
+        "失败原因 · 模型包里缺少文件：tokens.txt",
+      );
+      act(() => {
+        backend.simulateModelFailed(MOCK_STREAMING_MODEL_ID, "x", { kind: "broken" });
+      });
+      expect(within(card).getByTestId("model-failure")).toHaveTextContent(
+        "失败原因 · 模型包已损坏或不完整，请重新下载",
+      );
+      act(() => {
+        backend.simulateModelFailed(MOCK_STREAMING_MODEL_ID, "x", {
+          kind: "mismatched",
+          files: ["decoder.onnx", "bpe.model"],
+        });
+      });
+      expect(within(card).getByTestId("model-failure")).toHaveTextContent(
+        "失败原因 · 模型包里的文件与这个模型不符：decoder.onnx、bpe.model",
+      );
+    } finally {
+      vi.useRealTimers();
+      Reflect.deleteProperty(navigator, "clipboard");
+    }
+  });
+
+  it("regression: section 29.12 an English interface names the package and why it could not be used in English", async () => {
+    const user = userEvent.setup();
+    const { backend } = renderApp({ path: "/speech", mock: { settings: { locale: "en" } } });
+    await openTab(user, "Recognition");
+    const card = within(screen.getByTestId("live-preview")).getByRole("article", {
+      name: "Live preview",
+    });
+    const panel = within(card).getByTestId("manual-download");
+    await user.click(within(panel).getByRole("button", { name: "Download by hand" }));
+    expect(panel).toHaveTextContent(
+      "If the app cannot download the model, download this package in a browser and put it in this folder as it is, without unpacking it, then choose Check and import.",
+    );
+    const failures: [Parameters<MockBackend["simulateModelFailed"]>[2], string][] = [
+      [
+        { kind: "broken" },
+        "Reason · The model package is damaged or incomplete. Download it again.",
+      ],
+      [
+        { kind: "missing", files: ["tokens.txt"] },
+        "Reason · Files missing from the model package: tokens.txt",
+      ],
+      [
+        { kind: "mismatched", files: ["decoder.onnx", "bpe.model"] },
+        "Reason · Files in the model package that don't match this model: decoder.onnx, bpe.model",
+      ],
+    ];
+    for (const [problem, text] of failures) {
+      act(() => {
+        backend.simulateModelFailed(MOCK_STREAMING_MODEL_ID, "模型包无法使用", problem);
+      });
+      const failure = within(card).getByTestId("model-failure");
+      expect(failure).toHaveTextContent(text);
+      expect(failure.textContent).not.toMatch(/\p{Script=Han}/u);
+    }
+  });
+
   it("regression: the library lists recognition models by tier (均衡 → 高精度 → 轻量 → 轻量 · 中文) and the streaming model only in the 实时预览 block, without 使用此模型", async () => {
     const user = userEvent.setup();
     const { backend } = renderApp({

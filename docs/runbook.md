@@ -40,6 +40,7 @@ make desktop-vnc-stop
 | `VOLTIP_UPDATE_URL` | 本机构建的更新清单地址，与发布相同：`https://github.com/<owner>/<repo>/releases/latest/download/latest.json`（发布构建由工作流算出） |
 | `VOLTIP_UPDATE_MIRROR` | 可选：文档站更新通道的根地址（`https://voltip.firlab.app/updates`），桌面与手机都先问它、再问 GitHub；发布构建取仓库变量 `vars.VOLTIP_UPDATE_MIRROR` |
 | `VOLTIP_MODEL_BASE_URL` | 可选：本地模型的第一下载源 |
+| `VOLTIP_MODEL_RELEASE_BASE_URL` | 可选：模型发布包的主机，默认 `https://github.com`（`docs/dictation.md` §29.12）；发布构建不设，测试时可指向本机服务 |
 
 打包脚本（`make windows-x64` / `make linux-x64` / `make android-apk`）与发布候选（`release-candidate.yml` 的 `prepare`）在任一内置引擎值为空时拒绝出包（`scripts/lib/require-builtin-engines.sh`），显式 `VOLTIP_ALLOW_NO_BUILTIN_ENGINES=1` 才放行，CI 的打包 job 就是这样出无内置服务的包。客户端里唯一的凭据是应用令牌；`scripts/build-windows-x64.sh`、release 的 Linux 腿与 Android 包检查（`.github/scripts/check-android-package.sh`）用 `strings` 扫描二进制，出现 `gsk_…` / `sk-…` 即拒绝出包。生产主机名守卫（`.github/scripts/check-no-production-hosts.sh`）从 `VOLTIP_PRODUCTION_HOSTS` 读要找的词，扫描整棵树，命中时只打印 `文件:行号`。
 

@@ -34,6 +34,11 @@ allow = [
     "BSD-2-Clause",
     "BSD-3-Clause",
     "BSL-1.0",
+    "bzip2-1.0.6", # libbz2-rs-sys, the pure-Rust bzip2 decoder that unpacks the streaming model's
+                   # release package (docs/dictation.md §29.12). Read from its LICENSE on
+                   # 2026-10-30: BSD-style. Redistribution in binary form asks only that the origin
+                   # is not misrepresented, altered versions are marked and the authors' names are
+                   # not used for endorsement; source redistribution keeps the notice. No copyleft.
     "CC0-1.0",
     "CDLA-Permissive-2.0", # webpki-roots — Mozilla's CA root store, shipped as DATA rather than
                            # code, which is why it carries a data licence. Read from the SPDX text

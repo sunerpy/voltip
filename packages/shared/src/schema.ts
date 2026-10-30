@@ -2088,6 +2088,16 @@ export const MODEL_CAPABILITIES = ["offline", "streaming", "vad"] as const;
 export const modelCapabilitySchema = z.enum(MODEL_CAPABILITIES);
 export type ModelCapability = z.infer<typeof modelCapabilitySchema>;
 
+/** Why the package a model comes in could not be used (`voltip_core::models::PackageProblem`,
+ *  docs/dictation.md §29.12): it does not unpack, these files are not in it, or these files in it
+ *  are not the model's. */
+export const packageProblemSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("broken") }),
+  z.object({ kind: z.literal("missing"), files: z.array(z.string()) }),
+  z.object({ kind: z.literal("mismatched"), files: z.array(z.string()) }),
+]);
+export type PackageProblem = z.infer<typeof packageProblemSchema>;
+
 /** `voltip_core::models::ModelInstallState` (`#[serde(tag = "kind")]`). */
 export const modelInstallStateSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("not_installed") }),
@@ -2105,8 +2115,13 @@ export const modelInstallStateSchema = z.discriminatedUnion("kind", [
     /** Unix seconds. */
     installed_at: z.number().nonnegative(),
   }),
-  /** The `.part` files stay on disk; `model_download` resumes. */
-  z.object({ kind: z.literal("failed"), message: z.string() }),
+  /** The `.part` files stay on disk; `model_download` resumes. `package`: the package the model
+   *  comes in could not be used (§29.12), which the card says instead of `message`. */
+  z.object({
+    kind: z.literal("failed"),
+    message: z.string(),
+    package: packageProblemSchema.optional(),
+  }),
   /** A manual import (`model_import`, docs/dictation.md §10) found catalogue files absent from
    *  the model's directory (or of another size) and files whose sha256 is not the catalogue's. */
   z.object({
@@ -2119,13 +2134,22 @@ export type ModelInstallState = z.infer<typeof modelInstallStateSchema>;
 export type ModelInstallKind = ModelInstallState["kind"];
 
 /** One file of a catalogue model (`voltip_core::models::ModelFileView`): huggingface.co first, then
- *  hf-mirror.com, as the app tries them. */
+ *  hf-mirror.com, as the app tries them; none for a model that comes as a package. */
 export const modelFileSchema = z.object({
   name: z.string(),
   size_bytes: z.number().nonnegative(),
   urls: z.array(z.string()),
 });
 export type ModelFile = z.infer<typeof modelFileSchema>;
+
+/** The package a model comes in (`voltip_core::models::ModelPackageView`, docs/dictation.md
+ *  §29.12): its file name and its public addresses. Put into the model's folder, the import unpacks
+ *  it. */
+export const modelPackageSchema = z.object({
+  name: z.string(),
+  urls: z.array(z.string()),
+});
+export type ModelPackage = z.infer<typeof modelPackageSchema>;
 
 /** One catalogue row plus its install state (`voltip_core::models::ModelState`, `UiState.models`). */
 export const modelStateSchema = z.object({
@@ -2146,6 +2170,8 @@ export const modelStateSchema = z.object({
   dir: z.string().default(""),
   /** Its files, primary first, with the public addresses to download each from. */
   files: z.array(modelFileSchema).default(() => []),
+  /** Absent unless the model comes as one package of its files (§29.12). */
+  package: modelPackageSchema.optional(),
   /** The model `Settings.engines` currently selects. */
   active: z.boolean(),
   state: modelInstallStateSchema,

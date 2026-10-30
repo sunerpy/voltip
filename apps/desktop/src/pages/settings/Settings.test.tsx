@@ -199,6 +199,15 @@ describe("Settings · 外观", () => {
     expect(screen.getByTestId("model-sources")).toHaveTextContent(
       "handy-computer/Qwen3-ASR-0.6B-gguf",
     );
+    // docs/dictation.md §29.12 (user decision D21): the live preview model comes from sherpa-onnx's
+    // release on GitHub; its Hugging Face repository is gone.
+    expect(screen.getByTestId("model-sources")).toHaveTextContent("github.com/k2-fsa/sherpa-onnx");
+    expect(screen.getByTestId("model-sources")).not.toHaveTextContent("x-asr");
+    expect(
+      screen.getByText(
+        "模型文件从这些仓库下载（Hugging Face，或 GitHub 上的发布包），各自遵循其发布页上的许可证。",
+      ),
+    ).toBeInTheDocument();
     // AGPL left this guard on 2026-10-01: it is the licence now (see above).
     expect(screen.queryByText(/私有|All rights reserved/)).toBeNull();
     expect(screen.getByTestId("update-status")).toHaveTextContent("尚未检查更新");

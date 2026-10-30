@@ -546,6 +546,7 @@ static TINY_CATALOGUE: [ModelEntry; 1] = [ModelEntry {
     description: "test",
     recommended: true,
     repo: TINY_REPO,
+    package: None,
     files: &TINY_FILES,
     max_piece: std::time::Duration::from_secs(119),
 }];

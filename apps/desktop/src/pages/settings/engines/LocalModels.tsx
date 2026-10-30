@@ -22,6 +22,7 @@ import {
   modelAction,
   modelDescription,
   modelEngineLabel,
+  modelFailureText,
   modelStateCell,
   offlineModelsByTier,
 } from "./helpers";
@@ -235,7 +236,7 @@ export function ModelCard({ model }: ModelCardProps) {
         <p
           className="rounded-6 bg-danger-soft px-3 py-2 text-[12px] text-danger"
           data-testid="model-failure">
-          {t("model.failedPrefix")} · {model.state.message}
+          {t("model.failedPrefix")} · {modelFailureText(model.state, t, locale)}
         </p>
       )}
       {model.state.kind !== "installed" && model.files.length > 0 && (
@@ -275,6 +276,10 @@ function ManualDownload({ model }: { model: ModelState }) {
   const { t } = useI18n();
   const incomplete = model.state.kind === "import_incomplete" ? model.state : undefined;
   const [open, setOpen] = useState(incomplete !== undefined);
+  // A model that comes as one package downloads as the package (docs/dictation.md §29.12): the
+  // import unpacks it.
+  const downloads: readonly { name: string; size_bytes?: number; urls: readonly string[] }[] =
+    model.package === undefined ? model.files : [model.package];
   const moving = useUiState().models_location.moving !== null;
   const busy = model.state.kind === "downloading" || model.state.kind === "verifying" || moving;
   const fail = (e: unknown) => {
@@ -299,7 +304,9 @@ function ManualDownload({ model }: { model: ModelState }) {
       </Button>
       {(open || incomplete !== undefined) && (
         <div className="flex flex-col gap-2 rounded-6 bg-inset p-3 text-[12px] leading-5">
-          <p className="text-fg-muted">{t("model.manual.lede")}</p>
+          <p className="text-fg-muted">
+            {t(model.package === undefined ? "model.manual.lede" : "model.manual.ledePackage")}
+          </p>
           <div className="flex flex-col gap-1">
             <span className="text-fg-subtle">{t("model.manual.folder")}</span>
             <span
@@ -330,13 +337,18 @@ function ManualDownload({ model }: { model: ModelState }) {
             </div>
           </div>
           <ul className="flex flex-col gap-1.5" aria-label={t("model.manual.toggle")}>
-            {model.files.map((file) => (
+            {downloads.map((file) => (
               <li
                 key={file.name}
                 className="flex flex-col gap-0.5"
                 data-testid="manual-download-file">
                 <span className="mono text-fg">
-                  {t("model.manual.file", { name: file.name, size: formatBytes(file.size_bytes) })}
+                  {file.size_bytes === undefined
+                    ? file.name
+                    : t("model.manual.file", {
+                        name: file.name,
+                        size: formatBytes(file.size_bytes),
+                      })}
                 </span>
                 {file.urls.map((url, source) => (
                   <div key={url} className="flex items-start gap-1">

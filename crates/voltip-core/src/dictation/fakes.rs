@@ -1626,13 +1626,15 @@ pub struct FakeModels {
     entries: Mutex<Vec<crate::models::ModelState>>,
     /// `Downloading` reports before the fake verifies; `None` = never finishes (until cancelled).
     steps: Option<u32>,
-    /// Fail the verification with this message instead of installing.
-    fail_with: Option<String>,
+    /// Fail the verification with this reason instead of installing.
+    fail_with: Option<crate::models::ModelDownloadError>,
     downloads: AtomicUsize,
     removals: AtomicUsize,
     imports: AtomicUsize,
     /// What an import finds wrong (missing, mismatched); `None`: the files are right.
     import_problems: Mutex<Option<(Vec<String>, Vec<String>)>>,
+    /// The package an import unpacks cannot be used (docs/dictation.md §29.12).
+    import_package: Mutex<Option<crate::models::PackageProblem>>,
     /// Where the library is (docs/dictation.md §10.9).
     root: Mutex<std::path::PathBuf>,
     /// How a move goes.
@@ -1670,6 +1672,7 @@ impl FakeModels {
             removals: AtomicUsize::new(0),
             imports: AtomicUsize::new(0),
             import_problems: Mutex::new(None),
+            import_package: Mutex::new(None),
             root: Mutex::new(std::path::PathBuf::from("/fake/models")),
             relocation: Mutex::new(FakeRelocation::default()),
             relocations: AtomicUsize::new(0),
@@ -1704,7 +1707,13 @@ impl FakeModels {
 
     /// Downloads fail verification with `message` (the `.part` would stay).
     pub fn failing(message: &str) -> Self {
-        Self { fail_with: Some(message.to_owned()), ..Self::new(1) }
+        Self { fail_with: Some(message.to_owned().into()), ..Self::new(1) }
+    }
+
+    /// Downloads fail because the package the model comes in cannot be used (docs/dictation.md
+    /// §29.12).
+    pub fn failing_package(message: &str, problem: crate::models::PackageProblem) -> Self {
+        Self { fail_with: Some(crate::models::ModelDownloadError { message: message.to_owned(), package: Some(problem) }), ..Self::new(1) }
     }
 
     /// Downloads never finish on their own: they wait for the cancel token.
@@ -1721,6 +1730,13 @@ impl FakeModels {
     /// The person put the right files in place: the next import installs.
     pub fn fix_import(&self) {
         *self.import_problems.lock() = None;
+        *self.import_package.lock() = None;
+    }
+
+    /// A manual import finds the package put into the folder unusable until [`Self::fix_import`].
+    pub fn with_import_package_problem(self, problem: crate::models::PackageProblem) -> Self {
+        *self.import_package.lock() = Some(problem);
+        self
     }
 
     /// Mark `id` as installed before the core starts.
@@ -1751,6 +1767,7 @@ impl FakeModels {
                 repo: "example/model".into(),
                 dir: String::new(),
                 files: Vec::new(),
+                package: None,
                 active: false,
                 state: ModelInstallState::NotInstalled,
             },
@@ -1767,6 +1784,7 @@ impl FakeModels {
                 repo: "example/model".into(),
                 dir: String::new(),
                 files: Vec::new(),
+                package: None,
                 active: false,
                 state: ModelInstallState::NotInstalled,
             },
@@ -1783,6 +1801,7 @@ impl FakeModels {
                 repo: "example/model".into(),
                 dir: String::new(),
                 files: Vec::new(),
+                package: None,
                 active: false,
                 state: ModelInstallState::NotInstalled,
             },
@@ -1822,19 +1841,19 @@ impl crate::models::ModelManager for FakeModels {
         id: &str,
         progress: crate::models::ProgressSink,
         cancel: crate::models::CancelToken,
-    ) -> Result<crate::models::ModelInstallState, String> {
+    ) -> Result<crate::models::ModelInstallState, crate::models::ModelDownloadError> {
         use crate::models::ModelInstallState;
         self.downloads.fetch_add(1, Ordering::SeqCst);
-        let Some(entry) = self.entries.lock().iter().find(|m| m.id == id).cloned() else { return Err(format!("unknown model {id}")) };
+        let Some(entry) = self.entries.lock().iter().find(|m| m.id == id).cloned() else { return Err(format!("unknown model {id}").into()) };
         let total = entry.size_bytes;
         let Some(steps) = self.steps else {
             progress(ModelInstallState::Downloading { received: 0, total, file: "model.int8.onnx".into() });
             cancel.cancelled().await;
-            return Err("cancelled".into());
+            return Err("cancelled".to_owned().into());
         };
         for step in 1..=steps {
             if cancel.is_cancelled() {
-                return Err("cancelled".into());
+                return Err("cancelled".to_owned().into());
             }
             progress(ModelInstallState::Downloading { received: total * u64::from(step) / u64::from(steps.max(1)), total, file: "model.int8.onnx".into() });
             tokio::task::yield_now().await;
@@ -1860,6 +1879,9 @@ impl crate::models::ModelManager for FakeModels {
         }
         progress(ModelInstallState::Verifying);
         tokio::task::yield_now().await;
+        if let Some(problem) = self.import_package.lock().clone() {
+            return Err(ModelImportError::Package(crate::models::ModelDownloadError { message: "模型包无法使用".into(), package: Some(problem) }));
+        }
         if let Some((missing, mismatched)) = self.import_problems.lock().clone() {
             return Err(ModelImportError::Incomplete { missing, mismatched });
         }

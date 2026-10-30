@@ -33,6 +33,7 @@ After you cancel a dictation, the next one does not wait for the cancelled recog
 ## Downloading
 
 - Release packages download from the project's own mirror first, then from Hugging Face, then from hf-mirror.com. When a source is slow or unreachable, Voltip switches to the next one by itself.
+- The live transcription model is no longer on Hugging Face. After the project's mirror, it comes as one package from the sherpa-onnx project's releases on GitHub, and Voltip takes the model's files out of the package. A copy you already downloaded stays as it is.
 - An interrupted download resumes where it stopped.
 - Every file is checked against a SHA-256 hash before it is used.
 - Before a download starts, Voltip checks that there is enough free disk space.
@@ -58,6 +59,8 @@ When the app cannot download a model, for example on a network where only anothe
 1. On the model's card, choose **Download by hand** to see the model's folder and the files it needs.
 2. Open each file's address (Hugging Face or hf-mirror.com) in a browser, or copy it to download the file on another device, and save the file into the folder the card shows, under the same name. **Open folder** opens that folder, and **Copy path** copies its location.
 3. Once every file is there, choose **Check and import**. Voltip checks each file's size and SHA-256. When they are all right, the model is ready to use; otherwise the card lists the files that are missing or wrong.
+
+The live transcription model's card lists one package instead of its files: download it and put it into the folder as it is, without unpacking it. **Check and import** takes the model's files out of it and then deletes the package.
 
 When the app downloads a model itself, it checks the files already in the folder first and downloads again any that are wrong.
 
