@@ -89,9 +89,10 @@ fn model_options(compute: &Compute) -> Option<ModelOptions> {
     }
 }
 
-/// Every load's options. The weights are copied into memory (`no_mmap`): transcribe.cpp maps the
-/// GGUF by default since 0.4, and Windows can neither delete nor move a mapped file, while the
-/// store removes and moves model files without unloading the model first.
+/// Every load's options. The weights are copied into memory (`no_mmap`), as 0.2.3 always did:
+/// transcribe.cpp maps the GGUF by default since 0.4, and a mapped model reads its file for as long
+/// as it is loaded. The model folder may be on another disk (the store's chosen location): if that
+/// disk goes away, a page the system reads again faults the process, where a copy keeps working.
 const fn load_options(backend: Backend, device: Option<transcribe_cpp::Device>) -> ModelOptions {
     ModelOptions { backend, device, no_mmap: true }
 }
@@ -253,12 +254,10 @@ mod tests {
         }
     }
 
-    /// Regression (transcribe-cpp 0.4.1, 2026-10-30): the library maps the GGUF into memory unless
-    /// told not to, and Windows can neither delete nor move a file that is mapped. Nothing unloads
-    /// a model before the store removes it or moves the model folder (`ModelStore::remove`,
-    /// `relocate`), so every load copies the weights, as 0.2.3 always did.
+    /// transcribe-cpp 0.4.1 maps the GGUF unless told not to; every load copies the weights, as
+    /// 0.2.3 always did (docs/dictation.md §29.11), so a loaded model does not depend on its file.
     #[test]
-    fn regression_every_load_copies_the_weights_so_the_files_can_be_moved_or_deleted() {
+    fn every_load_copies_the_weights_into_memory() {
         for device in [LocalDevice::Auto, LocalDevice::Cpu] {
             let options = model_options(&Compute { device, ..Compute::default() }).unwrap();
             assert!(options.no_mmap, "{device:?} maps the model file");

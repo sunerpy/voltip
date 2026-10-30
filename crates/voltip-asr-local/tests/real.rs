@@ -905,11 +905,11 @@ async fn real_gguf_long_inputs_are_recognised_like_their_pieces() {
     long_inputs_are_recognised_like_their_pieces(e, root.path(), None).await;
 }
 
-/// docs/dictation.md §29: transcribe.cpp 0.4.1 maps the GGUF unless told not to, and Windows can
-/// neither move nor delete a mapped file; the store does both (`relocate`, `remove`) while the
-/// model may be in memory. The loader copies the weights, so with the model loaded its file can be
-/// renamed and deleted, and the recogniser still works (on Linux unlinking always works; the
-/// Windows build machine's `gate real` is where this test means something).
+/// docs/dictation.md §29.11: the store moves and deletes model files (`relocate`, `remove`) while
+/// the model may be in memory, so with the model loaded its file must be free to rename and
+/// delete, and the recogniser must keep working. The loader copies the weights; on the Windows
+/// build machine (Windows Server 2025) this held with a mapped GGUF too (2026-10-30), so the test
+/// guards the store's assumption on every platform, not the copy itself.
 #[test]
 #[ignore = "needs VOLTIP_LOCAL_GGUF (Qwen3-ASR GGUF) and VOLTIP_LOCAL_SAMPLE_WAV"]
 fn real_a_loaded_gguf_model_leaves_its_file_free_to_move_and_delete() {
