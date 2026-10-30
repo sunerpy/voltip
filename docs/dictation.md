@@ -2545,7 +2545,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 
 ### 29.5 本机识别的错误
 
-`Recognizer::transcribe(&mut self, rate, samples, abort: &Abort) -> Result<String, RecognizeError>`；`RecognizeError { kind: LocalFailure, message }`。`LocalFailure`（`voltip_core::dictation`，公开，候补模型按它决定是否换下一个）：
+`Recognizer::transcribe(&mut self, rate, samples, abort: &Abort) -> Result<String, RecognizeError>`；`RecognizeError { kind: LocalFailure, message, by_cancel }`（`by_cancel` 只由 `RecognizeError::cancelled` 设置，见下面的规则）。`LocalFailure`（`voltip_core::dictation`，公开，候补模型按它决定是否换下一个）：
 
 | 种类 | transcribe.cpp 的错误 | 处理 |
 |---|---|---|
