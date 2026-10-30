@@ -2552,9 +2552,11 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 | `device` | `Backend` | 丢掉这个实例；在 GPU 上时本次改用 CPU 重试一次 |
 | `memory` | `OutOfMemory` | 同上 |
 | `model` | `ModelLoad`、`ModelFileNotFound`，加载失败 | 丢掉这个模型的全部实例：空闲的立即丢，正在用的用完再丢 |
-| `input_too_long` | `InputTooLong` | 保留实例 |
-| `aborted` | `Aborted`、`OutputTruncated`、`OutputRepetition`（0.4 起，输出开始重复时提前停止） | 保留实例；后两种这一段没有完整的文字，识别失败 |
-| `other` | 其余；sherpa-onnx 的错误都是这一种 | 保留实例 |
+| `input_too_long` | `InputTooLong` | 丢掉这个实例 |
+| `aborted` | `Aborted`、`OutputTruncated`、`OutputRepetition`（0.4 起，输出开始重复时提前停止） | 录音自己的取消让推理停下时保留实例，其余丢掉；后两种这一段没有完整的文字，识别失败 |
+| `other` | 其余；sherpa-onnx 的错误都是这一种 | 丢掉这个实例 |
+
+- **出错的实例不再用**：除了被录音自己的取消停下的推理，任何错误都让下一次识别不再用出错的那个实例，而是重新加载（`model` 连同这个模型的其他实例一起丢掉；同一模型的其他空闲实例在别的错误后照常使用）。代价是出错后的下一次识别多一次加载；预热（§10.7）只在启动和改设置后进行。
 
 - **改用 CPU**：GPU 上出现 `device` 或 `memory` 时，这次录音以 `Compute { device: Cpu }` 加载并重试一次。10 分钟内第二次（`GPU_STRIKE_WINDOW`）之后，这次运行剩下的时间里本机模型都在 CPU 上（内存里的标志，重启 Voltip 恢复）。CPU 也失败时，错误是两次的说明合在一起：「显卡出错（…），改用 CPU 也失败（…）」。
 - **说明实际后端**：`Transcript.backend_note: Option<AsrNote>`（`gpu_failed_ran_on_cpu`：这一条改用 CPU；`gpu_off_until_restart`：显卡多次出错，重启前都用 CPU），进历史条目的可选字段 `asr_note`（旧条目没有这个字段照常读取）；历史详情的技术信息里显示「识别方式」。长录音取各段里最重的一条。
@@ -2566,8 +2568,8 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 
 - **取消**：`LocalTranscriber::transcribe` 持有一个被丢弃时设置 `Abort` 的守卫；核心取消听写时中止流水线任务，这个 future 被丢弃。识别在阻塞线程上继续到当前这一段（§29.7）结束，之后不再开始下一段；还没开始的推理两个引擎都不再开始。
 - **transcribe.cpp**：每次推理把 `Abort` 接到一个新的 `CancelToken`（`Session::set_cancel_token`）。transcribe-cpp 的 Rust 文档说取消在解码步之间检查，但 Qwen3-ASR 是一次完成的推理，只在开始前看一次（0.2.3 的 `src/arch/qwen3_asr/model.cpp:539`；0.4.1 照旧，`model.cpp:634`，§29.11），所以进行中的那一段照样跑完：真模型测试里，60 s 的录音在第一段中途取消后，下一次识别在第一段结束后拿到实例（`real_a_cancelled_gguf_take_frees_the_model_after_its_piece`）。每个模型只有一个实例（模型大），下一次识别最多等一段：30 s 的片段推理实测最慢 0.6B 在 Linux 上 3.1 s、Windows 构建机上 7.3 s，1.7B 在 Linux 上 6.0 s（§29.8）。这是用户的决定（2026-10-30）：「单实例+最多等待一段 并且升级到最新的cpp」；计划原先设想的「GGUF 中止推理」以此代替。
-- **sherpa-onnx**（SenseVoice、Paraformer）：解码是同步调用，没有停止的接口。被取消的那一段在后台跑完，结果丢弃；下一次识别用第二个实例，所以每个模型最多两个实例（int8 约 230 MB，多一个可以接受）。
-- **一次一个模型**：换模型时先丢掉旧模型的空闲实例；旧模型还有实例在用时，等它用完。同一个模型、语言和设备的加载正在进行时，等它，不重复加载。
+- **sherpa-onnx**（SenseVoice、Paraformer）：解码是同步调用，没有停止的接口。被取消的那一段在后台跑完，结果丢弃；下一次识别用第二个实例，所以每个模型最多两个实例（int8 约 230 MB，多一个可以接受）。下一次识别换了语言或模型也不等：录音被取消时，它的实例就不再算「在用」（`Pool::abandon`），下一次识别在它旁边加载自己需要的实例；它跑完回来时，内存里已有别的模型、语言或设备的实例就丢掉，否则回到池里。
+- **一次一个模型**：换模型时先丢掉旧模型的空闲实例；旧模型还有实例在用时，等它用完，上面那种被取消、还在跑的 sherpa-onnx 实例除外。transcribe.cpp 被取消的推理照旧要等它这一段跑完，不论下一次识别用哪个模型：内存里同时只放一个大模型。同一个模型、语言和设备的加载正在进行时，等它，不重复加载。
 - **等待上限**：一次识别拿实例最多等 `LOCK_WAIT`（155 s，§29.8），等不到就失败：「本地识别失败：上一次识别还没结束」。无头服务端同时处理最多 `MAX_CONCURRENCY`（8）个请求，它们轮流用一个识别器，所以服务端等 `LOCK_WAIT × MAX_CONCURRENCY`（1240 s，约 21 分钟）。
 - **不做独立进程**：一次推理在 `max_piece` 之内只要几秒，sherpa 有两个实例、transcribe.cpp 最多等一段，已经够用；原生崩溃要隔离时再评估。
 - 预热（§10.7）用同一个池：模型已在内存或正在加载时不再加载；正在用的实例属于另一个模型时等它，期间又有新的预热就让位。
@@ -2610,12 +2612,12 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 ### 29.9 门禁
 
 - Rust：`voltip-hooks` 的 `watch.rs`（`no_presses_no_judgement`、`three_presses_the_hook_missed_over_a_second_mean_it_is_gone`、`a_hook_that_still_hears_nothing_is_put_back_less_and_less_often`、`a_hook_put_back_starts_its_count_afresh` 等）；`voltip-platform` 的 `held_key.rs` 与 `SoloTracker::resumed`；三个平台钩子的真测试（见上）；桌面 `held.rs`（含 `regression_a_press_read_before_its_take_started_still_ends_that_take`）、`hotkey.rs`（`the_lone_key_status_follows_the_hook_s_health`、`regression_a_hook_whose_thread_ended_is_replaced`）、`tests/ipc.rs@regression_a_missed_release_stops_a_hold_take`。
-- `voltip-asr-local`：`pool.rs`（实例复用与上限、一次一个模型、驱逐、预热、10 分钟内第二次显卡错误）；`transcriber.rs`（`a_gpu_failure_is_tried_again_on_the_cpu_and_a_second_keeps_the_cpu`、`a_failed_cpu_retry_reports_both_failures`、`a_model_failure_drops_the_model_and_the_next_take_loads_it_again`、`regression_a_cancelled_local_take_releases_the_model`、`regression_a_cancelled_sherpa_take_does_not_block_the_next`、`a_cancelled_take_stops_between_pieces`、`an_input_longer_than_the_model_takes_is_recognised_piece_by_piece`）；`segmenter.rs@an_input_longer_than_max_piece_is_cut_into_pieces_that_fit`；`gguf.rs@transcribe_cpp_errors_map_to_their_kind`、`gguf.rs@every_load_copies_the_weights_into_memory`；真模型（`tests/real.rs`，`#[ignore]`）：`real_sherpa_long_inputs_are_recognised_like_their_pieces`、`real_gguf_long_inputs_are_recognised_like_their_pieces`（60 s 与 121 s：转写器的文字等于逐段识别再拼接的文字，字数不少于样音单独识别的 80%）、`real_a_cancelled_gguf_take_frees_the_model_after_its_piece`、`real_a_loaded_gguf_model_leaves_its_file_free_to_move_and_delete`；`catalogue.rs@every_whole_take_model_has_a_max_piece`。
+- `voltip-asr-local`：`pool.rs`（实例复用与上限、一次一个模型、被取消的实例不挡别的模型、驱逐、预热、10 分钟内第二次显卡错误）；`transcriber.rs`（`a_gpu_failure_is_tried_again_on_the_cpu_and_a_second_keeps_the_cpu`、`a_failed_cpu_retry_reports_both_failures`、`a_model_failure_drops_the_model_and_the_next_take_loads_it_again`、`regression_an_inference_error_drops_the_instance_that_failed`、`regression_a_cancelled_local_take_releases_the_model`、`regression_a_cancelled_sherpa_take_does_not_block_the_next`、`regression_a_cancelled_sherpa_take_holds_back_no_other_language_or_model`、`a_cancelled_take_stops_between_pieces`、`an_input_longer_than_the_model_takes_is_recognised_piece_by_piece`）；`segmenter.rs@an_input_longer_than_max_piece_is_cut_into_pieces_that_fit`；`gguf.rs@transcribe_cpp_errors_map_to_their_kind`、`gguf.rs@every_load_copies_the_weights_into_memory`；真模型（`tests/real.rs`，`#[ignore]`）：`real_sherpa_long_inputs_are_recognised_like_their_pieces`、`real_gguf_long_inputs_are_recognised_like_their_pieces`（60 s 与 121 s：转写器的文字等于逐段识别再拼接的文字，字数不少于样音单独识别的 80%）、`real_a_cancelled_gguf_take_frees_the_model_after_its_piece`、`real_a_loaded_gguf_model_leaves_its_file_free_to_move_and_delete`；`catalogue.rs@every_whole_take_model_has_a_max_piece`。
 - 核心：`asr_note` 进历史（`an_asr_note_round_trips_and_older_entries_read_without`、`the_recogniser_s_backend_note_reaches_the_history`、`a_long_take_keeps_its_segments_backend_note`）。
 - `make lint` 的 `check-no-device-event-filter.sh`；`scripts/measure` 的 Python 单测（`make verify` 的 `measure-helpers`，含 `--estimate`：`test_a_model_not_measured_on_a_machine_counts_with_its_estimate_there`）；许可清单（`release-helpers`：`test_every_component_transcribe_cpp_vendors_carries_its_text`、`test_a_component_transcribe_cpp_vendors_that_the_notices_do_not_know_fails`）。
 - 真机：Linux 上 `tests/real.rs` 全部真模型测试（0.6B、1.7B、SenseVoice、Paraformer、实时识别、VAD）；Windows 构建机的 `gate test`、`gate clippy`、`gate real`；托管 CI 的两台 Mac、`hooks-windows`、`windows-cross`（`make windows-x64`，Vulkan）、`windows-native`、`android` 与 `smoke-desktop`；本机 `make linux-x64`（Vulkan）。
 - 依赖时间和线程的测试在满载下（每个逻辑 CPU 一个空转循环）各跑 200 次：`HookWatch`、`held_key` 与 `solo_key`、`held.rs` 与 `hotkey.rs`、`regression_a_missed_release_stops_a_hold_take`、`transcriber.rs` 与 `pool.rs` 的全部测试。第一轮 `regression_a_missed_release_stops_a_hold_take` 有 1 次失败（§29.4 的按下被提前清掉），修正后它与 `held.rs` 各再跑 300 次无失败。
-- 失败原因的确认：钩子判定、对账（含按下被提前清掉的回归）和 X11 重连的测试先对着未实现的版本失败；`voltip-asr-local` 的恢复规则与实现一同写成，用 11 处临时改动（去掉 CPU 重试、显卡永不关闭、不驱逐、取消不设 `Abort`、sherpa 只留一个实例、不分段、段间不看取消、保留被驱逐的实例、两个模型同时在内存、重复加载、预热重复加载）逐一确认对应的测试以预期的原因失败。
+- 失败原因的确认：钩子判定、对账（含按下被提前清掉的回归）和 X11 重连的测试先对着未实现的版本失败；`voltip-asr-local` 的恢复规则与实现一同写成，用 11 处临时改动（去掉 CPU 重试、显卡永不关闭、不驱逐、取消不设 `Abort`、sherpa 只留一个实例、不分段、段间不看取消、保留被驱逐的实例、两个模型同时在内存、重复加载、预热重复加载）逐一确认对应的测试以预期的原因失败。完成评审（2026-10-30）指出的两处，`regression_an_inference_error_drops_the_instance_that_failed` 与 `regression_a_cancelled_sherpa_take_holds_back_no_other_language_or_model` 先对着旧实现失败：出错后实例还在池里；换成英文的下一次识别等满 `LOCK_WAIT`，返回「上一次识别还没结束」。
 
 ### 29.10 未做与限制
 
@@ -2633,7 +2635,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 
 - **取消**：0.4.1 的 Qwen3-ASR 仍然只在一次推理开始前看取消标志（`transcribe-cpp-sys-0.4.1/src/arch/qwen3_asr/model.cpp:634`，注释仍写 single-shot；逐个生成词元的循环里没有检查点），所以 §29.6 的做法不变：单实例，被取消的录音不再开始下一段，下一次识别最多等正在识别的那一段。`CancelToken` 照旧接上：上游以后在解码步之间检查取消，被取消的推理就会在一个解码步内停下，单实例和最多等一段仍是上限。
 - **权重复制进内存**：0.4 起 transcribe.cpp 默认把 GGUF 映射进内存，模型在内存里的这段时间一直读它的文件。加载器设 `ModelOptions.no_mmap = true`，和 0.2.3 一样把权重复制进内存（`gguf.rs@every_load_copies_the_weights_into_memory`），升级不改变内存与文件的用法：模型的保存位置可以在另一块磁盘上，那块磁盘断开时，被映射的模型在系统重新读取页面时会让进程崩溃，复制的不会。模型库删除模型、更改保存位置时不会先卸下内存里的模型；真模型测试 `real_a_loaded_gguf_model_leaves_its_file_free_to_move_and_delete` 在模型载入后改名并删除它的文件，再识别一次，Linux 和 Windows 构建机上都通过。原先以为 Windows 不能删除被映射的文件，实测不是这样：同一测试在加载器映射文件时，Windows 构建机（Windows Server 2025）上同样通过，所以这个测试守的是模型库的前提，不是 `no_mmap`。
-- **输出重复**：0.4 起 Qwen3-ASR 的输出开始重复时提前停止生成，返回 `OutputRepetition`；生成预算用完时也先去掉重复的尾巴。Voltip 把它和 `OutputTruncated` 一样当作这一段没有完整的文字：这次识别失败，实例保留（§29.5）。0.2.3 遇到同样的循环会一直生成到预算用完，结果同样是失败，只是更慢。
+- **输出重复**：0.4 起 Qwen3-ASR 的输出开始重复时提前停止生成，返回 `OutputRepetition`；生成预算用完时也先去掉重复的尾巴。Voltip 把它和 `OutputTruncated` 一样当作这一段没有完整的文字：这次识别失败，出错的实例丢掉（§29.5）。0.2.3 遇到同样的循环会一直生成到预算用完，结果同样是失败，只是更慢。
 - **没有接上的新能力**：0.4.1 的 Qwen3-ASR 声明词表与上下文提示（§16.3）；语言提示 0.2.3 起就接受。Voltip 两样都不传，升级不改变用户看到的行为。
 - **构建与许可**：两个 crate 都是 MIT；`Cargo.lock` 只换了这两个 crate，没有新的依赖，`cargo deny` 通过。`TRANSCRIBE_CMAKE_ARGS`（CPU 基线、Vulkan SDK 路径）照旧生效：0.4.1 新加的 macOS CPU 下限在它之前设置，被它覆盖。transcribe.cpp 自带的 miniz（0.2.3 就有，此前的许可清单漏了）和 0.4.1 起的 Silero VAD 分段逻辑现在都进 `THIRD-PARTY-NOTICES.txt`：`scripts/release/third-party-notices.py` 按 transcribe.cpp 的 `THIRD-PARTY-LICENSES.md` 表格逐项写入许可文本，表格里出现不认识的组件就生成失败（`test_a_component_transcribe_cpp_vendors_that_the_notices_do_not_know_fails`）。
 - **复测**：Qwen3-ASR 0.6B 在两台机器上用同一语料重测（§29.8 的表；0.2.3 的结果留在 `/tmp/voltip-measure/results-tcpp-0.2.3/`，不提交）：30 s 的错误率与 0.2.3 相当（中文 Linux / Windows 8.10% / 8.73%，0.2.3 为 8.10% / 7.94%；英文 4.84% / 5.20%，0.2.3 为 5.20% / 5.20%）；长片段不再因为生成预算用完而报错（0.2.3 在 90–121 s 共有 46 条 `OutputTruncated`，0.4.1 只有 Linux 上 2 条 `OutputRepetition`）；121 s 的峰值内存从 3398 MB 降到 1550 MB（Linux）、从 3168 MB 降到 1460 MB（Windows）。Windows 构建机上 30 s 的最慢推理从 8.4 s 降到 7.3 s，121 s 的从 37.4 s 升到 48.2 s：0.2.3 的长片段多在预算用完时提前返回，0.4.1 把它们识别完。`max_piece` 仍是 30 s，`LOCK_WAIT` 按 §29.8 重定为 155 s。

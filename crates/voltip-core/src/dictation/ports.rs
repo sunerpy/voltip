@@ -131,10 +131,11 @@ impl DictationError {
 }
 
 /// What went wrong in an on-device recognition (docs/dictation.md §29). The local engines sort
-/// their failures into these kinds; a recogniser that failed with [`LocalFailure::Device`] or
-/// [`LocalFailure::Memory`] is not used again, one that failed with [`LocalFailure::Model`] takes
-/// every instance of its model with it, and the fallback chain decides by the kind whether
-/// another model may take over. The wire names are part of the contract.
+/// their failures into these kinds; a recogniser that failed is not used again (unless its take's
+/// own cancel stopped it), one that failed with [`LocalFailure::Model`] takes every instance of
+/// its model with it, a [`LocalFailure::Device`] or [`LocalFailure::Memory`] failure on a GPU is
+/// tried once more on the CPU, and the fallback chain decides by the kind whether another model
+/// may take over. The wire names are part of the contract.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LocalFailure {

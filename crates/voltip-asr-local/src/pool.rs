@@ -6,9 +6,11 @@
 //! progress ends: neither engine stops a run once it has begun (transcribe.cpp 0.4.1 looks at a
 //! cancel only before a Qwen3-ASR run). So sherpa-onnx may have two instances ([`cap`]), and a
 //! take that finds every instance busy waits at most its lock wait instead of queueing behind them. One model at a time: an idle
-//! instance of another model is dropped before a new one loads, and a busy one is waited for.
-//! A model failure makes every instance of the model unusable ([`Pool::evict`]): the idle ones go
-//! at once, the busy ones when they come back.
+//! instance of another model is dropped before a new one loads, and a busy one is waited for,
+//! unless its take was cancelled and it cannot stop ([`Pool::abandon`]): a sherpa-onnx instance
+//! finishing a cancelled take holds back no other model, and goes when it comes back to a pool
+//! that holds another. A model failure makes every instance of the model unusable
+//! ([`Pool::evict`]): the idle ones go at once, the busy ones when they come back.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -56,33 +58,54 @@ pub struct Loaded {
     pub(crate) key: Key,
     /// The pool's generation when it was loaded: an eviction since makes it unusable.
     generation: u64,
+    /// The lease it is lent under, while it is lent.
+    pub(crate) lease: u64,
     pub(crate) recognizer: Box<dyn Recognizer>,
+}
+
+/// An instance lent out.
+struct Busy {
+    key: Key,
+    lease: u64,
+    /// Its take was cancelled and it runs on ([`Pool::abandon`]).
+    abandoned: bool,
 }
 
 #[derive(Default)]
 struct State {
     idle: Vec<Loaded>,
-    /// Instances lent out, by key.
-    busy: Vec<Key>,
+    /// Instances lent out.
+    busy: Vec<Busy>,
     /// Loads under way, by key.
     loading: Vec<Key>,
     /// Bumped by [`Pool::evict`] and [`Pool::clear`].
     generation: u64,
+    /// The number of the last lease.
+    leases: u64,
 }
 
 impl State {
+    /// Whether another key is loading or lent out; an abandoned instance does not count.
     fn others_live(&self, key: &Key) -> bool {
-        self.busy.iter().chain(&self.loading).any(|k| k != key)
+        self.busy.iter().filter(|b| !b.abandoned).map(|b| &b.key).chain(&self.loading).any(|k| k != key)
     }
 
     fn live(&self, key: &Key) -> usize {
-        self.busy.iter().chain(&self.loading).filter(|k| *k == key).count()
+        self.busy.iter().map(|b| &b.key).chain(&self.loading).filter(|k| *k == key).count()
+    }
+
+    /// Lend `loaded`: it is busy under a new lease.
+    fn lend(&mut self, mut loaded: Loaded) -> Loaded {
+        self.leases += 1;
+        loaded.lease = self.leases;
+        self.busy.push(Busy { key: loaded.key.clone(), lease: loaded.lease, abandoned: false });
+        loaded
     }
 
     fn take_idle(&mut self, key: &Key) -> Option<Loaded> {
         let at = self.idle.iter().position(|l| &l.key == key)?;
-        self.busy.push(key.clone());
-        Some(self.idle.remove(at))
+        let loaded = self.idle.remove(at);
+        Some(self.lend(loaded))
     }
 
     /// The idle instances of other keys, taken out to be dropped outside the lock.
@@ -163,8 +186,8 @@ impl Pool {
     pub fn loaded(&self, key: Key, recognizer: Box<dyn Recognizer>) -> Loaded {
         let mut state = self.state.lock();
         State::remove_one(&mut state.loading, &key);
-        state.busy.push(key.clone());
-        let loaded = Loaded { key, generation: state.generation, recognizer };
+        let loaded = Loaded { key, generation: state.generation, lease: 0, recognizer };
+        let loaded = state.lend(loaded);
         self.changed.notify_all();
         loaded
     }
@@ -173,7 +196,7 @@ impl Pool {
     pub fn stock(&self, key: Key, recognizer: Box<dyn Recognizer>) {
         let mut state = self.state.lock();
         State::remove_one(&mut state.loading, &key);
-        let loaded = Loaded { key, generation: state.generation, recognizer };
+        let loaded = Loaded { key, generation: state.generation, lease: 0, recognizer };
         state.idle.push(loaded);
         self.changed.notify_all();
     }
@@ -185,12 +208,14 @@ impl Pool {
         self.changed.notify_all();
     }
 
-    /// `loaded` comes back: kept for the next take when `keep` and no eviction happened since it
-    /// was loaded, dropped (outside the lock) otherwise.
+    /// `loaded` comes back: kept for the next take when `keep`, no eviction happened since it
+    /// was loaded and, if it was abandoned, no other key is in memory; dropped (outside the lock)
+    /// otherwise.
     pub fn give_back(&self, loaded: Loaded, keep: bool) {
         let mut state = self.state.lock();
-        State::remove_one(&mut state.busy, &loaded.key);
-        let dropped = if keep && loaded.generation == state.generation {
+        let abandoned = state.busy.iter().position(|b| b.lease == loaded.lease).is_some_and(|at| state.busy.remove(at).abandoned);
+        let alone = || state.busy.iter().map(|b| &b.key).chain(&state.loading).chain(state.idle.iter().map(|l| &l.key)).all(|k| k == &loaded.key);
+        let dropped = if keep && loaded.generation == state.generation && (!abandoned || alone()) {
             state.idle.push(loaded);
             None
         } else {
@@ -199,6 +224,18 @@ impl Pool {
         self.changed.notify_all();
         drop(state);
         drop(dropped);
+    }
+
+    /// The take holding `lease` was cancelled and its instance runs on to the end of its piece,
+    /// because it cannot stop (sherpa-onnx): from now on it holds back no other model, language
+    /// or compute, so the next take loads what it needs beside it; it comes back to the pool only
+    /// when nothing else is in memory by then. Nothing happens when the lease has ended.
+    pub fn abandon(&self, lease: u64) {
+        let mut state = self.state.lock();
+        if let Some(busy) = state.busy.iter_mut().find(|b| b.lease == lease) {
+            busy.abandoned = true;
+            self.changed.notify_all();
+        }
     }
 
     /// Every instance of `id` is unusable (a model failure): the idle ones are dropped now, the
@@ -223,10 +260,11 @@ impl Pool {
         drop(gone);
     }
 
-    /// The model in memory: an idle instance's, else a busy one's.
+    /// The model in memory: an idle instance's, else a busy one's (one not abandoned first).
     pub fn model(&self) -> Option<String> {
         let state = self.state.lock();
-        state.idle.first().map(|l| l.key.id.clone()).or_else(|| state.busy.first().map(|k| k.id.clone()))
+        let busy = state.busy.iter().find(|b| !b.abandoned).or_else(|| state.busy.first());
+        state.idle.first().map(|l| l.key.id.clone()).or_else(|| busy.map(|b| b.key.id.clone()))
     }
 
     /// The backend an idle instance runs on.
@@ -268,6 +306,11 @@ impl Lease {
     /// The backend it runs on.
     pub fn backend(&self) -> String {
         self.loaded.as_ref().map_or_else(String::new, |l| l.recognizer.backend())
+    }
+
+    /// The lease's number, for [`Pool::abandon`].
+    pub fn id(&self) -> Option<u64> {
+        self.loaded.as_ref().map(|l| l.lease)
     }
 
     /// Do not keep it: the instance failed.
@@ -375,6 +418,28 @@ mod tests {
         assert!(matches!(pool.acquire(&b, 2, soon()), Some(Grant::Load)), "the idle one of another model makes way");
         assert_eq!(pool.counts(), (0, 0, 1));
         assert!(!pool.has_idle(&a));
+    }
+
+    #[test]
+    fn an_abandoned_instance_holds_back_no_other_key_and_goes_when_another_is_in_memory() {
+        let pool = Pool::default();
+        let (a, b) = (key("a"), key("b"));
+        let first = lend(&pool, &a, 2);
+        assert!(pool.acquire(&b, 2, soon()).is_none(), "another key's busy instance is waited for");
+        pool.abandon(first.lease);
+        assert_eq!(pool.model().as_deref(), Some("a"));
+        let other = lend(&pool, &b, 2);
+        assert_eq!(pool.model().as_deref(), Some("b"), "the one not abandoned");
+        pool.give_back(first, true);
+        assert_eq!(pool.counts(), (0, 1, 0), "another key in memory: the abandoned one is dropped");
+        pool.give_back(other, true);
+        // Alone in the pool, an abandoned instance is kept.
+        let again = lend(&pool, &b, 2);
+        pool.abandon(again.lease + 1);
+        pool.abandon(again.lease);
+        pool.give_back(again, true);
+        assert_eq!(pool.counts(), (1, 0, 0));
+        assert!(pool.has_idle(&b));
     }
 
     #[test]

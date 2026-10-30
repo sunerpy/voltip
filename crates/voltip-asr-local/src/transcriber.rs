@@ -14,16 +14,17 @@
 //! [`VadTrimmer`] — fail-open: without the VAD model, or when it fails, the take goes in whole.
 //!
 //! When a recognition goes wrong (docs/dictation.md §29), the recogniser says how
-//! ([`RecognizeError`], a [`LocalFailure`]): a device or memory failure drops the instance, a
-//! model failure every instance of the model, so the next take loads afresh. A device or memory
-//! failure on a GPU is tried once more on the CPU, and a second one within ten minutes keeps the
-//! local models on the CPU until Voltip restarts; the transcript says so ([`AsrNote`]). An input
-//! longer than the model's `max_piece` is cut where it pauses ([`crate::segmenter::pieces`]),
-//! recognised piece by piece on one instance and put together like a long take's segments. A
-//! take that is cancelled sets its [`Abort`] and starts no further piece; the piece in progress
-//! runs to its end (transcribe.cpp 0.4.1 looks at a cancel only before a Qwen3-ASR run, sherpa-onnx
-//! not at all), on the one transcribe.cpp instance or, for sherpa-onnx, on an instance of its own
-//! while the next take uses a second one.
+//! ([`RecognizeError`], a [`LocalFailure`]): the instance that failed is not used again, a model
+//! failure takes every instance of the model with it, so the next take loads afresh; only a run
+//! the take's own cancel stopped gives its instance back. A device or memory failure on a GPU is
+//! tried once more on the CPU, and a second one within ten minutes keeps the local models on the
+//! CPU until Voltip restarts; the transcript says so ([`AsrNote`]). An input longer than the
+//! model's `max_piece` is cut where it pauses ([`crate::segmenter::pieces`]), recognised piece by
+//! piece on one instance and put together like a long take's segments. A take that is cancelled
+//! sets its [`Abort`] and starts no further piece; the piece in progress runs to its end
+//! (transcribe.cpp 0.4.1 looks at a cancel only before a Qwen3-ASR run, sherpa-onnx not at all), on
+//! the one transcribe.cpp instance or, for sherpa-onnx, on an instance of its own while the next
+//! take uses a second one, or loads the model or language it needs beside it.
 
 use std::io::Cursor;
 use std::ops::Range;
@@ -458,6 +459,13 @@ impl Job {
     fn attempt(&self, pieces: &[Range<usize>], samples: &[f32], sample_rate: u32, compute: &Compute) -> Result<String, Failed> {
         let key = Key { id: self.entry.id.to_owned(), language: self.language.clone(), compute: compute.clone() };
         let mut lease = self.lease(&key)?;
+        // sherpa-onnx (room for a second instance) cannot stop a decode: once the take is
+        // cancelled, its instance holds back no other model or language while it runs on. A
+        // transcribe.cpp instance stays the one of its model until its piece ends.
+        if let Some(id) = lease.id().filter(|_| cap(self.entry.engine) > 1) {
+            let pool = self.shared.pool.clone();
+            self.abort.on_abort(move || pool.abandon(id));
+        }
         let on_gpu = lease.backend() != "CPU";
         let mut texts = Vec::with_capacity(pieces.len());
         for piece in pieces {
@@ -473,13 +481,17 @@ impl Job {
                 }
                 Err(error) => {
                     match error.kind {
-                        // The instance (or its device's state) is broken: the next take loads anew.
-                        LocalFailure::Device | LocalFailure::Memory => lease.discard(),
+                        // The model itself: none of its instances is used again.
                         LocalFailure::Model => {
                             lease.discard();
                             self.shared.pool.evict(self.entry.id);
                         }
-                        LocalFailure::InputTooLong | LocalFailure::Aborted | LocalFailure::Other => {}
+                        // A run the take's own cancel stopped: no fault of the instance.
+                        LocalFailure::Aborted if self.abort.is_aborted() => {}
+                        // Any other failure: the next take does not use this instance again.
+                        LocalFailure::Device | LocalFailure::Memory | LocalFailure::InputTooLong | LocalFailure::Aborted | LocalFailure::Other => {
+                            lease.discard()
+                        }
                     }
                     tracing::warn!(model = self.entry.id, kind = error.kind.as_str(), on_gpu, error = %error, "local transcription failed");
                     return Err(Failed { error, on_gpu });
@@ -1111,7 +1123,7 @@ mod tests {
     }
 
     /// docs/dictation.md §29: a model failure drops every instance of the model, so the next take
-    /// loads it afresh; a failure the engine does not classify keeps the instance.
+    /// loads it afresh; a failure the engine does not classify drops the instance that failed.
     #[tokio::test]
     async fn a_model_failure_drops_the_model_and_the_next_take_loads_it_again() {
         let dir = tempfile::tempdir().unwrap();
@@ -1122,7 +1134,7 @@ mod tests {
         t.transcribe(&speech, None, &[]).await.unwrap();
         loader.script.fail(false, LocalFailure::Other);
         assert!(t.transcribe(&speech, None, &[]).await.is_err());
-        assert_eq!((t.loaded().as_deref(), loader.loads()), (Some("sense-voice-small"), 1), "kept");
+        assert_eq!((t.loaded(), loader.loads()), (None, 1), "the instance that failed is dropped");
         // Two instances in memory: a take holds one while the next loads the other.
         loader.script.hold(1);
         let held = tokio::spawn({
@@ -1139,7 +1151,61 @@ mod tests {
         assert_eq!(err, DictationError::Asr("本地识别失败：scripted model".into()));
         assert_eq!((t.loaded(), t.shared.pool.counts()), (None, (0, 0, 0)), "every instance of the model dropped");
         assert_eq!(t.transcribe(&speech, None, &[]).await.unwrap().text, echo("sense-voice-small", "auto", 24_000));
-        assert_eq!(loader.loads(), 3, "loaded afresh");
+        assert_eq!(loader.loads(), 4, "loaded afresh");
+    }
+
+    /// Regression (R04, 2026-10-30): a recognition that failed with an input that was too long, a
+    /// decoder that stopped early (output budget, repeating output) or an error the engine does not
+    /// classify (every sherpa-onnx error) left its instance in the pool for the next take. Every
+    /// failure of a take that was not cancelled now drops the instance that failed, and the next
+    /// take loads afresh; another idle instance of the model stays. A take's own cancel is not a
+    /// failure of its instance: a cancelled take gives it back.
+    #[tokio::test]
+    async fn regression_an_inference_error_drops_the_instance_that_failed() {
+        let dir = tempfile::tempdir().unwrap();
+        install_all(dir.path());
+        let loader = FakeLoader::new();
+        let speech = pcm16(&[1000; 24_000], 16_000);
+        let qwen = LocalTranscriber::with_loader(dir.path(), CATALOGUE, loader.clone()).select("qwen3-asr-0.6b");
+        qwen.transcribe(&speech, None, &[]).await.unwrap();
+        for kind in [LocalFailure::InputTooLong, LocalFailure::Aborted, LocalFailure::Other] {
+            let loads = loader.loads();
+            loader.script.fail(false, kind);
+            assert!(qwen.transcribe(&speech, None, &[]).await.is_err());
+            assert_eq!(qwen.loaded(), None, "{kind}: the instance that failed is dropped");
+            qwen.transcribe(&speech, None, &[]).await.unwrap();
+            assert_eq!(loader.loads(), loads + 1, "{kind}: the next take loads afresh");
+        }
+        // Only the instance that failed: the model's other one stays.
+        let t = qwen.select("sense-voice-small");
+        loader.script.hold(1);
+        let held = tokio::spawn({
+            let (t, speech) = (t.clone(), speech.clone());
+            async move { t.transcribe(&speech, None, &[]).await }
+        });
+        loader.script.until_running(1).await;
+        t.transcribe(&speech, None, &[]).await.unwrap();
+        loader.script.release();
+        held.await.unwrap().unwrap();
+        until(|| t.shared.pool.counts() == (2, 0, 0), "both instances idle").await;
+        loader.script.fail(false, LocalFailure::Other);
+        assert!(t.transcribe(&speech, None, &[]).await.is_err());
+        assert_eq!((t.shared.pool.counts(), t.loaded().as_deref()), ((1, 0, 0), Some("sense-voice-small")));
+        // A cancelled take's piece that stops (transcribe.cpp saw the cancel) gives its instance back.
+        let loads = loader.loads();
+        loader.script.hold(1);
+        loader.script.fail(false, LocalFailure::Aborted);
+        let cancelled = tokio::spawn({
+            let (t, speech) = (t.clone(), speech.clone());
+            async move { t.transcribe(&speech, None, &[]).await }
+        });
+        loader.script.until_running(1).await;
+        cancelled.abort();
+        assert!(cancelled.await.unwrap_err().is_cancelled());
+        loader.script.release();
+        until(|| loader.script.running() == 0 && t.shared.pool.counts() == (1, 0, 0), "the cancelled take's instance back").await;
+        t.transcribe(&speech, None, &[]).await.unwrap();
+        assert_eq!(loader.loads(), loads, "reused");
     }
 
     /// Regression (R04, 2026-10-30): a take cancelled while transcribe.cpp ran kept the one
@@ -1219,6 +1285,52 @@ mod tests {
             t.transcribe(&speech, Some("zh"), &[]).await.unwrap();
         }
         assert_eq!(loader.loads(), 2);
+    }
+
+    /// Regression (R04, 2026-10-30): the second instance after a cancelled sherpa-onnx take only
+    /// helped a next take of the same model, language and compute; one in another language, or
+    /// with another model, waited for the cancelled decode (one model at a time). The instance
+    /// finishing a cancelled take now holds back nothing: the next take loads what it needs beside
+    /// it, and the cancelled one is dropped when it comes back to a pool that holds another model.
+    /// A cancelled transcribe.cpp take still holds its one instance until its piece ends: the next
+    /// take waits at most for that piece (the user's decision of 2026-10-30).
+    #[tokio::test]
+    async fn regression_a_cancelled_sherpa_take_holds_back_no_other_language_or_model() {
+        let dir = tempfile::tempdir().unwrap();
+        install_all(dir.path());
+        let loader = FakeLoader::new();
+        let t = LocalTranscriber::with_loader(dir.path(), CATALOGUE, loader.clone()).select("sense-voice-small").with_lock_wait(Duration::from_secs(10));
+        let speech = pcm16(&[1000; 24_000], 16_000);
+        let spawn = |t: &LocalTranscriber, language: Option<&'static str>| {
+            let (t, speech) = (t.clone(), speech.clone());
+            tokio::spawn(async move { t.transcribe(&speech, language, &[]).await })
+        };
+        loader.script.hold(1);
+        let cancelled = spawn(&t, Some("zh"));
+        loader.script.until_running(1).await;
+        cancelled.abort();
+        assert!(cancelled.await.unwrap_err().is_cancelled());
+        // Another language, then another model, while the cancelled decode runs on.
+        let started = Instant::now();
+        assert_eq!(t.transcribe(&speech, Some("en"), &[]).await.unwrap().text, echo("sense-voice-small", "en", 24_000));
+        let paraformer = t.select("paraformer-zh");
+        assert_eq!(paraformer.transcribe(&speech, None, &[]).await.unwrap().text, echo("paraformer-zh", "-", 24_000));
+        assert!(started.elapsed() < Duration::from_secs(5), "the next takes waited {:?}", started.elapsed());
+        assert_eq!(loader.script.running(), 1, "the cancelled decode runs on");
+        // It ends: dropped, because another model is in memory now.
+        loader.script.release();
+        until(|| loader.script.running() == 0 && t.shared.pool.counts() == (1, 0, 0), "the cancelled take's instance gone").await;
+        assert_eq!((t.loaded().as_deref(), loader.loads()), (Some("paraformer-zh"), 3));
+        // transcribe.cpp: the next take, whatever its model, waits for the piece in progress.
+        loader.script.hold(1);
+        let cancelled = spawn(&t.select("qwen3-asr-0.6b"), None);
+        loader.script.until_running(1).await;
+        cancelled.abort();
+        assert!(cancelled.await.unwrap_err().is_cancelled());
+        let err = t.clone().with_lock_wait(Duration::from_millis(300)).transcribe(&speech, Some("zh"), &[]).await.unwrap_err();
+        assert_eq!(err, DictationError::Asr(format!("本地识别失败：{BUSY}")));
+        loader.script.release();
+        assert_eq!(t.transcribe(&speech, Some("zh"), &[]).await.unwrap().text, echo("sense-voice-small", "zh", 24_000), "once the piece is done");
     }
 
     /// A take cancelled between two pieces of a long input recognises no further piece.
