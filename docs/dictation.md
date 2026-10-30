@@ -14,7 +14,7 @@
 | `voltip-asr` | `AsrClient::transcribe(wav, language) -> Transcript`：OpenAI 兼容 `POST {base}/v1/audio/transcriptions` multipart（`file`, `model`, `language?`），Bearer token；`AsrConfig.upload = OggOpus` 时 `file` 是 Ogg Opus（`ogg_opus.rs`，§3.9）；`DashscopeClient`：阿里云百炼的 chat / multimodal / 实时 WebSocket 三种协议（§3.4，`duplex` 模块供流式会话用）；错误分类 `Unauthorized / RateLimited / Server / Service / FreeQuotaExhausted / Network / Timeout / BadResponse / Audio` | reqwest 0.13（rustls，multipart，json）、tokio-tungstenite（Mozilla 根证书）、opus-rs | wiremock；本地 WebSocket 假服务 |
 | `voltip-refine` | `RefineClient::refine_with(text, PromptHints) -> Refined`：OpenAI 兼容 `POST {base}/chat/completions`，系统提示词 = 这一次的预设（§21，默认「校对」）+ 语言 + 应用上下文 + 场景要求 + 术语表；`temperature 0.2`；结果去掉包裹引号/代码块 | reqwest | wiremock |
 | `voltip-inject` | `inject(text) -> Injection` 与一次听写一个的剪贴板会话（`begin_session`，§14.3）：保存整个剪贴板（全部格式）→ 写入文本 → 发 `Ctrl+V`（macOS `Cmd+V`）→ 最后一次粘贴后放回原剪贴板；粘贴不可用时把文本留在剪贴板并返回 `Via::Clipboard` + 原因；`Injector` trait + `FakeInjector` | arboard 3.6、enigo 0.6（x11rb / SendInput / CGEvent） | trait 假实现；真实实现只在有显示器时冒烟 |
-| `voltip-asr-local` | 本地引擎（§10）：`catalogue`（6 条目录，含隐藏的 `silero-vad`）、`store`（下载 / 校验 / 安装，§12 辅助条目随首个模型下载）、`transcriber`（`LocalTranscriber`，按条目引擎分派：`gguf.rs` transcribe.cpp、`sherpa.rs` sherpa-onnx；`vad_trim` 时先经 `vad.rs` 裁剪）、`streaming`（`LocalStreamingTranscriber`，§11 实时预览）、`vad`（`VadTrimmer`，§12 Silero VAD 首尾裁剪）、`segmenter`（`VadSegmenterFactory`，§22 长录音在停顿处切段） | transcribe-cpp 0.2.3（静态，CPU）、sherpa-onnx 1.13.8（动态）、rubato | 假加载器 / 假 VAD 单测；`tests/real.rs` 四条 `#[ignore]` 真模型测试 |
+| `voltip-asr-local` | 本地引擎（§10）：`catalogue`（6 条目录，含隐藏的 `silero-vad`）、`store`（下载 / 校验 / 安装，§12 辅助条目随首个模型下载）、`transcriber`（`LocalTranscriber`，按条目引擎分派：`gguf.rs` transcribe.cpp、`sherpa.rs` sherpa-onnx；`vad_trim` 时先经 `vad.rs` 裁剪）、`streaming`（`LocalStreamingTranscriber`，§11 实时预览）、`vad`（`VadTrimmer`，§12 Silero VAD 首尾裁剪）、`segmenter`（`VadSegmenterFactory`，§22 长录音在停顿处切段） | transcribe-cpp 0.4.1（静态，CPU；§29.11）、sherpa-onnx 1.13.8（动态）、rubato | 假加载器 / 假 VAD 单测；`tests/real.rs` 四条 `#[ignore]` 真模型测试 |
 | `voltip-core` | `dictation` 模块：状态机 + 编排（含 §11 的解码线程 `run_live` 与 `Listening.live` / `Processing.preview`，§22 长录音 `long.rs`）；`history` 模块：`history.sqlite3`（§4.3，上限 2 万条）、用 AI 预设处理与导出（§22）；`audio_cache` 模块：录音缓存（§26）；`engines` 模块：默认值解析（`option_env!`）与 `EngineSettings`；`models` 模块：模型库端口；秘密经 `SecretStore` | 只依赖 trait（`AudioSource` / `Capture` / `LivePcm` / `Transcriber` / `StreamingTranscriber` / `Refiner` / `Injector` / `ModelManager`），不依赖 cpal / rtrb / reqwest / enigo / sherpa | 假实现驱动完整状态机（`fakes.rs`：`FakeAudio` 带假 tap、`FakeStreaming` 脚本会话、`FakeModels`） |
 | `voltip-reply` | 服务拒绝请求时说了什么（§3.12）：`error_fields`（各服务商错误体的 `code` 与 `message`）、`summary`（要显示的话：消息与代码、HTML 页的标题或正文）、`clean`（合并空白、遮住密钥令牌与账号、截到 200 字） | regex、serde_json | 各服务商的错误体样本、遮盖与截断 |
 | `voltip-net` | 网络代理（§24）：`Network`（进程内的代理计划：跟随系统 / 不使用 / 手动）、`apply`（给 reqwest 客户端加一个每个请求都问计划的代理）、`connect`（为 WebSocket 打开直连、HTTP CONNECT 或 SOCKS5 的 TCP 流） | reqwest、hyper-util（`client-proxy-system`：系统代理读取，CONNECT 与 SOCKS5 连接器） | 记录请求的假 HTTP / SOCKS5 代理 |
@@ -551,10 +551,10 @@ pub struct HistoryEntry {
 
 | 引擎 | crate | 链接 | 用途 | 实测（本机 CPU，16 s 中文样音） |
 |---|---|---|---|---|
-| `transcribe_cpp`（ggml，GGUF） | `transcribe-cpp = 0.2.3`（MIT；`default-features = false`；macOS 打开 `metal`，Linux / Windows 的 `vulkan` 在 `vulkan` 特性后面，§10.6） | 源码 cmake 静态链接，**无 DLL**；cargo-xwin 交叉编译已验证 | **默认本地引擎**：Qwen3-ASR 0.6B / 1.7B GGUF，整段识别（VAD 划分的 utterance），30 语种自动检测，自带标点 | 0.6B Q6_K：加载 0.64 s，推理 1.56 s；文本质量最接近云端 1.7B |
+| `transcribe_cpp`（ggml，GGUF） | `transcribe-cpp = 0.4.1`（2026-10-30 起，此前 0.2.3，§29.11；MIT；`default-features = false`；macOS 打开 `metal`，Linux / Windows 的 `vulkan` 在 `vulkan` 特性后面，§10.6；权重复制进内存，不映射文件） | 源码 cmake 静态链接，**无 DLL**；cargo-xwin 交叉编译已验证 | **默认本地引擎**：Qwen3-ASR 0.6B / 1.7B GGUF，整段识别（VAD 划分的 utterance），30 语种自动检测，自带标点 | 0.6B Q6_K：加载 0.64 s，推理 1.56 s；文本质量最接近云端 1.7B |
 | `sherpa_onnx`（ONNX Runtime） | `sherpa-onnx = 1.13.8`（Apache-2.0，`shared`） | 预编译动态库 | **流式预览**（Zipformer transducer，§11）与轻量离线（SenseVoice / Paraformer） | SenseVoice-small：0.20–0.34 s；流式每 100 ms 块 4 ms |
 
-选择理由：Qwen3-ASR 在 transcribe.cpp 里不支持流式与语言提示（上游明确），但整段质量最好、体积 590–850 MB 可接受、且不依赖任何运行时 DLL；sherpa-onnx 是目前唯一在 CPU 上做到实时部分结果的离线路径。两者都在 `RecognizerLoader` 后面，UI 只看到产品档位，不看到 GGUF / Q6_K / ONNX 这些词。手机端**不**编译任何本地引擎，自己也不识别：它把麦克风经端到端加密通道流给配对的电脑，由电脑识别并插入（§20）。
+选择理由：Qwen3-ASR 在 transcribe.cpp 里不支持流式（它接受语言提示，Voltip 不传，让模型自己识别语言，§17），但整段质量最好、体积 590–850 MB 可接受、且不依赖任何运行时 DLL；sherpa-onnx 是目前唯一在 CPU 上做到实时部分结果的离线路径。两者都在 `RecognizerLoader` 后面，UI 只看到产品档位，不看到 GGUF / Q6_K / ONNX 这些词。手机端**不**编译任何本地引擎，自己也不识别：它把麦克风经端到端加密通道流给配对的电脑，由电脑识别并插入（§20）。
 
 **产品档位（设置对话框「引擎 › 本地」只显示这三类 + 流式预览开关）**：
 
@@ -2553,7 +2553,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 | `memory` | `OutOfMemory` | 同上 |
 | `model` | `ModelLoad`、`ModelFileNotFound`，加载失败 | 丢掉这个模型的全部实例：空闲的立即丢，正在用的用完再丢 |
 | `input_too_long` | `InputTooLong` | 保留实例 |
-| `aborted` | `Aborted`、`OutputTruncated` | 保留实例 |
+| `aborted` | `Aborted`、`OutputTruncated`、`OutputRepetition`（0.4 起，输出开始重复时提前停止） | 保留实例；后两种这一段没有完整的文字，识别失败 |
 | `other` | 其余；sherpa-onnx 的错误都是这一种 | 保留实例 |
 
 - **改用 CPU**：GPU 上出现 `device` 或 `memory` 时，这次录音以 `Compute { device: Cpu }` 加载并重试一次。10 分钟内第二次（`GPU_STRIKE_WINDOW`）之后，这次运行剩下的时间里本机模型都在 CPU 上（内存里的标志，重启 Voltip 恢复）。CPU 也失败时，错误是两次的说明合在一起：「显卡出错（…），改用 CPU 也失败（…）」。
@@ -2565,10 +2565,10 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 此前一把锁同时包住加载和推理：取消一次听写后，被取消的推理还在跑，下一次本机识别要等它。
 
 - **取消**：`LocalTranscriber::transcribe` 持有一个被丢弃时设置 `Abort` 的守卫；核心取消听写时中止流水线任务，这个 future 被丢弃。识别在阻塞线程上继续到当前这一段（§29.7）结束，之后不再开始下一段；还没开始的推理两个引擎都不再开始。
-- **transcribe.cpp**：每次推理把 `Abort` 接到一个新的 `CancelToken`（`Session::set_cancel_token`）。transcribe-cpp 的 Rust 文档说取消在解码步之间检查，但 0.2.3 的 Qwen3-ASR 是一次完成的推理，只在开始前看一次（`src/arch/qwen3_asr/model.cpp:539`），所以进行中的那一段照样跑完：真模型测试里，60 s 的录音在第一段中途取消后，下一次识别在第一段结束后拿到实例（`real_a_cancelled_gguf_take_frees_the_model_after_its_piece`）。每个模型只有一个实例（模型大），下一次识别最多等一段：30 s 的片段推理实测最慢 Linux 3.6 s、Windows 构建机 8.4 s。
+- **transcribe.cpp**：每次推理把 `Abort` 接到一个新的 `CancelToken`（`Session::set_cancel_token`）。transcribe-cpp 的 Rust 文档说取消在解码步之间检查，但 Qwen3-ASR 是一次完成的推理，只在开始前看一次（0.2.3 的 `src/arch/qwen3_asr/model.cpp:539`；0.4.1 照旧，`model.cpp:634`，§29.11），所以进行中的那一段照样跑完：真模型测试里，60 s 的录音在第一段中途取消后，下一次识别在第一段结束后拿到实例（`real_a_cancelled_gguf_take_frees_the_model_after_its_piece`）。每个模型只有一个实例（模型大），下一次识别最多等一段：30 s 的片段推理实测最慢 0.6B 在 Linux 上 3.1 s、Windows 构建机上 7.3 s，1.7B 在 Linux 上 6.0 s（§29.8）。这是用户的决定（2026-10-30）：「单实例+最多等待一段 并且升级到最新的cpp」；计划原先设想的「GGUF 中止推理」以此代替。
 - **sherpa-onnx**（SenseVoice、Paraformer）：解码是同步调用，没有停止的接口。被取消的那一段在后台跑完，结果丢弃；下一次识别用第二个实例，所以每个模型最多两个实例（int8 约 230 MB，多一个可以接受）。
 - **一次一个模型**：换模型时先丢掉旧模型的空闲实例；旧模型还有实例在用时，等它用完。同一个模型、语言和设备的加载正在进行时，等它，不重复加载。
-- **等待上限**：一次识别拿实例最多等 `LOCK_WAIT`（75 s，§29.8），等不到就失败：「本地识别失败：上一次识别还没结束」。无头服务端同时处理最多 `MAX_CONCURRENCY`（8）个请求，它们轮流用一个识别器，所以服务端等 `LOCK_WAIT × MAX_CONCURRENCY`（10 分钟）。
+- **等待上限**：一次识别拿实例最多等 `LOCK_WAIT`（155 s，§29.8），等不到就失败：「本地识别失败：上一次识别还没结束」。无头服务端同时处理最多 `MAX_CONCURRENCY`（8）个请求，它们轮流用一个识别器，所以服务端等 `LOCK_WAIT × MAX_CONCURRENCY`（1240 s，约 21 分钟）。
 - **不做独立进程**：一次推理在 `max_piece` 之内只要几秒，sherpa 有两个实例、transcribe.cpp 最多等一段，已经够用；原生崩溃要隔离时再评估。
 - 预热（§10.7）用同一个池：模型已在内存或正在加载时不再加载；正在用的实例属于另一个模型时等它，期间又有新的预热就让位。
 
@@ -2582,42 +2582,62 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 - **语料**（`scripts/measure/make-corpus.py`，`/usr/bin/python3 -I` 运行）：FLEURS 的 `cmn_hans_cn` 与 `en_us` 测试集（CC BY 4.0，Hugging Face 修订 `70bb2e84`，归档按 Hub 报告的 SHA-256 校验），句子之间留 300 ms 静音，拼成 30、60、90、119、121 s 的片段，中英文各 10 条，参考文本同样拼接。同一条片段的较短版本是较长版本的前缀，各长度比较的是同样的语音。音频与结果放在 `/tmp/voltip-measure/`，不提交。PR-5、PR-9 复用这个生成器（`--sentence-range`、`--count`、`--langs`）。
 - **测量**（`scripts/measure/local-pieces.sh`；Windows 上 `scripts/windows-remote.sh gate pieces <id>=<模型目录>`，在构建机的锁里运行）：`crates/voltip-asr-local/examples/piece_quality.rs` 用生产加载器在 CPU 上、以引擎缺省的线程数把每条片段一次送进模型，不经过分段；中文按简体字算 CER，英文按词算 WER，都不计标点和大小写；同时记下推理耗时、实时率和进程的峰值内存（Linux `VmHWM`，与 `/usr/bin/time -v` 的数一致；Windows `PeakWorkingSet64`）。`scripts/measure/summarize-pieces.py` 汇总成 `summary.csv`，并按下面的规则算出 `decisions.csv`。
 - **规则**：`max_piece` = 30、60、90、119 s 中最大的 L，两台机器、两种语言都满足「没有报错，且错误率不超过同一条件下 30 s 的错误率 + 1 个百分点」；一个都没有就取 30 s。`LOCK_WAIT` = 两台机器上 121 s 片段最慢一次推理 × 2，向上取整到 5 s，至少 30 s。
-- **机器**：本机 Linux（32 核服务器 CPU）；Windows 构建机（Xeon 8259CL，8 核 16 线程）。识别质量是模型的属性，没有报错的长度上两台机器的错误率相差不到 1.1 个百分点；仓库没有可用的显卡机器，显卡不测（显卡出错由 §29.5 的 CPU 重试兜住）。
-- **结果**（2026-10-30，错误率是 10 条片段合计的编辑数除以参考长度；括号里是报错的条数，全部是 transcribe.cpp 的 `OutputTruncated`：生成预算用完，Linux 约 12–15 s、Windows 约 30–37 s 后返回）：
+- **机器**：本机 Linux（32 核服务器 CPU）；Windows 构建机（Xeon 8259CL，8 核 16 线程）。识别质量是模型的属性：没有报错的长度上，两台机器的错误率相差不到 1.3 个百分点（最大是 Paraformer 英文 30 s：29.21% / 30.47%）。所以 Qwen3-ASR 1.7B 只在 Linux 上测（2026-10-30 用户决定：「都下载，1.7B 只在 Linux 测」），它在 Windows 构建机上的耗时按 0.6B 两台机器的比例估算（`summarize-pieces.py --estimate windows:qwen3-asr-1.7b:qwen3-asr-0.6b`）。仓库没有可用的显卡机器，显卡不测（显卡出错由 §29.5 的 CPU 重试兜住）。
+- **结果**（2026-10-30；Qwen3-ASR 两档用 transcribe-cpp 0.4.1，0.2.3 的结果见 §29.11；错误率是 10 条片段合计的编辑数除以参考长度；括号里是报错的条数，都是 0.4.1 的 `OutputRepetition`：输出开始重复时提前停止）：
 
   | 模型 | 语言 | 机器 | 30 s | 60 s | 90 s | 119 s | 121 s | 121 s 最慢推理 | 峰值内存（121 s） |
   |---|---|---|---|---|---|---|---|---|---|
-  | SenseVoice Small | 中文 CER | Linux | 8.89% | 16.71% | 23.63% | 30.25% | 29.86% | 5.2 s | 1015 MB |
+  | SenseVoice Small | 中文 CER | Linux | 8.89% | 16.71% | 23.63% | 30.25% | 29.86% | 5.3 s | 1015 MB |
   | | | Windows | 9.05% | 16.59% | 22.93% | 31.08% | 29.69% | 10.7 s | 1016 MB |
-  | | 英文 WER | Linux | 9.32% | 10.15% | 15.97% | 21.38% | 20.61% | 5.3 s | |
-  | | | Windows | 8.96% | 10.48% | 16.55% | 21.50% | 21.09% | 10.7 s | |
-  | Qwen3-ASR 0.6B | 中文 CER | Linux | 8.10% | 8.41% | 9.81% | 12.08%（3） | 13.74%（4） | 14.9 s | 3398 MB |
-  | | | Windows | 7.94% | 8.90% | 10.85% | 12.25%（3） | 13.29%（4） | 37.4 s | 3168 MB |
-  | | 英文 WER | Linux | 5.20% | 10.82% | 23.21%（2） | 33.23%（6） | 37.96%（7） | 14.9 s | |
-  | | | Windows | 5.20% | 11.06% | 23.14%（2） | 34.19%（6） | 39.56%（9） | 37.3 s | |
+  | | 英文 WER | Linux | 9.32% | 10.15% | 15.97% | 21.38% | 20.61% | | |
+  | | | Windows | 8.96% | 10.48% | 16.55% | 21.50% | 21.09% | | |
+  | Paraformer | 中文 CER | Linux | 13.81% | 14.47% | 15.71% | 16.63% | 17.52% | 3.7 s | 705 MB |
+  | | | Windows | 13.49% | 14.35% | 15.55% | 17.60% | 16.71% | 8.3 s | 666 MB |
+  | | 英文 WER | Linux | 29.21% | 40.18% | 46.53% | 52.36% | 53.10% | | |
+  | | | Windows | 30.47% | 39.10% | 45.62% | 53.02% | 53.97% | | |
+  | Qwen3-ASR 0.6B | 中文 CER | Linux | 8.10% | 8.54% | 9.69% | 11.32% | 11.22% | 18.2 s | 1550 MB |
+  | | | Windows | 8.73% | 8.66% | 10.19% | 11.40% | 11.31% | 48.2 s | 1460 MB |
+  | | 英文 WER | Linux | 4.84% | 10.65% | 20.42% | 27.80%（1） | 27.65%（1） | | |
+  | | | Windows | 5.20% | 10.90% | 20.53% | 32.09% | 28.16% | | |
+  | Qwen3-ASR 1.7B | 中文 CER | Linux | 7.94% | 7.87% | 8.66% | 9.47% | 9.35% | 28.4 s | 2525 MB |
+  | | 英文 WER | Linux | 7.53% | 14.31% | 24.72% | 34.10% | 33.12% | | |
+  | | | Windows（估算） | | | | | | 75.3 s | |
 
-  实时率（推理 / 音频，30 s → 121 s）：SenseVoice Linux 0.021 → 0.043、Windows 0.045 → 0.087；Qwen3-ASR 0.6B Linux 0.094 → 0.12、Windows 0.23 → 0.30。
-- **结论**：SenseVoice Small 与 Qwen3-ASR 0.6B 的 `max_piece` 都是 30 s。SenseVoice 的长输入大量漏字（119 s 的一条中文片段只输出 134 个字，参考是 361 个）；Qwen3-ASR 0.6B 的英文在 60 s 时就超过界限（漏句），90 s 起开始报错。此前 120 s 以内的录音整段送进模型，30–120 s 的本机听写因此漏字或失败。`LOCK_WAIT` = 2 × 37.4 s，取整为 75 s。
-- **未测**：Paraformer 与 Qwen3-ASR 1.7B 两台机器上都没有，暂取规则的下限 30 s（只会多切几段，不会让识别变差）。
-- 30 s 的界限让 30–120 s 的输入多了几次推理：60 s 的样音拼接片段，Qwen3-ASR 0.6B 分四段共 6.3 s，SenseVoice 1.6 s（Linux）。
+  最慢推理是两种语言里较慢的一次。实时率（推理 / 音频，两种语言的平均，30 s → 121 s）：SenseVoice Linux 0.021 → 0.043、Windows 0.044 → 0.087；Paraformer Linux 0.016 → 0.029、Windows 0.034 → 0.063；Qwen3-ASR 0.6B Linux 0.081 → 0.125、Windows 0.199 → 0.338；Qwen3-ASR 1.7B Linux 0.149 → 0.189。30 s 片段的最慢推理：SenseVoice Linux 0.7 s、Windows 1.4 s；Paraformer 0.5 s、1.1 s；Qwen3-ASR 0.6B 3.1 s、7.3 s；Qwen3-ASR 1.7B Linux 6.0 s（Windows 按同样的比例估算约 14 s）。
+- **结论**：四个整段识别模型的 `max_piece` 都是 30 s。SenseVoice 的长输入大量漏字（119 s 的一条中文片段只输出 134 个字，参考是 361 个）；Paraformer 与两档 Qwen3-ASR 的中文在 60 s 时仍在界限内，英文在 60 s 时都超出（漏句）；Qwen3-ASR 1.7B 的中文到 119 s 才超出。此前 120 s 以内的录音整段送进模型，30–120 s 的本机听写因此漏字或失败。`LOCK_WAIT` = 2 × 75.3 s（1.7B 在 Windows 构建机上的估算值：Linux 上最慢 28.4 s × 0.6B 的 48.2 s / 18.2 s），取整为 155 s；只测量出的值里最慢的是 0.6B 在 Windows 上的 48.2 s。分段识别比整段快（实时率随长度上升），一条接近 2 分钟的录音分成 30 s 的几段识别，用时少于整段推理的这个数。
+- 30 s 的界限让 30–120 s 的输入多了几次推理：60 s 的样音拼接片段，Qwen3-ASR 0.6B 分四段共 6.3 s，SenseVoice 1.6 s（Linux，transcribe-cpp 0.2.3）。
 
 ### 29.9 门禁
 
 - Rust：`voltip-hooks` 的 `watch.rs`（`no_presses_no_judgement`、`three_presses_the_hook_missed_over_a_second_mean_it_is_gone`、`a_hook_that_still_hears_nothing_is_put_back_less_and_less_often`、`a_hook_put_back_starts_its_count_afresh` 等）；`voltip-platform` 的 `held_key.rs` 与 `SoloTracker::resumed`；三个平台钩子的真测试（见上）；桌面 `held.rs`（含 `regression_a_press_read_before_its_take_started_still_ends_that_take`）、`hotkey.rs`（`the_lone_key_status_follows_the_hook_s_health`、`regression_a_hook_whose_thread_ended_is_replaced`）、`tests/ipc.rs@regression_a_missed_release_stops_a_hold_take`。
-- `voltip-asr-local`：`pool.rs`（实例复用与上限、一次一个模型、驱逐、预热、10 分钟内第二次显卡错误）；`transcriber.rs`（`a_gpu_failure_is_tried_again_on_the_cpu_and_a_second_keeps_the_cpu`、`a_failed_cpu_retry_reports_both_failures`、`a_model_failure_drops_the_model_and_the_next_take_loads_it_again`、`regression_a_cancelled_local_take_releases_the_model`、`regression_a_cancelled_sherpa_take_does_not_block_the_next`、`a_cancelled_take_stops_between_pieces`、`an_input_longer_than_the_model_takes_is_recognised_piece_by_piece`）；`segmenter.rs@an_input_longer_than_max_piece_is_cut_into_pieces_that_fit`；`gguf.rs@transcribe_cpp_errors_map_to_their_kind`；真模型（`tests/real.rs`，`#[ignore]`）：`real_sherpa_long_inputs_are_recognised_like_their_pieces`、`real_gguf_long_inputs_are_recognised_like_their_pieces`（60 s 与 121 s：转写器的文字等于逐段识别再拼接的文字，字数不少于样音单独识别的 80%）、`real_a_cancelled_gguf_take_frees_the_model_after_its_piece`；`catalogue.rs@every_whole_take_model_has_a_max_piece`。
+- `voltip-asr-local`：`pool.rs`（实例复用与上限、一次一个模型、驱逐、预热、10 分钟内第二次显卡错误）；`transcriber.rs`（`a_gpu_failure_is_tried_again_on_the_cpu_and_a_second_keeps_the_cpu`、`a_failed_cpu_retry_reports_both_failures`、`a_model_failure_drops_the_model_and_the_next_take_loads_it_again`、`regression_a_cancelled_local_take_releases_the_model`、`regression_a_cancelled_sherpa_take_does_not_block_the_next`、`a_cancelled_take_stops_between_pieces`、`an_input_longer_than_the_model_takes_is_recognised_piece_by_piece`）；`segmenter.rs@an_input_longer_than_max_piece_is_cut_into_pieces_that_fit`；`gguf.rs@transcribe_cpp_errors_map_to_their_kind`、`gguf.rs@regression_every_load_copies_the_weights_so_the_files_can_be_moved_or_deleted`；真模型（`tests/real.rs`，`#[ignore]`）：`real_sherpa_long_inputs_are_recognised_like_their_pieces`、`real_gguf_long_inputs_are_recognised_like_their_pieces`（60 s 与 121 s：转写器的文字等于逐段识别再拼接的文字，字数不少于样音单独识别的 80%）、`real_a_cancelled_gguf_take_frees_the_model_after_its_piece`、`real_a_loaded_gguf_model_leaves_its_file_free_to_move_and_delete`；`catalogue.rs@every_whole_take_model_has_a_max_piece`。
 - 核心：`asr_note` 进历史（`an_asr_note_round_trips_and_older_entries_read_without`、`the_recogniser_s_backend_note_reaches_the_history`、`a_long_take_keeps_its_segments_backend_note`）。
-- `make lint` 的 `check-no-device-event-filter.sh`；`scripts/measure` 的 Python 单测（`make verify` 的 `measure-helpers`）。
+- `make lint` 的 `check-no-device-event-filter.sh`；`scripts/measure` 的 Python 单测（`make verify` 的 `measure-helpers`，含 `--estimate`：`test_a_model_not_measured_on_a_machine_counts_with_its_estimate_there`）；许可清单（`release-helpers`：`test_every_component_transcribe_cpp_vendors_carries_its_text`、`test_a_component_transcribe_cpp_vendors_that_the_notices_do_not_know_fails`）。
+- 真机：Linux 上 `tests/real.rs` 全部真模型测试（0.6B、1.7B、SenseVoice、Paraformer、实时识别、VAD）；Windows 构建机的 `gate test`、`gate clippy`、`gate real`；托管 CI 的两台 Mac、`hooks-windows`、`windows-cross`（`make windows-x64`，Vulkan）、`windows-native`、`android` 与 `smoke-desktop`；本机 `make linux-x64`（Vulkan）。
 - 依赖时间和线程的测试在满载下（每个逻辑 CPU 一个空转循环）各跑 200 次：`HookWatch`、`held_key` 与 `solo_key`、`held.rs` 与 `hotkey.rs`、`regression_a_missed_release_stops_a_hold_take`、`transcriber.rs` 与 `pool.rs` 的全部测试。第一轮 `regression_a_missed_release_stops_a_hold_take` 有 1 次失败（§29.4 的按下被提前清掉），修正后它与 `held.rs` 各再跑 300 次无失败。
 - 失败原因的确认：钩子判定、对账（含按下被提前清掉的回归）和 X11 重连的测试先对着未实现的版本失败；`voltip-asr-local` 的恢复规则与实现一同写成，用 11 处临时改动（去掉 CPU 重试、显卡永不关闭、不驱逐、取消不设 `Abort`、sherpa 只留一个实例、不分段、段间不看取消、保留被驱逐的实例、两个模型同时在内存、重复加载、预热重复加载）逐一确认对应的测试以预期的原因失败。
 
 ### 29.10 未做与限制
 
-- **取消 transcribe.cpp 的推理**：0.2.3 的 Qwen3-ASR 推理中途不能停（§29.6），被取消的录音不再开始下一段，下一次识别最多等正在进行的那一段。计划设想的「GGUF 中止推理」要等上游在解码过程中检查取消；给 transcribe.cpp 第二个实例（像 sherpa 那样）会多占一份模型内存或显存，没有做。
+- **取消 transcribe.cpp 的推理**：0.2.3 和 0.4.1 的 Qwen3-ASR 推理中途都不能停（§29.6、§29.11），被取消的录音不再开始下一段，下一次识别最多等正在进行的那一段（2026-10-30 用户决定）。上游在解码过程中检查取消以后，已接上的 `CancelToken` 会让被取消的推理在一个解码步内停下；给 transcribe.cpp 第二个实例（像 sherpa 那样）会多占一份模型内存或显存，没有做。
+- **1.7B 在 Windows 上的耗时**：按用户决定只在 Linux 上测，Windows 构建机上的耗时按 0.6B 的比例估算，没有实测。
 - **松开对账的平台**：纯 Wayland 与 XWayland 读不到物理状态，不对账，录音照旧靠松开边沿结束。
 - **UIPI**：以管理员身份运行的窗口在前台时，钩子和 Raw Input 都收不到它的输入，这段时间单键不起作用，也不会被误判为钩子被摘掉。
 - **Shift 作单键**：按住 8 s 以上的筛选键提示、连按 5 次的粘滞键提示，要在用户电脑上照实记录后补进本节。
 - **显卡**：识别中出错改用 CPU 的真机路径没有测试（没有可用的显卡机器），由假识别器的单测覆盖。
 - **文字**：`solo_error` 的说明与现有的「无法监听」原因一样由壳生成（中文），英文界面里也显示中文。
+
+### 29.11 transcribe-cpp 0.4.1
+
+2026-10-30 用户决定：「单实例+最多等待一段 并且升级到最新的cpp」。transcribe-cpp 从 0.2.3 升到当时 crates.io 上的最新版 0.4.1（2026-10-22 发布）。目录里的 GGUF 文件不变：0.4.1 加载 0.2.3 用的同一批文件，真模型测试照常通过，用户不需要重新下载模型。
+
+- **取消**：0.4.1 的 Qwen3-ASR 仍然只在一次推理开始前看取消标志（`transcribe-cpp-sys-0.4.1/src/arch/qwen3_asr/model.cpp:634`，注释仍写 single-shot；逐个生成词元的循环里没有检查点），所以 §29.6 的做法不变：单实例，被取消的录音不再开始下一段，下一次识别最多等正在识别的那一段。`CancelToken` 照旧接上：上游以后在解码步之间检查取消，被取消的推理就会在一个解码步内停下，单实例和最多等一段仍是上限。
+- **权重复制进内存**：0.4 起 transcribe.cpp 默认把 GGUF 映射进内存。Windows 上被映射的文件不能删除，也不能移动，而模型库删除模型、更改保存位置时不会先卸下内存里的模型，所以加载器设 `ModelOptions.no_mmap = true`，和 0.2.3 一样把权重复制进内存（`gguf.rs@regression_every_load_copies_the_weights_so_the_files_can_be_moved_or_deleted`；真模型测试 `real_a_loaded_gguf_model_leaves_its_file_free_to_move_and_delete` 在模型载入后改名并删除它的文件，再识别一次，Windows 构建机的 `gate real` 上通过）。
+- **输出重复**：0.4 起 Qwen3-ASR 的输出开始重复时提前停止生成，返回 `OutputRepetition`；生成预算用完时也先去掉重复的尾巴。Voltip 把它和 `OutputTruncated` 一样当作这一段没有完整的文字：这次识别失败，实例保留（§29.5）。0.2.3 遇到同样的循环会一直生成到预算用完，结果同样是失败，只是更慢。
+- **没有接上的新能力**：0.4.1 的 Qwen3-ASR 声明词表与上下文提示（§16.3）；语言提示 0.2.3 起就接受。Voltip 两样都不传，升级不改变用户看到的行为。
+- **构建与许可**：两个 crate 都是 MIT；`Cargo.lock` 只换了这两个 crate，没有新的依赖，`cargo deny` 通过。`TRANSCRIBE_CMAKE_ARGS`（CPU 基线、Vulkan SDK 路径）照旧生效：0.4.1 新加的 macOS CPU 下限在它之前设置，被它覆盖。transcribe.cpp 自带的 miniz（0.2.3 就有，此前的许可清单漏了）和 0.4.1 起的 Silero VAD 分段逻辑现在都进 `THIRD-PARTY-NOTICES.txt`：`scripts/release/third-party-notices.py` 按 transcribe.cpp 的 `THIRD-PARTY-LICENSES.md` 表格逐项写入许可文本，表格里出现不认识的组件就生成失败（`test_a_component_transcribe_cpp_vendors_that_the_notices_do_not_know_fails`）。
+- **复测**：Qwen3-ASR 0.6B 在两台机器上用同一语料重测（§29.8 的表；0.2.3 的结果留在 `/tmp/voltip-measure/results-tcpp-0.2.3/`，不提交）：30 s 的错误率与 0.2.3 相当（中文 Linux / Windows 8.10% / 8.73%，0.2.3 为 8.10% / 7.94%；英文 4.84% / 5.20%，0.2.3 为 5.20% / 5.20%）；长片段不再因为生成预算用完而报错（0.2.3 在 90–121 s 共有 46 条 `OutputTruncated`，0.4.1 只有 Linux 上 2 条 `OutputRepetition`）；121 s 的峰值内存从 3398 MB 降到 1550 MB（Linux）、从 3168 MB 降到 1460 MB（Windows）。Windows 构建机上 30 s 的最慢推理从 8.4 s 降到 7.3 s，121 s 的从 37.4 s 升到 48.2 s：0.2.3 的长片段多在预算用完时提前返回，0.4.1 把它们识别完。`max_piece` 仍是 30 s，`LOCK_WAIT` 按 §29.8 重定为 155 s。
+- **验证**：见 §29.9 的「真机」一条。
 
 ## 31. 音视频文件导入与字幕（2026-10-30）
 

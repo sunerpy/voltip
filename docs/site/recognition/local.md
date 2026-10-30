@@ -26,7 +26,7 @@ When **Silence trimming** is on, a 1.8 MB silence detection model is downloaded 
 
 ### Longer recordings
 
-The longer the recording a local model recognises in one go, the more words it misses. In our tests with Chinese and English speech from the FLEURS test set, SenseVoice Small's Chinese character error rate was 8.9% at 30 seconds and 16.7% at 60 seconds; Qwen3-ASR 0.6B's English word error rate rose from 5.2% at 30 seconds to 10.8% at 60 seconds, and recordings of 90 seconds or more could fail. Recordings longer than 30 seconds are therefore split at pauses, recognised part by part and joined into one text. This happens automatically; recordings longer than 2 minutes are still recognised in parts while you record.
+The longer the recording a local model recognises in one go, the more words it misses. In our tests with Chinese and English speech from the FLEURS test set, SenseVoice Small's Chinese character error rate was 8.9% at 30 seconds and 16.7% at 60 seconds; Qwen3-ASR 0.6B's English word error rate rose from 4.8% at 30 seconds to 10.7% at 60 seconds and 20.4% at 90 seconds, and Paraformer and Qwen3-ASR 1.7B also got clearly worse in English at 60 seconds. With every local model, recordings longer than 30 seconds are therefore split at pauses, recognised part by part and joined into one text. This happens automatically; recordings longer than 2 minutes are still recognised in parts while you record.
 
 After you cancel a dictation, the next one does not wait for the cancelled recognition to finish: with SenseVoice or Paraformer, Voltip loads a second copy of the model for it; with Qwen3-ASR, it waits at most for the part being recognised.
 

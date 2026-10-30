@@ -78,7 +78,7 @@ class LockWait(unittest.TestCase):
         self.assertEqual(sp.lock_wait({})[0], 30)
 
     def test_a_model_not_measured_on_a_machine_counts_with_its_estimate_there(self) -> None:
-        """D17 (2026-10-30): Qwen3-ASR 1.7B is measured on Linux only; its time on the Windows
+        """User decision 2026-10-30: Qwen3-ASR 1.7B is measured on Linux only; its time on the Windows
         machine is the Linux time scaled by the reference model's Windows / Linux ratio."""
         lines = [
             row(121, 0, model="ref", infer_ms=10_000),

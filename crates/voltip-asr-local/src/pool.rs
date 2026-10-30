@@ -22,9 +22,9 @@ use crate::transcriber::Recognizer;
 /// How long a take waits for a recogniser before it gives up (docs/dictation.md §29.8, measured):
 /// twice the slowest recognition of a 121 s input on the two machines measured, rounded up to 5 s.
 /// The slowest is Qwen3-ASR 1.7B on the Windows build machine's CPU, 75.3 s, estimated from its
-/// Linux time and 0.6B's Windows / Linux ratio (D17: 1.7B is measured on Linux only). A take
-/// recognised in pieces of at most `max_piece` takes less than one inference over all of it, so a
-/// take gives up on a recogniser that is stuck, not on one that is merely busy.
+/// Linux time and 0.6B's Windows / Linux ratio (the user decided on 2026-10-30 to measure 1.7B on
+/// Linux only). A take recognised in pieces of at most `max_piece` takes less than one inference
+/// over all of it, so a take gives up on a recogniser that is stuck, not on one merely busy.
 pub const LOCK_WAIT: Duration = Duration::from_secs(155);
 
 /// Two GPU failures this close together turn the GPU off until Voltip restarts.

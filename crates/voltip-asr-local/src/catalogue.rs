@@ -238,8 +238,8 @@ pub const CATALOGUE: &[ModelEntry] = &[
             size: 1_692_554_208,
             sha256: "c75a961b7134a6c952d89797865cb0d0376876185aee04ef6d12c31c2952e4e1",
         }],
-        // docs/dictation.md §29.8 (measured on Linux only, D17): the English error rate doubles from
-        // 30 s to 60 s (WER 7.5 % → 14.3 %).
+        // docs/dictation.md §29.8 (measured on Linux only, as the user decided): the English error
+        // rate doubles from 30 s to 60 s (WER 7.5 % → 14.3 %).
         max_piece: Duration::from_secs(30),
     },
     ModelEntry {

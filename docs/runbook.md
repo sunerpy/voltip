@@ -226,7 +226,7 @@ Android 工程由 `expo prebuild` 每次生成，不提交（`docs/mobile-rn.md`
 
 ## 第三方许可声明
 
-`scripts/release/third-party-notices.py` 生成 `THIRD-PARTY-NOTICES.txt`：cargo-about（`about.toml`，许可证允许列表与 `deny.toml` 相同，只算会进二进制的依赖）列出桌面壳链接的每个 crate，`pnpm licenses list --prod` 列出前端依赖并带上各包自己的许可证文件（三款 OFL 字体在内），原生库的文本在 `scripts/release/licenses/`（ONNX Runtime 1.28.2 的 LICENSE 与 ThirdPartyNotices、Khronos Vulkan loader），transcribe.cpp 与 ggml 的取自 transcribe-cpp-sys 的源码。两个打包脚本和 release 工作流都会生成它：Windows 装进安装目录和便携 zip，Linux 放在 `/usr/share/doc/voltip/`。升级 sherpa-onnx（随之 ONNX Runtime）或 Vulkan 运行时后，要同步更新 `scripts/release/licenses/` 里对应的文本。
+`scripts/release/third-party-notices.py` 生成 `THIRD-PARTY-NOTICES.txt`：cargo-about（`about.toml`，许可证允许列表与 `deny.toml` 相同，只算会进二进制的依赖）列出桌面壳链接的每个 crate，`pnpm licenses list --prod` 列出前端依赖并带上各包自己的许可证文件（三款 OFL 字体在内），原生库的文本在 `scripts/release/licenses/`（ONNX Runtime 1.28.2 的 LICENSE 与 ThirdPartyNotices、Khronos Vulkan loader），transcribe.cpp 和它附带的组件（ggml、miniz、Silero VAD，按其 `THIRD-PARTY-LICENSES.md` 表格逐项）取自 transcribe-cpp-sys 的源码；升级 transcribe-cpp 后表格里出现新组件时脚本失败，在 `TRANSCRIBE_VENDORED` 里补上它的许可证路径。两个打包脚本和 release 工作流都会生成它：Windows 装进安装目录和便携 zip，Linux 放在 `/usr/share/doc/voltip/`。升级 sherpa-onnx（随之 ONNX Runtime）或 Vulkan 运行时后，要同步更新 `scripts/release/licenses/` 里对应的文本。
 
 ## Windows 真机（SSH）
 
