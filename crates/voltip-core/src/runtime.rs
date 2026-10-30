@@ -44,7 +44,7 @@ mod always_on;
 mod audio;
 use audio::{Recovery, audio_at_start, keeps_audio, leftovers_at_start};
 mod auto_backup;
-pub use auto_backup::AUTO_SCAN_DELAY;
+pub use auto_backup::AUTO_WEEKLY_DELAY;
 mod backup;
 mod check;
 mod import;

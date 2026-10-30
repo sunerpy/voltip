@@ -170,6 +170,6 @@ describe("backup and migration (docs/dictation.md section 4.6)", () => {
     ]);
     // An answer the shell does not give is refused rather than shown.
     answers.push({ kind: "moved" });
-    await expect(backend.backupFolderChoose("选择位置")).rejects.toThrow();
+    await expect(backend.backupFolderChoose("选择位置")).rejects.toBeInstanceOf(z.ZodError);
   });
 });

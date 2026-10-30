@@ -7,8 +7,9 @@
 //! core task, after every command queued before the backup. The history comes from its database on
 //! a read-only connection, one snapshot. The weekly and the update backups are written on a
 //! blocking thread, one at a time; the others wait their turn. The weekly one needs
-//! `CoreConfig.auto_backup` (the desktop): the folder is looked at [`AUTO_SCAN_DELAY`] after start
-//! and again when the setting names another folder, so no tick reads a directory.
+//! `CoreConfig.auto_backup` (the desktop): the folder is looked at on the first tick and again when
+//! the setting names another folder, so no tick reads a directory, and the weekly backup is first
+//! written [`AUTO_WEEKLY_DELAY`] after start.
 
 use std::collections::VecDeque;
 use std::io::Write as _;
@@ -29,9 +30,9 @@ use crate::scenes::Scene;
 use crate::vocabulary::{DictionaryEntry, ReplacementRule};
 use crate::{CoreError, history::HISTORY_DB_FILE_NAME};
 
-/// How long after start the automatic backups' folder is first looked at (the window and the
-/// core settle first; a weekly backup that is due follows at once).
-pub const AUTO_SCAN_DELAY: Duration = Duration::from_secs(60);
+/// How long after start a weekly backup that is due is first written: the window and the core
+/// settle first. The folder is looked at at once, so the page names the newest backup from the start.
+pub const AUTO_WEEKLY_DELAY: Duration = Duration::from_secs(60);
 
 /// What reaches the core about automatic backups.
 pub(super) enum AutoInbound {
@@ -210,21 +211,22 @@ impl Runtime {
         self.emit(CoreEvent::AutoBackup(self.auto_view()));
     }
 
-    /// Once per tick, at `now_ms`: look at the folder once it is due, then start the weekly backup
-    /// when it is.
+    /// Once per tick, at `now_ms`: look at the folder when it has not been, then start the weekly
+    /// backup when it is due.
     pub(super) fn backup_tick_at(&mut self, now_ms: u64) {
         if !self.config.auto_backup {
             return;
         }
         let folder = self.auto_folder();
         if self.auto.scanned.as_ref() != Some(&folder) {
-            if !self.auto.scanning && now_ms >= self.auto.started_ms.saturating_add(ms(AUTO_SCAN_DELAY)) {
+            if !self.auto.scanning {
                 self.start_scan(folder);
             }
             return;
         }
         let auto = &self.auto;
         let due = self.settings.backup.weekly
+            && now_ms >= auto.started_ms.saturating_add(ms(AUTO_WEEKLY_DELAY))
             && !auto.writing
             && auto.waiting.is_empty()
             && auto.retry_at_ms.is_none_or(|at| now_ms >= at)
@@ -288,12 +290,17 @@ impl Runtime {
                 if folder != self.auto_folder() {
                     return;
                 }
-                self.auto.newest = match result {
+                let listed = match result {
                     Ok(files) => files.into_iter().next(),
                     Err(e) => {
                         tracing::warn!(error = %e, "the automatic backups' folder could not be read");
                         None
                     }
+                };
+                // A backup written here while the listing ran is newer than what it saw.
+                self.auto.newest = match (self.auto.newest.take(), listed) {
+                    (Some(written), Some(found)) => Some(if (written.stamp, written.same) >= (found.stamp, found.same) { written } else { found }),
+                    (written, found) => found.or(written),
                 };
                 self.auto.scanned = Some(folder);
                 self.emit_auto_backup();
@@ -467,16 +474,17 @@ mod tests {
         path
     }
 
-    /// docs/dictation.md §4.6.1: nothing before the folder is looked at a minute after start; then
-    /// a folder without an automatic backup gets the weekly one at once, which `UiState` names.
+    /// docs/dictation.md §4.6.1: the folder is looked at on the first tick, and one without an
+    /// automatic backup gets the weekly one a minute after start, which `UiState` names.
     #[tokio::test]
     async fn a_weekly_backup_is_written_a_minute_after_start_when_none_is_there() {
         let mut rig = rig(BackupSettings::default());
         let t0 = rig.started();
-        rig.rt.backup_tick_at(t0 + AUTO_SCAN_DELAY.as_millis() as u64 - 1_000);
-        assert!(rig.idle(), "not before the folder is looked at");
-        rig.tick_and_answer(t0 + AUTO_SCAN_DELAY.as_millis() as u64).await;
-        rig.tick_and_answer(t0 + 61_000).await;
+        rig.tick_and_answer(t0 + 1_000).await;
+        assert_eq!(rig.rt.auto_view().last, None);
+        rig.rt.backup_tick_at(t0 + AUTO_WEEKLY_DELAY.as_millis() as u64 - 1_000);
+        assert!(rig.idle(), "not before the minute is up");
+        rig.tick_and_answer(t0 + AUTO_WEEKLY_DELAY.as_millis() as u64).await;
         let files = list(&rig.default_folder()).unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].kind, AutoKind::Weekly);
@@ -492,6 +500,42 @@ mod tests {
         rig.rt.backup_tick_at(t0 + 62_000);
         rig.rt.backup_tick_at(t0 + WEEK_MS - DAY_MS);
         assert!(rig.idle());
+    }
+
+    /// Regression (Linux AppImage, 2026-10-30): for the first minute after every start the page said
+    /// 「尚未进行自动备份」 beside a folder full of them. The folder is looked at on the first tick;
+    /// only the weekly backup waits its minute.
+    #[tokio::test]
+    async fn regression_the_latest_backup_is_known_right_after_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let recent = made_ago(&dir.path().join(AUTO_BACKUP_DIR), AutoKind::Update, 8 * DAY_MS);
+        let mut rig = rig_in(dir, BackupSettings::default(), true);
+        let t0 = rig.started();
+        rig.tick_and_answer(t0 + 1_000).await;
+        assert_eq!(rig.rt.auto_view().last.map(|l| l.name), recent.file_name().map(|n| n.to_string_lossy().into_owned()));
+        rig.rt.backup_tick_at(t0 + 59_000);
+        assert!(rig.idle(), "eight days old, yet the weekly one waits its minute");
+        rig.tick_and_answer(t0 + AUTO_WEEKLY_DELAY.as_millis() as u64).await;
+        assert_eq!(list(&rig.default_folder()).unwrap().len(), 2);
+    }
+
+    /// A backup written while the folder is looked at stays the newest: the listing that comes
+    /// back after it was made before it (an update installing right at start).
+    #[tokio::test]
+    async fn a_backup_written_during_the_first_look_stays_the_newest() {
+        let mut rig = rig(BackupSettings::default());
+        let t0 = rig.started();
+        rig.rt.backup_tick_at(t0 + 1_000);
+        let listed = rig.next().await;
+        let (reply, answer) = AutoReply::channel();
+        rig.rt.request_auto_backup(AutoKind::Update, Some(reply));
+        let written = rig.next().await;
+        rig.rt.on_auto_backup(written, t0 + 2_000);
+        rig.rt.on_auto_backup(listed, t0 + 2_000);
+        let file = answer.await.unwrap().unwrap();
+        assert_eq!(rig.rt.auto_view().last, Some(file));
+        rig.rt.backup_tick_at(t0 + 61_000);
+        assert!(rig.idle(), "the update backup is today's: no weekly one");
     }
 
     /// A backup made two days ago is new enough: the weekly one waits until it is a week old.

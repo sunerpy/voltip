@@ -64,7 +64,7 @@ pub use providers::{
     ReasoningEffort, ServiceKind, ServicePreset, SiteId, key_entries, key_env_var, load_user_secrets, peek_user_secrets,
 };
 pub use runtime::{
-    AUTO_SCAN_DELAY, AppCore, CoreCommand, CoreConfig, CoreEvent, CoreHandle, EXTRA_RECORDING_POLL, MAX_ACTIVATION_MS, PRESET_TRY_UNCONFIGURED,
+    AUTO_WEEKLY_DELAY, AppCore, CoreCommand, CoreConfig, CoreEvent, CoreHandle, EXTRA_RECORDING_POLL, MAX_ACTIVATION_MS, PRESET_TRY_UNCONFIGURED,
     SERVE_UNAVAILABLE, TestHooks, now_ms,
 };
 pub use scenes::{AppRef, BuiltinScene, ContextSharing, Scene, SceneDraft, SceneError, SceneMatch, SceneOverrides, SceneRef, TakeContext};
