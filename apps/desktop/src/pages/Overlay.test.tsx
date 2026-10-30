@@ -478,6 +478,11 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
       const backend = new MockBackend({ now: () => Date.now() });
       renderApp({ path: "/overlay?state=live", backend });
       await screen.findByTestId("overlay-window");
+      // The page loads with the clock following real time; from here only the test moves it. The
+      // last read comes 100 ms before the mock finishes refining, and on a loaded CI runner
+      // (2026-10-30) more real time than that passed during the test: the text was inserted in
+      // between and the pill had no step time left to read.
+      vi.setTimerTickMode("manual");
       await act(async () => {
         await backend.invoke("dictation_start");
       });
