@@ -247,7 +247,7 @@ pub async fn run(shell: &Shell, command: &str, args: Value) -> Result<Value, Str
         // docs/dictation.md §4.6: backups are the computer's, as in the Tauri phone shell.
         "backup_export" => to_json(&voltip_core::backup::ExportOutcome::unsupported()),
         "backup_open" => to_json(&voltip_core::backup::OpenOutcome::unsupported()),
-        "backup_import" => to_json(&voltip_core::backup::ImportOutcome::Failed { code: voltip_core::backup::ImportFailure::Unsupported }),
+        "backup_import" => to_json(&voltip_core::backup::ImportOutcome::failed(voltip_core::backup::ImportFailure::Unsupported)),
         "backup_discard" => Ok(Value::Null),
         // docs/dictation.md §20.9: Google Play updates what it installed; an APK from a release asks
         // GitHub, and the newer release's APK opens in the browser.

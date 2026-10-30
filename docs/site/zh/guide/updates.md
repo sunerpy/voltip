@@ -17,6 +17,8 @@ Voltip 在应用内更新。在「设置 → 通用」中：
 
 在 Windows 上，新版本在后台安装，不显示安装程序窗口，完成后 Voltip 自动重新打开；从 0.1.6 或更早的版本更新到新版本时也是如此。在 macOS 和 Linux 上，应用会原地替换后重新启动。
 
+安装更新前，Voltip 会自动备份历史记录、词典、规则、场景和 AI 预设，见[自动备份](/zh/dictation/history#自动备份)。
+
 在 Mac 上，从 0.0.6 及更早版本更新时，各项权限还会再询问一次，见[安装](/zh/guide/install#macos)。从 0.0.7 起，每个版本都使用同一张证书签名，以便之后的更新保留麦克风和辅助功能权限；第一次这样的更新（0.0.7 到 0.0.8）尚未在真机上验证。
 
 ### Android 手机
@@ -52,7 +54,7 @@ Voltip 先在本站检查更新并从本站下载。本站提供的文件与 Git
 | macOS | `~/Library/Application Support/dev.voltip.Voltip` |
 | Linux | `~/.local/share/voltip` |
 
-模型默认位于其中的 `models` 目录，通常占用大部分空间，也可以移到其他磁盘，见[保存位置](/zh/recognition/local#保存位置)。在「语音模型」页删除模型会同时删除它的文件。保留的录音位于 `audio-cache` 目录，默认最多占用 200 MB，可以在「设置 → 隐私与历史」的「录音缓存」中清理，见[重新识别与重新润色](/zh/dictation/history#重新识别与重新润色)。
+模型默认位于其中的 `models` 目录，通常占用大部分空间，也可以移到其他磁盘，见[保存位置](/zh/recognition/local#保存位置)。在「语音模型」页删除模型会同时删除它的文件。保留的录音位于 `audio-cache` 目录，默认最多占用 200 MB，可以在「设置 → 隐私与历史」的「录音缓存」中清理，见[重新识别与重新润色](/zh/dictation/history#重新识别与重新润色)。自动备份默认位于 `backups` 目录，也可以改到其他位置，见[自动备份](/zh/dictation/history#自动备份)。
 
 云端服务商的密钥和这台电脑的设备身份保存在系统钥匙串中（Windows 凭据管理器、macOS 钥匙串或 Linux 的 Secret Service），条目名称以 `dev.voltip.desktop` 开头。
 
@@ -64,4 +66,4 @@ Voltip 先在本站检查更新并从本站下载。本站提供的文件与 Git
    - **macOS**：把「应用程序」中的 Voltip 移到废纸篓。
    - **Linux，.deb**：执行 `sudo apt remove voltip`。
    - **Linux，AppImage**：删除 `~/.local/bin/Voltip.AppImage` 和 `~/.local/share/applications/voltip.desktop`。
-3. 如果也要删除数据，删除上面列出的目录，以及钥匙串中名称以 `dev.voltip.desktop` 开头的条目。模型保存在其他位置时，也删除那个文件夹。
+3. 如果也要删除数据，删除上面列出的目录，以及钥匙串中名称以 `dev.voltip.desktop` 开头的条目。模型或自动备份保存在其他位置时，也删除那些文件夹。

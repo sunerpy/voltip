@@ -309,10 +309,11 @@ pub fn parse(bytes: &[u8]) -> Result<Backup, BackupError> {
     }
     let version =
         head.version.as_ref().and_then(serde_json::Value::as_u64).filter(|v| *v >= 1).ok_or_else(|| BackupError::Damaged("no format version".into()))?;
-    if version > u64::from(BACKUP_VERSION) {
-        return Err(BackupError::TooNew(u32::try_from(version).unwrap_or(u32::MAX)));
+    let version = u32::try_from(version).unwrap_or(u32::MAX);
+    if version > BACKUP_VERSION {
+        return Err(BackupError::TooNew(version));
     }
-    let file: BackupFile = serde_json::from_slice(bytes).map_err(|e| BackupError::Damaged(e.to_string()))?;
+    let file = migrate(version, bytes)?;
     let counts = BackupCounts {
         history: count(file.history.len()),
         dictionary: count(file.dictionary.len()),
@@ -341,8 +342,56 @@ pub fn parse(bytes: &[u8]) -> Result<Backup, BackupError> {
     })
 }
 
+/// A file of format `version` in this build's layout. When a format change raises
+/// [`BACKUP_VERSION`], the older version gets a step here that reads its layout as a
+/// `serde_json::Value`, rewrites what changed and hands it on to the next version's step; this
+/// build's version reads straight into [`BackupFile`]. A version without a step is newer than this
+/// build ([`parse`] says so before it gets here).
+fn migrate(version: u32, bytes: &[u8]) -> Result<BackupFile, BackupError> {
+    match version {
+        1 => serde_json::from_slice(bytes).map_err(|e| BackupError::Damaged(e.to_string())),
+        newer => Err(BackupError::TooNew(newer)),
+    }
+}
+
 /// The start of `bytes` names the format: a backup that does not parse is damaged, not foreign.
 fn names_the_format(bytes: &[u8]) -> bool {
     let head = String::from_utf8_lossy(&bytes[..bytes.len().min(HEAD_BYTES)]);
     head.contains("\"format\"") && head.contains(BACKUP_FORMAT)
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    fn version_one() -> Vec<u8> {
+        let input = ExportInput {
+            app_version: "0.3.0",
+            device: "书房",
+            platform: Some(Platform::Windows),
+            created_at_ms: 1_793_000_000_000,
+            dictionary: &[],
+            rules: &[],
+            scenes: &[],
+            presets: &[],
+        };
+        let mut bytes = Vec::new();
+        write_backup(&mut bytes, Path::new("no-history.sqlite3"), &input).unwrap();
+        bytes
+    }
+
+    /// docs/dictation.md §4.6.1: a file is read through the migration of its format version.
+    /// Version 1 is this build's layout and passes through as it is; a version without a step
+    /// here is newer than this build, and a file that does not parse in its version's layout is
+    /// damaged.
+    #[test]
+    fn a_file_is_read_through_the_migration_of_its_version() {
+        let bytes = version_one();
+        let file = migrate(1, &bytes).unwrap();
+        assert_eq!((file.format.as_str(), file.version, file.device.as_str(), file.platform), (BACKUP_FORMAT, 1, "书房", Platform::Windows));
+        assert_eq!(parse(&bytes).unwrap().manifest.device, "书房", "parse goes the same way");
+        assert_eq!(migrate(2, &bytes).err(), Some(BackupError::TooNew(2)));
+        assert!(matches!(migrate(1, b"{\"format\":\"voltip-backup\",\"version\":1}"), Err(BackupError::Damaged(_))), "no counts");
+    }
 }

@@ -14,6 +14,7 @@
 //! [`merge`] works out each new list and what was skipped and why; the runtime hands the lists to
 //! the stores, which check them again with their own rules and write each part in one go.
 
+pub mod auto;
 mod file;
 pub(crate) mod merge;
 
@@ -309,6 +310,12 @@ pub enum ImportFailure {
     Unavailable,
     /// This shell cannot import a backup (the phone).
     Unsupported,
+    /// A replacing import while a take runs (docs/dictation.md §4.6.1): the take would be recorded
+    /// into the history being replaced. Nothing changed.
+    Busy,
+    /// The automatic backup a replacing import makes first could not be written
+    /// (docs/dictation.md §4.6.1): nothing was replaced.
+    SnapshotFailed,
 }
 
 /// `backup_import`'s answer.
@@ -324,7 +331,17 @@ pub enum ImportOutcome {
     Failed {
         /// Why.
         code: ImportFailure,
+        /// The system's message (the technical details), for `snapshot_failed`.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        detail: String,
     },
+}
+
+impl ImportOutcome {
+    /// Nothing ran, for `code`.
+    pub fn failed(code: ImportFailure) -> Self {
+        Self::Failed { code, detail: String::new() }
+    }
 }
 
 /// Why an item of a backup was not restored.
@@ -419,23 +436,28 @@ pub struct ImportReport {
     pub mode: ImportMode,
     /// One per part chosen.
     pub parts: Vec<PartReport>,
+    /// A replacing import: the automatic backup of what was here before (docs/dictation.md
+    /// §4.6.1), the path it was written to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<String>,
 }
 
-/// Where the core answers a [`crate::CoreCommand::BackupImport`]: once, with the report.
+/// Where the core answers a [`crate::CoreCommand::BackupImport`]: once, with the report or why
+/// nothing ran.
 #[derive(Clone)]
-pub struct ImportReply(Arc<Mutex<Option<tokio::sync::oneshot::Sender<ImportReport>>>>);
+pub struct ImportReply(Arc<Mutex<Option<tokio::sync::oneshot::Sender<ImportOutcome>>>>);
 
 impl ImportReply {
     /// The reply to hand the command, and the receiver the caller waits on.
-    pub fn channel() -> (Self, tokio::sync::oneshot::Receiver<ImportReport>) {
+    pub fn channel() -> (Self, tokio::sync::oneshot::Receiver<ImportOutcome>) {
         let (tx, rx) = tokio::sync::oneshot::channel();
         (Self(Arc::new(Mutex::new(Some(tx)))), rx)
     }
 
     /// Answer; a second answer, or one nobody waits for any more, goes nowhere.
-    pub fn send(&self, report: ImportReport) {
+    pub fn send(&self, outcome: ImportOutcome) {
         if let Some(tx) = self.0.lock().take() {
-            let _ = tx.send(report);
+            let _ = tx.send(outcome);
         }
     }
 }

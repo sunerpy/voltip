@@ -1,5 +1,11 @@
-import { type BackupOpenOutcome } from "@voltip/shared";
-import { MockBackend, type MockBackupFile, sampleBackup } from "@voltip/shared/mock";
+import { type BackupOpenOutcome, formatDateTime } from "@voltip/shared";
+import {
+  MOCK_BACKUPS_DIR,
+  MOCK_CHOSEN_BACKUPS_DIR,
+  MockBackend,
+  type MockBackupFile,
+  sampleBackup,
+} from "@voltip/shared/mock";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderApp } from "../../test/render";
@@ -276,5 +282,189 @@ describe("Settings · 隐私与历史 · 备份与迁移 (docs/dictation.md sect
     await user.click(within(dialog).getByRole("button", { name: "Import" }));
     const done = await screen.findByRole("dialog", { name: "Import complete" });
     expect(within(done).getByTestId("backup-result-rules")).toHaveTextContent("1 rule imported");
+  });
+});
+
+/** The time the 自动备份 rows show, as the page formats it. */
+function shown(atMs: number, locale: "zh-CN" | "en" = "zh-CN"): string {
+  return formatDateTime(locale, atMs, { dateStyle: "medium", timeStyle: "short" });
+}
+
+describe("Settings · 隐私与历史 · 自动备份 (docs/dictation.md section 4.6.1)", () => {
+  it("shows the weekly switch, where the backups go and the latest one, and what else is backed up", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend({
+      now: () => NOW,
+      autoBackup: {
+        last: {
+          name: "voltip-auto-20250924-154640-weekly.voltip-backup",
+          at_ms: NOW,
+          kind: "weekly",
+        },
+      },
+    });
+    renderApp({ path: "/settings/privacy", backend });
+    const section = await screen.findByTestId("privacy-auto-backup");
+    expect(section).toHaveTextContent("自动备份");
+    expect(section).toHaveTextContent("更新安装前和替换导入前也会自动备份一份");
+    expect(section).toHaveTextContent("自动备份只保留最近 5 份");
+    expect(section).toHaveTextContent("备份文件未加密，放在同步盘中会随同步上传");
+    expect(within(section).getByTestId("auto-backup-folder")).toHaveTextContent(MOCK_BACKUPS_DIR);
+    expect(section).toHaveTextContent("默认");
+    expect(within(section).queryByRole("button", { name: "恢复默认位置" })).toBeNull();
+    expect(within(section).getByTestId("auto-backup-last")).toHaveTextContent(
+      `${shown(NOW)}（每周）`,
+    );
+    const weekly = within(section).getByRole("switch", { name: "每周自动备份" });
+    expect(weekly).toHaveAttribute("aria-checked", "true");
+    await user.click(weekly);
+    await waitFor(() => {
+      expect(backend.peek().settings.backup.weekly).toBe(false);
+    });
+    expect(weekly).toHaveAttribute("aria-checked", "false");
+    await user.click(within(section).getByRole("button", { name: "打开文件夹" }));
+    expect(backend.backupFoldersOpened).toEqual([MOCK_BACKUPS_DIR]);
+  });
+
+  it("更改… moves the backups to a folder that can be written; one that cannot is refused with why", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend({ now: () => NOW });
+    renderApp({ path: "/settings/privacy", backend });
+    const section = await screen.findByTestId("privacy-auto-backup");
+    expect(within(section).getByTestId("auto-backup-last")).toHaveTextContent("尚未进行自动备份");
+    await user.click(within(section).getByRole("button", { name: "更改…" }));
+    expect(
+      await screen.findByText(`自动备份将保存到：${MOCK_CHOSEN_BACKUPS_DIR}`),
+    ).toBeInTheDocument();
+    expect(within(section).getByTestId("auto-backup-folder")).toHaveTextContent(
+      MOCK_CHOSEN_BACKUPS_DIR,
+    );
+    expect(section).toHaveTextContent("自定义");
+    expect(backend.peek().settings.backup.folder).toBe(MOCK_CHOSEN_BACKUPS_DIR);
+
+    backend.simulateBackupFolder({ unwritable: "Permission denied (os error 13)" });
+    await user.click(within(section).getByRole("button", { name: "更改…" }));
+    expect(
+      await screen.findByText("无法写入所选文件夹，位置未更改：Permission denied (os error 13)"),
+    ).toBeInTheDocument();
+    expect(backend.peek().settings.backup.folder).toBe(MOCK_CHOSEN_BACKUPS_DIR);
+
+    backend.simulateBackupFolder(null);
+    await user.click(within(section).getByRole("button", { name: "更改…" }));
+    expect(backend.peek().settings.backup.folder).toBe(MOCK_CHOSEN_BACKUPS_DIR);
+
+    await user.click(within(section).getByRole("button", { name: "恢复默认位置" }));
+    await waitFor(() => {
+      expect(within(section).getByTestId("auto-backup-folder")).toHaveTextContent(MOCK_BACKUPS_DIR);
+    });
+    expect(backend.peek().settings.backup.folder).toBeNull();
+    expect(within(section).queryByRole("button", { name: "恢复默认位置" })).toBeNull();
+  });
+
+  it("a failed automatic backup is shown until one is written", async () => {
+    const backend = new MockBackend({
+      now: () => NOW,
+      autoBackup: {
+        failure: { kind: "weekly", at_ms: NOW, detail: "No space left on device (os error 28)" },
+      },
+    });
+    renderApp({ path: "/settings/privacy", backend });
+    const failure = await screen.findByTestId("auto-backup-failure");
+    expect(failure).toHaveTextContent(
+      `自动备份失败（每周，${shown(NOW)}）：No space left on device (os error 28)`,
+    );
+    expect(failure).toHaveTextContent("将在 24 小时后重试。");
+    backend.simulateWeeklyBackup();
+    await waitFor(() => {
+      expect(screen.queryByTestId("auto-backup-failure")).toBeNull();
+    });
+    expect(screen.getByTestId("auto-backup-last")).toHaveTextContent(`${shown(NOW)}（每周）`);
+  });
+
+  it("a replacing import backs up what is here first and names the file; a merge does not", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend({ now: () => NOW });
+    backend.simulateBackupFile(sampleBackup(NOW));
+    renderApp({ path: "/settings/privacy", backend });
+    let dialog = await openImport(user);
+    await user.click(within(dialog).getByRole("button", { name: "导入" }));
+    let done = await screen.findByRole("dialog", { name: "导入完成" });
+    expect(within(done).queryByTestId("backup-snapshot")).toBeNull();
+    expect(backend.autoBackups).toEqual([]);
+    await user.click(within(done).getByRole("button", { name: "完成" }));
+
+    backend.simulateBackupFile(sampleBackup(NOW));
+    dialog = await openImport(user);
+    await user.click(within(dialog).getByRole("radio", { name: "替换" }));
+    await user.click(within(dialog).getByRole("button", { name: "替换" }));
+    done = await screen.findByRole("dialog", { name: "导入完成" });
+    const [snapshot] = backend.autoBackups;
+    expect(snapshot?.kind).toBe("import");
+    expect(snapshot?.name).toMatch(/^voltip-auto-\d{8}-\d{6}-import\.voltip-backup$/);
+    expect(within(done).getByTestId("backup-snapshot")).toHaveTextContent(
+      `替换前的内容已自动备份到：${MOCK_BACKUPS_DIR}/${snapshot?.name ?? ""}`,
+    );
+    await user.click(within(done).getByRole("button", { name: "完成" }));
+    expect(screen.getByTestId("auto-backup-last")).toHaveTextContent(`${shown(NOW)}（替换导入前）`);
+  });
+
+  it("a replacing import is refused during a dictation or when its backup fails, and can be tried again", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend({ now: () => NOW });
+    backend.simulateBackupFile(sampleBackup(NOW));
+    renderApp({ path: "/settings/privacy", backend });
+    const before = backend.peek().history_total;
+    const dialog = await openImport(user);
+    await user.click(within(dialog).getByRole("radio", { name: "替换" }));
+    await backend.invoke("dictation_start");
+    await user.click(within(dialog).getByRole("button", { name: "替换" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "正在听写，请在听写结束后再替换导入。",
+    );
+    await backend.invoke("dictation_cancel");
+    backend.simulateAutoBackupFails("No space left on device (os error 28)");
+    await user.click(within(dialog).getByRole("button", { name: "替换" }));
+    await waitFor(() => {
+      expect(within(dialog).getByRole("alert")).toHaveTextContent(
+        "替换前未能先备份现有数据，未导入任何内容：No space left on device (os error 28)",
+      );
+    });
+    expect(backend.peek().history_total).toBe(before);
+    expect(backend.peek().dictionary).toEqual([]);
+    backend.simulateAutoBackupFails(undefined);
+    await user.click(within(dialog).getByRole("button", { name: "替换" }));
+    const done = await screen.findByRole("dialog", { name: "导入完成" });
+    expect(within(done).getByTestId("backup-snapshot")).toBeInTheDocument();
+    expect(backend.peek().dictionary.map((e) => e.term)).toEqual(["Kubernetes"]);
+  });
+
+  it("in English", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend({
+      now: () => NOW,
+      autoBackup: {
+        last: {
+          name: "voltip-auto-20250924-154640-update.voltip-backup",
+          at_ms: NOW,
+          kind: "update",
+        },
+        failure: { kind: "import", at_ms: NOW, detail: "Access is denied. (os error 5)" },
+      },
+    });
+    renderApp({ path: "/settings/privacy", backend, systemLanguage: "en-US" });
+    const section = await screen.findByTestId("privacy-auto-backup");
+    expect(section).toHaveTextContent("Automatic backups");
+    expect(within(section).getByRole("switch", { name: "Back up every week" })).toBeInTheDocument();
+    expect(within(section).getByTestId("auto-backup-last")).toHaveTextContent(
+      `${shown(NOW, "en")} (before an update)`,
+    );
+    expect(within(section).getByTestId("auto-backup-failure")).toHaveTextContent(
+      `Automatic backup failed (before a replacing import, ${shown(NOW, "en")}): Access is denied. (os error 5)`,
+    );
+    expect(within(section).getByTestId("auto-backup-failure")).not.toHaveTextContent("24 hours");
+    await user.click(within(section).getByRole("button", { name: "Change…" }));
+    expect(
+      await screen.findByText(`Automatic backups will be saved to: ${MOCK_CHOSEN_BACKUPS_DIR}`),
+    ).toBeInTheDocument();
   });
 });

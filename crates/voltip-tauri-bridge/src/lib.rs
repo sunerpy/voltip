@@ -16,6 +16,7 @@ use parking_lot::Mutex;
 use serde::Deserialize;
 use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
+use voltip_core::backup::auto::{AutoKind, AutoOutcome, AutoReply};
 use voltip_core::backup::{self, BackupError, BackupParts, ExportInput, ExportSummary, ImportFailure, ImportOutcome, ImportReply, OpenOutcome};
 use voltip_core::dictation::LevelFrame;
 use voltip_core::history::MAX_RECENT_TEXTS;
@@ -189,6 +190,16 @@ pub enum UiCommand {
         /// MB at most (50–10000).
         max_mb: u32,
     },
+    /// The weekly automatic backup on or off (docs/dictation.md §4.6.1); the backups before an
+    /// update and before a replacing import are made either way.
+    SettingsSetBackup {
+        /// Make one every week.
+        weekly: bool,
+    },
+    /// The automatic backups go to `<data dir>/backups` again; the ones made elsewhere stay there.
+    BackupFolderReset,
+    /// Close home's notice that the automatic backup before the update failed.
+    BackupNoticeDismiss,
     /// Delete every kept recording.
     AudioCacheClear,
     /// Delete one kept recording.
@@ -647,6 +658,9 @@ impl UiCommand {
             Self::SettingsSetAutoUpdate { enabled } => CoreCommand::SetAutoUpdate(enabled),
             Self::SettingsSetHistory { enabled, keep } => CoreCommand::SetHistory(voltip_core::HistorySettings { enabled, keep }),
             Self::SettingsSetAudioCache { enabled, keep, max_mb } => CoreCommand::SetAudioCache(voltip_core::AudioCacheSettings { enabled, keep, max_mb }),
+            Self::SettingsSetBackup { weekly } => CoreCommand::SetBackupWeekly(weekly),
+            Self::BackupFolderReset => CoreCommand::SetBackupFolder(None),
+            Self::BackupNoticeDismiss => CoreCommand::BackupNoticeDismiss,
             Self::AudioCacheClear => CoreCommand::AudioCacheClear,
             Self::AudioCacheDelete { id } => CoreCommand::AudioCacheDelete(parse_id(&id)?),
             Self::AudioRetake { id, asr, refine } => {
@@ -1261,24 +1275,35 @@ impl Bridge {
 
     /// `backup_import`: restore `parts` of the backup `token` names, merged or in place, and wait at
     /// most `within` for the core's report. The bridge lets go of the backup as the core takes it,
-    /// so a token works once.
+    /// so a token works once; a replacing import the core refused before anything ran (a take
+    /// running, the backup before it failed: docs/dictation.md §4.6.1) keeps the preview, and the
+    /// import can be tried again.
     pub async fn backup_import(&self, token: Uuid, parts: BackupParts, mode: ImportMode, within: Duration) -> ImportOutcome {
         let backup = {
             let mut opened = self.opened_backup.lock();
             if opened.as_ref().is_some_and(|(held, _)| *held == token) { opened.take().map(|(_, backup)| backup) } else { None }
         };
-        let Some(backup) = backup else { return ImportOutcome::Failed { code: ImportFailure::Expired } };
+        let Some(backup) = backup else { return ImportOutcome::failed(ImportFailure::Expired) };
+        let held = Arc::clone(&backup);
         let (reply, answer) = ImportReply::channel();
         if self.handle.send(CoreCommand::BackupImport { backup, parts, mode, reply }).await.is_err() {
-            return ImportOutcome::Failed { code: ImportFailure::Unavailable };
+            return ImportOutcome::failed(ImportFailure::Unavailable);
         }
-        match tokio::time::timeout(within, answer).await {
-            Ok(Ok(report)) => ImportOutcome::Done { report },
+        let outcome = match tokio::time::timeout(within, answer).await {
+            Ok(Ok(outcome)) => outcome,
             Ok(Err(_)) | Err(_) => {
                 tracing::warn!("a backup import got no answer in time");
-                ImportOutcome::Failed { code: ImportFailure::Unavailable }
+                ImportOutcome::failed(ImportFailure::Unavailable)
+            }
+        };
+        if matches!(outcome, ImportOutcome::Failed { code: ImportFailure::Busy | ImportFailure::SnapshotFailed, .. }) {
+            let mut opened = self.opened_backup.lock();
+            // Unless another backup was opened meanwhile.
+            if opened.is_none() {
+                *opened = Some((token, held));
             }
         }
+        outcome
     }
 
     /// `backup_discard`: let go of the backup `token` names (its preview was closed).
@@ -1287,6 +1312,31 @@ impl Bridge {
         if opened.as_ref().is_some_and(|(held, _)| *held == token) {
             *opened = None;
         }
+    }
+
+    /// `backup_folder_choose` (docs/dictation.md §4.6.1): the automatic backups go to `dir`, the
+    /// folder the shell's dialog returned and checked; `auto_backup` events follow.
+    pub fn backup_set_folder(&self, dir: std::path::PathBuf) -> Result<(), BridgeError> {
+        self.handle.try_send(CoreCommand::SetBackupFolder(Some(dir)))?;
+        Ok(())
+    }
+
+    /// Where the automatic backups go, as the core last said (`backup_folder_open`, the import's
+    /// open dialog): `<data dir>/backups` until it said.
+    pub fn backup_folder(&self) -> std::path::PathBuf {
+        let folder = self.state.lock().auto_backup.folder.clone();
+        if folder.is_empty() { voltip_core::backup::auto::default_folder(&self.data_dir) } else { folder.into() }
+    }
+
+    /// An automatic backup of `kind` now (docs/dictation.md §4.6.1), the shell's before an update
+    /// installs. The core makes it of its own lists, after every command sent before, never of
+    /// this bridge's cache, which may be a step behind. Blocks until the file is written, however
+    /// long the history takes: the shell calls it on a blocking thread. A core that has stopped
+    /// answers with why.
+    pub fn backup_auto(&self, kind: AutoKind) -> AutoOutcome {
+        let (reply, answer) = AutoReply::channel();
+        self.handle.blocking_send(CoreCommand::BackupAuto { kind, reply }).map_err(|e| e.to_string())?;
+        answer.blocking_recv().unwrap_or_else(|_| Err("the app stopped before the backup was written".into()))
     }
 
     /// Stop the core.
@@ -2098,7 +2148,7 @@ mod tests {
         assert_eq!((manifest.device.as_str(), manifest.counts, manifest.version), ("旧电脑", summary.counts, 1));
         assert!(to.state().dictionary.is_empty() && to.state().history_total == 0, "opening changes nothing");
         let wait = Duration::from_secs(20);
-        let expired = ImportOutcome::Failed { code: ImportFailure::Expired };
+        let expired = ImportOutcome::failed(ImportFailure::Expired);
         assert_eq!(to.backup_import(Uuid::new_v4(), BackupParts::ALL, ImportMode::Merge, wait).await, expired);
         let ImportOutcome::Done { report } = to.backup_import(token, BackupParts::ALL, ImportMode::Merge, wait).await else { panic!("imported") };
         assert_eq!(report.parts.iter().map(|p| p.restored).sum::<u32>(), 3 + 1);
@@ -2117,6 +2167,101 @@ mod tests {
         assert_eq!(to.backup_import(token, BackupParts::ALL, ImportMode::Replace, wait).await, expired, "another file replaced the one held");
         from.shutdown();
         to.shutdown();
+    }
+
+    /// docs/dictation.md §4.6.1: the backup before an update is the core's own: a dictionary entry
+    /// dispatched just before it — its event not necessarily in this bridge's cache yet — is in
+    /// the file, which `auto_backup` then names. A core that has stopped answers with why instead
+    /// of leaving the shell waiting.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_backup_before_an_update_is_made_of_the_cores_own_lists() {
+        use voltip_core::backup::auto::AutoKind;
+        let dir = tempfile::tempdir().unwrap();
+        voltip_core::SettingsStore::new(dir.path())
+            .save(&voltip_core::Settings { relay_enabled: false, engines: voltip_core::dictation::fakes::fake_engines(), ..Default::default() })
+            .unwrap();
+        let mut cfg = CoreConfig::new(dir.path().to_path_buf());
+        cfg.auto_backup = true;
+        let bridge = Bridge::start(cfg, Arc::new(MemorySecretStore::new())).unwrap();
+        let mut rx = bridge.events();
+        for _ in 0..60 {
+            if bridge.state().auto_backup.available {
+                break;
+            }
+            let _ = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await;
+        }
+        assert!(bridge.state().auto_backup.available, "the desktop's core makes automatic backups");
+        bridge
+            .dispatch(UiCommand::DictionaryAdd {
+                entry: DictionaryDraft { term: "Voltip".into(), heard_as: vec!["沃提普".into()], enabled: true },
+                history_id: None,
+            })
+            .unwrap();
+        let worker = bridge.clone();
+        let file = tokio::task::spawn_blocking(move || worker.backup_auto(AutoKind::Update)).await.unwrap().expect("written");
+        assert_eq!(file.kind, AutoKind::Update);
+        let written = voltip_core::backup::read(&bridge.backup_folder().join(&file.name)).unwrap();
+        assert_eq!(written.dictionary.iter().map(|d| d.term.as_str()).collect::<Vec<_>>(), ["Voltip"]);
+        for _ in 0..60 {
+            if bridge.state().auto_backup.last.as_ref() == Some(&file) {
+                break;
+            }
+            let _ = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await;
+        }
+        assert_eq!(bridge.state().auto_backup.last, Some(file));
+        bridge.shutdown();
+        let worker = bridge.clone();
+        let stopped = tokio::time::timeout(Duration::from_secs(20), tokio::task::spawn_blocking(move || worker.backup_auto(AutoKind::Update))).await;
+        assert!(stopped.expect("an answer, not a wait").unwrap().is_err());
+    }
+
+    /// docs/dictation.md §4.6.1: a replacing import whose backup first could not be written
+    /// replaced nothing and keeps its preview: once the folder can be written the same token
+    /// imports, after the backup the report names.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_replacing_import_refused_before_it_ran_can_be_tried_again() {
+        let dir = tempfile::tempdir().unwrap();
+        voltip_core::SettingsStore::new(dir.path())
+            .save(&voltip_core::Settings { relay_enabled: false, engines: voltip_core::dictation::fakes::fake_engines(), ..Default::default() })
+            .unwrap();
+        let mut cfg = CoreConfig::new(dir.path().to_path_buf());
+        cfg.auto_backup = true;
+        let bridge = Bridge::start(cfg, Arc::new(MemorySecretStore::new())).unwrap();
+        let mut rx = bridge.events();
+        let mut wait_for = async |what: &str, ok: &dyn Fn(&UiState) -> bool| {
+            for _ in 0..60 {
+                if ok(&bridge.state()) {
+                    return;
+                }
+                let _ = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await;
+            }
+            panic!("{what}: not within 5 minutes");
+        };
+        wait_for("ready", &|s| s.auto_backup.available).await;
+        let file = dir.path().join("mine.voltip-backup");
+        let worker = bridge.clone();
+        let written = file.clone();
+        tokio::task::spawn_blocking(move || worker.backup_export(&written)).await.unwrap().unwrap();
+        let OpenOutcome::Preview { token, .. } = bridge.backup_open(&file) else { panic!("a preview") };
+        // A folder under a file cannot be made, on every system.
+        std::fs::write(dir.path().join("blocker"), b"").unwrap();
+        let blocked = dir.path().join("blocker").join("backups");
+        bridge.backup_set_folder(blocked.clone()).unwrap();
+        wait_for("blocked folder", &|s| s.auto_backup.folder == blocked.display().to_string()).await;
+        let refused = bridge.backup_import(token, BackupParts::ALL, ImportMode::Replace, Duration::from_secs(60)).await;
+        assert!(matches!(refused, ImportOutcome::Failed { code: ImportFailure::SnapshotFailed, ref detail } if !detail.is_empty()), "{refused:?}");
+        let good = dir.path().join("good");
+        bridge.backup_set_folder(good.clone()).unwrap();
+        wait_for("good folder", &|s| s.auto_backup.folder == good.display().to_string()).await;
+        let ImportOutcome::Done { report } = bridge.backup_import(token, BackupParts::ALL, ImportMode::Replace, Duration::from_secs(60)).await else {
+            panic!("the same token imports")
+        };
+        let snapshot = std::path::PathBuf::from(report.snapshot.expect("the backup first"));
+        assert_eq!(snapshot.parent(), Some(good.as_path()));
+        assert!(snapshot.is_file());
+        let again = bridge.backup_import(token, BackupParts::ALL, ImportMode::Replace, Duration::from_secs(60)).await;
+        assert_eq!(again, ImportOutcome::failed(ImportFailure::Expired), "an import that ran used the token");
+        bridge.shutdown();
     }
 
     /// Regression (CI runner, 2026-09-25): the shell used to subscribe after `start`, and a core

@@ -88,6 +88,10 @@
       "keep": 50,
       "max_mb": 500
     },
+    "backup": {
+      "weekly": false,
+      "folder": "D:\\同步盘\\Voltip 备份"
+    },
     "overlay": "top",
     "microphone": "wasapi:{0.0.1.00000000}.{c2}",
     "recording": {
@@ -590,6 +594,27 @@
         }
       }
     ]
+  },
+  "auto_backup": {
+    "available": true,
+    "folder": "D:\\同步盘\\Voltip 备份",
+    "default_folder": "C:\\Users\\me\\AppData\\Roaming\\voltip\\Voltip\\data\\backups",
+    "custom": true,
+    "last": {
+      "name": "voltip-auto-20261030-152000-weekly.voltip-backup",
+      "at_ms": 1758700600000,
+      "kind": "weekly"
+    },
+    "failure": {
+      "kind": "update",
+      "at_ms": 1758700540000,
+      "detail": "Access is denied. (os error 5)"
+    },
+    "notice": {
+      "kind": "update",
+      "at_ms": 1758700540000,
+      "detail": "Access is denied. (os error 5)"
+    }
   },
   "engines": {
     "asr_provider": "builtin",

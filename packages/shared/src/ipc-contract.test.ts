@@ -105,6 +105,7 @@ const EVENT_TYPE_SET: Record<UiEventType, null> = {
   history_process: null,
   audio_cache: null,
   imports: null,
+  auto_backup: null,
   provider_probe: null,
   phone_take: null,
   sent_texts: null,
@@ -168,6 +169,9 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   import_cancel: null,
   import_retry: null,
   import_remove: null,
+  settings_set_backup: null,
+  backup_folder_reset: null,
+  backup_notice_dismiss: null,
   settings_set_locale: null,
   settings_set_auto_update: null,
   settings_set_history: null,
@@ -301,6 +305,7 @@ const argSchemas = {
     .object({ enabled: z.boolean(), keep: z.number().int(), maxMb: z.number().int() })
     .strict(),
   audio_cache_delete: z.object({ id: z.string() }).strict(),
+  settings_set_backup: z.object({ weekly: z.boolean() }).strict(),
   audio_retake: z
     .object({
       id: z.string(),
@@ -422,6 +427,8 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
     case "dictation_cancel":
     case "history_clear":
     case "audio_cache_clear":
+    case "backup_folder_reset":
+    case "backup_notice_dismiss":
     case "models_location_reset":
     case "models_location_cancel":
     case "update_check":
@@ -505,6 +512,8 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
       return backend.invoke(name, argSchemas.settings_set_audio_cache.parse(args));
     case "audio_cache_delete":
       return backend.invoke(name, argSchemas.audio_cache_delete.parse(args));
+    case "settings_set_backup":
+      return backend.invoke(name, argSchemas.settings_set_backup.parse(args));
     case "audio_retake":
       return backend.invoke(name, argSchemas.audio_retake.parse(args));
     case "import_add":
@@ -673,8 +682,25 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       phone_talk: "tap",
       // docs/dictation.md §26: the recording cache keeps more, in more space, than by default.
       audio_cache: { enabled: true, keep: 50, max_mb: 500 },
+      // docs/dictation.md §4.6.1: no weekly backup, into a folder of the user's.
+      backup: { weekly: false, folder: "D:\\同步盘\\Voltip 备份" },
     });
     expect(parsed.app_version).toBe("0.3.0");
+    // docs/dictation.md §4.6.1: the automatic backups in a folder of the user's, the newest a
+    // weekly one, and the backup before an update that failed named until closed.
+    expect(parsed.auto_backup).toEqual({
+      available: true,
+      folder: "D:\\同步盘\\Voltip 备份",
+      default_folder: "C:\\Users\\me\\AppData\\Roaming\\voltip\\Voltip\\data\\backups",
+      custom: true,
+      last: {
+        name: "voltip-auto-20261030-152000-weekly.voltip-backup",
+        at_ms: 1758700600000,
+        kind: "weekly",
+      },
+      failure: { kind: "update", at_ms: 1758700540000, detail: "Access is denied. (os error 5)" },
+      notice: { kind: "update", at_ms: 1758700540000, detail: "Access is denied. (os error 5)" },
+    });
     // docs/dictation.md §23.6: the app's local speech service, running.
     expect(parsed.serve).toEqual({
       available: true,

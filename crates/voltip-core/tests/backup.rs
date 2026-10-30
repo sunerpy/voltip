@@ -9,7 +9,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::mpsc;
-use voltip_core::backup::{self, BackupPart, BackupParts, ExportInput, ImportReply, ImportReport, PartReport, Skipped};
+use voltip_core::backup::auto::{AUTO_BACKUP_DIR, AutoKind};
+use voltip_core::backup::{self, BackupPart, BackupParts, ExportInput, ImportFailure, ImportOutcome, ImportReply, ImportReport, PartReport, Skipped};
 use voltip_core::dictation::fakes::history_entry;
 use voltip_core::history::{HistoryQuery, HistoryReader};
 use voltip_core::presets::PresetStore;
@@ -31,12 +32,11 @@ struct Node {
 }
 
 fn start(dir: &std::path::Path, keep: u32) -> Node {
-    let settings = Settings {
-        relay_enabled: false,
-        engines: voltip_core::dictation::fakes::fake_engines(),
-        history: HistorySettings { enabled: true, keep },
-        ..Settings::default()
-    };
+    start_with(dir, Settings { history: HistorySettings { enabled: true, keep }, ..Settings::default() })
+}
+
+fn start_with(dir: &std::path::Path, settings: Settings) -> Node {
+    let settings = Settings { relay_enabled: false, engines: voltip_core::dictation::fakes::fake_engines(), ..settings };
     SettingsStore::new(dir).save(&settings).unwrap();
     let mut cfg = CoreConfig::new(dir.to_path_buf());
     cfg.default_device_name = "Backup Test".into();
@@ -60,6 +60,13 @@ async fn stop(mut node: Node) {
 }
 
 async fn import(node: &mut Node, backup: &Arc<backup::Backup>, parts: BackupParts, mode: ImportMode) -> ImportReport {
+    match import_outcome(node, backup, parts, mode).await {
+        ImportOutcome::Done { report } => report,
+        other => panic!("not imported: {other:?}"),
+    }
+}
+
+async fn import_outcome(node: &mut Node, backup: &Arc<backup::Backup>, parts: BackupParts, mode: ImportMode) -> ImportOutcome {
     let (reply, answer) = ImportReply::channel();
     node.handle.send(CoreCommand::BackupImport { backup: backup.clone(), parts, mode, reply }).await.unwrap();
     tokio::time::timeout(STEP, answer).await.expect("an answer in time").expect("the core answers")
@@ -243,5 +250,167 @@ async fn a_part_that_cannot_be_written_is_reported_and_the_rest_restored() {
     assert_eq!(part(&report, BackupPart::History).restored, 0);
     assert_eq!(part(&report, BackupPart::Rules).restored, 2);
     assert_eq!(wait(&mut node, |e| if let CoreEvent::Rules(r) = e { Some(r.len()) } else { None }).await, 2);
+    stop(node).await;
+}
+
+/// The automatic backups in `dir`'s default folder (docs/dictation.md §4.6.1).
+fn auto_backups(dir: &std::path::Path) -> Vec<backup::auto::AutoFile> {
+    backup::auto::list(&dir.join(AUTO_BACKUP_DIR)).unwrap()
+}
+
+/// What `dir`'s history holds, newest first.
+fn history_here(dir: &std::path::Path) -> Vec<HistoryEntry> {
+    HistoryReader::new(dir).query(&HistoryQuery { limit: 200, ..HistoryQuery::default() }).unwrap().entries
+}
+
+/// Regression (原计划核对 R12, user decision 2026-10-28): a replacing import deleted what was here
+/// with no copy of it anywhere. Now it first writes an automatic backup of everything here, names
+/// it in the report, and that backup brings the data back.
+#[tokio::test]
+async fn regression_a_replace_import_keeps_a_snapshot_first() {
+    let old = tempfile::tempdir().unwrap();
+    let file = old.path().join("b.voltip-backup");
+    let OldComputer { entries, .. } = old_computer(old.path(), &file);
+    let backup = Arc::new(backup::read(&file).unwrap());
+    let new = tempfile::tempdir().unwrap();
+    let own = dictation(99, 100);
+    HistoryStore::open(new.path()).push(own.clone(), 20_000).unwrap();
+    DictionaryStore::open(new.path())
+        .0
+        .add(&DictionaryDraft { term: "Paseo".into(), heard_as: vec!["帕索".into()], enabled: true }, EntrySource::Manual, AT)
+        .unwrap();
+    let mut node = start(new.path(), 20_000);
+    let dictionary_before = wait(&mut node, |e| if let CoreEvent::Dictionary(d) = e { Some(d.clone()) } else { None }).await;
+
+    let report = import(&mut node, &backup, BackupParts::ALL, ImportMode::Replace).await;
+    let snapshot = report.snapshot.clone().expect("the report names the backup made first");
+    let made = auto_backups(new.path());
+    assert_eq!(made.len(), 1);
+    assert_eq!((made[0].kind, made[0].path.display().to_string()), (AutoKind::Import, snapshot.clone()));
+    let kept = backup::read(std::path::Path::new(&snapshot)).unwrap();
+    assert_eq!(kept.history, vec![own.clone()], "the history as it was before the import");
+    assert_eq!(kept.dictionary, dictionary_before);
+    assert_eq!(history_here(new.path()), entries, "and the import replaced it");
+
+    // That backup restores what was here.
+    let kept = Arc::new(kept);
+    import(&mut node, &kept, BackupParts::ALL, ImportMode::Replace).await;
+    assert_eq!(history_here(new.path()), vec![own]);
+    let dictionary_after = loop {
+        let d = wait(&mut node, |e| if let CoreEvent::Dictionary(d) = e { Some(d.clone()) } else { None }).await;
+        if d == dictionary_before {
+            break d;
+        }
+    };
+    assert_eq!(dictionary_after, dictionary_before);
+    assert_eq!(auto_backups(new.path()).len(), 2, "the second replace made its own backup");
+    stop(node).await;
+}
+
+/// Regression (plan PR-6, the bridge's cache follows the core's events a step behind): a write
+/// queued just before a replacing import — not waited for — is in the backup made first, because
+/// the core makes it of its own lists, after every command queued before.
+#[tokio::test]
+async fn regression_a_snapshot_includes_a_write_dispatched_just_before() {
+    let old = tempfile::tempdir().unwrap();
+    let file = old.path().join("b.voltip-backup");
+    old_computer(old.path(), &file);
+    let backup = Arc::new(backup::read(&file).unwrap());
+    let new = tempfile::tempdir().unwrap();
+    let mut node = start(new.path(), 20_000);
+    node.handle
+        .send(CoreCommand::DictionaryAdd {
+            draft: DictionaryDraft { term: "Kiro".into(), heard_as: vec!["基罗".into()], enabled: true },
+            source: EntrySource::Manual,
+        })
+        .await
+        .unwrap();
+    let report = import(&mut node, &backup, BackupParts { dictionary: true, ..BackupParts::default() }, ImportMode::Replace).await;
+    let kept = backup::read(std::path::Path::new(&report.snapshot.unwrap())).unwrap();
+    assert_eq!(kept.dictionary.iter().map(|d| d.term.as_str()).collect::<Vec<_>>(), ["Kiro"]);
+    stop(node).await;
+}
+
+/// A take that just ended is in the backup made before a replacing import: its entry was written
+/// on the core task before the import's command came.
+#[tokio::test]
+async fn a_take_that_just_ended_is_in_the_backup_before_a_replacing_import() {
+    let old = tempfile::tempdir().unwrap();
+    let file = old.path().join("b.voltip-backup");
+    old_computer(old.path(), &file);
+    let backup = Arc::new(backup::read(&file).unwrap());
+    let new = tempfile::tempdir().unwrap();
+    let mut node = start(new.path(), 20_000);
+    node.handle.send(CoreCommand::DictationStart).await.unwrap();
+    wait(&mut node, |e| matches!(e, CoreEvent::Dictation(s) if matches!(s.phase, voltip_core::DictationPhase::Listening { .. })).then_some(())).await;
+    node.handle.send(CoreCommand::DictationStop).await.unwrap();
+    let recent = wait(&mut node, |e| if let CoreEvent::History { recent, total: 1 } = e { Some(recent.clone()) } else { None }).await;
+    let report = import(&mut node, &backup, BackupParts { history: true, ..BackupParts::default() }, ImportMode::Replace).await;
+    let kept = backup::read(std::path::Path::new(&report.snapshot.unwrap())).unwrap();
+    assert_eq!(kept.history, recent);
+    stop(node).await;
+}
+
+/// docs/dictation.md §4.6.1: a replacing import while a take runs is refused — the take would be
+/// recorded into the history being replaced — and nothing changes: no backup, no part replaced.
+#[tokio::test]
+async fn a_replacing_import_during_a_take_is_refused_and_changes_nothing() {
+    let old = tempfile::tempdir().unwrap();
+    let file = old.path().join("b.voltip-backup");
+    old_computer(old.path(), &file);
+    let backup = Arc::new(backup::read(&file).unwrap());
+    let new = tempfile::tempdir().unwrap();
+    let own = dictation(99, 100);
+    HistoryStore::open(new.path()).push(own.clone(), 20_000).unwrap();
+    let mut node = start(new.path(), 20_000);
+    node.handle.send(CoreCommand::DictationStart).await.unwrap();
+    wait(&mut node, |e| matches!(e, CoreEvent::Dictation(s) if matches!(s.phase, voltip_core::DictationPhase::Listening { .. })).then_some(())).await;
+    let outcome = import_outcome(&mut node, &backup, BackupParts::ALL, ImportMode::Replace).await;
+    assert_eq!(outcome, ImportOutcome::failed(ImportFailure::Busy));
+    assert_eq!(auto_backups(new.path()), Vec::new());
+    assert_eq!(history_here(new.path()), vec![own]);
+    // A merge goes ahead during a take: it deletes nothing.
+    node.handle.send(CoreCommand::DictationCancel).await.unwrap();
+    stop(node).await;
+}
+
+/// docs/dictation.md §4.6.1: when the backup before a replacing import cannot be written, the
+/// import is refused with the reason, and the history and the dictionary stay as they were.
+#[tokio::test]
+async fn a_replacing_import_whose_backup_fails_replaces_nothing() {
+    let old = tempfile::tempdir().unwrap();
+    let file = old.path().join("b.voltip-backup");
+    old_computer(old.path(), &file);
+    let backup = Arc::new(backup::read(&file).unwrap());
+    let new = tempfile::tempdir().unwrap();
+    let own = dictation(99, 100);
+    HistoryStore::open(new.path()).push(own.clone(), 20_000).unwrap();
+    DictionaryStore::open(new.path()).0.add(&DictionaryDraft { term: "Paseo".into(), heard_as: Vec::new(), enabled: true }, EntrySource::Manual, AT).unwrap();
+    let blocker = new.path().join("a file");
+    std::fs::write(&blocker, b"x").unwrap();
+    let settings =
+        Settings { backup: voltip_core::BackupSettings { weekly: true, folder: Some(blocker.join("backups").display().to_string()) }, ..Settings::default() };
+    let mut node = start_with(new.path(), settings);
+    let dictionary_before = wait(&mut node, |e| if let CoreEvent::Dictionary(d) = e { Some(d.clone()) } else { None }).await;
+    let outcome = import_outcome(&mut node, &backup, BackupParts::ALL, ImportMode::Replace).await;
+    let ImportOutcome::Failed { code: ImportFailure::SnapshotFailed, detail } = outcome else { panic!("refused: {outcome:?}") };
+    assert!(!detail.is_empty());
+    assert_eq!(history_here(new.path()), vec![own]);
+    stop(node).await;
+    assert_eq!(DictionaryStore::open(new.path()).0.entries(), dictionary_before.as_slice());
+}
+
+/// A merge deletes nothing here: it makes no backup first.
+#[tokio::test]
+async fn a_merging_import_makes_no_backup() {
+    let old = tempfile::tempdir().unwrap();
+    let file = old.path().join("b.voltip-backup");
+    old_computer(old.path(), &file);
+    let backup = Arc::new(backup::read(&file).unwrap());
+    let new = tempfile::tempdir().unwrap();
+    let mut node = start(new.path(), 20_000);
+    let report = import(&mut node, &backup, BackupParts::ALL, ImportMode::Merge).await;
+    assert_eq!(report.snapshot, None);
+    assert_eq!(auto_backups(new.path()), Vec::new());
     stop(node).await;
 }

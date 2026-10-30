@@ -47,9 +47,10 @@ fn core_config(dir: &Path, relay_url: Option<&str>) -> CoreConfig {
     SettingsStore::new(dir).save(&settings).unwrap();
     let mut cfg = CoreConfig::new(dir.to_path_buf());
     cfg.default_device_name = DEVICE_NAME.into();
-    // As in the shell's own configuration (docs/dictation.md §20.8, §31).
+    // As in the shell's own configuration (docs/dictation.md §4.6.1, §20.8, §31).
     cfg.sync_role = voltip_core::sync::SyncRole::Computer;
     cfg.media_decoder = Some(Arc::new(voltip_media::Decoder));
+    cfg.auto_backup = true;
     cfg
 }
 
@@ -1598,8 +1599,10 @@ fn a_second_instance_forwards_toggle_and_cancel_to_the_running_core() {
         std::thread::sleep(Duration::from_millis(100));
         assert!(core_state(webview).dictation.phase.is_terminal(), "still in the dwell: nothing was dispatched");
         assert_eq!(voltip_desktop_lib::MAIN_WINDOW, "main");
-        assert_eq!(ShellOptions::PRODUCTION.hidden(true), ShellOptions { global_hotkey: true, start_hidden: true });
+        assert_eq!(ShellOptions::PRODUCTION.hidden(true), ShellOptions { global_hotkey: true, start_hidden: true, opens_folders: true });
         const { assert!(!ShellOptions::HEADLESS.start_hidden && !ShellOptions::PRODUCTION.start_hidden) };
+        // The tests call every command: on the mock runtime no folder opens on the desktop.
+        const { assert!(!ShellOptions::HEADLESS.opens_folders) };
     });
 }
 
@@ -1708,6 +1711,8 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
             "backup_open",
             "backup_import",
             "backup_discard",
+            "backup_folder_choose",
+            "backup_folder_open",
             "audio_meter_start",
             "audio_meter_stop",
             "imports_state",
@@ -1830,6 +1835,28 @@ fn a_backup_import_needs_a_backup_the_shell_opened() {
         assert!(invoke(webview, "backup_import", json!({ "token": "x", "parts": parts, "mode": "merge" })).is_err());
         assert!(invoke(webview, "backup_import", json!({ "token": token, "parts": parts, "mode": "append" })).is_err());
         assert!(invoke(webview, "backup_export", json!({})).is_err(), "the file name is required");
+    });
+}
+
+/// docs/dictation.md §4.6.1: the automatic backups through the shell's commands. `auto_backup`
+/// names the default folder; the weekly switch is saved; 打开文件夹 makes the folder (the mock
+/// runtime opens no window); 恢复默认 and closing home's notice are accepted; the folder dialog
+/// needs its title and the switch its value.
+#[test]
+fn the_automatic_backups_go_through_the_shells_commands() {
+    with_running_app(|_, webview, _| {
+        let st = wait_state(webview, |s| s.auto_backup.available);
+        assert!(!st.auto_backup.custom && st.settings.backup.weekly);
+        assert_eq!(st.auto_backup.folder, st.auto_backup.default_folder);
+        assert!(st.auto_backup.folder.ends_with("backups"), "{}", st.auto_backup.folder);
+        assert_eq!(invoke(webview, "settings_set_backup", json!({ "weekly": false })), Ok(Value::Null));
+        wait_state(webview, |s| !s.settings.backup.weekly);
+        assert_eq!(invoke(webview, "backup_folder_open", json!({})), Ok(Value::Null));
+        assert!(Path::new(&st.auto_backup.folder).is_dir(), "made on the way");
+        assert_eq!(invoke(webview, "backup_folder_reset", json!({})), Ok(Value::Null));
+        assert_eq!(invoke(webview, "backup_notice_dismiss", json!({})), Ok(Value::Null));
+        assert!(invoke(webview, "backup_folder_choose", json!({})).is_err(), "the dialog's title is required");
+        assert!(invoke(webview, "settings_set_backup", json!({})).is_err());
     });
 }
 

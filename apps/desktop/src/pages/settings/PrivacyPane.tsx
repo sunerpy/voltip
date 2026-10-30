@@ -43,7 +43,7 @@ function backendKey(name: string): MessageKey {
 
 /** Settings · 隐私: what leaves this computer right now (from `state.engines`, the context
  *  switches and the phones' sync switches), the history switch and retention (`settings_set_history`), 清空历史 (with a confirm),
- *  备份与迁移 (`BackupSection`, docs/dictation.md §4.6) and where the provider keys live (`state.secret_backend`). */
+ *  备份与迁移 and 自动备份 (`BackupSection`, docs/dictation.md §4.6, §4.6.1) and where the provider keys live (`state.secret_backend`). */
 export function PrivacyPane() {
   const { backend } = useBackend();
   const { navigate } = useRouter();

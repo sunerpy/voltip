@@ -290,6 +290,33 @@ describe("Home page", () => {
     expect(await screen.findByTestId("page-ai")).toBeInTheDocument();
   });
 
+  it("docs/dictation.md section 4.6.1: a backup before the update that failed is named on home until closed, and leads to the backup settings", async () => {
+    const user = userEvent.setup();
+    const notice = {
+      kind: "update" as const,
+      at_ms: 1_758_700_000_000,
+      detail: "Access is denied. (os error 5)",
+    };
+    const { backend } = renderApp({
+      mock: { ...liveClock(), autoBackup: { notice, failure: notice } },
+    });
+    expect(await screen.findByText("更新前的自动备份未能完成")).toBeInTheDocument();
+    expect(screen.getByTestId("backup-notice")).toHaveTextContent(
+      "未能写入备份，更新仍照常进行。原因：Access is denied. (os error 5)",
+    );
+    await user.click(screen.getByRole("button", { name: "查看备份设置" }));
+    expect(await screen.findByTestId("privacy-auto-backup")).toBeInTheDocument();
+    expect(screen.getByTestId("auto-backup-failure")).toHaveTextContent("Access is denied.");
+    await user.keyboard("{Escape}");
+    expect(await screen.findByTestId("backup-notice")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "关闭" }));
+    await waitFor(() => {
+      expect(screen.queryByTestId("backup-notice")).toBeNull();
+    });
+    expect(backend.peek().auto_backup.notice).toBeNull();
+    expect(backend.peek().auto_backup.failure).toEqual(notice);
+  });
+
   it("a paste refused while a take runs says so, and a voice edit's row hands on its rewrite", async () => {
     const user = userEvent.setup();
     const writeText = vi.fn(() => Promise.resolve());

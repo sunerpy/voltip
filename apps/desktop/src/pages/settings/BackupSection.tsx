@@ -1,4 +1,6 @@
 import {
+  AUTO_BACKUP_KEEP,
+  type AutoBackupKind,
   BACKUP_PARTS,
   type BackupManifest,
   type BackupPart,
@@ -14,8 +16,10 @@ import {
   platformLabel,
 } from "@voltip/shared";
 import {
+  Badge,
   Button,
   Dialog,
+  Icon,
   Segmented,
   SettingsRows,
   SettingsSection,
@@ -50,7 +54,7 @@ function countOf(t: TFunction, part: BackupPart, n: number): string {
 
 /** Settings · 隐私与历史 · 备份与迁移 (docs/dictation.md §4.6): 导出备份 through the shell's save
  *  dialog, and 导入备份 through its open dialog, a preview of what the file holds, the parts and
- *  the mode chosen, then what each part restored. */
+ *  the mode chosen, then what each part restored; then the automatic backups (§4.6.1). */
 export function BackupSection() {
   const { backend } = useBackend();
   const shell = useShell();
@@ -138,6 +142,7 @@ export function BackupSection() {
           </StatusRow>
         </SettingsRows>
       </SettingsSection>
+      <AutoBackupSection />
       {opened !== undefined && (
         <BackupImportDialog
           token={opened.token}
@@ -148,6 +153,156 @@ export function BackupSection() {
         />
       )}
     </>
+  );
+}
+
+/** Settings · 隐私与历史 · 自动备份 (docs/dictation.md §4.6.1): the weekly switch, where the
+ *  automatic backups go (更改… through the shell's folder dialog and a trial file, 打开文件夹,
+ *  恢复默认位置), the newest one, and the last failure until one is written. The backups before an
+ *  update and before a replacing import have no switch. The webview never names a folder. Nothing
+ *  where the app makes no automatic backups (the phone). */
+function AutoBackupSection() {
+  const { backend } = useBackend();
+  const shell = useShell();
+  const { t, locale } = useI18n();
+  const state = useUiState();
+  const [choosing, setChoosing] = useState(false);
+  const auto = state.auto_backup;
+  if (!auto.available) return null;
+  const kindOf = (kind: AutoBackupKind) => t(`settings.brief.privacy.backup.auto.kind.${kind}`);
+  const timeOf = (ms: number) =>
+    formatDateTime(locale, ms, { dateStyle: "medium", timeStyle: "short" });
+  const fail = (message: string) => {
+    shell.toast({ message, duration: TOAST_MS, tone: "danger" });
+  };
+  const choose = async () => {
+    setChoosing(true);
+    try {
+      const outcome = await backend.backupFolderChoose(
+        t("settings.brief.privacy.backup.auto.chooseTitle"),
+      );
+      if (outcome.kind === "chosen") {
+        shell.toast({
+          message: t("settings.brief.privacy.backup.auto.chosen", { folder: outcome.folder }),
+          duration: TOAST_MS,
+        });
+      } else if (outcome.kind === "failed") {
+        fail(t("settings.brief.privacy.backup.auto.unwritable", { detail: outcome.detail }));
+      }
+    } catch (e) {
+      fail(errorText(e));
+    } finally {
+      setChoosing(false);
+    }
+  };
+  const failure = auto.failure;
+  return (
+    <SettingsSection
+      title={t("settings.brief.privacy.backup.auto.title")}
+      description={t("settings.brief.privacy.backup.auto.note", { keep: AUTO_BACKUP_KEEP })}
+      data-testid="privacy-auto-backup">
+      <SettingsRows>
+        <StatusRow
+          label={t("settings.brief.privacy.backup.auto.weekly")}
+          help={t("settings.brief.privacy.backup.auto.weeklyHelp")}>
+          <Toggle
+            checked={state.settings.backup.weekly}
+            ariaLabel={t("settings.brief.privacy.backup.auto.weekly")}
+            onChange={(weekly) => {
+              void backend.invoke("settings_set_backup", { weekly });
+            }}
+          />
+        </StatusRow>
+        <StatusRow
+          label={
+            <span className="flex items-center gap-2">
+              {t("settings.brief.privacy.backup.auto.folder")}
+              <Badge tone={auto.custom ? "accent" : "neutral"}>
+                {auto.custom
+                  ? t("settings.brief.privacy.backup.auto.custom")
+                  : t("settings.brief.privacy.backup.auto.default")}
+              </Badge>
+            </span>
+          }
+          help={
+            <span className="flex flex-col gap-0.5">
+              <span
+                className="mono break-all select-text"
+                title={auto.folder}
+                data-testid="auto-backup-folder">
+                {auto.folder}
+              </span>
+              <span className="text-fg-subtle">
+                {t("settings.brief.privacy.backup.auto.folderHelp")}
+              </span>
+            </span>
+          }>
+          <div className="flex flex-wrap items-center justify-end gap-1.5">
+            <Button
+              size="sm"
+              variant="outline"
+              icon="folder"
+              disabled={choosing}
+              onClick={() => {
+                void choose();
+              }}>
+              {t("settings.brief.privacy.backup.auto.change")}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                backend.backupFolderOpen().catch((e: unknown) => {
+                  fail(errorText(e));
+                });
+              }}>
+              {t("settings.brief.privacy.backup.auto.open")}
+            </Button>
+            {auto.custom && (
+              <Button
+                size="sm"
+                variant="text"
+                disabled={choosing}
+                onClick={() => {
+                  void backend.invoke("backup_folder_reset");
+                }}>
+                {t("settings.brief.privacy.backup.auto.reset")}
+              </Button>
+            )}
+          </div>
+        </StatusRow>
+        <StatusRow label={t("settings.brief.privacy.backup.auto.last")}>
+          <span className="text-[13px] text-fg-muted" data-testid="auto-backup-last">
+            {auto.last === null
+              ? t("settings.brief.privacy.backup.auto.none")
+              : t("settings.brief.privacy.backup.auto.lastValue", {
+                  time: timeOf(auto.last.at_ms),
+                  kind: kindOf(auto.last.kind),
+                })}
+          </span>
+        </StatusRow>
+      </SettingsRows>
+      {failure !== null && (
+        <p
+          role="status"
+          className="mt-2 flex items-start gap-1.5 text-[12px] leading-[18px] break-words text-danger"
+          data-testid="auto-backup-failure">
+          <Icon name="alert" size={13} className="mt-[2px] shrink-0" />
+          <span className="flex min-w-0 flex-col">
+            <span>
+              {t("settings.brief.privacy.backup.auto.failed", {
+                kind: kindOf(failure.kind),
+                time: timeOf(failure.at_ms),
+                detail: failure.detail,
+              })}
+            </span>
+            {failure.kind === "weekly" && (
+              <span>{t("settings.brief.privacy.backup.auto.retry")}</span>
+            )}
+          </span>
+        </p>
+      )}
+    </SettingsSection>
   );
 }
 
@@ -190,7 +345,13 @@ function BackupImportDialog({
     try {
       const outcome = await backend.backupImport(token, parts, mode);
       if (outcome.kind === "done") setReport(outcome.report);
-      else setError(t(`settings.brief.privacy.backup.importFailed.${outcome.code}`));
+      else {
+        setError(
+          t(`settings.brief.privacy.backup.importFailed.${outcome.code}`, {
+            detail: outcome.detail ?? "",
+          }),
+        );
+      }
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -215,6 +376,13 @@ function BackupImportDialog({
             return row === undefined ? null : <PartResult key={part} report={row} />;
           })}
         </ul>
+        {report.snapshot !== undefined && (
+          <p
+            className="mt-3 text-[12px] leading-4 break-all text-fg-muted select-text"
+            data-testid="backup-snapshot">
+            {t("settings.brief.privacy.backup.result.snapshot", { path: report.snapshot })}
+          </p>
+        )}
       </Dialog>
     );
   }

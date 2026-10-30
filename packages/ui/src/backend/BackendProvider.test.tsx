@@ -59,6 +59,8 @@ describe("BackendProvider", () => {
       backupOpen: inner.backupOpen.bind(inner),
       backupImport: inner.backupImport.bind(inner),
       backupDiscard: inner.backupDiscard.bind(inner),
+      backupFolderChoose: inner.backupFolderChoose.bind(inner),
+      backupFolderOpen: inner.backupFolderOpen.bind(inner),
       meter: inner.meter.bind(inner),
       updateStatus: inner.updateStatus.bind(inner),
       vocabularyPreview: inner.vocabularyPreview.bind(inner),
@@ -138,6 +140,8 @@ describe("BackendProvider", () => {
       backupOpen: () => Promise.resolve({ kind: "cancelled" as const }),
       backupImport: () => Promise.resolve({ kind: "failed" as const, code: "expired" as const }),
       backupDiscard: () => Promise.resolve(),
+      backupFolderChoose: () => Promise.resolve({ kind: "cancelled" as const }),
+      backupFolderOpen: () => Promise.resolve(),
       meter: () => Promise.resolve(() => undefined),
       updateStatus: () => Promise.resolve({ state: "idle" as const }),
       vocabularyPreview: () =>

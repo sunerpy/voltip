@@ -1,6 +1,6 @@
 // Backup and migration (docs/dictation.md section 4.6): the answers the Rust side writes
 // (crates/voltip-tauri-bridge/tests/contract.rs, fixtures/ipc/backup.json) parse with the zod
-// schemas, and TauriBackend sends the four commands with the arguments the desktop shell takes.
+// schemas, and TauriBackend sends the backup commands with the arguments the desktop shell takes.
 import { readFileSync } from "node:fs";
 import { z } from "zod";
 
@@ -71,11 +71,25 @@ describe("backup and migration (docs/dictation.md section 4.6)", () => {
       removed: 5,
       skipped: { duplicate: 10, older: 990 },
     });
+    // docs/dictation.md §4.6.1: a replacing import names the backup it made first.
+    const replaced = imports[1];
+    expect(replaced?.kind === "done" && replaced.report.snapshot).toBe(
+      "C:\\Users\\me\\AppData\\Roaming\\voltip\\Voltip\\data\\backups\\voltip-auto-20261030-152000-import.voltip-backup",
+    );
+    expect(done.report.snapshot).toBeUndefined();
     expect(imports.slice(2).map((o) => o.kind === "failed" && o.code)).toEqual([
       "expired",
       "unavailable",
       "unsupported",
+      "busy",
+      "snapshot_failed",
     ]);
+    expect(imports.at(-1)).toEqual({
+      kind: "failed",
+      code: "snapshot_failed",
+      detail: "No space left on device (os error 28)",
+    });
+    expect(imports[2]).toEqual({ kind: "failed", code: "expired" });
     expect(backupPartsSchema.parse(fixture.parts)).toEqual({
       history: true,
       dictionary: true,
@@ -121,5 +135,41 @@ describe("backup and migration (docs/dictation.md section 4.6)", () => {
       { command: "backup_import", args: { token: opened.token, parts, mode: "replace" } },
       { command: "backup_discard", args: { token: opened.token } },
     ]);
+  });
+
+  it("TauriBackend asks the shell for the automatic backups' folder and shows it (section 4.6.1)", async () => {
+    const answers: unknown[] = [
+      { kind: "chosen", folder: "D:\\同步盘\\Voltip" },
+      { kind: "failed", detail: "Access is denied. (os error 5)" },
+      { kind: "cancelled" },
+      null,
+    ];
+    const calls: { command: string; args: unknown }[] = [];
+    const backend = new TauriBackend({
+      invoke: (command, args) => {
+        calls.push({ command, args });
+        return Promise.resolve(answers.shift());
+      },
+      listen: () => Promise.resolve(() => undefined),
+    });
+    expect(await backend.backupFolderChoose("选择位置")).toEqual({
+      kind: "chosen",
+      folder: "D:\\同步盘\\Voltip",
+    });
+    expect(await backend.backupFolderChoose("选择位置")).toEqual({
+      kind: "failed",
+      detail: "Access is denied. (os error 5)",
+    });
+    expect(await backend.backupFolderChoose("选择位置")).toEqual({ kind: "cancelled" });
+    await backend.backupFolderOpen();
+    expect(calls).toStrictEqual([
+      { command: "backup_folder_choose", args: { title: "选择位置" } },
+      { command: "backup_folder_choose", args: { title: "选择位置" } },
+      { command: "backup_folder_choose", args: { title: "选择位置" } },
+      { command: "backup_folder_open", args: undefined },
+    ]);
+    // An answer the shell does not give is refused rather than shown.
+    answers.push({ kind: "moved" });
+    await expect(backend.backupFolderChoose("选择位置")).rejects.toThrow();
   });
 });

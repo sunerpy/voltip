@@ -42,6 +42,10 @@
         "keep": 20,
         "max_mb": 200
       },
+      "backup": {
+        "weekly": true,
+        "folder": null
+      },
       "overlay": "bottom",
       "microphone": null,
       "recording": {
@@ -116,6 +120,15 @@
       "available": false,
       "extensions": [],
       "jobs": []
+    },
+    "auto_backup": {
+      "available": false,
+      "folder": "",
+      "default_folder": "",
+      "custom": false,
+      "last": null,
+      "failure": null,
+      "notice": null
     },
     "engines": {
       "asr_provider": "builtin",
@@ -486,6 +499,10 @@
       "enabled": true,
       "keep": 50,
       "max_mb": 500
+    },
+    "backup": {
+      "weekly": false,
+      "folder": "D:\\同步盘\\Voltip 备份"
     },
     "overlay": "top",
     "microphone": "wasapi:{0.0.1.00000000}.{c2}",
@@ -4964,6 +4981,10 @@
       "keep": 50,
       "max_mb": 500
     },
+    "backup": {
+      "weekly": false,
+      "folder": "D:\\同步盘\\Voltip 备份"
+    },
     "overlay": "top",
     "microphone": "wasapi:{0.0.1.00000000}.{c2}",
     "recording": {
@@ -5546,6 +5567,48 @@
       }
     ],
     "total": 1
+  },
+  {
+    "type": "auto_backup",
+    "available": true,
+    "folder": "D:\\同步盘\\Voltip 备份",
+    "default_folder": "C:\\Users\\me\\AppData\\Roaming\\voltip\\Voltip\\data\\backups",
+    "custom": true,
+    "last": {
+      "name": "voltip-auto-20261030-152000-weekly.voltip-backup",
+      "at_ms": 1758700600000,
+      "kind": "weekly"
+    },
+    "failure": {
+      "kind": "update",
+      "at_ms": 1758700540000,
+      "detail": "Access is denied. (os error 5)"
+    },
+    "notice": {
+      "kind": "update",
+      "at_ms": 1758700540000,
+      "detail": "Access is denied. (os error 5)"
+    }
+  },
+  {
+    "type": "auto_backup",
+    "available": true,
+    "folder": "C:\\Users\\me\\AppData\\Roaming\\voltip\\Voltip\\data\\backups",
+    "default_folder": "C:\\Users\\me\\AppData\\Roaming\\voltip\\Voltip\\data\\backups",
+    "custom": false,
+    "last": null,
+    "failure": null,
+    "notice": null
+  },
+  {
+    "type": "auto_backup",
+    "available": false,
+    "folder": "",
+    "default_folder": "",
+    "custom": false,
+    "last": null,
+    "failure": null,
+    "notice": null
   },
   {
     "type": "models_location",

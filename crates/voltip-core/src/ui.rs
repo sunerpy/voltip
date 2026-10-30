@@ -128,6 +128,9 @@ pub enum UiEvent {
     AudioCache(crate::audio_cache::AudioCacheView),
     /// The import queue (docs/dictation.md §31), full replacement.
     Imports(crate::import::ImportsView),
+    /// Where the automatic backups go, the newest one and the last failure (docs/dictation.md
+    /// §4.6.1), full replacement.
+    AutoBackup(crate::backup::auto::AutoBackupView),
     /// Updater progress. Produced by the desktop shell (which owns the updater plugin) and folded
     /// into the same state as core events, like [`UiEvent::Hotkey`].
     Update(UpdateStatus),
@@ -509,6 +512,10 @@ pub struct UiState {
     /// none (the phone).
     #[serde(default)]
     pub imports: crate::import::ImportsView,
+    /// The automatic backups (docs/dictation.md §4.6.1); `available` is false where the app makes
+    /// none (the phone).
+    #[serde(default)]
+    pub auto_backup: crate::backup::auto::AutoBackupView,
     /// Resolved ASR / refine / inject configuration.
     #[serde(default)]
     pub engines: EngineStatus,
@@ -611,6 +618,7 @@ impl Default for UiState {
             history_total: 0,
             audio_cache: crate::audio_cache::AudioCacheView::default(),
             imports: crate::import::ImportsView::default(),
+            auto_backup: crate::backup::auto::AutoBackupView::default(),
             engines: EngineStatus::default(),
             update: UpdateStatus::default(),
             models: Vec::new(),
@@ -744,6 +752,10 @@ impl UiState {
             CoreEvent::Imports(view) => {
                 self.imports = view.clone();
                 UiEvent::Imports(view)
+            }
+            CoreEvent::AutoBackup(view) => {
+                self.auto_backup = view.clone();
+                UiEvent::AutoBackup(view)
             }
             CoreEvent::ProviderProbe(report) => UiEvent::ProviderProbe(report),
             CoreEvent::Connectivity(status) => {

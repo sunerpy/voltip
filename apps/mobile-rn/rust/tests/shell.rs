@@ -20,8 +20,8 @@ use voltip_rn::update::{InstallSource, NOTHING_TO_INSTALL, PACKAGE, UpdateConfig
 
 const STEP_TIMEOUT: Duration = Duration::from_secs(15);
 const POLL: Duration = Duration::from_millis(20);
-/// Commands of the shared contract that only the desktop registers (docs/dictation.md §16.10,
-/// §23.6, §25, §26, §28, §31).
+/// Commands of the shared contract that only the desktop registers (docs/dictation.md §4.6.1,
+/// §16.10, §23.6, §25, §26, §28, §31).
 const DESKTOP_ONLY: &[&str] = &[
     "settings_set_serve",
     "serve_copy_token",
@@ -52,6 +52,12 @@ const DESKTOP_ONLY: &[&str] = &[
     // The dictionary's learning suggestions (docs/dictation.md §16.10) are the desktop's.
     "vocabulary_suggestion_ignore",
     "vocabulary_suggestion_unignore",
+    // The automatic backups (docs/dictation.md §4.6.1) are the desktop's.
+    "settings_set_backup",
+    "backup_folder_choose",
+    "backup_folder_reset",
+    "backup_folder_open",
+    "backup_notice_dismiss",
 ];
 
 fn repo_root() -> PathBuf {

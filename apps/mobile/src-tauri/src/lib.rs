@@ -34,8 +34,9 @@ pub const KEYSTORE_SERVICE: &str = "dev.voltip.mobile";
 
 /// Every command the webview may invoke, in registration order. Must equal the desktop shell's
 /// list, `packages/shared/src/schema.ts` (`CommandArgs`) and `fixtures/ipc/commands.json`, less the
-/// desktop-only commands (the local speech service's and the MCP service's, docs/dictation.md
-/// §23.6, §25) that `tests/ipc.rs` lists as `DESKTOP_ONLY`.
+/// desktop-only commands (the local speech service's, the MCP service's, the recording cache's and
+/// the automatic backups', docs/dictation.md §23.6, §25, §26, §4.6.1) that `tests/ipc.rs` lists as
+/// `DESKTOP_ONLY`.
 pub const COMMANDS: [&str; 123] = [
     "core_state",
     "pairing_start",
@@ -683,7 +684,7 @@ fn backup_open() -> voltip_core::backup::OpenOutcome {
 /// See [`backup_export`].
 #[tauri::command]
 fn backup_import() -> voltip_core::backup::ImportOutcome {
-    voltip_core::backup::ImportOutcome::Failed { code: voltip_core::backup::ImportFailure::Unsupported }
+    voltip_core::backup::ImportOutcome::failed(voltip_core::backup::ImportFailure::Unsupported)
 }
 
 /// See [`backup_export`]: nothing is held, so there is nothing to let go of.

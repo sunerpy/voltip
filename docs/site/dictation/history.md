@@ -118,7 +118,7 @@ The backup file is not encrypted and its dictations can be read as they are: kee
 1. On the other computer, install Voltip, open **Settings → Privacy and history**, select **Import…** under **Backup and migration** and choose the backup file.
 2. Voltip shows the device the backup comes from, when it was made and how many items each part holds; nothing has changed yet. Choose the parts to import and how:
    - **Merge** keeps what is on this computer and adds what is new in the backup. Entries already here, dictionary entries with the same spelling, and rules, scenes and presets with a name already in use are skipped, as is anything past a limit (500 dictionary entries, 200 rules, 50 scenes, 30 AI presets). Built-in scenes keep this computer's settings.
-   - **Replace** deletes what this computer has in the chosen parts and puts the backup's content in its place.
+   - **Replace** deletes what this computer has in the chosen parts and puts the backup's content in its place. Before replacing, Voltip makes an automatic backup of what is here; see [Automatic backups](#automatic-backups).
 3. Select **Import** (**Replace** when replacing). Voltip then lists, part by part, how many items it imported, and how many it skipped and why.
 
 The history keeps as many entries as **Keep the latest** allows; the older ones beyond that are not kept. To import the whole history, set **Keep the latest** high enough first.
@@ -126,3 +126,19 @@ The history keeps as many entries as **Keep the latest** allows; the older ones 
 Between operating systems the same app has a different identifier, so choose the apps of your own scenes again; the default apps of the built-in scenes switch to the new system's.
 
 When the chosen file is not a Voltip backup, is damaged, was made by a newer version of Voltip or is larger than 512 MB, Voltip says why and imports nothing.
+
+### Automatic backups
+
+Voltip also backs up the same content on its own, at three moments:
+
+- **Every week**: one backup every 7 days. To stop it, turn off **Back up every week** under **Settings → Privacy and history → Automatic backups**.
+- **Before an update installs**: when this backup cannot be written, the update goes ahead anyway, and the home page says so after the next start.
+- **Before an import replaces data**: when this backup cannot be written, nothing is replaced. An import cannot replace data while a dictation is running; try again when it has ended.
+
+The backups before an update and before a replacing import cannot be turned off. The first update to a version with automatic backups makes no backup before it installs, because the version being replaced does not have them; with weekly backups on, the new version makes one about a minute after it starts.
+
+Automatic backups are saved in the `backups` folder of Voltip's data folder ([where that is](/guide/updates#where-your-data-is-kept)). To save them elsewhere, for example in a folder that syncs to your other devices, select **Change…** under **Automatic backup location**; Voltip first checks that it can write to the chosen folder. Backups already in the previous folder stay where they are. **Open folder** shows the backup files, and **Restore default location** goes back to the `backups` folder.
+
+Only the latest 5 automatic backups are kept, and older ones are deleted. Backups you export yourself are never deleted, even in the same folder. **Latest automatic backup** shows when the newest one was made and why.
+
+An automatic backup is the same kind of file as an exported one. To restore from it, select **Import…** and choose it; the file dialog opens in the automatic backup folder. After a replacing import, Voltip shows where the backup made before it was saved. Backup files are not encrypted: in a synced folder, they are uploaded with it.
