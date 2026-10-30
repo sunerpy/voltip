@@ -16,9 +16,12 @@ The rules (docs/dictation.md §29):
              language, no clip failed and the error rate is at most the 30 s rate + 1 point;
              30 s when none is.
   LOCK_WAIT  twice the slowest inference of a 121 s clip on any machine, rounded up to 5 s,
-             at least 30 s.
+             at least 30 s. A model not measured on a machine counts there with an estimate
+             (--estimate MACHINE:MODEL:REFERENCE): its slowest 121 s inference elsewhere, scaled by
+             the reference model's slowest there and on MACHINE.
 
-  /usr/bin/python3 -I scripts/measure/summarize-pieces.py --out /tmp/voltip-measure/results rows...
+  /usr/bin/python3 -I scripts/measure/summarize-pieces.py --out /tmp/voltip-measure/results \
+      [--estimate windows:qwen3-asr-1.7b:qwen3-asr-0.6b] rows...
 """
 
 from __future__ import annotations
@@ -122,7 +125,8 @@ def max_piece(model: str, by: dict[tuple[str, str, str, int], Group]) -> tuple[i
     """`model`'s max_piece and the reasons each other candidate was not taken."""
     keys = [k for k in by if k[1] == model]
     combos = sorted({(k[0], k[2]) for k in keys})
-    notes = []
+    machines = sorted({k[0] for k in keys})
+    notes = [] if machines == sorted({k[0] for k in by}) else [f"measured on {', '.join(machines)} only"]
     best = BASE
     for length in CANDIDATES:
         failed = []
@@ -144,9 +148,34 @@ def max_piece(model: str, by: dict[tuple[str, str, str, int], Group]) -> tuple[i
     return best, notes
 
 
-def lock_wait(by: dict[tuple[str, str, str, int], Group]) -> tuple[int, int, str]:
-    """LOCK_WAIT in seconds, the slowest 121 s inference (ms) and where it was."""
-    slowest = max(((g.max_infer_ms, f"{k[0]}/{k[1]}/{k[2]}") for k, g in by.items() if k[3] == TIMING), default=(0, "none"))
+def slowest_at_timing(by: dict[tuple[str, str, str, int], Group], machine: str, model: str) -> int | None:
+    """`model`'s slowest 121 s inference (ms) on `machine`, over its languages."""
+    return max((g.max_infer_ms for k, g in by.items() if k[0] == machine and k[1] == model and k[3] == TIMING), default=None)
+
+
+def estimate(by: dict[tuple[str, str, str, int], Group], machine: str, model: str, reference: str) -> tuple[int, str]:
+    """`model`'s slowest 121 s inference on `machine`, where it was not measured: the largest of its
+    slowest on each other machine times `reference`'s slowest on `machine` over that machine's."""
+    here = slowest_at_timing(by, machine, reference)
+    best = None
+    for other in sorted({k[0] for k in by if k[1] == model and k[0] != machine}):
+        mine, there = slowest_at_timing(by, other, model), slowest_at_timing(by, other, reference)
+        if here is None or mine is None or not there:
+            continue
+        value = round(mine * here / there)
+        if best is None or value > best[0]:
+            best = (value, f"{machine}/{model}, estimated: {other} {mine} ms x {reference} {here}/{there}")
+    if best is None:
+        raise ValueError(f"no estimate for {model} on {machine}: {reference} must be measured on both machines and {model} on another")
+    return best
+
+
+def lock_wait(by: dict[tuple[str, str, str, int], Group], estimates=()) -> tuple[int, int, str]:
+    """LOCK_WAIT in seconds, the slowest 121 s inference (ms) and where it was; `estimates` are
+    (machine, model, reference) for models not measured on a machine."""
+    times = [(g.max_infer_ms, f"{k[0]}/{k[1]}/{k[2]}") for k, g in by.items() if k[3] == TIMING]
+    times += [estimate(by, *e) for e in estimates]
+    slowest = max(times, default=(0, "none"))
     seconds = max(MIN_LOCK_WAIT_S, 5 * math.ceil(2 * slowest[0] / 1000 / 5))
     return seconds, slowest[0], slowest[1]
 
@@ -154,8 +183,15 @@ def lock_wait(by: dict[tuple[str, str, str, int], Group]) -> tuple[int, int, str
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--estimate", action="append", default=[], metavar="MACHINE:MODEL:REFERENCE", help="a model not measured on MACHINE, scaled by REFERENCE")
     parser.add_argument("rows", type=Path, nargs="+")
     args = parser.parse_args(argv)
+    estimates = []
+    for spec in args.estimate:
+        parts = spec.split(":")
+        if len(parts) != 3 or not all(parts):
+            parser.error(f"--estimate {spec}: MACHINE:MODEL:REFERENCE")
+        estimates.append(tuple(parts))
     lines = []
     for path in args.rows:
         lines.extend(path.read_text(encoding="utf-8").splitlines())
@@ -177,7 +213,7 @@ def main(argv: list[str]) -> int:
         for model in sorted({p.model for p in pieces}):
             value, notes = max_piece(model, by)
             w.writerow(["max_piece", model, value, " | ".join(notes)])
-        seconds, slowest_ms, where = lock_wait(by)
+        seconds, slowest_ms, where = lock_wait(by, estimates)
         w.writerow(["lock_wait", "all", seconds, f"slowest {TIMING} s inference {slowest_ms} ms ({where})"])
     print((args.out / "decisions.csv").read_text(encoding="utf-8"), end="")
     return 0

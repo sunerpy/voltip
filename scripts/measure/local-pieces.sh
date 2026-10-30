@@ -8,6 +8,8 @@
 #
 #   VOLTIP_MEASURE_MANIFEST  the corpus (default /tmp/voltip-measure/corpus/manifest.csv)
 #   VOLTIP_MEASURE_LENGTHS   the clip lengths in seconds (default 30,60,90,119,121)
+#   VOLTIP_MEASURE_ESTIMATES space-separated MACHINE:MODEL:REFERENCE estimates for a model not
+#                            measured on a machine (summarize-pieces.py --estimate)
 #
 # Results go to /tmp/voltip-measure/results by default; neither the audio nor the results are
 # committed. Run it alone on the machine: the timings are what LOCK_WAIT is made of.
@@ -44,4 +46,6 @@ for spec in "$@"; do
     >"$out/$machine-$model.rows" 2>"$out/$machine-$model.log"
   grep -E 'Maximum resident set size|Elapsed \(wall clock\)' "$out/$machine-$model.log" | sed 's/^[[:space:]]*/local-pieces:   /'
 done
-/usr/bin/python3 -I scripts/measure/summarize-pieces.py --out "$out" "$out"/*.rows
+estimates=()
+for spec in ${VOLTIP_MEASURE_ESTIMATES:-}; do estimates+=(--estimate "$spec"); done
+/usr/bin/python3 -I scripts/measure/summarize-pieces.py --out "$out" "${estimates[@]}" "$out"/*.rows

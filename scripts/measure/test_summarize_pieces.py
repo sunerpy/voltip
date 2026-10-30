@@ -77,6 +77,29 @@ class LockWait(unittest.TestCase):
         self.assertEqual(sp.lock_wait(sp.groups(sp.parse([row(121, 0, infer_ms=2_000)])[0]))[0], 30)
         self.assertEqual(sp.lock_wait({})[0], 30)
 
+    def test_a_model_not_measured_on_a_machine_counts_with_its_estimate_there(self) -> None:
+        """D17 (2026-10-30): Qwen3-ASR 1.7B is measured on Linux only; its time on the Windows
+        machine is the Linux time scaled by the reference model's Windows / Linux ratio."""
+        lines = [
+            row(121, 0, model="ref", infer_ms=10_000),
+            row(121, 0, model="ref", infer_ms=25_000, machine="windows"),
+            row(121, 0, model="big", infer_ms=30_000),
+            row(121, 0, model="big", infer_ms=40_000, lang="en_us"),
+        ]
+        by = sp.groups(sp.parse(lines)[0])
+        self.assertEqual(sp.lock_wait(by)[:2], (80, 40_000), "measured only")
+        seconds, slowest, where = sp.lock_wait(by, [("windows", "big", "ref")])
+        self.assertEqual((seconds, slowest), (200, 100_000))
+        self.assertIn("windows/big", where)
+        self.assertIn("estimated", where)
+        with self.assertRaises(ValueError):
+            sp.lock_wait(by, [("macos", "big", "ref")])
+
+    def test_a_model_measured_on_fewer_machines_says_where_it_was(self) -> None:
+        lines = lengths({30: 5, 60: 5, 90: 5, 119: 5}) + lengths({30: 5, 60: 5, 90: 5, 119: 5}, machine="windows", model="other")
+        pieces, _ = sp.parse(lines)
+        self.assertEqual(sp.max_piece("m", sp.groups(pieces))[1], ["measured on linux only"])
+
 
 class Files(unittest.TestCase):
     def test_writes_the_summary_and_the_decisions(self) -> None:
