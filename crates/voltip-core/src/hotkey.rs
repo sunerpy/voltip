@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 /// The lone-key trigger (`Settings.solo_key`, docs/dictation.md §13.1); the platform crate owns
 /// the key tables its hooks need.
-pub use voltip_platform::solo_key::SoloKey;
+pub use voltip_platform::solo_key::{SoloKey, SoloLoss};
 
 /// Chord the app ships with.
 pub const DEFAULT_HOTKEY: &str = "Ctrl+Alt+Space";

@@ -113,6 +113,7 @@ import {
   type HotkeyStatus,
   SOLO_KEYS,
   type SoloKey,
+  type SoloLoss,
   MAX_PHONE_TEXT_CHARS,
   MAX_PASTE_TEXT_CHARS,
   type SentText,
@@ -1640,6 +1641,25 @@ export class MockBackend implements Backend {
    *  longer dwell say so, as the core does (tests and the dev pages, docs/dictation.md §14.3). */
   simulateWindowSwitch(switched: boolean) {
     this.windowSwitched = switched;
+  }
+
+  /** The lone key's input hook went away and the shell is bringing it back (`loss`), or it came
+   *  back at `atMs` (`null`), as the desktop shell reports it (tests and the dev pages,
+   *  docs/dictation.md §29). */
+  simulateSoloHook(loss: SoloLoss | null, atMs: number = this.now()) {
+    const { solo_loss: _was, ...hotkey } = this.state.hotkey;
+    const key = this.state.settings.solo_key;
+    this.emit(
+      loss === null
+        ? {
+            type: "hotkey",
+            ...hotkey,
+            ...(key === null ? {} : { solo_registered: key }),
+            solo_pressed: false,
+            solo_recovered_at: atMs,
+          }
+        : { type: "hotkey", ...hotkey, solo_loss: loss, solo_pressed: false },
+    );
   }
 
   /** The built-in clean-up service turned a take down (`null`: the notice went; tests and the dev

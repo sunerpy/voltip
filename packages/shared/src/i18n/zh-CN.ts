@@ -2456,6 +2456,14 @@ export const zhCN = {
         waiting: "等待生效",
         failed: "未生效",
         recovered: "已自动恢复（{time}）",
+        /** Why the key's input hook is gone while Voltip brings it back (docs/dictation.md §29);
+         *  `{key}` is the key's name. */
+        loss: {
+          hook: "{key} 暂时无法单独触发：系统移除了输入钩子，Voltip 正在重新安装",
+          accessibility:
+            "{key} 无法单独触发：需要在「系统设置 › 隐私与安全性 › 辅助功能」里重新允许 Voltip，允许后自动恢复",
+          display: "{key} 暂时无法单独触发：与 X 服务器的连接断开了，正在重新连接",
+        },
         unavailable: "当前会话不支持单键触发（纯 Wayland 下只能使用组合键）",
         key: {
           right_ctrl: "右 Ctrl",

@@ -3,6 +3,7 @@ import {
   MAX_ACTIVATION_MS,
   createTranslator,
   defaultEngineSettings,
+  SOLO_LOSSES,
   formatDateTime,
   zhT,
 } from "@voltip/shared";
@@ -800,31 +801,59 @@ describe("Settings · 热键", () => {
       expect(within(row).getByTestId("solo-key-status")).toHaveTextContent("已生效");
     });
     expect(within(row).queryByTestId("solo-key-recovered")).toBeNull();
-    // Gone: the shell's reason, as an alert.
+    // Gone: why, in the interface's words, as an alert.
     act(() => {
-      backend.publish({
-        type: "hotkey",
-        ...backend.peek().hotkey,
-        solo_error: "右 Ctrl 暂时无法单独触发：系统移除了输入钩子，Voltip 正在重新安装",
-      });
+      backend.simulateSoloHook("hook");
     });
-    expect(within(row).getByRole("alert")).toHaveTextContent("正在重新安装");
+    expect(within(row).getByTestId("solo-key-status")).toHaveTextContent("未生效");
+    expect(within(row).getByRole("alert")).toHaveTextContent(
+      "右 Ctrl 暂时无法单独触发：系统移除了输入钩子，Voltip 正在重新安装",
+    );
     expect(within(row).queryByTestId("solo-key-recovered")).toBeNull();
-    // Back: no error, and when it came back.
+    // Back: no alert, and when it came back.
     const at = new Date(2026, 9, 30, 14, 5).getTime();
     act(() => {
-      backend.publish({
-        type: "hotkey",
-        ...backend.peek().hotkey,
-        solo_error: undefined,
-        solo_recovered_at: at,
-      });
+      backend.simulateSoloHook(null, at);
     });
     expect(within(row).getByTestId("solo-key-status")).toHaveTextContent("已生效");
     expect(within(row).queryByRole("alert")).toBeNull();
     const when = formatDateTime("zh-CN", at, { dateStyle: "medium", timeStyle: "short" });
     expect(within(row).getByTestId("solo-key-recovered")).toHaveTextContent(
       `已自动恢复（${when}）`,
+    );
+  });
+
+  it("regression: section 29 an English interface says in English why the lone key's hook is gone, naming the key", async () => {
+    const user = userEvent.setup();
+    const { backend } = renderApp({ path: "/settings/hotkey", systemLanguage: "en-US" });
+    const row = await screen.findByTestId("solo-key");
+    await user.selectOptions(
+      within(row).getByRole("combobox", { name: "Single-key trigger" }),
+      "right_ctrl",
+    );
+    await waitFor(() => {
+      expect(within(row).getByTestId("solo-key-status")).toHaveTextContent("Active");
+    });
+    const said = {
+      hook: "Right Ctrl can't start a recording on its own right now: the system removed the input hook, and Voltip is putting it back.",
+      accessibility:
+        "Right Ctrl can't start a recording on its own: allow Voltip again in System Settings › Privacy & Security › Accessibility. It works again by itself once allowed.",
+      display:
+        "Right Ctrl can't start a recording on its own right now: the connection to the X server was lost, and Voltip is reconnecting.",
+    } as const;
+    for (const loss of SOLO_LOSSES) {
+      act(() => {
+        backend.simulateSoloHook(loss);
+      });
+      expect(within(row).getByTestId("solo-key-status")).toHaveTextContent("Not active");
+      expect(within(row).getByRole("alert")).toHaveTextContent(said[loss]);
+    }
+    act(() => {
+      backend.simulateSoloHook(null);
+    });
+    expect(within(row).queryByRole("alert")).toBeNull();
+    expect(within(row).getByTestId("solo-key-recovered")).toHaveTextContent(
+      "Recovered automatically",
     );
   });
 

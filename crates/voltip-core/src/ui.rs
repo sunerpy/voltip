@@ -428,6 +428,11 @@ pub struct HotkeyStatus {
     /// platform has not got).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub solo_error: Option<String>,
+    /// The lone key's hook is gone and being brought back (docs/dictation.md §29), and why: the
+    /// settings page words it in the interface's language, naming the key. `None` while the hook
+    /// runs, and when it could not be installed at all (that is `solo_error`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub solo_loss: Option<crate::SoloLoss>,
     /// The lone key is currently held down on its own.
     #[serde(default)]
     pub solo_pressed: bool,

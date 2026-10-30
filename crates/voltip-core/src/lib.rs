@@ -53,7 +53,7 @@ pub use history::{
     EditRecord, EntryOrigin, HistoryEntry, HistoryHits, HistoryPage, HistoryQuery, HistoryReader, HistoryStats, HistoryStatsBucket, HistoryStore, OriginKind,
     Outcome,
 };
-pub use hotkey::{DEFAULT_EDIT_HOTKEY, DEFAULT_HOTKEY, Hotkey, HotkeyError, Modifier, SoloKey};
+pub use hotkey::{DEFAULT_EDIT_HOTKEY, DEFAULT_HOTKEY, Hotkey, HotkeyError, Modifier, SoloKey, SoloLoss};
 pub use models::{
     CAPABILITY_OFFLINE, CAPABILITY_STREAMING, CAPABILITY_VAD, CancelToken, DEFAULT_LOCAL_MODEL_ID, ModelFileView, ModelImportError, ModelInstallState,
     ModelManager, ModelState, ProgressSink, RelocateCommit, RelocateProgress, Relocated,

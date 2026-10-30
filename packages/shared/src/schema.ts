@@ -553,6 +553,13 @@ export const SOLO_KEYS = [
 export const soloKeySchema = z.enum(SOLO_KEYS);
 export type SoloKey = z.infer<typeof soloKeySchema>;
 
+/** Why the lone key's input hook is gone while the shell brings it back
+ *  (`voltip_platform::solo_key::SoloLoss`, docs/dictation.md §29): Windows refused the hook, macOS
+ *  the event tap (Accessibility), or the X server connection went away. */
+export const SOLO_LOSSES = ["hook", "accessibility", "display"] as const;
+export const soloLossSchema = z.enum(SOLO_LOSSES);
+export type SoloLoss = z.infer<typeof soloLossSchema>;
+
 // ---- the local speech service (docs/dictation.md §23.6; `voltip_core::ServeSettings`) -------
 
 /** `voltip_core::serve::DEFAULT_PORT`. */
@@ -2394,6 +2401,9 @@ export const hotkeyStatusSchema = z.object({
    *  chosen one is not watched; both absent while it is off. */
   solo_registered: soloKeySchema.optional(),
   solo_error: z.string().optional(),
+  /** The lone key's input hook is gone and being brought back (docs/dictation.md §29), and why;
+   *  the settings page words it in the interface's language. Absent while the hook runs. */
+  solo_loss: soloLossSchema.optional(),
   /** The lone key is held down on its own (Rust always sends it; absent in old payloads). */
   solo_pressed: z.boolean().optional(),
   /** The 复制上一条结果 chord (docs/dictation.md §28): registered, or why not; both absent while

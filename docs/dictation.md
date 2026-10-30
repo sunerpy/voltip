@@ -841,7 +841,7 @@ TS 侧已接（2026-09-26）：`schema.ts` `CommandArgs` 有 `hotkey_edge: { pre
 按住一个键或鼠标键就开始听写，不用组合键。`Settings.solo_key: Option<SoloKey>`（`#[serde(default)]`，缺省为关闭），与 `Settings.hotkey` 同时有效，边沿同样进激活状态机，所以 `hold` / `toggle` / `hold_or_toggle` 都适用。可选的键（`voltip_platform::solo_key::SoloKey`，wire 为 snake_case）：`right_ctrl`、`right_alt`、`right_shift`、`right_meta`（Win / Command / Super）、`fn`（只有 macOS）、`mouse_middle`、`mouse_back`、`mouse_forward`。只提供右手侧的修饰键：左侧的修饰键在日常快捷键里太常用。
 
 - **命令**：`CoreCommand::SetSoloKey(Option<SoloKey>)` / `settings_set_solo_key { key }`（`null` 关闭），持久化后回发 `Settings`；任何键都是合法数据，这台电脑能不能监听由壳层报告。
-- **状态**：`HotkeyStatus.solo_registered`（钩子正在监听的键）、`solo_error`（为什么没有监听）、`solo_pressed`；`HotkeyCapabilities.solo_keys` 是这个会话能监听的键（纯 Wayland 为空）。
+- **状态**：`HotkeyStatus.solo_registered`（钩子正在监听的键）、`solo_error`（为什么没有监听）、`solo_loss`（钩子正在恢复的原因，§29.3）、`solo_pressed`；`HotkeyCapabilities.solo_keys` 是这个会话能监听的键（纯 Wayland 为空）。
 - **组合即取消**：按住触发键时又按下别的键或鼠标键（右 Ctrl + C、右 Ctrl + 点击），壳层发 `HotkeyEdge { chorded: true }`，不再报告它的松开。`ActivationMachine::chorded` 只取消由这一次按下开始的录音（或丢掉它留下的 pending start）；`toggle` 下按下时已经在停止上一段录音、或录音是 CLI / 界面按钮开始的，都不受影响。触发键是鼠标键时，按住期间打字不算组合。
 - **只认硬件输入**：Voltip 自己的粘贴、复制组合键和其他注入的输入都不算（Windows `LLKHF_INJECTED` / `LLMHF_INJECTED`，macOS enigo 的 `EVENT_SOURCE_USER_DATA` 标记，X11 的 XTEST 设备），所以粘贴永远不会被当成组合。
 - **取消键**：`hold` 下按着右侧修饰键时 Esc 带着这个修饰键，`cancel_shortcuts` 因此也注册「修饰键 + Escape」（右 Shift → `Shift+Escape`）；按 Esc 本身也是组合，同样会取消。
@@ -2524,13 +2524,13 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 
 ### 29.2 macOS 与 X11
 
-- **macOS**：系统停用事件监听（回调超时、用户输入）时重新启用；停用事件有时不送达，run loop 因此每 2 s 检查一次 `CGEventTapIsEnabled`。重建失败（通常是辅助功能权限被收回）按 1、2、4 …… 最多 60 s 重试，期间 `solo_error` 说明要在「系统设置 › 隐私与安全性 › 辅助功能」里重新允许 Voltip；成功后清空并发 `Recovered`。桌面壳订阅 `NSWorkspaceDidWakeNotification` 和 `NSWorkspaceSessionDidBecomeActiveNotification`，收到后 `SoloHook::refresh()`：事件监听不在启用状态就重新启用或重建。真测试（`macos` job，两台 Mac）用 `CGEventTapEnable(tap, false)` 模拟系统停用（`regression_a_tap_the_system_disables_is_put_back`）。
-- **X11**：与 X 服务器的连接断开时监听结束，按同样的退避重连，期间 `solo_error` 说明正在重新连接，连上后发 `Recovered`。Xvfb 里的真测试用 `KillClient` 断开连接（`regression_a_lost_x_connection_comes_back`）。
+- **macOS**：系统停用事件监听（回调超时、用户输入）时重新启用；停用事件有时不送达，run loop 因此每 2 s 检查一次 `CGEventTapIsEnabled`。重建失败（通常是辅助功能权限被收回）按 1、2、4 …… 最多 60 s 重试，期间 `solo_loss` 为 `accessibility`，设置页据此说明要在「系统设置 › 隐私与安全性 › 辅助功能」里重新允许 Voltip；成功后清空并发 `Recovered`。桌面壳订阅 `NSWorkspaceDidWakeNotification` 和 `NSWorkspaceSessionDidBecomeActiveNotification`，收到后 `SoloHook::refresh()`：事件监听不在启用状态就重新启用或重建。真测试（`macos` job，两台 Mac）用 `CGEventTapEnable(tap, false)` 模拟系统停用（`regression_a_tap_the_system_disables_is_put_back`）。
+- **X11**：与 X 服务器的连接断开时监听结束，按同样的退避重连，期间 `solo_loss` 为 `display`（设置页说明正在重新连接），连上后发 `Recovered`。Xvfb 里的真测试用 `KillClient` 断开连接（`regression_a_lost_x_connection_comes_back`）。
 - 纯 Wayland 没有单键触发，不变。
 
 ### 29.3 状态与界面
 
-- `HotkeyStatus.solo_recovered_at: Option<u64>`：最近一次自动恢复的时间（毫秒）。钩子正在恢复时 `solo_error` 写明哪个键、为什么，恢复后清空，`solo_pressed` 复位。快捷键设置页在单键一行下显示「已自动恢复（时间）」或错误。
+- `HotkeyStatus.solo_recovered_at: Option<u64>`：最近一次自动恢复的时间（毫秒）。钩子正在恢复时 `HotkeyStatus.solo_loss: Option<SoloLoss>` 记下原因（`hook`：Windows 不让重新安装钩子；`accessibility`：macOS 拒绝事件监听，辅助功能权限被收回；`display`：与 X 服务器的连接断开），恢复后清空，`solo_pressed` 复位。壳只给原因，不拼文字：快捷键设置页按界面语言的词典（`settings.hotkey.solo.loss.*`，按键名作参数）说明哪个键、为什么，恢复后在单键一行下显示「已自动恢复（时间）」。装不上钩子的原因（`solo_error`）仍是壳写的文字，见 §29.10。
 - `sync_solo` 在钩子线程已经结束（转发循环退出）时换一个新钩子，不再「同一个键就保留旧钩子」（`regression_a_hook_whose_thread_ended_is_replaced`）。
 
 ### 29.4 漏掉的松开（`apps/desktop/src-tauri/src/held.rs`）
@@ -2627,7 +2627,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 - **UIPI**：以管理员身份运行的窗口在前台时，钩子和 Raw Input 都收不到它的输入，这段时间单键不起作用，也不会被误判为钩子被摘掉。
 - **Shift 作单键**：按住 8 s 以上的筛选键提示、连按 5 次的粘滞键提示，要在用户电脑上照实记录后补进本节。
 - **显卡**：识别中出错改用 CPU 的真机路径没有测试（没有可用的显卡机器），由假识别器的单测覆盖。
-- **文字**：`solo_error` 的说明与现有的「无法监听」原因一样由壳生成（中文），英文界面里也显示中文。
+- **文字**：钩子恢复期间的三种原因（`solo_loss`）由设置页按界面语言说明。装不上钩子时的 `solo_error`（这个会话没有输入钩子、平台没有这个键、`voltip_hooks::start` 的错误）仍是壳写的中文，英文界面里也显示中文，是此前就有的问题，本 PR 不改。
 
 ### 29.11 transcribe-cpp 0.4.1
 

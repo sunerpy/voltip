@@ -35,7 +35,7 @@ use voltip_core::{
     FallbackSettings, HistoryEntry, HistoryHits, HistoryPage, HistoryQuery, HistoryStats, HistoryStatsBucket, ImportMode, InjectMode, LiveText, LocalDevice,
     Locale, ModelFileView, ModelInstallState, ModelState, Outcome, OutputMode, ProbeFailure, ProbeOutcome, ProbeReport, ProviderId, ProviderSettings,
     RefineFailure, RelaySource, RelayStatus, ReplacementRule, ResolvedEngines, RuleDraft, RuleKind, Scene, SceneDraft, SceneMatch, SceneOverrides, SceneRef,
-    Segment, ServiceKind, Settings, SoloKey, SwitchedWindow, TakeContext, TakeKind, ThemeId, UserSecrets, VocabularyHit, VocabularyHits,
+    Segment, ServiceKind, Settings, SoloKey, SoloLoss, SwitchedWindow, TakeContext, TakeKind, ThemeId, UserSecrets, VocabularyHit, VocabularyHits,
 };
 use voltip_core::{EntryOrigin, FailureKind, OriginKind, RelayFailure};
 use voltip_crypto::{PublicKey, SafetyCode};
@@ -1152,6 +1152,7 @@ fn full_state() -> UiState {
             capabilities: capabilities(true, true),
             solo_registered: Some(SoloKey::RightCtrl),
             solo_error: None,
+            solo_loss: None,
             solo_pressed: false,
             solo_recovered_at: None,
         },
@@ -1512,6 +1513,7 @@ fn all_events() -> Vec<UiEvent> {
             capabilities: capabilities(true, true),
             solo_registered: Some(SoloKey::MouseBack),
             solo_error: None,
+            solo_loss: None,
             solo_pressed: true,
             solo_recovered_at: Some(AT_MS),
         }),
@@ -1528,6 +1530,8 @@ fn all_events() -> Vec<UiEvent> {
             capabilities: capabilities(true, false),
             solo_registered: Some(SoloKey::RightAlt),
             solo_error: None,
+            // The X connection went away; the hook reconnects (docs/dictation.md §29).
+            solo_loss: Some(SoloLoss::Display),
             solo_pressed: false,
             solo_recovered_at: None,
         }),
@@ -1544,6 +1548,7 @@ fn all_events() -> Vec<UiEvent> {
             capabilities: capabilities(false, false),
             solo_registered: None,
             solo_error: Some("右 Ctrl 无法单独触发：纯 Wayland 会话不允许应用监听全局按键".into()),
+            solo_loss: None,
             solo_pressed: false,
             solo_recovered_at: None,
         }),

@@ -23,7 +23,7 @@
 //! `solo_pressed`. Its edges are dictation `HotkeyEdge`s; a chord made with it (Right Ctrl + C)
 //! goes to the core as `chorded`, which cancels the take that press started. Its hook keeps
 //! itself alive (docs/dictation.md §29): a hook put back sets `solo_recovered_at`, one that is
-//! being brought back sets `solo_error` ([`solo_health`]).
+//! being brought back sets `solo_loss` ([`solo_health`]), which the settings page words.
 //!
 //! Every press forwarded is remembered until its release is ([`crate::held`]): a hold-to-talk
 //! take whose key-up got lost ends when the key reads as up.
@@ -483,20 +483,21 @@ pub fn refresh_solo(registry: &HotkeyRegistry) {
     }
 }
 
-/// What a lone-key edge changes in `status`, for `key` on `os` at `now_ms`; whether the settings
-/// page needs the new status. A hook put back clears the error and records when; one that is
-/// being brought back says why.
-pub fn solo_health(status: &mut HotkeyStatus, edge: SoloEdge, key: SoloKey, os: &str, now_ms: u64) -> bool {
+/// What a lone-key edge changes in `status`, for `key` at `now_ms`; whether the settings page needs
+/// the new status. A hook put back clears the loss and records when; one that is being brought
+/// back says why (`solo_loss`, which the page words in its own language).
+pub fn solo_health(status: &mut HotkeyStatus, edge: SoloEdge, key: SoloKey, now_ms: u64) -> bool {
     match edge {
         SoloEdge::Press | SoloEdge::Release | SoloEdge::Chorded => status.solo_pressed = edge == SoloEdge::Press,
         SoloEdge::Recovered => {
             status.solo_recovered_at = Some(now_ms);
+            status.solo_loss = None;
             status.solo_error = None;
             status.solo_pressed = false;
             status.solo_registered = Some(key);
         }
         SoloEdge::Lost(loss) => {
-            status.solo_error = Some(solo_key::lost_reason(key, loss, os));
+            status.solo_loss = Some(loss);
             status.solo_pressed = false;
         }
     }
@@ -540,7 +541,7 @@ fn solo_sink(bridge: Bridge, registry: Weak<HotkeyRegistry>, key: SoloKey) -> im
         }
         {
             let mut st = registry.status.lock();
-            if solo_health(&mut st, edge, key, std::env::consts::OS, now_ms()) {
+            if solo_health(&mut st, edge, key, now_ms()) {
                 let snapshot = st.clone();
                 drop(st);
                 bridge.publish(UiEvent::Hotkey(snapshot));
@@ -767,27 +768,32 @@ mod tests {
     use super::*;
 
     /// docs/dictation.md §29: the settings page hears how the lone-key hook is: being brought
-    /// back (`solo_error` says why), back (`solo_recovered_at`, no error, not pressed), and a
-    /// press still lights `solo_pressed`.
+    /// back (`solo_loss` says why; the page words it in its own language), back
+    /// (`solo_recovered_at`, no loss, not pressed), and a press still lights `solo_pressed`.
     #[test]
     fn the_lone_key_status_follows_the_hook_s_health() {
         let key = SoloKey::RightCtrl;
         let mut st = HotkeyStatus { solo_registered: Some(key), ..HotkeyStatus::default() };
-        assert!(solo_health(&mut st, SoloEdge::Press, key, "windows", 10));
+        assert!(solo_health(&mut st, SoloEdge::Press, key, 10));
         assert!(st.solo_pressed);
-        assert!(solo_health(&mut st, SoloEdge::Lost(SoloLoss::Hook), key, "windows", 20));
-        assert!(st.solo_error.as_deref().is_some_and(|e| e.contains("重新安装")), "{:?}", st.solo_error);
+        assert!(solo_health(&mut st, SoloEdge::Lost(SoloLoss::Hook), key, 20));
+        assert_eq!((st.solo_loss, st.solo_error.as_deref()), (Some(SoloLoss::Hook), None), "a reason, not shell text");
         assert!(!st.solo_pressed, "a hook that is gone holds nothing");
         assert_eq!(st.solo_recovered_at, None);
-        assert!(solo_health(&mut st, SoloEdge::Recovered, key, "windows", 30));
-        assert_eq!((st.solo_error.as_deref(), st.solo_recovered_at, st.solo_pressed, st.solo_registered), (None, Some(30), false, Some(key)));
-        assert!(solo_health(&mut st, SoloEdge::Press, key, "windows", 40));
-        assert!(solo_health(&mut st, SoloEdge::Chorded, key, "windows", 50));
+        assert!(solo_health(&mut st, SoloEdge::Recovered, key, 30));
+        assert_eq!(
+            (st.solo_loss, st.solo_error.as_deref(), st.solo_recovered_at, st.solo_pressed, st.solo_registered),
+            (None, None, Some(30), false, Some(key))
+        );
+        assert!(solo_health(&mut st, SoloEdge::Press, key, 40));
+        assert!(solo_health(&mut st, SoloEdge::Chorded, key, 50));
         assert!(!st.solo_pressed);
         assert_eq!(st.solo_recovered_at, Some(30), "an ordinary edge keeps the last recovery");
-        let mut mac = HotkeyStatus::default();
-        assert!(solo_health(&mut mac, SoloEdge::Lost(SoloLoss::Accessibility), SoloKey::Fn, "macos", 1));
-        assert!(mac.solo_error.as_deref().is_some_and(|e| e.starts_with("Fn ") && e.contains("辅助功能")));
+        for loss in [SoloLoss::Accessibility, SoloLoss::Display] {
+            let mut other = HotkeyStatus::default();
+            assert!(solo_health(&mut other, SoloEdge::Lost(loss), SoloKey::Fn, 1));
+            assert_eq!((other.solo_loss, other.solo_error), (Some(loss), None));
+        }
     }
 
     /// docs/dictation.md §29: a hook whose thread ended is replaced at the next sync instead of

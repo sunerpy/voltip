@@ -192,8 +192,10 @@ pub enum SoloEdge {
     Lost(SoloLoss),
 }
 
-/// Why a hook could not be put back (`SoloEdge::Lost`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Why a hook could not be put back (`SoloEdge::Lost`; `HotkeyStatus.solo_loss`, which the settings
+/// page words in the interface's language). The wire names are part of the contract.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SoloLoss {
     /// Windows refused to install the hook again.
     Hook,
@@ -201,6 +203,20 @@ pub enum SoloLoss {
     Accessibility,
     /// The connection to the X server is gone.
     Display,
+}
+
+impl SoloLoss {
+    /// Every reason.
+    pub const ALL: [Self; 3] = [Self::Hook, Self::Accessibility, Self::Display];
+
+    /// Wire name (`hook`, `accessibility`, `display`).
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Hook => "hook",
+            Self::Accessibility => "accessibility",
+            Self::Display => "display",
+        }
+    }
 }
 
 /// Raw input → edges for one trigger: auto-repeat is dropped, the first other key or button during
@@ -342,5 +358,11 @@ mod tests {
             assert_eq!(key.to_string(), key.as_str());
         }
         assert!(serde_json::from_str::<SoloKey>("\"left_ctrl\"").is_err());
+        for loss in SoloLoss::ALL {
+            let json = serde_json::to_string(&loss).unwrap();
+            assert_eq!(json, format!("\"{}\"", loss.as_str()));
+            assert_eq!(serde_json::from_str::<SoloLoss>(&json).unwrap(), loss);
+        }
+        assert!(serde_json::from_str::<SoloLoss>("\"permission\"").is_err());
     }
 }

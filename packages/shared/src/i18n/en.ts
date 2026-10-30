@@ -2482,6 +2482,13 @@ export const en: Messages = {
         waiting: "Waiting",
         failed: "Not active",
         recovered: "Recovered automatically ({time})",
+        loss: {
+          hook: "{key} can't start a recording on its own right now: the system removed the input hook, and Voltip is putting it back.",
+          accessibility:
+            "{key} can't start a recording on its own: allow Voltip again in System Settings › Privacy & Security › Accessibility. It works again by itself once allowed.",
+          display:
+            "{key} can't start a recording on its own right now: the connection to the X server was lost, and Voltip is reconnecting.",
+        },
         unavailable:
           "This session does not support a single-key trigger (pure Wayland supports key combinations only)",
         key: {

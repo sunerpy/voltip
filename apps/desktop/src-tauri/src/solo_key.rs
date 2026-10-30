@@ -29,7 +29,7 @@ use std::thread::JoinHandle;
 
 use voltip_core::SoloKey;
 use voltip_inject::{SessionKind, X11Grab};
-use voltip_platform::solo_key::{SoloEdge, SoloLoss};
+use voltip_platform::solo_key::SoloEdge;
 
 /// How the settings page and the log name a key (the core stores the wire name).
 pub fn label(key: SoloKey, os: &str) -> &'static str {
@@ -71,16 +71,6 @@ pub fn unavailable(key: SoloKey, os: &str, session: Option<SessionKind>) -> Opti
         (_, "linux") => format!("{name} 无法单独触发：纯 Wayland 会话不允许应用监听全局按键，请改用组合键"),
         _ => format!("{name} 无法单独触发：这个平台没有全局输入钩子"),
     })
-}
-
-/// `solo_error` while the hook of `key` is gone and being brought back (docs/dictation.md §29).
-pub fn lost_reason(key: SoloKey, loss: SoloLoss, os: &str) -> String {
-    let name = label(key, os);
-    match loss {
-        SoloLoss::Hook => format!("{name} 暂时无法单独触发：系统移除了输入钩子，Voltip 正在重新安装"),
-        SoloLoss::Accessibility => format!("{name} 无法单独触发：需要在「系统设置 › 隐私与安全性 › 辅助功能」里重新允许 Voltip，允许后自动恢复"),
-        SoloLoss::Display => format!("{name} 暂时无法单独触发：与 X 服务器的连接断开了，正在重新连接"),
-    }
 }
 
 /// A running input hook. Dropping it removes the hook and joins its threads.
@@ -186,17 +176,5 @@ mod tests {
                 assert!(!label(key, os).is_empty());
             }
         }
-    }
-
-    /// docs/dictation.md §29: while a hook is being brought back, `solo_error` says which key, why
-    /// and that it comes back by itself.
-    #[test]
-    fn a_lost_hook_says_why_and_that_it_is_coming_back() {
-        let hook = lost_reason(SoloKey::RightCtrl, SoloLoss::Hook, "windows");
-        assert!(hook.starts_with("右 Ctrl ") && hook.contains("重新安装"), "{hook}");
-        let tap = lost_reason(SoloKey::Fn, SoloLoss::Accessibility, "macos");
-        assert!(tap.starts_with("Fn ") && tap.contains("辅助功能") && tap.contains("自动恢复"), "{tap}");
-        let x = lost_reason(SoloKey::MouseBack, SoloLoss::Display, "linux");
-        assert!(x.starts_with("鼠标后退键 ") && x.contains("重新连接"), "{x}");
     }
 }
