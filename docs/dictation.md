@@ -2533,6 +2533,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 - `HotkeyStatus.solo_recovered_at: Option<u64>`：最近一次自动恢复的时间（毫秒）。钩子正在恢复时 `HotkeyStatus.solo_loss: Option<SoloLoss>` 记下原因（`hook`：Windows 不让重新安装钩子；`accessibility`：macOS 拒绝事件监听，辅助功能权限被收回；`display`：与 X 服务器的连接断开），恢复后清空，`solo_pressed` 复位。壳只给原因，不拼文字：快捷键设置页按界面语言的词典（`settings.hotkey.solo.loss.*`，按键名作参数）说明哪个键、为什么，恢复后在单键一行下显示「已自动恢复（时间）」。装不上钩子的原因（`solo_error`）仍是壳写的文字，见 §29.10。
 - `sync_solo` 在钩子线程已经结束（转发循环退出）时换一个新钩子，不再「同一个键就保留旧钩子」（`regression_a_hook_whose_thread_ended_is_replaced`）。
 - 改了别的快捷键时 `apply` 重建整个 `HotkeyStatus`；单键钩子保留（同一个键、线程还在）时，钩子报过的情况照旧：`solo_pressed`、`solo_loss`、`solo_recovered_at` 从当前状态带过来（`HotkeyRegistry::store_applied`，与钩子边沿用同一把锁，期间到达的边沿不会被覆盖）。macOS 只在第一次重建失败时发 `Lost`，原先改一下组合快捷键就清掉了 `solo_loss`，钩子仍在重试时设置页却显示「已生效」（goal 审查 2026-10-30，`regression_a_lone_key_being_brought_back_stays_so_when_another_shortcut_changes`）。新装的钩子（换了键、线程结束后重装、录制快捷键之后）从自己的边沿开始。
+- 快捷键状态的每一处改动都在同一把锁里改完并发布（`HotkeyRegistry::change`：`apply`、钩子边沿、按下与读到的松开、录制快捷键），设置页听到的顺序就是改动的顺序。原先各处放开锁之后才发布：钩子的 `Lost` 落在 `apply` 改完与发布之间时先发布出去，`apply` 较旧的状态最后发布，留在桥的缓存里，设置页又显示「已生效」（goal 审查第 2 轮，2026-10-30，`regression_a_hook_edge_is_never_overtaken_by_an_older_rebuilt_status`：经真实的 `Bridge` 交错发布）。
 
 ### 29.4 漏掉的松开（`apps/desktop/src-tauri/src/held.rs`）
 
