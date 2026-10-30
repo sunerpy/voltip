@@ -3,7 +3,7 @@
 //! automatic backups' folder (`<data dir>/backups`, or the folder `Settings.backup.folder` names).
 //!
 //! A file is an automatic backup by its name alone: `voltip-auto-<yyyyMMdd-HHmmss>-<kind>-<device>`,
-//! in local time, with [`BACKUP_EXTENSION`] (and `-2`, `-3`… before it when the second is taken).
+//! in local time, with [`BACKUP_EXTENSION`] (and `-2` to `-99` before it when the second is taken).
 //! `<device>` is the [`device_tag`] of the computer that wrote it (user decision D23, 2026-10-30):
 //! several computers may keep their backups in one synced folder, and each manages its own alone.
 //! [`prune`] keeps a computer's newest [`AUTO_KEEP`], its three kinds together, ordered by the time
@@ -207,8 +207,8 @@ pub fn parse_auto_name(name: &str) -> Option<AutoName> {
     let stamp = NaiveDate::from_ymd_opt(i32::try_from(year).ok()?, month, day)?.and_hms_opt(hour, minute, second)?;
     let (word, rest) = rest.split_once('-')?;
     let (device, same) = match rest.split_once('-') {
-        // Written by `auto_name` alone: 2 or more, without a leading zero.
-        Some((device, n)) if !n.starts_with('0') => (device, digits(n).filter(|n| *n >= 2)?),
+        // Written by `write_auto` alone: 2 to `MAX_SAME_SECOND`, without a leading zero.
+        Some((device, n)) if !n.starts_with('0') => (device, digits(n).filter(|n| (2..=MAX_SAME_SECOND).contains(n))?),
         Some(_) => return None,
         None => (rest, 1),
     };
@@ -419,6 +419,8 @@ mod tests {
             "voltip-auto-20261030-070509-weekly-a7c4198e-x.voltip-backup",
             "voltip-auto-20261030-070509-weekly-a7c4198e-.voltip-backup",
             "voltip-auto-20261030-070509-weekly-a7c4198e-2-3.voltip-backup",
+            "voltip-auto-20261030-070509-weekly-a7c4198e-100.voltip-backup",
+            "voltip-auto-20261030-070509-weekly-a7c4198e-4294967296.voltip-backup",
             "VOLTIP-AUTO-20261030-070509-WEEKLY-A7C4198E.voltip-backup",
             "my-voltip-auto-20261030-070509-weekly-a7c4198e.voltip-backup",
             // The computer's tag: eight lower-case hex digits, nothing else.
@@ -583,6 +585,27 @@ mod tests {
         let removed = prune(dir.path(), THERE, AUTO_KEEP, None);
         assert_eq!(removed, theirs[..5].to_vec());
         assert_eq!(list(dir.path(), Some(HERE)).unwrap().len(), AUTO_KEEP);
+    }
+
+    /// Regression (goal review, 2026-10-31): a same-second number past 99, which `write_auto` never
+    /// writes, made a file an automatic backup, so a file named that way counted among the five and
+    /// could be deleted. Only `-2` to `-99` are; such a file is not listed, not counted for the
+    /// weekly backup, and never deleted.
+    #[test]
+    fn regression_a_same_second_number_past_99_is_not_an_automatic_backup() {
+        let stamp = at("2026-10-30 07:05:09");
+        let last = auto_name(AutoKind::Weekly, stamp, HERE, MAX_SAME_SECOND);
+        assert_eq!(parse_auto_name(&last), parsed(stamp, AutoKind::Weekly, HERE, MAX_SAME_SECOND));
+        for n in [100, 101, 999, 4_000_000] {
+            assert_eq!(parse_auto_name(&format!("voltip-auto-20261030-070509-weekly-{HERE}-{n}.voltip-backup")), None, "-{n}");
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let odd = touch(dir.path(), &format!("voltip-auto-20261031-090000-weekly-{HERE}-100.voltip-backup"));
+        assert_eq!(list(dir.path(), Some(HERE)).unwrap(), Vec::new(), "alone in the folder, it is no automatic backup: the weekly one is due");
+        let mine: Vec<PathBuf> = (1..=6).map(|day| touch(dir.path(), &format!("voltip-auto-202610{day:02}-090000-weekly-{HERE}.voltip-backup"))).collect();
+        assert_eq!(list(dir.path(), Some(HERE)).unwrap().len(), 6);
+        assert_eq!(prune(dir.path(), HERE, AUTO_KEEP, None), [mine[0].clone()], "the oldest of this computer's six goes");
+        assert!(odd.exists(), "never deleted");
     }
 
     /// A clock that went back names the backup just written older than the five there: it stays
