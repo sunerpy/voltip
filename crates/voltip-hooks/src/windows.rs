@@ -53,7 +53,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, CreateWindowExW, DEVICE_NOTIFY_WINDOW_HANDLE, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, HC_ACTION, HHOOK,
     KBDLLHOOKSTRUCT, LLKHF_INJECTED, LLMHF_INJECTED, MSG, MSLLHOOKSTRUCT, PostThreadMessageW, RI_KEY_BREAK, RI_MOUSE_BUTTON_4_DOWN, RI_MOUSE_BUTTON_4_UP,
     RI_MOUSE_BUTTON_5_DOWN, RI_MOUSE_BUTTON_5_UP, RI_MOUSE_LEFT_BUTTON_DOWN, RI_MOUSE_MIDDLE_BUTTON_DOWN, RI_MOUSE_MIDDLE_BUTTON_UP,
-    RI_MOUSE_RIGHT_BUTTON_DOWN, RegisterClassW, SetWindowsHookExW, UnhookWindowsHookEx, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_APP, WM_INPUT, WM_KEYDOWN, WM_KEYUP,
+    RI_MOUSE_RIGHT_BUTTON_DOWN, RegisterClassW, SetWindowsHookExW, UnhookWindowsHookEx, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_INPUT, WM_KEYDOWN, WM_KEYUP,
     WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_QUIT, WM_RBUTTONDOWN, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSW,
     WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP, XBUTTON1, XBUTTON2,
 };
@@ -70,7 +70,7 @@ const _: () = assert!(watch::WTS_SESSION_UNLOCK as u32 == windows_sys::Win32::UI
 /// A thread message that removes the hooks without telling the watch, as the system does (the
 /// tests' stand-in for `LowLevelHooksTimeout`).
 #[cfg(test)]
-const WM_FORCE_UNHOOK: u32 = WM_APP + 1;
+const WM_FORCE_UNHOOK: u32 = windows_sys::Win32::UI::WindowsAndMessaging::WM_APP + 1;
 
 /// What the hook procedures need.
 struct HookState {
