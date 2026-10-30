@@ -219,8 +219,8 @@ pub const CATALOGUE: &[ModelEntry] = &[
         recommended: true,
         repo: "handy-computer/Qwen3-ASR-0.6B-gguf",
         files: &[ModelFile { name: "Qwen3-ASR-0.6B-Q6_K.gguf", size: 690_417_824, sha256: "3b051f108f03c0c91bbe1a3b2c1ee15e3ed51e4caec2a48751b01f2a21441cc3" }],
-        // docs/dictation.md §29: the English error rate doubles from 30 s to 60 s, and 90 s input
-        // can run out of the decoder's output budget.
+        // docs/dictation.md §29.8 (transcribe-cpp 0.4.1): the English error rate doubles from 30 s
+        // to 60 s (WER 4.8 % → 10.7 % on Linux, 5.2 % → 10.9 % on the Windows build machine).
         max_piece: Duration::from_secs(30),
     },
     ModelEntry {
@@ -238,7 +238,8 @@ pub const CATALOGUE: &[ModelEntry] = &[
             size: 1_692_554_208,
             sha256: "c75a961b7134a6c952d89797865cb0d0376876185aee04ef6d12c31c2952e4e1",
         }],
-        // docs/dictation.md §29: not measured yet; the rule's floor until it is.
+        // docs/dictation.md §29.8 (measured on Linux only, D17): the English error rate doubles from
+        // 30 s to 60 s (WER 7.5 % → 14.3 %).
         max_piece: Duration::from_secs(30),
     },
     ModelEntry {
@@ -272,7 +273,8 @@ pub const CATALOGUE: &[ModelEntry] = &[
             ModelFile { name: "model.int8.onnx", size: 227_330_205, sha256: "90bc03034ae1bef9575f8cc798cd1519c8be8aa9e8b458a033e32017ff4d584c" },
             ModelFile { name: "tokens.txt", size: 75_354, sha256: "6c0e3b35cece259829e6cb5b8d90d13db88f61ea3a2953d11898e4b2bfd7a2e2" },
         ],
-        // docs/dictation.md §29: not measured yet; the rule's floor until it is.
+        // docs/dictation.md §29.8: English loses words from 30 s to 60 s (WER 29.2 % → 40.2 % on
+        // Linux); Chinese stays within a point up to 60 s, not past it.
         max_piece: Duration::from_secs(30),
     },
     ModelEntry {
