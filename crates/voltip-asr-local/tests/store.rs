@@ -311,9 +311,13 @@ async fn wrong_sha256_fails_and_keeps_the_part_and_the_retry_starts_over() {
     );
 }
 
+/// The cancel lands while the server holds the request back for 30 s. It used to come at a fixed
+/// 200 ms, before the store had always asked: under a full load (2 of 200 runs, 2026-10-30) the
+/// download was cancelled before it reported where it resumes. It now comes once the server has
+/// the request, as it does for a user waiting on a slow source.
 #[tokio::test]
 async fn cancel_stops_the_download_and_keeps_the_part() {
-    let server = MockServer::start().await;
+    let server = Arc::new(MockServer::start().await);
     Mock::given(method("GET"))
         .and(path(format!("/{REPO}/model.int8.onnx")))
         .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(30)).set_body_bytes(model_bytes()))
@@ -327,15 +331,23 @@ async fn cancel_stops_the_download_and_keeps_the_part() {
     let store = store(dir.path(), vec![Source::Base(server.uri())]);
     let cancel = CancelToken::new();
     let (progress, seen) = sink();
-    let canceller = cancel.clone();
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(200)).await;
+    let (canceller, watched) = (cancel.clone(), server.clone());
+    let cancelled_at = tokio::spawn(async move {
+        // At most 20 s, well inside the server's delay: a request that never comes fails below.
+        let _ = tokio::time::timeout(Duration::from_secs(20), async {
+            while watched.received_requests().await.is_none_or(|asked| asked.is_empty()) {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await;
         canceller.cancel();
+        std::time::Instant::now()
     });
-    let started = std::time::Instant::now();
     let err = store.download("tiny", progress, cancel.clone()).await.unwrap_err();
     assert_eq!(err, StoreError::Cancelled);
-    assert!(started.elapsed() < Duration::from_secs(10), "cancel is prompt, not the server's delay");
+    let cancelled_at = cancelled_at.await.unwrap();
+    assert!(cancelled_at.elapsed() < Duration::from_secs(10), "cancel is prompt, not the server's delay");
+    assert_eq!(server.received_requests().await.map(|asked| asked.len()), Some(1), "cancelled while the server held the request");
     assert_eq!(std::fs::metadata(&part).unwrap().len(), 12_345, ".part kept for a resume");
     assert_eq!(seen.lock().as_slice(), &[ModelInstallState::Downloading { received: 12_345, total: MODEL_SIZE as u64, file: "model.int8.onnx".into() }]);
     assert!(cancel.is_cancelled());
