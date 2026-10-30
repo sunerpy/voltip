@@ -159,13 +159,23 @@ impl Recognizer for Gguf {
         // No language hint: the model detects the language (docs/dictation.md §17).
         let result = self.session.run(pcm, &RunOptions::default());
         self.session.clear_cancel_token();
-        let transcript = result.map_err(|e| RecognizeError::new(failure(&e), e.to_string()))?;
+        let transcript = result.map_err(|e| recognize_error(&e))?;
         tracing::debug!(language = ?transcript.language, "gguf transcription done");
         Ok(transcript.text)
     }
 
     fn backend(&self) -> String {
         self.backend.clone()
+    }
+}
+
+/// A transcribe.cpp error as the transcriber takes it (docs/dictation.md §29): `Aborted` comes
+/// only from the take's cancel token, so it is the take's cancel; an output budget or a repetition
+/// that ends a run is a failure of the run, whether or not the take is being cancelled.
+pub fn recognize_error(error: &transcribe_cpp::Error) -> RecognizeError {
+    match error {
+        transcribe_cpp::Error::Aborted { .. } => RecognizeError::cancelled(error.to_string()),
+        _ => RecognizeError::new(failure(error), error.to_string()),
     }
 }
 
@@ -251,6 +261,9 @@ mod tests {
         ];
         for (error, kind) in cases {
             assert_eq!(failure(&error), kind, "{error}");
+            // Only the cancel token's abort is the take's cancel; the instance stays for that alone.
+            let taken = recognize_error(&error);
+            assert_eq!((taken.kind, taken.by_cancel), (kind, matches!(error, E::Aborted { .. })), "{error}");
         }
     }
 

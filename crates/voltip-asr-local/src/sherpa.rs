@@ -16,7 +16,7 @@ use voltip_core::dictation::{DictationError, LIVE_SAMPLE_RATE_HZ, Segment, Strea
 use crate::catalogue::{Engine, ModelEntry};
 use crate::compute::Compute;
 use crate::streaming::{StreamingLoader, StreamingRecognizer};
-use crate::transcriber::{Abort, LocalFailure, RecognizeError, Recognizer, RecognizerLoader, default_threads};
+use crate::transcriber::{Abort, RecognizeError, Recognizer, RecognizerLoader, default_threads};
 use crate::vad::{MAX_SPEECH, MIN_SILENCE, MIN_SPEECH, SpeechSpan, THRESHOLD, VAD_SAMPLE_RATE_HZ, VadLoader, VoiceActivity, WINDOW_SAMPLES};
 
 /// Loads SenseVoice / Paraformer recognisers from an installed model directory.
@@ -60,7 +60,7 @@ impl Recognizer for Offline {
     /// end, unless it was cancelled before it began.
     fn transcribe(&mut self, sample_rate: u32, samples: &[f32], abort: &Abort) -> Result<String, RecognizeError> {
         if abort.is_aborted() {
-            return Err(RecognizeError::new(LocalFailure::Aborted, "cancelled"));
+            return Err(RecognizeError::cancelled("cancelled"));
         }
         let stream = self.0.create_stream();
         stream.accept_waveform(i32::try_from(sample_rate).map_err(|_| RecognizeError::other("sample rate out of range"))?, samples);

@@ -60,17 +60,26 @@ pub struct RecognizeError {
     pub kind: LocalFailure,
     /// The engine's message.
     pub message: String,
+    /// The take's own cancel stopped the run ([`RecognizeError::cancelled`]): no fault of the
+    /// recogniser, which goes back to the pool. Any other failure drops it, a decoder stopped by
+    /// its output budget or a repetition too, even while the take is being cancelled.
+    pub by_cancel: bool,
 }
 
 impl RecognizeError {
     /// A failure of `kind`.
     pub fn new(kind: LocalFailure, message: impl Into<String>) -> Self {
-        Self { kind, message: message.into() }
+        Self { kind, message: message.into(), by_cancel: false }
     }
 
     /// A failure the engine does not classify.
     pub fn other(message: impl Into<String>) -> Self {
         Self::new(LocalFailure::Other, message)
+    }
+
+    /// The run did not start, or stopped, because the take was cancelled ([`LocalFailure::Aborted`]).
+    pub fn cancelled(message: impl Into<String>) -> Self {
+        Self { by_cancel: true, ..Self::new(LocalFailure::Aborted, message) }
     }
 }
 
@@ -470,7 +479,7 @@ impl Job {
         let mut texts = Vec::with_capacity(pieces.len());
         for piece in pieces {
             if self.abort.is_aborted() {
-                return Err(Failed { error: RecognizeError::new(LocalFailure::Aborted, "cancelled"), on_gpu });
+                return Err(Failed { error: RecognizeError::cancelled("cancelled"), on_gpu });
             }
             let Some(recognizer) = lease.recognizer() else { return Err(Failed { error: RecognizeError::other("recogniser vanished"), on_gpu }) };
             let started = Instant::now();
@@ -487,8 +496,9 @@ impl Job {
                             self.shared.pool.evict(self.entry.id);
                         }
                         // A run the take's own cancel stopped: no fault of the instance.
-                        LocalFailure::Aborted if self.abort.is_aborted() => {}
-                        // Any other failure: the next take does not use this instance again.
+                        _ if error.by_cancel => {}
+                        // Any other failure, even one that ends a cancelled take's run: the next
+                        // take does not use this instance again.
                         LocalFailure::Device | LocalFailure::Memory | LocalFailure::InputTooLong | LocalFailure::Aborted | LocalFailure::Other => {
                             lease.discard()
                         }
@@ -740,6 +750,9 @@ mod tests {
         running: AtomicUsize,
         /// Each call's input length, in order.
         lengths: Mutex<Vec<usize>>,
+        /// A call whose take was cancelled by the time it runs stops with the cancel, as
+        /// transcribe.cpp's check before a Qwen3-ASR run does; otherwise it runs to its end.
+        stop_on_cancel: std::sync::atomic::AtomicBool,
     }
 
     impl Script {
@@ -769,6 +782,25 @@ mod tests {
         fn lengths(&self) -> Vec<usize> {
             self.lengths.lock().clone()
         }
+
+        fn stop_on_cancel(&self, on: bool) {
+            self.stop_on_cancel.store(on, Ordering::SeqCst);
+        }
+    }
+
+    /// A take of `speech` on `t` whose call is held, cancelled while the call runs; returns once
+    /// the call was released and has ended.
+    async fn cancel_while_held(t: &LocalTranscriber, loader: &FakeLoader, speech: &[u8]) {
+        loader.script.hold(1);
+        let cancelled = tokio::spawn({
+            let (t, speech) = (t.clone(), speech.to_vec());
+            async move { t.transcribe(&speech, None, &[]).await }
+        });
+        loader.script.until_running(1).await;
+        cancelled.abort();
+        assert!(cancelled.await.unwrap_err().is_cancelled());
+        loader.script.release();
+        until(|| loader.script.running() == 0, "the cancelled call ended").await;
     }
 
     struct Echo {
@@ -779,7 +811,7 @@ mod tests {
     }
 
     impl Recognizer for Echo {
-        fn transcribe(&mut self, sample_rate: u32, samples: &[f32], _abort: &Abort) -> Result<String, RecognizeError> {
+        fn transcribe(&mut self, sample_rate: u32, samples: &[f32], abort: &Abort) -> Result<String, RecognizeError> {
             let script = &self.script;
             script.lengths.lock().push(samples.len());
             script.running.fetch_add(1, Ordering::SeqCst);
@@ -797,6 +829,9 @@ mod tests {
             }
             drop(released);
             script.running.fetch_sub(1, Ordering::SeqCst);
+            if script.stop_on_cancel.load(Ordering::SeqCst) && abort.is_aborted() {
+                return Err(RecognizeError::cancelled("cancelled"));
+            }
             let on_gpu = self.backend != "CPU";
             let failure = {
                 let mut failures = script.failures.lock();
@@ -1157,9 +1192,10 @@ mod tests {
     /// Regression (R04, 2026-10-30): a recognition that failed with an input that was too long, a
     /// decoder that stopped early (output budget, repeating output) or an error the engine does not
     /// classify (every sherpa-onnx error) left its instance in the pool for the next take. Every
-    /// failure of a take that was not cancelled now drops the instance that failed, and the next
-    /// take loads afresh; another idle instance of the model stays. A take's own cancel is not a
-    /// failure of its instance: a cancelled take gives it back.
+    /// failure now drops the instance that failed, and the next take loads afresh; another idle
+    /// instance of the model stays. Only a run that the take's own cancel stopped gives its
+    /// instance back: a failure of any other kind drops it, also when the take was cancelled
+    /// meanwhile (goal review round 2, 2026-10-30).
     #[tokio::test]
     async fn regression_an_inference_error_drops_the_instance_that_failed() {
         let dir = tempfile::tempdir().unwrap();
@@ -1176,6 +1212,20 @@ mod tests {
             qwen.transcribe(&speech, None, &[]).await.unwrap();
             assert_eq!(loader.loads(), loads + 1, "{kind}: the next take loads afresh");
         }
+        // A run the take's cancel stopped (transcribe.cpp's check before a run) gives it back.
+        let loads = loader.loads();
+        loader.script.stop_on_cancel(true);
+        cancel_while_held(&qwen, &loader, &speech).await;
+        until(|| qwen.shared.pool.counts() == (1, 0, 0), "the cancelled take's instance back").await;
+        loader.script.stop_on_cancel(false);
+        qwen.transcribe(&speech, None, &[]).await.unwrap();
+        assert_eq!(loader.loads(), loads, "reused");
+        // An output budget or a repetition that ends a cancelled take's run is a failure all the same.
+        loader.script.fail(false, LocalFailure::Aborted);
+        cancel_while_held(&qwen, &loader, &speech).await;
+        until(|| qwen.shared.pool.counts() == (0, 0, 0), "the instance that failed dropped").await;
+        qwen.transcribe(&speech, None, &[]).await.unwrap();
+        assert_eq!(loader.loads(), loads + 1, "loaded afresh");
         // Only the instance that failed: the model's other one stays.
         let t = qwen.select("sense-voice-small");
         loader.script.hold(1);
@@ -1191,21 +1241,6 @@ mod tests {
         loader.script.fail(false, LocalFailure::Other);
         assert!(t.transcribe(&speech, None, &[]).await.is_err());
         assert_eq!((t.shared.pool.counts(), t.loaded().as_deref()), ((1, 0, 0), Some("sense-voice-small")));
-        // A cancelled take's piece that stops (transcribe.cpp saw the cancel) gives its instance back.
-        let loads = loader.loads();
-        loader.script.hold(1);
-        loader.script.fail(false, LocalFailure::Aborted);
-        let cancelled = tokio::spawn({
-            let (t, speech) = (t.clone(), speech.clone());
-            async move { t.transcribe(&speech, None, &[]).await }
-        });
-        loader.script.until_running(1).await;
-        cancelled.abort();
-        assert!(cancelled.await.unwrap_err().is_cancelled());
-        loader.script.release();
-        until(|| loader.script.running() == 0 && t.shared.pool.counts() == (1, 0, 0), "the cancelled take's instance back").await;
-        t.transcribe(&speech, None, &[]).await.unwrap();
-        assert_eq!(loader.loads(), loads, "reused");
     }
 
     /// Regression (R04, 2026-10-30): a take cancelled while transcribe.cpp ran kept the one

@@ -2553,10 +2553,10 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 | `memory` | `OutOfMemory` | 同上 |
 | `model` | `ModelLoad`、`ModelFileNotFound`，加载失败 | 丢掉这个模型的全部实例：空闲的立即丢，正在用的用完再丢 |
 | `input_too_long` | `InputTooLong` | 丢掉这个实例 |
-| `aborted` | `Aborted`、`OutputTruncated`、`OutputRepetition`（0.4 起，输出开始重复时提前停止） | 录音自己的取消让推理停下时保留实例，其余丢掉；后两种这一段没有完整的文字，识别失败 |
+| `aborted` | `Aborted`、`OutputTruncated`、`OutputRepetition`（0.4 起，输出开始重复时提前停止） | `Aborted` 只来自录音的取消令牌，是录音自己的取消，保留实例；`OutputTruncated`、`OutputRepetition` 丢掉实例，取消同时发生也一样，这一段没有完整的文字，识别失败 |
 | `other` | 其余；sherpa-onnx 的错误都是这一种 | 丢掉这个实例 |
 
-- **出错的实例不再用**：除了被录音自己的取消停下的推理，任何错误都让下一次识别不再用出错的那个实例，而是重新加载（`model` 连同这个模型的其他实例一起丢掉；同一模型的其他空闲实例在别的错误后照常使用）。代价是出错后的下一次识别多一次加载；预热（§10.7）只在启动和改设置后进行。
+- **出错的实例不再用**：除了被录音自己的取消停下的推理（`RecognizeError.by_cancel`：transcribe.cpp 的 `Aborted`，以及 sherpa-onnx 和转写器在推理开始前看到的取消），任何错误都让下一次识别不再用出错的那个实例，而是重新加载（`model` 连同这个模型的其他实例一起丢掉；同一模型的其他空闲实例在别的错误后照常使用）。代价是出错后的下一次识别多一次加载；预热（§10.7）只在启动和改设置后进行。
 
 - **改用 CPU**：GPU 上出现 `device` 或 `memory` 时，这次录音以 `Compute { device: Cpu }` 加载并重试一次。10 分钟内第二次（`GPU_STRIKE_WINDOW`）之后，这次运行剩下的时间里本机模型都在 CPU 上（内存里的标志，重启 Voltip 恢复）。CPU 也失败时，错误是两次的说明合在一起：「显卡出错（…），改用 CPU 也失败（…）」。
 - **说明实际后端**：`Transcript.backend_note: Option<AsrNote>`（`gpu_failed_ran_on_cpu`：这一条改用 CPU；`gpu_off_until_restart`：显卡多次出错，重启前都用 CPU），进历史条目的可选字段 `asr_note`（旧条目没有这个字段照常读取）；历史详情的技术信息里显示「识别方式」。长录音取各段里最重的一条。
@@ -2617,7 +2617,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 - `make lint` 的 `check-no-device-event-filter.sh`；`scripts/measure` 的 Python 单测（`make verify` 的 `measure-helpers`，含 `--estimate`：`test_a_model_not_measured_on_a_machine_counts_with_its_estimate_there`）；许可清单（`release-helpers`：`test_every_component_transcribe_cpp_vendors_carries_its_text`、`test_a_component_transcribe_cpp_vendors_that_the_notices_do_not_know_fails`）。
 - 真机：Linux 上 `tests/real.rs` 全部真模型测试（0.6B、1.7B、SenseVoice、Paraformer、实时识别、VAD）；Windows 构建机的 `gate test`、`gate clippy`、`gate real`；托管 CI 的两台 Mac、`hooks-windows`、`windows-cross`（`make windows-x64`，Vulkan）、`windows-native`、`android` 与 `smoke-desktop`；本机 `make linux-x64`（Vulkan）。
 - 依赖时间和线程的测试在满载下（每个逻辑 CPU 一个空转循环）各跑 200 次：`HookWatch`、`held_key` 与 `solo_key`、`held.rs` 与 `hotkey.rs`、`regression_a_missed_release_stops_a_hold_take`、`transcriber.rs` 与 `pool.rs` 的全部测试。第一轮 `regression_a_missed_release_stops_a_hold_take` 有 1 次失败（§29.4 的按下被提前清掉），修正后它与 `held.rs` 各再跑 300 次无失败。
-- 失败原因的确认：钩子判定、对账（含按下被提前清掉的回归）和 X11 重连的测试先对着未实现的版本失败；`voltip-asr-local` 的恢复规则与实现一同写成，用 11 处临时改动（去掉 CPU 重试、显卡永不关闭、不驱逐、取消不设 `Abort`、sherpa 只留一个实例、不分段、段间不看取消、保留被驱逐的实例、两个模型同时在内存、重复加载、预热重复加载）逐一确认对应的测试以预期的原因失败。完成评审（2026-10-30）指出的两处，`regression_an_inference_error_drops_the_instance_that_failed` 与 `regression_a_cancelled_sherpa_take_holds_back_no_other_language_or_model` 先对着旧实现失败：出错后实例还在池里；换成英文的下一次识别等满 `LOCK_WAIT`，返回「上一次识别还没结束」。
+- 失败原因的确认：钩子判定、对账（含按下被提前清掉的回归）和 X11 重连的测试先对着未实现的版本失败；`voltip-asr-local` 的恢复规则与实现一同写成，用 11 处临时改动（去掉 CPU 重试、显卡永不关闭、不驱逐、取消不设 `Abort`、sherpa 只留一个实例、不分段、段间不看取消、保留被驱逐的实例、两个模型同时在内存、重复加载、预热重复加载）逐一确认对应的测试以预期的原因失败。完成评审（2026-10-30）指出的两处，`regression_an_inference_error_drops_the_instance_that_failed` 与 `regression_a_cancelled_sherpa_take_holds_back_no_other_language_or_model` 先对着旧实现失败：出错后实例还在池里；换成英文的下一次识别等满 `LOCK_WAIT`，返回「上一次识别还没结束」。第二轮评审指出的取消与输出截断或重复同时发生的情形，同一测试的那一段也先对着旧实现失败（实例没有丢掉）。
 
 ### 29.10 未做与限制
 
