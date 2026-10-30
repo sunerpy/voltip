@@ -36,6 +36,7 @@ pub(super) fn entry(text: &str) -> HistoryEntry {
         preset: None,
         origin: None,
         processed: None,
+        file: None,
     }
 }
 
@@ -188,7 +189,7 @@ fn outcome_and_entry_serialize_tagged_and_omit_absent_options() {
     assert!(json.ends_with(r#""starred":false,"mode":"whole_take","kind":"dictation"}"#), "segments / live_error / edit are omitted when None: {json}");
     let streamed = HistoryEntry {
         mode: OutputMode::LiveInject,
-        segments: Some(vec![Segment { text: "你好。".into(), start_ms: 0, end_ms: 900 }]),
+        segments: Some(vec![Segment { text: "你好。".into(), refined: None, start_ms: 0, end_ms: 900 }]),
         live_error: Some("decoder panicked".into()),
         ..e
     };
@@ -410,6 +411,56 @@ fn only_dictations_count_toward_the_statistics() {
     assert!(counts_for_stats(&phone(OriginKind::Take)), "the phone as a microphone is a dictation");
     assert!(!counts_for_stats(&phone(OriginKind::Typed)));
     assert!(!counts_for_stats(&phone(OriginKind::Clipboard)));
+    // docs/dictation.md §31: an imported file is no dictation (it may hold other people's words).
+    assert!(!counts_for_stats(&imported(entry("导入"))));
+}
+
+/// `entry` as the transcript of an imported file.
+fn imported(entry: HistoryEntry) -> HistoryEntry {
+    HistoryEntry { file: Some(ImportedFile { name: "会议录音.m4a".into(), duration_ms: 1_800_000 }), ..entry }
+}
+
+/// docs/dictation.md §31: the file's name is kept, never its path; the field is left out of the
+/// JSON when absent, and entries from before read without it.
+#[test]
+fn an_imported_file_round_trips_and_is_omitted_when_absent() {
+    let with = imported(entry("导入"));
+    let json = serde_json::to_value(&with).unwrap();
+    assert_eq!(json["file"], serde_json::json!({ "name": "会议录音.m4a", "duration_ms": 1_800_000 }));
+    assert_eq!(serde_json::from_value::<HistoryEntry>(json).unwrap(), with);
+    let without = serde_json::to_value(entry("听写")).unwrap();
+    assert!(without.get("file").is_none(), "{without}");
+    assert_eq!(serde_json::from_value::<HistoryEntry>(without).unwrap().file, None);
+}
+
+/// docs/dictation.md §31: what the dictionary learns from (the suggestions, the MCP service's
+/// correction summary) is the user's own dictations; an imported file's text never is.
+#[test]
+fn regression_imported_files_stay_out_of_the_recent_texts() {
+    let dir = tempfile::tempdir().unwrap();
+    let reader = HistoryReader::new(dir.path());
+    let mut store = HistoryStore::open(dir.path());
+    let base = 1_758_700_000_000;
+    store.push(HistoryEntry { at_ms: base, ..entry("自己说的") }, MAX_ENTRIES).unwrap();
+    store.push(HistoryEntry { at_ms: base + 1, ..imported(entry("文件里别人说的")) }, MAX_ENTRIES).unwrap();
+    store.push(HistoryEntry { at_ms: base + 2, ..entry("又说了一句") }, MAX_ENTRIES).unwrap();
+    let texts = reader.recent_texts(10).unwrap();
+    assert_eq!(texts.iter().map(|t| t.raw_text.as_str()).collect::<Vec<_>>(), vec!["又说了一句", "自己说的"]);
+}
+
+/// docs/dictation.md §31: the history page's search finds an imported file's entry by the file's
+/// name, which its row shows.
+#[test]
+fn an_imported_entry_is_found_by_its_file_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let reader = HistoryReader::new(dir.path());
+    let mut store = HistoryStore::open(dir.path());
+    store.push(imported(entry("今天过一下发布安排")), MAX_ENTRIES).unwrap();
+    store.push(entry("会议改到明天"), MAX_ENTRIES).unwrap();
+    let found = reader.query(&page(HistoryQuery { query: "会议录音".into(), ..Default::default() })).unwrap();
+    assert_eq!(found.entries.iter().map(|e| e.raw_text.as_str()).collect::<Vec<_>>(), vec!["今天过一下发布安排"]);
+    let found = reader.query(&page(HistoryQuery { query: ".M4A".into(), ..Default::default() })).unwrap();
+    assert_eq!(found.entries.len(), 1, "case-insensitive, like the rest of the search");
 }
 
 /// Regression (docs/dictation.md §28): a paste the insert check found not written is not
@@ -534,6 +585,8 @@ fn stats_add_up_dictations_between_the_boundaries_and_leave_out_the_rest() {
             MAX_ENTRIES,
         )
         .unwrap();
+    // An imported file (docs/dictation.md §31): no dictation, no time saved.
+    store.push(imported(dictation(4 * hour, "一小时的会议录音", "一小时的会议录音。")), MAX_ENTRIES).unwrap();
     let stats = reader.stats(&boundaries).unwrap();
     let day = |count, raw_chars, corrected_chars| HistoryStatsBucket {
         count,
@@ -797,7 +850,7 @@ fn a_database_from_before_gets_its_entries_numbered() {
 fn a_batch_counts_encoded_bytes_and_leaves_the_segments_out() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = HistoryStore::open(dir.path());
-    let segment = Segment { text: "第一段".into(), start_ms: 0, end_ms: 900 };
+    let segment = Segment { text: "第一段".into(), refined: None, start_ms: 0, end_ms: 900 };
     let all: Vec<HistoryEntry> =
         (0..5u64).map(|i| HistoryEntry { at_ms: 1_758_700_000_000 + i, segments: Some(vec![segment.clone(); 50]), ..entry(&"字".repeat(1000)) }).collect();
     for e in &all {

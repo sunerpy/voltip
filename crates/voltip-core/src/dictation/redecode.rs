@@ -307,7 +307,7 @@ impl RedecodeSession {
                 let text = t.text.trim().to_owned();
                 if !text.is_empty() {
                     self.model = t.model;
-                    self.committed.push(Segment { text: text.clone(), start_ms, end_ms });
+                    self.committed.push(Segment { text: text.clone(), refined: None, start_ms, end_ms });
                     self.events.push_back(StreamEvent::Endpoint { text, start_ms, end_ms });
                 }
             }
@@ -520,7 +520,14 @@ mod tests {
             ]
         );
         // The open sentence at the end is the tail; the closed one stays committed.
-        assert_eq!(fin, StreamFinal { committed: vec![Segment { text: "第3段。".into(), start_ms: 200, end_ms: 3000 }], tail: "第5段。".into(), model: None });
+        assert_eq!(
+            fin,
+            StreamFinal {
+                committed: vec![Segment { text: "第3段。".into(), refined: None, start_ms: 200, end_ms: 3000 }],
+                tail: "第5段。".into(),
+                model: None
+            }
+        );
         // The previews grew by a second from the pre-roll on; the close carried the sentence with
         // its pause; the second sentence starts with the 0.2 s of silence before it.
         assert_eq!(transcriber.durations_ms(), [1000, 2000, 3600, 1000, 1600]);

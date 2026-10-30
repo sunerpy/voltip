@@ -10,6 +10,10 @@
 //!   cargo test -p voltip-asr-local --test real -- --ignored --nocapture
 //! ```
 //!
+//! `real_imports_of_one_clip_agree_across_containers` (docs/dictation.md §31) also needs
+//! `VOLTIP_IMPORT_CLIP`, about 60 s of Chinese speech as a 16 kHz mono WAV, and ffmpeg
+//! (`VOLTIP_FFMPEG`, else `ffmpeg` on the PATH) to turn it into MP3, M4A and MKV on the spot.
+//!
 //! On a GPU host, `--features vulkan` (Linux / Windows, Vulkan SDK at build time) or macOS (Metal)
 //! makes `real_gguf_runs_where_the_compute_choice_says` run the GGUF tier on the GPU as well.
 //!
@@ -26,7 +30,7 @@ use voltip_asr_local::{
     CATALOGUE_VERSION, Compute, LocalDevice, LocalStreamingTranscriber, LocalTranscriber, MANIFEST_FILE, Manifest, ModelEntry, VadSegmenterFactory, VadTrimmer,
     entry, hardware, streaming_entry, vad_entry,
 };
-use voltip_core::dictation::{LIVE_CHUNK_SAMPLES, SegmenterFactory, StreamEvent, StreamingTranscriber, Transcriber};
+use voltip_core::dictation::{LIVE_CHUNK_SAMPLES, Segment, SegmenterFactory, StreamEvent, StreamingTranscriber, Transcriber};
 
 /// Stage `entry`'s files from `sources` (file name → path) into `root/<id>` with a manifest, as the
 /// store would have installed them; the sizes are checked against the catalogue.
@@ -705,5 +709,110 @@ async fn real_qwen3_redecode_preview_timing() {
         assert!(events.iter().any(|(_, e)| matches!(e, StreamEvent::Partial { .. })), "a preview came back while the sample played");
         let text: String = fin.committed.iter().map(|s| s.text.as_str()).chain(std::iter::once(fin.tail.as_str())).collect();
         assert!(text.contains("想创建"), "the sample says 想创建: {text}");
+    }
+}
+
+/// The times of every cue in `srt`, in milliseconds: `(start, end)` in order.
+fn cue_times(srt: &str) -> Vec<(u64, u64)> {
+    let ms = |t: &str| -> u64 {
+        let (hms, millis) = t.trim().split_once(',').unwrap();
+        let parts: Vec<u64> = hms.split(':').map(|p| p.parse().unwrap()).collect();
+        ((parts[0] * 60 + parts[1]) * 60 + parts[2]) * 1000 + millis.parse::<u64>().unwrap()
+    };
+    srt.lines().filter_map(|l| l.split_once(" --> ")).map(|(a, b)| (ms(a), ms(b))).collect()
+}
+
+/// An imported file (docs/dictation.md §31), from three containers: the 60 s clip turned into MP3,
+/// M4A (AAC) and MKV (Opus) by ffmpeg on the spot, each decoded by `voltip-media`, cut into the
+/// import's 3–15 s segments where the speech pauses and recognised by the local model, as the
+/// import and `--transcribe-file` do. The three texts agree word for word, every segment keeps to
+/// the bounds, and each file's subtitles go forward in time.
+#[tokio::test]
+#[ignore = "needs VOLTIP_IMPORT_CLIP (60 s, 16 kHz mono WAV), VOLTIP_LOCAL_MODEL_DIR, VOLTIP_LOCAL_VAD_MODEL and ffmpeg"]
+async fn real_imports_of_one_clip_agree_across_containers() {
+    use voltip_core::dictation::long::{self, SEGMENT_ATTEMPTS};
+    use voltip_core::history::export::{SegmentText, srt};
+    use voltip_core::import::{SEGMENT_BOUNDS, run::cut_points};
+
+    let clip = PathBuf::from(std::env::var("VOLTIP_IMPORT_CLIP").expect("VOLTIP_IMPORT_CLIP"));
+    let model_dir = PathBuf::from(std::env::var("VOLTIP_LOCAL_MODEL_DIR").expect("VOLTIP_LOCAL_MODEL_DIR"));
+    let vad = PathBuf::from(std::env::var("VOLTIP_LOCAL_VAD_MODEL").expect("VOLTIP_LOCAL_VAD_MODEL"));
+    let ffmpeg = std::env::var("VOLTIP_FFMPEG").unwrap_or_else(|_| "ffmpeg".into());
+    let id = if model_dir.to_string_lossy().contains("paraformer") { "paraformer-zh" } else { "sense-voice-small" };
+    let root = tempfile::tempdir().unwrap();
+    stage(root.path(), entry(id).unwrap(), |name| model_dir.join(name));
+    stage(root.path(), vad_entry(), |_| vad.clone());
+    let transcriber = LocalTranscriber::new(root.path()).select(id);
+    let segmenter = VadSegmenterFactory::new(root.path(), None);
+
+    let work = tempfile::tempdir().unwrap();
+    let mut texts = Vec::new();
+    for (name, codec) in
+        [("clip.mp3", ["-c:a", "libmp3lame", "-b:a", "64k"]), ("clip.m4a", ["-c:a", "aac", "-b:a", "64k"]), ("clip.mkv", ["-c:a", "libopus", "-b:a", "32k"])]
+    {
+        let media = work.path().join(name);
+        let status = std::process::Command::new(&ffmpeg)
+            .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i"])
+            .arg(&clip)
+            .args(codec)
+            .arg(&media)
+            .status()
+            .expect("ffmpeg runs");
+        assert!(status.success(), "ffmpeg could not make {name}");
+        let started = Instant::now();
+        let pcm = work.path().join(format!("{name}.pcm"));
+        let decoded = voltip_media::decode_to_pcm(&media, &pcm, &|_, _| {}, &voltip_core::CancelToken::new()).unwrap();
+        let decode_ms = started.elapsed().as_millis();
+        let seconds = decoded.samples as f64 / long::RATE as f64;
+        assert!((59.0..=61.5).contains(&seconds), "{name}: {seconds:.2} s decoded");
+        let cuts = cut_points(&pcm, decoded.samples, Some(&segmenter)).unwrap();
+        let mut segments = Vec::new();
+        let mut start = 0;
+        for &end in &cuts {
+            let wav = long::read_segment(&pcm, start, end).unwrap();
+            let mut answer = Err(voltip_core::DictationError::NoSpeech);
+            for _ in 0..SEGMENT_ATTEMPTS {
+                answer = long::recognize_segment(
+                    &transcriber,
+                    &wav,
+                    Some("zh"),
+                    &[],
+                    voltip_core::ChineseScript::default(),
+                    &voltip_core::usage::AsrCall::default(),
+                )
+                .await;
+                if answer.is_ok() {
+                    break;
+                }
+            }
+            let ms = |sample: u64| sample * 1000 / long::RATE;
+            segments.push(Segment { text: answer.unwrap().text, refined: None, start_ms: ms(start), end_ms: ms(end) });
+            start = end;
+        }
+        assert_eq!(start, decoded.samples, "{name}: the segments cover the file");
+        let lengths: Vec<u64> = segments.iter().map(|s| s.end_ms - s.start_ms).collect();
+        let (min, max) = (SEGMENT_BOUNDS.min * 1000 / long::RATE, SEGMENT_BOUNDS.max * 1000 / long::RATE);
+        assert!(lengths[..lengths.len() - 1].iter().all(|l| (min..=max).contains(l)), "{name}: segments of {lengths:?} ms");
+        assert!(lengths.last().is_some_and(|l| *l <= max), "{name}: the last segment {lengths:?}");
+        let pieces: Vec<(u64, u64, Option<String>)> = segments.iter().map(|s| (s.start_ms, s.end_ms, Some(s.text.clone()))).collect();
+        let text = long::assemble(&pieces, &[]);
+        let subtitles = srt(&segments, SegmentText::Raw);
+        let times = cue_times(&subtitles);
+        assert!(!times.is_empty(), "{name}: no cue");
+        let mut previous = 0;
+        for &(a, b) in &times {
+            assert!(a < b && a >= previous, "{name}: the cues go back in time: {times:?}");
+            previous = b;
+        }
+        println!("{name}: decoded in {decode_ms} ms, {} segments {lengths:?} ms, {} cues, text={text}", segments.len(), times.len());
+        assert!(is_chinese(&text), "{name}: {text}");
+        texts.push((name, text));
+    }
+    // The words agree; the model's punctuation may differ by a mark where a lossy codec changed the
+    // pause a little (measured 2026-10-30: one full stop between the MKV and the others).
+    let words = |text: &str| -> String { text.chars().filter(|c| c.is_alphanumeric()).collect() };
+    let (first, reference) = &texts[0];
+    for (name, text) in &texts[1..] {
+        assert_eq!(words(text), words(reference), "{name} and {first} were heard differently:\n{text}\n{reference}");
     }
 }

@@ -555,6 +555,36 @@ pub enum UiCommand {
         /// `asr_near` | `asr_out` | `refine_near` | `refine_out`.
         notice: voltip_core::usage::UsageNotice,
     },
+    /// Import audio or video files (docs/dictation.md §31): each joins the queue with the same
+    /// models and language, and the queue follows as `imports` events. Refused with the built-in
+    /// service, with the history off, and where the app imports nothing.
+    ImportAdd {
+        /// The files, as the file dialog or a drop named them.
+        paths: Vec<String>,
+        /// The recognition: an installed local model or a provider's model with the user's key.
+        asr: voltip_core::audio_cache::RecognitionChoice,
+        /// The polish, when the text is polished.
+        #[serde(default)]
+        refine: Option<voltip_core::import::PolishModel>,
+        /// The language hint; absent: detected.
+        #[serde(default)]
+        language: Option<String>,
+    },
+    /// Stop a running or waiting import: nothing goes into the history.
+    ImportCancel {
+        /// The job's UUID.
+        id: String,
+    },
+    /// Run a failed import again.
+    ImportRetry {
+        /// The job's UUID.
+        id: String,
+    },
+    /// Take a finished or failed import off the queue.
+    ImportRemove {
+        /// The job's UUID.
+        id: String,
+    },
 }
 
 impl UiCommand {
@@ -603,6 +633,15 @@ impl UiCommand {
             Self::AudioRetake { id, asr, refine } => {
                 CoreCommand::AudioRetake { id: parse_id(&id)?, models: voltip_core::audio_cache::RetakeModels { asr, refine } }
             }
+            Self::ImportAdd { paths, asr, refine, language } => CoreCommand::ImportAdd(
+                paths
+                    .into_iter()
+                    .map(|path| voltip_core::import::ImportRequest { path: path.into(), asr: asr.clone(), refine: refine.clone(), language: language.clone() })
+                    .collect(),
+            ),
+            Self::ImportCancel { id } => CoreCommand::ImportCancel(parse_id(&id)?),
+            Self::ImportRetry { id } => CoreCommand::ImportRetry(parse_id(&id)?),
+            Self::ImportRemove { id } => CoreCommand::ImportRemove(parse_id(&id)?),
             Self::SettingsSetOverlay { placement } => CoreCommand::SetOverlay(placement),
             Self::DevicesRefresh => CoreCommand::RefreshDevices,
             Self::ConnectivityCheck => CoreCommand::CheckConnectivity,

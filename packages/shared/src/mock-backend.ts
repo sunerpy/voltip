@@ -12,7 +12,7 @@
 // status and the history name). Used by `pnpm dev` without Tauri and by every functional test.
 // Timers are plain `setTimeout`/`setInterval` so fake timers drive it.
 import { z } from "zod";
-import type { Backend, EventListener, FrameListener, Unsubscribe } from "./backend";
+import type { Backend, DropListener, EventListener, FrameListener, Unsubscribe } from "./backend";
 import { type SampleHistoryRow, historyEntries } from "./fixtures/history";
 import builtinPresetTexts from "./fixtures/ipc/presets-builtin.json";
 import builtinSceneRows from "./fixtures/ipc/scenes-builtin.json";
@@ -27,6 +27,7 @@ import {
 import { checkProxySettings, proxyPasswordProblem, proxyProblemCoreText } from "./proxy";
 import { isMcpWrite, mcpAddress } from "./mcp";
 import { type RetakeModels, applyRetakeModels } from "./audio-cache";
+import { baseName } from "./imports";
 import {
   type AppRef,
   type ArgsOf,
@@ -48,8 +49,16 @@ import {
   type DictationFailureCode,
   type DictionaryEntry,
   type EntrySource,
+  type ImportFailure,
+  type ImportJob,
   type ImportMode,
+  type ImportsView,
   type InsertCheck,
+  type PolishModel,
+  type RecognitionChoice,
+  type SegmentText,
+  type VocabularyHits,
+  DEFAULT_PRESET,
   type PreviewDraft,
   type RefineFailure,
   type ReplacementRule,
@@ -329,6 +338,9 @@ export interface MockBackendOptions {
   /** Phone (docs/dictation.md §20.8): its copies of computers, each with the entries and the
    *  settings the copy holds; none by default. */
   mirrors?: MockMirror[];
+  /** The import queue it starts with (docs/dictation.md §31), empty by default. These jobs only
+   *  show: none runs until `import_retry` queues a failed one again. */
+  imports?: ImportJob[];
   /** Clock in milliseconds; injectable for deterministic tests. */
   now?: () => number;
   /** Deterministic randomness source in [0, 1). */
@@ -407,6 +419,70 @@ export const MOCK_REFINE_FAILED = "请求过于频繁：mock: the clean-up was t
 export const MOCK_PART_MAX_CHARS = 1_500;
 /** Where the preview says an export was saved. */
 export const MOCK_EXPORT_DIR = "/home/you/Documents";
+
+/** What a file holds for the preview's import (`simulateImportFile`, docs/dictation.md §31). */
+export interface MockImportFile {
+  /** Its size in bytes. */
+  size: number;
+  /** The length of its sound. */
+  duration_ms: number;
+  /** Why it stops: a decoding failure every time it is read; `recognition` once, at segment
+   *  `failAt` (from 0), so that 重试 goes on from there; `no_speech` once it is recognised. */
+  failure?: ImportFailure;
+  failAt?: number;
+}
+
+/** Where the preview's open dialog finds the files to import. */
+export const MOCK_IMPORT_DIR = "/home/you/Videos";
+/** What 导入音频或视频's open dialog picks in the preview (`simulateImportPick` changes it). */
+export const MOCK_IMPORT_PICK: readonly string[] = [
+  `${MOCK_IMPORT_DIR}/team-sync.mp4`,
+  `${MOCK_IMPORT_DIR}/interview.m4a`,
+];
+/** The files the preview's import takes: `voltip_media::EXTENSIONS`. */
+export const MOCK_IMPORT_EXTENSIONS: readonly string[] = [
+  "wav",
+  "mp3",
+  "m4a",
+  "m4b",
+  "aac",
+  "flac",
+  "ogg",
+  "oga",
+  "opus",
+  "mp4",
+  "m4v",
+  "mov",
+  "mkv",
+  "mka",
+  "webm",
+];
+/** A step of the preview's import: a quarter of the decoding, or a segment recognised or
+ *  polished. */
+export const MOCK_IMPORT_STEP_MS = 400;
+/** A segment of the preview's import (the core cuts 3–15 s, docs/dictation.md §31). */
+export const MOCK_IMPORT_SEGMENT_MS = 12_000;
+/** What a path holds when `simulateImportFile` said nothing of it: 1 min 40 s of speech. */
+export const MOCK_IMPORT_FILE: MockImportFile = { size: 18_400_000, duration_ms: 100_000 };
+/** `ImportError` (docs/dictation.md §31) as the core words it. */
+export const MOCK_IMPORT_BUILTIN = "导入只能使用本机模型或自己密钥的服务，不能使用内置服务";
+export const MOCK_IMPORT_UNAVAILABLE = "这台设备不能导入音视频文件";
+export const MOCK_IMPORT_HISTORY_OFF =
+  "历史记录已关闭：导入的文字保存在历史记录里，请先打开历史记录";
+/** What the preview's import recognises, segment after segment, and how it polishes each. */
+export const MOCK_IMPORT_SEGMENTS: readonly { raw: string; refined: string }[] = [
+  {
+    raw: "嗯那我们开始吧今天主要过一下下周发布的安排",
+    refined: "我们开始吧，今天主要过一下下周发布的安排。",
+  },
+  { raw: "安装包周三出然后周四开始灰度", refined: "安装包周三出，周四开始灰度。" },
+  { raw: "文档那边呢截图要重新截一遍", refined: "文档的截图要重新截一遍。" },
+  { raw: "那个反馈里提到的导入问题已经修好了", refined: "反馈里提到的导入问题已经修好了。" },
+  {
+    raw: "大家还有别的问题吗没有的话就先到这里",
+    refined: "大家还有别的问题吗？没有的话就先到这里。",
+  },
+];
 export const MOCK_DICTATION_DWELL_MS = 2500;
 export const MOCK_DICTATION_FAILED_DWELL_MS = 6000;
 /** `voltip_core::dictation::engine::WINDOW_CHANGED`: why a take whose window changed was copied
@@ -1093,6 +1169,18 @@ export class MockBackend implements Backend {
   >();
   /** Every event emitted, oldest first; handy for asserting ordering in tests. */
   readonly log: UiEvent[] = [];
+  /** What each queued import was asked for and how far it got (docs/dictation.md §31), by job. */
+  private readonly importRuns = new Map<string, MockImportRun>();
+  /** The running import's next step, and its job. */
+  private importTimer: ReturnType<typeof setTimeout> | undefined;
+  private importRunning: string | undefined;
+  /** What paths hold for the import (`simulateImportFile`). */
+  private readonly importFiles = new Map<string, MockImportFile>();
+  /** What the next `importPick` picks (`simulateImportPick`). */
+  private nextImportPick: string[] | undefined;
+  private readonly dropListeners = new Set<DropListener>();
+  /** Every open dialog `importPick` showed, by its title and filter names (tests). */
+  readonly importPicks: { title: string; media: string; all: string }[] = [];
   /** The whole history, newest first: what the core keeps in `history.sqlite3`. The state holds
    *  its newest `HISTORY_RECENT` and the total, as `UiState` does (docs/dictation.md §4.4). */
   private history: HistoryEntry[] = [];
@@ -1181,6 +1269,12 @@ export class MockBackend implements Backend {
       history_total: this.history.length,
       // The phone keeps no recordings (docs/dictation.md §26).
       audio_cache: cacheView(this.role !== "phone", structuredClone(options.audioCache ?? [])),
+      // The phone imports no files (docs/dictation.md §31).
+      imports: {
+        available: this.role !== "phone",
+        extensions: this.role === "phone" ? [] : [...MOCK_IMPORT_EXTENSIONS],
+        jobs: structuredClone(options.imports ?? []),
+      },
       engines: emptyEngineStatus(),
       update: options.update ?? idleUpdate(),
       models,
@@ -1327,7 +1421,12 @@ export class MockBackend implements Backend {
 
   /** `history_export` (docs/dictation.md §22): the preview's save dialog takes the offered name,
    *  the phone's share sheet opens (`shared`); what was asked for is kept in `exports`. */
-  async historyExport(id: string, format: ExportFormat, fileName: string): Promise<ExportOutcome> {
+  async historyExport(
+    id: string,
+    format: ExportFormat,
+    fileName: string,
+    subtitles?: SegmentText,
+  ): Promise<ExportOutcome> {
     await Promise.resolve();
     const entry = this.history.find((e) => e.id === id);
     if (entry === undefined)
@@ -1342,13 +1441,18 @@ export class MockBackend implements Backend {
         code: "empty",
         detail: "the entry has no segments",
       };
-    this.exports.push({ id, format, fileName });
+    this.exports.push({ id, format, fileName, ...(subtitles === undefined ? {} : { subtitles }) });
     if (this.role === "phone") return { kind: "shared" };
     return { kind: "saved", path: `${MOCK_EXPORT_DIR}/${fileName}.${format}` };
   }
 
   /** Every `historyExport` that saved or was shared, in order (tests). */
-  readonly exports: { id: string; format: ExportFormat; fileName: string }[] = [];
+  readonly exports: {
+    id: string;
+    format: ExportFormat;
+    fileName: string;
+    subtitles?: SegmentText;
+  }[] = [];
 
   // ---- backup and migration (docs/dictation.md §4.6) -------------------------------------------
 
@@ -2263,6 +2367,18 @@ export class MockBackend implements Backend {
         ...(asr === undefined ? {} : { asr }),
         ...(refine === undefined ? {} : { refine }),
       });
+    },
+    import_add: (args) => {
+      this.importAdd(required(args));
+    },
+    import_cancel: (args) => {
+      this.importDrop(uuidArg(required(args).id));
+    },
+    import_remove: (args) => {
+      this.importDrop(uuidArg(required(args).id));
+    },
+    import_retry: (args) => {
+      this.importRetry(uuidArg(required(args).id));
     },
     history_star: (args) => {
       const { id, starred } = required(args);
@@ -3327,6 +3443,8 @@ export class MockBackend implements Backend {
     this.clearLiveTimers();
     this.clearExtraStop();
     this.clearUpdateTimers();
+    this.stopImportTimer();
+    this.dropListeners.clear();
     for (const t of this.modelTimers.values()) clearTimeout(t);
     this.modelTimers.clear();
     this.stopModelsMove();
@@ -4021,6 +4139,339 @@ export class MockBackend implements Backend {
       ...recording,
       ...retake,
     });
+  }
+
+  // ---- importing audio and video files (docs/dictation.md §31) ---------------------------------
+
+  /** `imports_state`: the import queue. */
+  importsState(): Promise<ImportsView> {
+    return Promise.resolve(structuredClone(this.state.imports));
+  }
+
+  /** The next `importPick` picks `paths`; `[]` is a dialog that was cancelled. */
+  simulateImportPick(paths: readonly string[]) {
+    this.nextImportPick = [...paths];
+  }
+
+  /** `import_pick`: the files the open dialog picked, `MOCK_IMPORT_PICK` unless told otherwise.
+   *  The phone has no such dialog. */
+  async importPick(title: string, media: string, all: string): Promise<string[]> {
+    await Promise.resolve();
+    if (!this.state.imports.available) return [];
+    this.importPicks.push({ title, media, all });
+    const picked = this.nextImportPick ?? [...MOCK_IMPORT_PICK];
+    this.nextImportPick = undefined;
+    return picked;
+  }
+
+  onFileDrop(listener: DropListener): Unsubscribe {
+    this.dropListeners.add(listener);
+    return () => {
+      this.dropListeners.delete(listener);
+    };
+  }
+
+  /** How many listen for dropped files (tests: a page subscribes after it renders). */
+  fileDropListeners(): number {
+    return this.dropListeners.size;
+  }
+
+  /** Files dropped on the window, as the shell reports them (`tauri://drag-drop`). */
+  simulateFileDrop(paths: readonly string[]) {
+    for (const listener of this.dropListeners) listener([...paths]);
+  }
+
+  /** What `path` holds for the import from now on; the rest as `MOCK_IMPORT_FILE`. */
+  simulateImportFile(path: string, file: Partial<MockImportFile>) {
+    this.importFiles.set(path, { ...MOCK_IMPORT_FILE, ...file });
+  }
+
+  /** `import_add` as the core checks it (`Runtime::import_add`): refused on the phone, with the
+   *  history off, with the built-in service and with models that cannot run; otherwise every file
+   *  joins the queue. */
+  private importAdd({ paths, asr, refine, language }: CommandArgs["import_add"]) {
+    const refused = this.importRefusal(asr, refine);
+    if (refused !== undefined) {
+      this.emit({ type: "error", message: refused });
+      return;
+    }
+    const hint = language?.trim() ?? "";
+    const jobs = paths.map((path): ImportJob => {
+      const id = this.uuid();
+      this.importRuns.set(id, {
+        path,
+        asr,
+        ...(refine === undefined ? {} : { refine }),
+        ...(hint === "" ? {} : { language: hint }),
+        decoded: false,
+        recognized: 0,
+      });
+      const { size } = this.importFile(path);
+      return { id, name: baseName(path), size, paused: false, state: { kind: "queued" } };
+    });
+    this.setImports([...this.state.imports.jobs, ...jobs]);
+    this.startImport();
+  }
+
+  /** Why an import with these models is refused, as the core words it; `undefined` when it may
+   *  run. Only an installed local model or a provider with the user's own key will do. */
+  private importRefusal(asr: RecognitionChoice, refine: PolishModel | undefined) {
+    if (!this.state.imports.available) return MOCK_IMPORT_UNAVAILABLE;
+    if (!this.state.settings.history.enabled) return MOCK_IMPORT_HISTORY_OFF;
+    if ((asr.kind === "remote" && asr.provider === "builtin") || refine?.provider === "builtin")
+      return MOCK_IMPORT_BUILTIN;
+    // An import never falls back to another model (docs/dictation.md §31).
+    const {
+      asr_fallback: _asr,
+      llm_fallback: _llm,
+      ...engines
+    } = applyRetakeModels(this.state.settings.engines, {
+      asr,
+      ...(refine === undefined ? {} : { refine: { kind: "remote", ...refine } }),
+    });
+    const status = this.resolveEngines(engines);
+    if (!status.asr_ready || (refine !== undefined && !status.refine_ready))
+      return MOCK_RETAKE_NOT_READY;
+    return undefined;
+  }
+
+  /** `import_cancel` and `import_remove`: the job leaves the queue at once; a running one stops
+   *  and writes nothing. */
+  private importDrop(id: string) {
+    if (!this.state.imports.jobs.some((j) => j.id === id)) return;
+    if (this.importRunning === id) {
+      this.stopImportTimer();
+      this.importRunning = undefined;
+    }
+    this.importRuns.delete(id);
+    this.setImports(this.state.imports.jobs.filter((j) => j.id !== id));
+    this.startImport();
+  }
+
+  /** `import_retry`: a failed job waits again, going on from the segments it recognised when it
+   *  can, otherwise from the start. A job the mock started with has nothing to run. */
+  private importRetry(id: string) {
+    const job = this.state.imports.jobs.find((j) => j.id === id);
+    const run = this.importRuns.get(id);
+    if (job?.state.kind !== "failed" || run === undefined) return;
+    if (!job.state.resumable) {
+      run.decoded = false;
+      run.recognized = 0;
+    }
+    this.setJob(id, { state: { kind: "queued" }, paused: false });
+    this.startImport();
+  }
+
+  /** Start the first waiting job when none runs (`Runtime::start_import`); one whose models cannot
+   *  run now (a key removed since, the history turned off) fails at once and the next is tried. */
+  private startImport() {
+    if (this.importRunning !== undefined) return;
+    for (const job of this.state.imports.jobs) {
+      const run = this.importRuns.get(job.id);
+      if (job.state.kind !== "queued" || run === undefined) continue;
+      const refused = this.importRefusal(run.asr, run.refine);
+      if (refused !== undefined) {
+        const failure: ImportFailure = { code: "recognition", detail: refused };
+        this.setJob(job.id, { state: { kind: "failed", failure, resumable: run.decoded } });
+        continue;
+      }
+      this.importRunning = job.id;
+      if (run.decoded) this.importRecognizing(job.id, run);
+      else this.importDecode(job.id, run, 0);
+      return;
+    }
+  }
+
+  /** Decoding, a quarter at a time; a file the decoder cannot read fails after the first. */
+  private importDecode(id: string, run: MockImportRun, quarter: number) {
+    const file = this.importFile(run.path);
+    if (quarter === 0) {
+      this.setJob(id, { state: { kind: "decoding" }, paused: false });
+      this.importLater(() => this.importDecode(id, run, 1));
+      return;
+    }
+    if (file.failure !== undefined && DECODE_FAILURES.has(file.failure.code)) {
+      this.importFailed(id, file.failure, false);
+      return;
+    }
+    this.setJob(id, {
+      state: { kind: "decoding", pct: quarter * 25 },
+      duration_ms: file.duration_ms,
+    });
+    if (quarter < 4) {
+      this.importLater(() => this.importDecode(id, run, quarter + 1));
+      return;
+    }
+    run.decoded = true;
+    this.importLater(() => this.importRecognizing(id, run));
+  }
+
+  /** Recognition from the first segment not recognised yet. */
+  private importRecognizing(id: string, run: MockImportRun) {
+    const total = mockImportSegments(this.importFile(run.path).duration_ms);
+    this.setJob(id, { state: { kind: "recognizing", done: run.recognized, total }, paused: false });
+    this.importLater(() => this.importRecognize(id, run, total));
+  }
+
+  /** One segment recognised, after any dictation that runs (dictation always goes first). */
+  private importRecognize(id: string, run: MockImportRun, total: number) {
+    if (this.importWaits(id, () => this.importRecognize(id, run, total))) return;
+    const file = this.importFile(run.path);
+    if (file.failure?.code === "recognition" && (file.failAt ?? 0) === run.recognized) {
+      // It fails once: 重试 goes on from this segment.
+      const { failure, failAt: _failAt, ...rest } = file;
+      this.importFiles.set(run.path, rest);
+      this.importFailed(id, failure, true);
+      return;
+    }
+    run.recognized += 1;
+    this.setJob(id, { state: { kind: "recognizing", done: run.recognized, total }, paused: false });
+    if (run.recognized < total) {
+      this.importLater(() => this.importRecognize(id, run, total));
+    } else if (file.failure?.code === "no_speech") {
+      this.importFailed(id, file.failure, false);
+    } else if (run.refine === undefined) {
+      this.importLater(() => this.importFinish(id, run, total));
+    } else {
+      this.setJob(id, { state: { kind: "polishing", done: 0, total } });
+      this.importLater(() => this.importPolish(id, run, total, 0));
+    }
+  }
+
+  /** One segment polished, after any dictation that runs. */
+  private importPolish(id: string, run: MockImportRun, total: number, done: number) {
+    if (this.importWaits(id, () => this.importPolish(id, run, total, done))) return;
+    this.setJob(id, { state: { kind: "polishing", done: done + 1, total }, paused: false });
+    if (done + 1 < total) this.importLater(() => this.importPolish(id, run, total, done + 1));
+    else this.importLater(() => this.importFinish(id, run, total));
+  }
+
+  /** A job waits while a dictation runs, saying so; `true` while it does. */
+  private importWaits(id: string, next: () => void): boolean {
+    const phase = this.state.dictation.phase.phase;
+    if (phase !== "listening" && phase !== "processing") return false;
+    const job = this.state.imports.jobs.find((j) => j.id === id);
+    if (job?.paused === false) this.setJob(id, { paused: true });
+    this.importLater(next);
+    return true;
+  }
+
+  /** The job's entry goes into the history (`Runtime::finish_import`): its segments keep their
+   *  times, and their polished text when it was polished. */
+  private importFinish(id: string, run: MockImportRun, total: number) {
+    this.importRunning = undefined;
+    if (!this.state.settings.history.enabled) {
+      const failure: ImportFailure = { code: "storage", detail: MOCK_IMPORT_HISTORY_OFF };
+      run.decoded = false;
+      run.recognized = 0;
+      this.setJob(id, { state: { kind: "failed", failure, resumable: false }, paused: false });
+      this.startImport();
+      return;
+    }
+    const { duration_ms } = this.importFile(run.path);
+    const vocabulary = Vocabulary.compile(this.state.dictionary, this.state.rules);
+    const polished = run.refine !== undefined;
+    const hits: VocabularyHits = { corrections: [], rules: [] };
+    const segments: LiveSegment[] = [];
+    const raws: string[] = [];
+    const finals: string[] = [];
+    for (let i = 0; i < total; i++) {
+      const line = MOCK_IMPORT_SEGMENTS[i % MOCK_IMPORT_SEGMENTS.length] ?? {
+        raw: "",
+        refined: "",
+      };
+      const corrected = vocabulary.correct(line.raw);
+      hits.corrections.push(...corrected.hits);
+      const ruled = vocabulary.applyRules(polished ? line.refined : corrected.text);
+      hits.rules.push(...ruled.hits);
+      segments.push({
+        text: line.raw,
+        ...(polished ? { refined: ruled.text } : {}),
+        start_ms: i * MOCK_IMPORT_SEGMENT_MS,
+        end_ms: Math.min(duration_ms, (i + 1) * MOCK_IMPORT_SEGMENT_MS),
+      });
+      raws.push(line.raw);
+      finals.push(ruled.text);
+    }
+    const asrModel =
+      run.asr.kind === "remote"
+        ? run.asr.model
+        : (this.catalogueRow(run.asr.id)?.name ?? run.asr.id);
+    const entry: HistoryEntry = {
+      id: this.uuid(),
+      at_ms: this.now(),
+      raw_text: raws.join(""),
+      text: finals.join(""),
+      refined: polished,
+      asr_model: asrModel,
+      ...(run.refine === undefined
+        ? {}
+        : {
+            refine_model: run.refine.model,
+            refine_ms: MOCK_REFINE_MS * total,
+            preset: resolvePreset(DEFAULT_PRESET, []).preset,
+          }),
+      duration_ms,
+      asr_ms: MOCK_ASR_MS * total,
+      outcome: { kind: "inserted", via: "clipboard" },
+      starred: false,
+      mode: "whole_take",
+      segments,
+      ...(hits.corrections.length + hits.rules.length > 0 ? { vocabulary: hits } : {}),
+      kind: "dictation",
+      file: { name: baseName(run.path), duration_ms },
+    };
+    this.recordHistory(entry);
+    this.importRuns.delete(id);
+    this.setJob(id, {
+      state: { kind: "done", entry: entry.id, polish_failed: 0 },
+      paused: false,
+    });
+    this.startImport();
+  }
+
+  /** The running job stopped; the next one starts. A failure that cannot go on starts again. */
+  private importFailed(id: string, failure: ImportFailure, resumable: boolean) {
+    const run = this.importRuns.get(id);
+    if (run !== undefined && !resumable) {
+      run.decoded = false;
+      run.recognized = 0;
+    }
+    this.importRunning = undefined;
+    this.setJob(id, { state: { kind: "failed", failure, resumable }, paused: false });
+    this.startImport();
+  }
+
+  /** What `path` holds (`simulateImportFile`, else `MOCK_IMPORT_FILE`). */
+  private importFile(path: string): MockImportFile {
+    return this.importFiles.get(path) ?? MOCK_IMPORT_FILE;
+  }
+
+  /** Replace the queue and tell the UI, as `CoreEvent::Imports`. */
+  private setImports(jobs: ImportJob[]) {
+    const { available, extensions } = this.state.imports;
+    this.emit({ type: "imports", available, extensions, jobs });
+  }
+
+  /** Change one job and tell the UI. */
+  private setJob(id: string, change: Partial<Omit<ImportJob, "id">>) {
+    this.setImports(
+      this.state.imports.jobs.map((job) => (job.id === id ? { ...job, ...change } : job)),
+    );
+  }
+
+  /** The running import's next step. */
+  private importLater(fn: () => void) {
+    this.stopImportTimer();
+    this.importTimer = setTimeout(() => {
+      this.importTimer = undefined;
+      fn();
+    }, MOCK_IMPORT_STEP_MS);
+  }
+
+  private stopImportTimer() {
+    if (this.importTimer !== undefined) clearTimeout(this.importTimer);
+    this.importTimer = undefined;
   }
 
   // ---- audio cache (docs/dictation.md §26) -----------------------------------------------------
@@ -5211,6 +5662,33 @@ export class MockBackend implements Backend {
     this.log.push(event);
     for (const listener of this.listeners) listener(event);
   }
+}
+
+/** What an import job was asked for and how far it got (docs/dictation.md §31). */
+interface MockImportRun {
+  path: string;
+  asr: RecognitionChoice;
+  refine?: PolishModel;
+  language?: string;
+  /** The file was decoded: 重试 keeps it. */
+  decoded: boolean;
+  /** Segments recognised: a resumable 重试 goes on from the next one. */
+  recognized: number;
+}
+
+/** The failures a file meets while it is decoded. */
+const DECODE_FAILURES: ReadonlySet<ImportFailure["code"]> = new Set([
+  "unreadable",
+  "unsupported_format",
+  "no_audio",
+  "unsupported_codec",
+  "corrupt",
+  "storage",
+]);
+
+/** How many segments the preview's import cuts `duration_ms` into. */
+function mockImportSegments(duration_ms: number): number {
+  return Math.max(1, Math.ceil(duration_ms / MOCK_IMPORT_SEGMENT_MS));
 }
 
 /** `AudioCache::view`: the recordings and their size in all (docs/dictation.md §26). */

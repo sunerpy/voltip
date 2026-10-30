@@ -17,8 +17,9 @@ use serde_json::{Value, json};
 use voltip_core::audio_cache::{AudioCacheView, KeptFormat, KeptRecording, KeptStatus};
 use voltip_core::connectivity::{ConnectivityReport, ConnectivityStatus, PeerCheck, ProbeResult, RelayCheck};
 use voltip_core::dictation::{ClipboardCode, FailureCode, InsertCheck, ProcessingStage, Via};
-use voltip_core::history::ProcessedText;
 use voltip_core::history::process::ProcessState;
+use voltip_core::history::{ImportedFile, ProcessedText};
+use voltip_core::import::{ImportFailure, ImportJob, ImportState, ImportsView};
 use voltip_core::mcp::{HistoryRange, McpAction, McpActivity, McpClient, McpRead, McpSettings, McpStatus, McpWrite};
 use voltip_core::models_location::{ModelsLocationView, ModelsMove, ModelsMoveOutcome};
 use voltip_core::paste::{CopyReason, PasteFailure, PasteOutcome};
@@ -103,6 +104,23 @@ const RULE_ID: &str = "8d7e6f5a-4b3c-4d2e-9f1a-0b9c8d7e6f5a";
 const RULE_ID_2: &str = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d";
 const HISTORY_ID_3: &str = "2d3e4f5a-6b7c-4d8e-9f0a-1b2c3d4e5f6a";
 const HISTORY_ID_4: &str = "6a0c1f5e-2b7d-4c3a-9e8f-0d1c2b3a4f56";
+/// An imported file's entry, and the jobs of the import queue (docs/dictation.md §31).
+const HISTORY_ID_5: &str = "f1e2d3c4-b5a6-4978-8a6b-5c4d3e2f1a0b";
+const IMPORT_IDS: [&str; 13] = [
+    "a0000000-0000-4000-8000-000000000001",
+    "a0000000-0000-4000-8000-000000000002",
+    "a0000000-0000-4000-8000-000000000003",
+    "a0000000-0000-4000-8000-000000000004",
+    "a0000000-0000-4000-8000-000000000005",
+    "a0000000-0000-4000-8000-000000000006",
+    "a0000000-0000-4000-8000-000000000007",
+    "a0000000-0000-4000-8000-000000000008",
+    "a0000000-0000-4000-8000-000000000009",
+    "a0000000-0000-4000-8000-00000000000a",
+    "a0000000-0000-4000-8000-00000000000b",
+    "a0000000-0000-4000-8000-00000000000c",
+    "a0000000-0000-4000-8000-00000000000d",
+];
 /// A voice edit (docs/dictation.md §19): the selection, the spoken instruction, the rewrite.
 const EDIT_SELECTION: &str = "大家好，会议改到周四十点哈";
 const EDIT_INSTRUCTION: &str = "改得更正式";
@@ -512,7 +530,10 @@ fn fallen_back_done_phase() -> DictationPhase {
 
 /// The two sentences of the sample take as the streaming recogniser committed them.
 fn stream_segments() -> Vec<Segment> {
-    vec![Segment { text: LIVE_COMMITTED.into(), start_ms: 0, end_ms: 1480 }, Segment { text: "然后加上错误处理".into(), start_ms: 1480, end_ms: 3200 }]
+    vec![
+        Segment { text: LIVE_COMMITTED.into(), refined: None, start_ms: 0, end_ms: 1480 },
+        Segment { text: "然后加上错误处理".into(), refined: None, start_ms: 1480, end_ms: 3200 },
+    ]
 }
 
 /// 用 AI 预设处理's result as a long entry carries it (docs/dictation.md §22).
@@ -553,6 +574,7 @@ fn history_entries() -> Vec<HistoryEntry> {
             preset: Some(PresetRef { id: PresetId::Builtin(BuiltinPreset::Formal), name: "书面语".into() }),
             origin: None,
             processed: None,
+            file: None,
         },
         HistoryEntry {
             id: uuid(HISTORY_ID_2),
@@ -583,6 +605,7 @@ fn history_entries() -> Vec<HistoryEntry> {
             preset: None,
             origin: None,
             processed: None,
+            file: None,
         },
         // docs/dictation.md §19: the instruction is the raw text, the rewrite the text.
         HistoryEntry {
@@ -613,6 +636,7 @@ fn history_entries() -> Vec<HistoryEntry> {
             preset: None,
             origin: None,
             processed: None,
+            file: None,
         },
         // docs/dictation.md §20.6: text a phone sent, inserted as it was.
         HistoryEntry {
@@ -641,8 +665,80 @@ fn history_entries() -> Vec<HistoryEntry> {
             preset: None,
             origin: Some(EntryOrigin { device: "Pixel 8".into(), kind: OriginKind::Typed }),
             processed: None,
+            file: None,
         },
     ]
+}
+
+/// An imported file's entry (docs/dictation.md §31): its file's name and length, its segments with
+/// their times and, where the polish ran, the polished text of each.
+fn imported_history_entry() -> HistoryEntry {
+    HistoryEntry {
+        id: uuid(HISTORY_ID_5),
+        at_ms: AT_MS - 240_000,
+        raw_text: "嗯今天我们讨论一下进度然后呢就是下周发布".into(),
+        text: "今天我们讨论一下进度。下周发布。".into(),
+        refined: true,
+        asr_model: "whisper-large-v3".into(),
+        refine_model: Some("llama-3.3-70b-versatile".into()),
+        duration_ms: 9_500,
+        asr_ms: 1_800,
+        refine_ms: Some(1_200),
+        refine_failure: None,
+        refine_error: None,
+        outcome: Outcome::Inserted { via: Via::Clipboard },
+        starred: false,
+        mode: OutputMode::WholeTake,
+        segments: Some(vec![
+            Segment { text: "嗯今天我们讨论一下进度".into(), refined: Some("今天我们讨论一下进度。".into()), start_ms: 0, end_ms: 4_000 },
+            Segment { text: "然后呢就是下周发布".into(), refined: Some("下周发布。".into()), start_ms: 4_000, end_ms: 9_500 },
+        ]),
+        live_error: None,
+        vocabulary: None,
+        kind: TakeKind::Dictation,
+        edit: None,
+        app: None,
+        scene: None,
+        preset: Some(PresetRef { id: PresetId::Builtin(BuiltinPreset::Proofread), name: "校对".into() }),
+        origin: None,
+        processed: None,
+        file: Some(ImportedFile { name: "季度会议.mp4".into(), duration_ms: 9_500 }),
+    }
+}
+
+/// The import queue (docs/dictation.md §31): a job in every state, and every reason one fails.
+fn imports_view() -> ImportsView {
+    let job = |i: usize, name: &str, state: ImportState| ImportJob {
+        id: uuid(IMPORT_IDS[i]),
+        name: name.into(),
+        size: 48_213_504,
+        duration_ms: None,
+        paused: false,
+        state,
+    };
+    let failed = |i: usize, failure: ImportFailure, resumable: bool| job(i, "失败的文件.mkv", ImportState::Failed { failure, resumable });
+    ImportsView {
+        available: true,
+        extensions: ["mp3", "m4a", "mp4", "mkv"].map(String::from).to_vec(),
+        jobs: vec![
+            ImportJob { duration_ms: Some(1_800_000), paused: true, ..job(0, "季度会议.mp4", ImportState::Recognizing { done: 12, total: 240 }) },
+            job(1, "访谈.m4a", ImportState::Queued),
+            job(2, "讲座.mov", ImportState::Decoding { pct: Some(42) }),
+            job(3, "播客.mp3", ImportState::Decoding { pct: None }),
+            ImportJob { duration_ms: Some(1_800_000), ..job(4, "课堂.webm", ImportState::Polishing { done: 3, total: 238 }) },
+            ImportJob { duration_ms: Some(9_500), ..job(5, "季度会议.mp4", ImportState::Done { entry: uuid(HISTORY_ID_5), polish_failed: 2 }) },
+            failed(6, ImportFailure::Recognition { detail: "额度已用完：quota exceeded (HTTP 429)".into() }, true),
+            failed(7, ImportFailure::UnsupportedCodec { codec: "AC-3".into() }, false),
+            failed(8, ImportFailure::Unreadable { detail: "No such file or directory (os error 2)".into() }, false),
+            failed(9, ImportFailure::UnsupportedFormat, false),
+            failed(10, ImportFailure::NoAudio, false),
+            failed(11, ImportFailure::Corrupt { detail: "it ends after 12.0 s of 60.0 s".into() }, false),
+            ImportJob {
+                state: ImportState::Failed { failure: ImportFailure::Storage { detail: "No space left on device (os error 28)".into() }, resumable: false },
+                ..failed(12, ImportFailure::NoSpeech, false)
+            },
+        ],
+    }
 }
 
 /// What the dictionary and the rules did to the first history entry (docs/dictation.md §16.3).
@@ -947,7 +1043,12 @@ fn models_other_states() -> Vec<ModelState> {
 
 /// The live preview while listening (docs/dictation.md §11): one committed sentence, one in progress.
 fn live_text() -> LiveText {
-    LiveText { committed: vec![Segment { text: LIVE_COMMITTED.into(), start_ms: 0, end_ms: 1480 }], current: LIVE_CURRENT.into(), degraded: None, injected: 0 }
+    LiveText {
+        committed: vec![Segment { text: LIVE_COMMITTED.into(), refined: None, start_ms: 0, end_ms: 1480 }],
+        current: LIVE_CURRENT.into(),
+        degraded: None,
+        injected: 0,
+    }
 }
 
 fn models_not_installed() -> Vec<ModelState> {
@@ -1064,6 +1165,7 @@ fn full_state() -> UiState {
         },
         history_recent: history_entries(),
         audio_cache: audio_cache(),
+        imports: imports_view(),
         // More entries than the recent ones: the rest are read through the queries.
         history_total: 312,
         engines: engine_status(),
@@ -1184,6 +1286,7 @@ fn event_tag(event: &UiEvent) -> &'static str {
         UiEvent::PresetTry { .. } => "preset_try",
         UiEvent::HistoryProcess { .. } => "history_process",
         UiEvent::AudioCache(_) => "audio_cache",
+        UiEvent::Imports(_) => "imports",
         UiEvent::ProviderProbe(_) => "provider_probe",
         UiEvent::PhoneTake { .. } => "phone_take",
         UiEvent::SentTexts { .. } => "sent_texts",
@@ -1200,7 +1303,7 @@ fn event_tag(event: &UiEvent) -> &'static str {
     }
 }
 
-const ALL_EVENT_TAGS: [&str; 31] = [
+const ALL_EVENT_TAGS: [&str; 32] = [
     "state",
     "identity",
     "settings",
@@ -1232,6 +1335,7 @@ const ALL_EVENT_TAGS: [&str; 31] = [
     "network",
     "mcp",
     "usage",
+    "imports",
 ];
 
 /// The computer's settings as a phone shows them (docs/dictation.md §20.8): every `Option` set.
@@ -2079,6 +2183,23 @@ fn all_events() -> Vec<UiEvent> {
         // docs/dictation.md §26: the kept recordings, and the phone's (none kept there).
         UiEvent::AudioCache(audio_cache()),
         UiEvent::AudioCache(AudioCacheView::default()),
+        // docs/dictation.md §31: the import queue, a file that nothing was said in, the phone (no
+        // imports), and an imported file's entry.
+        UiEvent::Imports(imports_view()),
+        UiEvent::Imports(ImportsView {
+            available: true,
+            extensions: vec!["wav".into()],
+            jobs: vec![ImportJob {
+                id: uuid(IMPORT_IDS[0]),
+                name: "静音.wav".into(),
+                size: 1_024,
+                duration_ms: Some(2_000),
+                paused: false,
+                state: ImportState::Failed { failure: ImportFailure::NoSpeech, resumable: false },
+            }],
+        }),
+        UiEvent::Imports(ImportsView::default()),
+        history_event(vec![imported_history_entry()]),
         // docs/dictation.md §10.9: a move halfway, every way one ends, and the phone (no library).
         UiEvent::ModelsLocation(models_location()),
         UiEvent::ModelsLocation(ModelsLocationView { moving: None, last: Some(ModelsMoveOutcome::Cancelled), ..models_location() }),
@@ -2205,6 +2326,10 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::RefineNoticeClose => "RefineNoticeClose",
         UiCommand::UsageRefresh => "UsageRefresh",
         UiCommand::UsageNoticeDismiss { .. } => "UsageNoticeDismiss",
+        UiCommand::ImportAdd { .. } => "ImportAdd",
+        UiCommand::ImportCancel { .. } => "ImportCancel",
+        UiCommand::ImportRetry { .. } => "ImportRetry",
+        UiCommand::ImportRemove { .. } => "ImportRemove",
     }
 }
 
@@ -2383,6 +2508,21 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         // docs/dictation.md §27.
         ("usage_refresh", Value::Null, "UsageRefresh"),
         ("usage_notice_dismiss", json!({ "notice": "asr_near" }), "UsageNoticeDismiss"),
+        // docs/dictation.md §31: two files on Groq's Whisper, polished on Model Studio, in Chinese;
+        // then one job's 取消, 重试 and 移除.
+        (
+            "import_add",
+            json!({
+                "paths": ["C:\\Users\\me\\Videos\\季度会议.mp4", "/home/me/播客.mp3"],
+                "asr": { "kind": "remote", "provider": "groq", "model": "whisper-large-v3" },
+                "refine": { "provider": "aliyun", "model": "qwen-plus" },
+                "language": "zh"
+            }),
+            "ImportAdd",
+        ),
+        ("import_cancel", json!({ "id": IMPORT_IDS[0] }), "ImportCancel"),
+        ("import_retry", json!({ "id": IMPORT_IDS[6] }), "ImportRetry"),
+        ("import_remove", json!({ "id": IMPORT_IDS[5] }), "ImportRemove"),
     ]
 }
 
@@ -2793,6 +2933,10 @@ fn commands_fixture_is_the_wire_form_and_parses_into_every_variant() {
         "McpRotateToken",
         "McpCopySetup",
         "McpUndo",
+        "ImportAdd",
+        "ImportCancel",
+        "ImportRetry",
+        "ImportRemove",
     ] {
         assert!(seen.contains(variant), "commands fixture lacks {variant}");
     }

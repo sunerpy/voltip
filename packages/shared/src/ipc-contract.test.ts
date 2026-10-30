@@ -36,6 +36,7 @@ import {
   mcpWriteSchema,
   overlayPlacementSchema,
   polishChoiceSchema,
+  polishModelSchema,
   presetDraftSchema,
   presetIdSchema,
   proxyModeSchema,
@@ -98,6 +99,7 @@ const EVENT_TYPE_SET: Record<UiEventType, null> = {
   preset_try: null,
   history_process: null,
   audio_cache: null,
+  imports: null,
   provider_probe: null,
   phone_take: null,
   sent_texts: null,
@@ -157,6 +159,10 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   audio_cache_clear: null,
   audio_cache_delete: null,
   audio_retake: null,
+  import_add: null,
+  import_cancel: null,
+  import_retry: null,
+  import_remove: null,
   settings_set_locale: null,
   settings_set_auto_update: null,
   settings_set_history: null,
@@ -295,6 +301,17 @@ const argSchemas = {
       refine: polishChoiceSchema.optional(),
     })
     .strict(),
+  import_add: z
+    .object({
+      paths: z.array(z.string()),
+      asr: recognitionChoiceSchema,
+      refine: polishModelSchema.optional(),
+      language: z.string().optional(),
+    })
+    .strict(),
+  import_cancel: z.object({ id: z.string() }).strict(),
+  import_retry: z.object({ id: z.string() }).strict(),
+  import_remove: z.object({ id: z.string() }).strict(),
   settings_set_overlay: z.object({ placement: overlayPlacementSchema }).strict(),
   hotkey_edge: z.object({
     pressed: z.boolean(),
@@ -481,6 +498,14 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
       return backend.invoke(name, argSchemas.audio_cache_delete.parse(args));
     case "audio_retake":
       return backend.invoke(name, argSchemas.audio_retake.parse(args));
+    case "import_add":
+      return backend.invoke(name, argSchemas.import_add.parse(args));
+    case "import_cancel":
+      return backend.invoke(name, argSchemas.import_cancel.parse(args));
+    case "import_retry":
+      return backend.invoke(name, argSchemas.import_retry.parse(args));
+    case "import_remove":
+      return backend.invoke(name, argSchemas.import_remove.parse(args));
     case "settings_set_overlay":
       return backend.invoke(name, argSchemas.settings_set_overlay.parse(args));
     case "hotkey_edge":

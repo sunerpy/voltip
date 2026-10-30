@@ -23,6 +23,7 @@ members = [
     "crates/voltip-focus",
     "crates/voltip-serve",
     "crates/voltip-mcp",
+    "crates/voltip-media",
     "apps/server",
     "apps/desktop/src-tauri",
     "apps/mobile/src-tauri",
@@ -139,6 +140,11 @@ snow = "=0.10.0"
 # in the graph through clap.
 strsim = "=0.11.1"
 subtle = "=2.6.1"
+# Decoding imported audio and video files (crates/voltip-media, docs/dictation.md §31): pure Rust,
+# MPL-2.0. The containers (MP4/MOV/M4A, Matroska/WebM, Ogg, WAV) and codecs (AAC, ALAC, FLAC, MP3,
+# PCM, Vorbis) the import accepts; Opus is decoded by `opus-rs`. No default features: ADPCM is not
+# offered.
+symphonia = { version = "=0.5.5", default-features = false, features = ["aac", "alac", "flac", "isomp4", "mkv", "mp3", "ogg", "pcm", "vorbis", "wav"] }
 tempfile = "=3.27.0"
 thiserror = "=2.0.21"
 tokio = { version = "=1.53.1", features = [
@@ -200,6 +206,7 @@ voltip-cloud = { path = "crates/voltip-cloud" }
 voltip-inject = { path = "crates/voltip-inject" }
 voltip-serve = { path = "crates/voltip-serve" }
 voltip-mcp = { path = "crates/voltip-mcp" }
+voltip-media = { path = "crates/voltip-media" }
 
 # The bundled SQLite (the history, docs/dictation.md §4) is C code that is not debugged here:
 # optimised even in dev builds, so tests and `make desktop-dev` see a realistic database.

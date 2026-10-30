@@ -16,9 +16,12 @@ pub const CORRECTION_PIECE_CHARS: usize = 2_000;
 const FIELD_SEPARATOR: char = '\u{1f}';
 
 /// Whether an entry counts toward the statistics: dictations only. A voice edit does not, nor a
-/// text or the clipboard a phone sent; a phone's take (its audio recognised here) does.
+/// text or the clipboard a phone sent, nor an imported file (docs/dictation.md §31); a phone's take
+/// (its audio recognised here) does.
 pub fn counts_for_stats(entry: &HistoryEntry) -> bool {
-    entry.kind == TakeKind::Dictation && !matches!(entry.origin.as_ref().map(|o| o.kind), Some(OriginKind::Typed | OriginKind::Clipboard))
+    entry.kind == TakeKind::Dictation
+        && entry.file.is_none()
+        && !matches!(entry.origin.as_ref().map(|o| o.kind), Some(OriginKind::Typed | OriginKind::Clipboard))
 }
 
 /// The characters the transcript has (Unicode scalar values).
@@ -68,9 +71,9 @@ pub(super) const fn outcome_name(outcome: &Outcome) -> &'static str {
 
 /// The text `history_query` searches: the fields the history page searched when it filtered in the
 /// webview — a built-in scene's name in both languages, the text, the transcript, both models, the
-/// application's name and id, the scene's name, the voice edit's instruction and selection — and
-/// the processed text (docs/dictation.md §22), each lowercased on its own and joined by
-/// [`FIELD_SEPARATOR`].
+/// application's name and id, the scene's name, the voice edit's instruction and selection — the
+/// processed text (docs/dictation.md §22) and an imported file's name (§31), each lowercased on its
+/// own and joined by [`FIELD_SEPARATOR`].
 pub(super) fn search_text(entry: &HistoryEntry) -> String {
     let builtin = entry.scene.as_ref().and_then(|s| s.builtin);
     let fields = [
@@ -86,6 +89,7 @@ pub(super) fn search_text(entry: &HistoryEntry) -> String {
         entry.edit.as_ref().map(|e| e.instruction.as_str()),
         entry.edit.as_ref().map(|e| e.selection.as_str()),
         entry.processed.as_ref().map(|p| p.text.as_str()),
+        entry.file.as_ref().map(|f| f.name.as_str()),
     ];
     let mut out = String::new();
     for field in fields.into_iter().flatten().filter(|f| !f.is_empty()) {

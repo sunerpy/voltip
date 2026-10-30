@@ -6,6 +6,7 @@ import type {
   BackupOpenOutcome,
   BackupParts,
   ImportMode,
+  ImportsView,
   AttachmentFile,
   AudioDevice,
   AudioOutputs,
@@ -30,6 +31,7 @@ import type {
   PasteOutcome,
   PreviewDraft,
   Permission,
+  SegmentText,
   PermissionReport,
   GuidePage,
   ProjectLink,
@@ -47,6 +49,8 @@ import type {
 export type EventListener = (event: UiEvent) => void;
 export type Unsubscribe = () => void;
 export type FrameListener = (frame: LevelFrame) => void;
+/** The paths of files dropped on the window (`tauri://drag-drop`). */
+export type DropListener = (paths: string[]) => void;
 
 /** What the webviews talk to. Implemented by `TauriBackend` (real) and `MockBackend` (in-memory). */
 export interface Backend {
@@ -62,8 +66,24 @@ export interface Backend {
    *  from (`audio_outputs`, docs/dictation.md §22). */
   audioOutputs(): Promise<AudioOutputs>;
   /** 导出字幕（SRT）/ 导出文本（TXT） of entry `id` (`history_export`, docs/dictation.md §22): the
-   *  shell's save dialog offers `fileName`, and the shell writes the file. */
-  historyExport(id: string, format: ExportFormat, fileName: string): Promise<ExportOutcome>;
+   *  shell's save dialog offers `fileName`, and the shell writes the file. `subtitles` picks the
+   *  text of an imported file's subtitles (§31); absent: the polished one where there is one. */
+  historyExport(
+    id: string,
+    format: ExportFormat,
+    fileName: string,
+    subtitles?: SegmentText,
+  ): Promise<ExportOutcome>;
+  /** The import queue (`imports_state`, docs/dictation.md §31); the same value `UiState.imports`
+   *  carries. */
+  importsState(): Promise<ImportsView>;
+  /** 导入音频或视频… (`import_pick`, §31): the shell's open dialog, titled `title`, for several
+   *  files at once; `media` names the filter of the files the import reads, `all` the one of any
+   *  file. The paths chosen; none when the dialog was closed. */
+  importPick(title: string, media: string, all: string): Promise<string[]>;
+  /** Files dropped on the window (§31): the history page imports them. The returned function
+   *  stops listening. */
+  onFileDrop(listener: DropListener): Unsubscribe;
   /** 导出备份 (`backup_export`, docs/dictation.md §4.6): the shell's save dialog offers `fileName`,
    *  and the shell writes the history, the dictionary, the rules, the scenes and the presets into
    *  one file. */

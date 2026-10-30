@@ -1,11 +1,19 @@
 import {
   type HistoryEntry,
+  type Labelled,
+  type Locale,
+  type TFunction,
+  baseName,
   formatCount,
   activationHint,
   formatMs,
+  formatTakeLength,
+  isImported,
   outcomeLabel,
   outputModeLabel,
   sceneLabel,
+  skippedFilesText,
+  splitDrop,
   syncsToPhones,
 } from "@voltip/shared";
 import {
@@ -23,7 +31,7 @@ import {
   useI18n,
   useUiState,
 } from "@voltip/ui";
-import { useId, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useId, useMemo, useRef, useState } from "react";
 import { inTextField, usePageShortcuts, withCommand } from "../app/page-shortcuts";
 import { useRouter } from "../app/router";
 import { copyWithToast, useShell } from "../app/shell-context";
@@ -43,6 +51,8 @@ import {
   useDebounced,
   useHistoryEntry,
 } from "../features/history/useHistoryList";
+import { ImportDialog } from "../features/history/ImportDialog";
+import { ImportQueue } from "../features/history/ImportQueue";
 import { UnrecognisedRecordings } from "../features/history/Recordings";
 import { ResultActions } from "../features/history/ResultActions";
 import { shortModel } from "../shell/page-meta";
@@ -66,6 +76,14 @@ export interface HistoryProps {
 /** A phone's text rather than a recognised take (docs/dictation.md §20.6): no model, no timings. */
 function sentAsText(entry: HistoryEntry): boolean {
   return entry.origin?.kind === "typed" || entry.origin?.kind === "clipboard";
+}
+
+/** How an entry ended, as its row and the detail's header say it: an imported file's text was
+ *  pasted nowhere (docs/dictation.md §31). */
+export function entryOutcome(entry: HistoryEntry, t: TFunction, locale: Locale): Labelled {
+  return isImported(entry)
+    ? { text: t("history.imports.outcome"), tone: "ok" }
+    : outcomeLabel(entry.outcome, locale);
 }
 
 /** History: the core's database (docs/dictation.md §4.4, up to 20 000 entries), read one page at a
@@ -101,6 +119,60 @@ export function History({ initialFilter }: HistoryProps) {
     isHistoryFilter(initialFilter) ? undefined : initialFilter,
   );
   const [view, setView] = useState<View>("polished");
+  // docs/dictation.md §31: the files picked or dropped, waiting for the import's options, and the
+  // dropped files left out (the dialog names them: it would cover a toast).
+  const [importing, setImporting] = useState<{ paths: string[]; skipped: string[] } | undefined>(
+    undefined,
+  );
+  const imports = state.imports;
+  const historyOffToast = () => {
+    shell.toast({
+      message: t("history.imports.historyOff"),
+      duration: 5000,
+      tone: "danger",
+      action: {
+        label: t("history.imports.historyOffAction"),
+        onClick: () => {
+          navigate({ name: "settings", section: "privacy" });
+        },
+      },
+    });
+  };
+  const pickFiles = async () => {
+    const paths = await backend.importPick(
+      t("history.imports.pickTitle"),
+      t("history.imports.pickMedia"),
+      t("history.imports.pickAll"),
+    );
+    if (paths.length > 0) setImporting({ paths, skipped: [] });
+  };
+  // Files dropped on the window import from this page only (the other pages ignore a drop); a
+  // file the decoder does not read is named and left out: in the dialog when it is open or opens
+  // now (it would cover a toast), else in a toast.
+  const onDrop = useEffectEvent((paths: string[]) => {
+    const { accepted, rejected } = splitDrop(paths, imports.extensions);
+    const skipped = rejected.map(baseName);
+    if (importing === undefined && accepted.length === 0) {
+      if (skipped.length > 0)
+        shell.toast({ message: skippedFilesText(skipped, t), duration: 4000 });
+      return;
+    }
+    if (!retention.enabled) {
+      historyOffToast();
+      return;
+    }
+    setImporting((current) =>
+      current === undefined
+        ? { paths: accepted, skipped }
+        : { paths: [...current.paths, ...accepted], skipped: [...current.skipped, ...skipped] },
+    );
+  });
+  useEffect(() => {
+    if (!imports.available) return undefined;
+    return backend.onFileDrop((paths) => {
+      onDrop(paths);
+    });
+  }, [backend, imports.available]);
 
   const search = useDebounced(query, SEARCH_DEBOUNCE_MS);
   const [pageSize, setPageSize] = useHistoryPageSize();
@@ -229,6 +301,23 @@ export function History({ initialFilter }: HistoryProps) {
           value={`${formatCount(total)} / ${formatCount(retention.keep)}`}
           size="sm"
         />
+        {imports.available && (
+          <Button
+            size="sm"
+            variant="outline"
+            icon="upload"
+            title={t("history.imports.buttonHint")}
+            data-testid="history-import"
+            onClick={() => {
+              if (!retention.enabled) {
+                historyOffToast();
+                return;
+              }
+              void pickFiles();
+            }}>
+            {t("history.imports.button")}
+          </Button>
+        )}
         <Button
           size="sm"
           variant="text"
@@ -247,8 +336,25 @@ export function History({ initialFilter }: HistoryProps) {
         </Button>
       </Card>
 
+      {/* docs/dictation.md §31: the files being imported, until Voltip closes. */}
+      <ImportQueue
+        onView={(entry) => {
+          setSelectedId(entry);
+        }}
+      />
+
       {/* docs/dictation.md §26: the kept recordings no text came from, for 重新识别. */}
       <UnrecognisedRecordings />
+
+      {importing !== undefined && (
+        <ImportDialog
+          paths={importing.paths}
+          skipped={importing.skipped}
+          onClose={() => {
+            setImporting(undefined);
+          }}
+        />
+      )}
 
       {/* session log left, entry detail right, two parts to three: at 1440 px the log is wide
           enough for a row's model, time and result on one line (user feedback 2026-09-29, plan
@@ -355,10 +461,13 @@ export function History({ initialFilter }: HistoryProps) {
                 <ul>
                   {g.items.map((e) => {
                     const active = e.id === selected?.id;
-                    const outcome = outcomeLabel(e.outcome, locale);
+                    const outcome = entryOutcome(e, t, locale);
+                    // An imported file: its length rather than the time it took (§31).
                     const meta = sentAsText(e)
                       ? outcome.text
-                      : `${shortModel(e.asr_model)} · ${formatMs(e.asr_ms + (e.refine_ms ?? 0))} · ${outcome.text}`;
+                      : e.file !== undefined
+                        ? `${shortModel(e.asr_model)} · ${formatTakeLength(e.file.duration_ms, locale)} · ${outcome.text}`
+                        : `${shortModel(e.asr_model)} · ${formatMs(e.asr_ms + (e.refine_ms ?? 0))} · ${outcome.text}`;
                     return (
                       <li
                         key={e.id}
@@ -398,6 +507,18 @@ export function History({ initialFilter }: HistoryProps) {
                               {e.kind === "edit" && (
                                 <span data-testid="history-kind" data-kind={e.kind}>
                                   <Badge tone="accent">{t("history.edit.badge")}</Badge>
+                                </span>
+                              )}
+                              {e.file !== undefined && (
+                                // docs/dictation.md §31: an imported file, by its name.
+                                <span
+                                  className="flex min-w-0 shrink items-center gap-1"
+                                  data-testid="history-file"
+                                  title={e.file.name}>
+                                  <Badge tone="accent">{t("history.imports.badge")}</Badge>
+                                  <span className="truncate text-fg-muted" data-user-text>
+                                    {e.file.name}
+                                  </span>
                                 </span>
                               )}
                               {e.origin !== undefined && (
@@ -530,8 +651,13 @@ export function History({ initialFilter }: HistoryProps) {
                     <Badge tone="accent">{outputModeLabel(selected.mode, locale)}</Badge>
                   </span>
                 )}
-                <LampText tone={outcomeLabel(selected.outcome, locale).tone} mono>
-                  {outcomeLabel(selected.outcome, locale).text}
+                {selected.file !== undefined && (
+                  <span data-testid="history-detail-file">
+                    <Badge tone="accent">{t("history.imports.badge")}</Badge>
+                  </span>
+                )}
+                <LampText tone={entryOutcome(selected, t, locale).tone} mono>
+                  {entryOutcome(selected, t, locale).text}
                 </LampText>
               </span>
             )

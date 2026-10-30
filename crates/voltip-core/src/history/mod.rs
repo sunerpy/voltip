@@ -170,6 +170,20 @@ pub struct HistoryEntry {
     /// was. Absent until it ran. Boxed: most entries have none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub processed: Option<Box<ProcessedText>>,
+    /// The audio or video file the entry was transcribed from (docs/dictation.md §31); absent for
+    /// takes and in entries written before it. Such an entry is no dictation of the user's: it
+    /// counts toward no statistics and teaches the dictionary nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<ImportedFile>,
+}
+
+/// The file an imported entry came from (docs/dictation.md §31): its name, never where it is.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct ImportedFile {
+    /// The file's name.
+    pub name: String,
+    /// The length of its sound.
+    pub duration_ms: u64,
 }
 
 /// 用 AI 预设处理's result (docs/dictation.md §22): the text, the preset it ran with, and when.

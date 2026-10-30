@@ -27,7 +27,7 @@ You can help Voltip get there sooner by joining the closed test: join the [commu
 
 - **Listening all the time, or stopping when you fall silent.** An always-on microphone could type other people's words into the app in front, and stopping on silence cuts off dictation in a noisy room.
 - **Polishing sentence by sentence in Type as you speak.** Sentences already typed cannot be taken back and rewritten.
-- **Speaker separation, meeting detection and batch transcription of files.**
+- **Speaker separation and meeting detection.** Importing audio and video files and exporting their subtitles is available; see [Import audio or video](/dictation/history#import-audio-or-video).
 - **Browser addresses, the clipboard or screenshots as context for AI polish.** They can contain sensitive content unrelated to the dictation.
 - **A browser-only version.** The global shortcut, typing into other apps and local models need a native app.
 - **Packages for Windows on ARM and Linux on ARM**, for now.

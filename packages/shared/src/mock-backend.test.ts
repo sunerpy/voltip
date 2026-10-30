@@ -7,6 +7,16 @@ import {
   MOCK_OPUS_BYTES_PER_SECOND,
   MOCK_AUDIO_OUTPUTS,
   MOCK_EXPORT_DIR,
+  MOCK_IMPORT_BUILTIN,
+  MOCK_IMPORT_DIR,
+  MOCK_IMPORT_EXTENSIONS,
+  MOCK_IMPORT_FILE,
+  MOCK_IMPORT_HISTORY_OFF,
+  MOCK_IMPORT_PICK,
+  MOCK_IMPORT_SEGMENT_MS,
+  MOCK_IMPORT_SEGMENTS,
+  MOCK_IMPORT_STEP_MS,
+  MOCK_IMPORT_UNAVAILABLE,
   MOCK_PROCESS_ENTRY_GONE,
   MOCK_PROCESS_UNCONFIGURED,
   MOCK_AUDIO_DEVICES,
@@ -4160,5 +4170,373 @@ describe("MockBackend audio cache (docs/dictation.md §26)", () => {
     expect(off.peek().audio_cache.recordings).toEqual([]);
     const phone = new MockBackend({ now: () => clock, role: "phone" });
     expect(phone.peek().audio_cache.available).toBe(false);
+  });
+});
+
+describe("MockBackend file import (docs/dictation.md §31)", () => {
+  const T0 = 1_758_700_000_000;
+  let clock = T0;
+  beforeEach(() => {
+    clock = T0;
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+  const tick = (ms: number) => {
+    clock += ms;
+    vi.advanceTimersByTime(ms);
+  };
+  const STEP = MOCK_IMPORT_STEP_MS;
+  /** `MOCK_IMPORT_FILE`'s segments. */
+  const SEGMENTS = Math.ceil(MOCK_IMPORT_FILE.duration_ms / MOCK_IMPORT_SEGMENT_MS);
+  /** A job's steps: four quarters of decoding after its start, the start of recognition, a step
+   *  per segment, then the entry. */
+  const WHOLE = 6 + SEGMENTS;
+  const groq = { kind: "remote", provider: "groq", model: "whisper-large-v3" } as const;
+  const polish = { provider: "groq", model: "llama-3.3-70b-versatile" } as const;
+  const keyed = (options: ConstructorParameters<typeof MockBackend>[0] = {}) =>
+    new MockBackend({
+      now: () => clock,
+      history: [],
+      providerKeys: [
+        { provider: "groq", kind: "asr" },
+        { provider: "groq", kind: "llm" },
+      ],
+      ...options,
+    });
+  const jobs = (backend: MockBackend) => backend.peek().imports.jobs;
+
+  it("imports a file into one history entry whose segments keep their times", async () => {
+    const backend = keyed();
+    const engines = backend.peek().settings.engines;
+    expect(backend.peek().imports).toEqual({
+      available: true,
+      extensions: [...MOCK_IMPORT_EXTENSIONS],
+      jobs: [],
+    });
+    const events = collect(backend);
+    await backend.invoke("import_add", {
+      paths: [`${MOCK_IMPORT_DIR}/team-sync.mp4`],
+      asr: groq,
+      language: " zh ",
+    });
+    expect(jobs(backend)[0]).toMatchObject({
+      name: "team-sync.mp4",
+      size: MOCK_IMPORT_FILE.size,
+      paused: false,
+      state: { kind: "decoding" },
+    });
+    tick(STEP);
+    expect(jobs(backend)[0]).toMatchObject({
+      duration_ms: MOCK_IMPORT_FILE.duration_ms,
+      state: { kind: "decoding", pct: 25 },
+    });
+    tick(4 * STEP);
+    expect(jobs(backend)[0]?.state).toEqual({ kind: "recognizing", done: 0, total: SEGMENTS });
+    tick(STEP);
+    expect(jobs(backend)[0]?.state).toEqual({ kind: "recognizing", done: 1, total: SEGMENTS });
+    tick((SEGMENTS - 1) * STEP);
+    expect(jobs(backend)[0]?.state.kind).toBe("recognizing");
+    tick(STEP);
+    const [entry] = backend.peek().history_recent;
+    expect(jobs(backend)[0]?.state).toEqual({ kind: "done", entry: entry?.id, polish_failed: 0 });
+    expect(entry).toMatchObject({
+      file: { name: "team-sync.mp4", duration_ms: MOCK_IMPORT_FILE.duration_ms },
+      refined: false,
+      asr_model: "whisper-large-v3",
+      duration_ms: MOCK_IMPORT_FILE.duration_ms,
+      outcome: { kind: "inserted", via: "clipboard" },
+      kind: "dictation",
+    });
+    expect(entry?.refine_model).toBeUndefined();
+    expect(entry?.segments).toHaveLength(SEGMENTS);
+    expect(entry?.segments?.[1]).toEqual({
+      text: MOCK_IMPORT_SEGMENTS[1]?.raw,
+      start_ms: MOCK_IMPORT_SEGMENT_MS,
+      end_ms: 2 * MOCK_IMPORT_SEGMENT_MS,
+    });
+    expect(entry?.segments?.at(-1)?.end_ms).toBe(MOCK_IMPORT_FILE.duration_ms);
+    // The queue went out as events, the query answers it, and the settings stayed.
+    expect(events.filter((e) => e.type === "imports").length).toBeGreaterThan(SEGMENTS);
+    expect(await backend.importsState()).toEqual(backend.peek().imports);
+    expect(backend.peek().settings.engines).toEqual(engines);
+  });
+
+  it("polishes each segment with the chosen model when asked", async () => {
+    const backend = keyed();
+    await backend.invoke("import_add", { paths: ["/v/a.m4a"], asr: groq, refine: polish });
+    tick((5 + SEGMENTS) * STEP);
+    expect(jobs(backend)[0]?.state).toEqual({ kind: "polishing", done: 0, total: SEGMENTS });
+    tick(STEP);
+    expect(jobs(backend)[0]?.state).toEqual({ kind: "polishing", done: 1, total: SEGMENTS });
+    tick(SEGMENTS * STEP);
+    const [entry] = backend.peek().history_recent;
+    expect(jobs(backend)[0]?.state.kind).toBe("done");
+    expect(entry).toMatchObject({
+      refined: true,
+      refine_model: polish.model,
+      preset: { id: "proofread" },
+    });
+    expect(entry?.segments?.[0]).toEqual({
+      text: MOCK_IMPORT_SEGMENTS[0]?.raw,
+      refined: MOCK_IMPORT_SEGMENTS[0]?.refined,
+      start_ms: 0,
+      end_ms: MOCK_IMPORT_SEGMENT_MS,
+    });
+    expect(entry?.text.startsWith(MOCK_IMPORT_SEGMENTS[0]?.refined ?? "?")).toBe(true);
+    expect(entry?.raw_text.startsWith(MOCK_IMPORT_SEGMENTS[0]?.raw ?? "?")).toBe(true);
+  });
+
+  it("applies the dictionary and the rules to each segment", async () => {
+    const backend = keyed({
+      dictionary: [
+        {
+          id: "00000000-0000-4000-8000-000000000001",
+          term: "灰度发布",
+          heard_as: ["灰度"],
+          enabled: true,
+          source: { kind: "manual" },
+          created_at_ms: 0,
+          updated_at_ms: 0,
+        },
+      ],
+    });
+    await backend.invoke("import_add", { paths: ["/v/a.m4a"], asr: groq });
+    tick(WHOLE * STEP);
+    const [entry] = backend.peek().history_recent;
+    expect(entry?.file?.name).toBe("a.m4a");
+    expect(entry?.text).toContain("灰度发布");
+    expect(entry?.raw_text).not.toContain("灰度发布");
+    expect(entry?.vocabulary?.corrections.length).toBeGreaterThan(0);
+  });
+
+  it("refuses the built-in service, models that cannot run, the history off and the phone", async () => {
+    const plain = new MockBackend({ now: () => clock, history: [] });
+    const events = collect(plain);
+    const builtin = { kind: "remote", provider: "builtin", model: MOCK_ENGINE_BUILTIN.asr_model };
+    await plain.invoke("import_add", { paths: ["/a.mp3"], asr: builtin } as never);
+    await plain.invoke("import_add", { paths: ["/a.mp3"], asr: groq });
+    await plain.invoke("import_add", {
+      paths: ["/a.mp3"],
+      asr: { kind: "local", id: "sense-voice-small" },
+    });
+    expect(events).toEqual([
+      { type: "error", message: MOCK_IMPORT_BUILTIN },
+      { type: "error", message: MOCK_RETAKE_NOT_READY },
+      { type: "error", message: MOCK_RETAKE_NOT_READY },
+    ]);
+    const backend = keyed();
+    const refused = collect(backend);
+    await backend.invoke("import_add", {
+      paths: ["/a.mp3"],
+      asr: groq,
+      refine: { provider: "builtin", model: MOCK_ENGINE_BUILTIN.refine_model },
+    });
+    await backend.invoke("settings_set_history", { enabled: false, keep: 200 });
+    await backend.invoke("import_add", { paths: ["/a.mp3"], asr: groq });
+    expect(refused.filter((e) => e.type === "error")).toEqual([
+      { type: "error", message: MOCK_IMPORT_BUILTIN },
+      { type: "error", message: MOCK_IMPORT_HISTORY_OFF },
+    ]);
+    expect(jobs(plain)).toEqual([]);
+    expect(jobs(backend)).toEqual([]);
+    const phone = new MockBackend({ now: () => clock, role: "phone" });
+    const said = collect(phone);
+    expect(phone.peek().imports).toEqual({ available: false, extensions: [], jobs: [] });
+    await phone.invoke("import_add", { paths: ["/a.mp3"], asr: groq });
+    expect(said).toEqual([{ type: "error", message: MOCK_IMPORT_UNAVAILABLE }]);
+    expect(await phone.importPick("t", "m", "a")).toEqual([]);
+  });
+
+  it("runs on an installed local model, named as the catalogue names it", async () => {
+    const id = "sense-voice-small";
+    const backend = new MockBackend({
+      now: () => clock,
+      history: [],
+      models: { [id]: { kind: "installed", path: `${MOCK_MODELS_ROOT}/${id}`, installed_at: 1 } },
+    });
+    await backend.invoke("import_add", { paths: ["/v/a.wav"], asr: { kind: "local", id } });
+    tick(WHOLE * STEP);
+    expect(backend.peek().history_recent[0]?.asr_model).toBe(
+      MOCK_MODEL_CATALOGUE.find((m) => m.id === id)?.name,
+    );
+  });
+
+  it("a failed import does not hold up the next, and its retry goes on from its segment", async () => {
+    const backend = keyed();
+    const failure = { code: "recognition", detail: "服务暂时不可用" } as const;
+    backend.simulateImportFile("/v/a.mp4", { failure, failAt: 2 });
+    await backend.invoke("import_add", { paths: ["/v/a.mp4", "/v/b.mp3"], asr: groq });
+    expect(jobs(backend)[1]?.state).toEqual({ kind: "queued" });
+    // Decoding, the start of recognition, two segments; the third fails.
+    tick(8 * STEP);
+    const [a, b] = jobs(backend);
+    expect(a?.state).toEqual({ kind: "failed", failure, resumable: true });
+    expect(b?.state).toEqual({ kind: "decoding" });
+    tick(WHOLE * STEP);
+    expect(jobs(backend)[1]?.state.kind).toBe("done");
+    await backend.invoke("import_retry", { id: a?.id ?? "" });
+    // It goes on from the third segment, without decoding again.
+    expect(jobs(backend)[0]?.state).toEqual({ kind: "recognizing", done: 2, total: SEGMENTS });
+    tick((SEGMENTS - 2 + 1) * STEP);
+    expect(jobs(backend)[0]?.state.kind).toBe("done");
+    expect(backend.peek().history_recent).toHaveLength(2);
+    // Retrying a job that did not fail does nothing.
+    await backend.invoke("import_retry", { id: a?.id ?? "" });
+    expect(jobs(backend)[0]?.state.kind).toBe("done");
+  });
+
+  it("a file that cannot be decoded fails with its reason, and its retry starts again", async () => {
+    const backend = keyed();
+    const codec = { code: "unsupported_codec", codec: "AC-3" } as const;
+    backend.simulateImportFile("/v/c.mkv", { failure: codec });
+    backend.simulateImportFile("/v/quiet.wav", { failure: { code: "no_speech" } });
+    await backend.invoke("import_add", { paths: ["/v/c.mkv", "/v/quiet.wav"], asr: groq });
+    tick(STEP);
+    expect(jobs(backend)[0]?.state).toEqual({ kind: "failed", failure: codec, resumable: false });
+    tick(WHOLE * STEP);
+    expect(jobs(backend)[1]?.state).toEqual({
+      kind: "failed",
+      failure: { code: "no_speech" },
+      resumable: false,
+    });
+    await backend.invoke("import_retry", { id: jobs(backend)[0]?.id ?? "" });
+    expect(jobs(backend)[0]?.state).toEqual({ kind: "decoding" });
+    expect(backend.peek().history_recent).toEqual([]);
+  });
+
+  it("取消 stops a running import and leaves nothing; 移除 takes a finished one out", async () => {
+    const backend = keyed();
+    await backend.invoke("import_add", { paths: ["/v/a.mp4", "/v/b.mp4"], asr: groq });
+    tick(6 * STEP);
+    const [a, b] = jobs(backend);
+    await backend.invoke("import_cancel", { id: a?.id ?? "" });
+    expect(jobs(backend).map((j) => j.id)).toEqual([b?.id]);
+    expect(jobs(backend)[0]?.state).toEqual({ kind: "decoding" });
+    tick(WHOLE * STEP);
+    expect(backend.peek().history_recent).toHaveLength(1);
+    expect(backend.peek().history_recent[0]?.file?.name).toBe("b.mp4");
+    await backend.invoke("import_remove", { id: b?.id ?? "" });
+    expect(jobs(backend)).toEqual([]);
+    expect(backend.peek().history_recent).toHaveLength(1);
+    // A job that is gone, and an id the bridge would not parse.
+    await backend.invoke("import_remove", { id: b?.id ?? "" });
+    await expect(backend.invoke("import_cancel", { id: "x" })).rejects.toThrow("UUID");
+  });
+
+  it("an import waits at its next segment while a dictation runs", async () => {
+    const backend = keyed();
+    await backend.invoke("import_add", { paths: ["/v/a.mp4"], asr: groq, refine: polish });
+    tick(6 * STEP);
+    expect(jobs(backend)[0]?.state).toMatchObject({ kind: "recognizing", done: 1 });
+    await backend.invoke("dictation_start");
+    tick(STEP);
+    expect(jobs(backend)[0]).toMatchObject({
+      paused: true,
+      state: { kind: "recognizing", done: 1 },
+    });
+    tick(5 * STEP);
+    expect(jobs(backend)[0]).toMatchObject({ paused: true, state: { done: 1 } });
+    await backend.invoke("dictation_stop");
+    const { extra_recording_ms } = backend.peek().settings;
+    tick(extra_recording_ms + MOCK_ASR_MS + MOCK_REFINE_MS);
+    expect(backend.peek().dictation.phase.phase).toBe("done");
+    tick(STEP);
+    expect(jobs(backend)[0]).toMatchObject({
+      paused: false,
+      state: { kind: "recognizing", done: 2 },
+    });
+    // The polish waits too.
+    tick((SEGMENTS - 2 + 1) * STEP);
+    expect(jobs(backend)[0]?.state).toEqual({ kind: "polishing", done: 1, total: SEGMENTS });
+    tick(MOCK_DICTATION_DWELL_MS);
+    await backend.invoke("dictation_start");
+    tick(2 * STEP);
+    expect(jobs(backend)[0]).toMatchObject({ paused: true, state: { kind: "polishing" } });
+    await backend.invoke("dictation_cancel");
+    tick(SEGMENTS * STEP);
+    expect(jobs(backend)[0]?.state.kind).toBe("done");
+  });
+
+  it("a waiting job whose models can no longer run fails when its turn comes", async () => {
+    const backend = keyed();
+    await backend.invoke("import_add", { paths: ["/v/a.mp4", "/v/b.mp4"], asr: groq });
+    await backend.invoke("provider_key_set", { provider: "groq", kind: "asr", value: null });
+    tick(WHOLE * STEP);
+    const [a, b] = jobs(backend);
+    expect(a?.state.kind).toBe("done");
+    expect(b?.state).toEqual({
+      kind: "failed",
+      failure: { code: "recognition", detail: MOCK_RETAKE_NOT_READY },
+      resumable: false,
+    });
+  });
+
+  it("an import that ends with the history turned off saves nothing", async () => {
+    const backend = keyed();
+    await backend.invoke("import_add", { paths: ["/v/a.mp4"], asr: groq });
+    tick(5 * STEP);
+    await backend.invoke("settings_set_history", { enabled: false, keep: 200 });
+    tick(WHOLE * STEP);
+    expect(jobs(backend)[0]?.state).toEqual({
+      kind: "failed",
+      failure: { code: "storage", detail: MOCK_IMPORT_HISTORY_OFF },
+      resumable: false,
+    });
+    expect(backend.peek().history_recent).toEqual([]);
+  });
+
+  it("the open dialog picks files, a drop reaches the listeners, and an export keeps its text", async () => {
+    const backend = keyed();
+    expect(await backend.importPick("导入音频或视频", "音频和视频文件", "所有文件")).toEqual([
+      ...MOCK_IMPORT_PICK,
+    ]);
+    backend.simulateImportPick([]);
+    expect(await backend.importPick("t", "m", "a")).toEqual([]);
+    expect(await backend.importPick("t", "m", "a")).toEqual([...MOCK_IMPORT_PICK]);
+    expect(backend.importPicks[0]).toEqual({
+      title: "导入音频或视频",
+      media: "音频和视频文件",
+      all: "所有文件",
+    });
+    const dropped: string[][] = [];
+    const stop = backend.onFileDrop((paths) => dropped.push(paths));
+    expect(backend.fileDropListeners()).toBe(1);
+    backend.simulateFileDrop(["/v/a.mp4", "/v/notes.txt"]);
+    stop();
+    expect(backend.fileDropListeners()).toBe(0);
+    backend.simulateFileDrop(["/v/b.mp4"]);
+    expect(dropped).toEqual([["/v/a.mp4", "/v/notes.txt"]]);
+    await backend.invoke("import_add", { paths: ["/v/a.mp4"], asr: groq, refine: polish });
+    tick((6 + 2 * SEGMENTS) * STEP);
+    const id = backend.peek().history_recent[0]?.id ?? "";
+    await backend.historyExport(id, "srt", "a", "raw");
+    await backend.historyExport(id, "txt", "a");
+    expect(backend.exports).toEqual([
+      { id, format: "srt", fileName: "a", subtitles: "raw" },
+      { id, format: "txt", fileName: "a" },
+    ]);
+  });
+
+  it("the queue it starts with only shows: 重试 runs none of it, 移除 takes a job out", async () => {
+    const failed = {
+      id: "0b0c3a52-6c1e-4b3e-9a51-2f3c4d5e6f70",
+      name: "lecture.mkv",
+      size: 1_000,
+      paused: false,
+      state: {
+        kind: "failed",
+        failure: { code: "corrupt", detail: "cut off" },
+        resumable: false,
+      },
+    } as const;
+    const backend = keyed({ imports: [failed] });
+    expect(jobs(backend)).toEqual([failed]);
+    await backend.invoke("import_retry", { id: failed.id });
+    expect(jobs(backend)).toEqual([failed]);
+    await backend.invoke("import_remove", { id: failed.id });
+    expect(jobs(backend)).toEqual([]);
+    backend.destroy();
   });
 });

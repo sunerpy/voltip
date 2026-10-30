@@ -120,6 +120,8 @@ pub enum UiEvent {
     },
     /// The recordings the audio cache holds (docs/dictation.md §26), full replacement.
     AudioCache(crate::audio_cache::AudioCacheView),
+    /// The import queue (docs/dictation.md §31), full replacement.
+    Imports(crate::import::ImportsView),
     /// Updater progress. Produced by the desktop shell (which owns the updater plugin) and folded
     /// into the same state as core events, like [`UiEvent::Hotkey`].
     Update(UpdateStatus),
@@ -487,6 +489,10 @@ pub struct UiState {
     /// false where the app keeps none (the phone).
     #[serde(default)]
     pub audio_cache: crate::audio_cache::AudioCacheView,
+    /// The files being imported (docs/dictation.md §31); `available` is false where the app imports
+    /// none (the phone).
+    #[serde(default)]
+    pub imports: crate::import::ImportsView,
     /// Resolved ASR / refine / inject configuration.
     #[serde(default)]
     pub engines: EngineStatus,
@@ -584,6 +590,7 @@ impl Default for UiState {
             history_recent: Vec::new(),
             history_total: 0,
             audio_cache: crate::audio_cache::AudioCacheView::default(),
+            imports: crate::import::ImportsView::default(),
             engines: EngineStatus::default(),
             update: UpdateStatus::default(),
             models: Vec::new(),
@@ -708,6 +715,10 @@ impl UiState {
             CoreEvent::AudioCache(view) => {
                 self.audio_cache = view.clone();
                 UiEvent::AudioCache(view)
+            }
+            CoreEvent::Imports(view) => {
+                self.imports = view.clone();
+                UiEvent::Imports(view)
             }
             CoreEvent::ProviderProbe(report) => UiEvent::ProviderProbe(report),
             CoreEvent::Connectivity(status) => {
@@ -889,6 +900,7 @@ mod tests {
             preset: None,
             origin: None,
             processed: None,
+            file: None,
         };
         let ev = st.apply(CoreEvent::History { recent: vec![entry.clone()], total: 7 });
         assert_eq!((st.history_recent.clone(), st.history_total), (vec![entry], 7));

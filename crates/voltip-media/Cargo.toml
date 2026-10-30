@@ -1,0 +1,22 @@
+[package]
+name = "voltip-media"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Imported audio and video files in the app's recording format (docs/dictation.md §31): the audio track of a container decoded with Symphonia (Opus with opus-rs), mixed to mono and resampled to 16 kHz as it is read."
+
+[lints]
+workspace = true
+
+[dependencies]
+opus-rs.workspace = true
+symphonia.workspace = true
+tracing.workspace = true
+voltip-core.workspace = true
+# The resampler the local speech service brings its uploads to 16 kHz with, block by block.
+voltip-serve.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -75,6 +75,11 @@ describe("history queries of the mock backend (the core's semantics)", () => {
     expect(countsForStats(phone("take"))).toBe(true);
     expect(countsForStats(phone("typed"))).toBe(false);
     expect(countsForStats(phone("clipboard"))).toBe(false);
+    // An imported file is no dictation of the user's (docs/dictation.md §31).
+    const imported = entry({ at_ms: NOW, file: { name: "interview.m4a", duration_ms: 90_000 } });
+    expect(countsForStats(imported)).toBe(false);
+    expect(matchesHistoryQuery(imported, "INTERVIEW")).toBe(true);
+    expect(matchesHistoryQuery(entry({ at_ms: NOW }), "interview")).toBe(false);
     // The same cases as the core's `corrected_chars` test.
     expect(correctedChars("嗯那个明天开会", "明天开会。")).toBe(4);
     expect(correctedChars("hello world", "Hello, world.")).toBe(3);

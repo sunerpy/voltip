@@ -1482,7 +1482,7 @@ impl StreamingSession for FakeSession {
         }
         self.word += 1;
         if self.word.is_multiple_of(self.endpoint_every) {
-            let segment = Segment { text: text.clone(), start_ms: self.sentence_start_ms, end_ms: self.fed_ms() };
+            let segment = Segment { text: text.clone(), refined: None, start_ms: self.sentence_start_ms, end_ms: self.fed_ms() };
             self.sentence_start_ms = self.fed_ms();
             self.committed.push(segment.clone());
             self.pending.push_back(StreamEvent::Endpoint { text: segment.text, start_ms: segment.start_ms, end_ms: segment.end_ms });
@@ -1554,6 +1554,7 @@ pub fn history_entry(text: &str) -> crate::HistoryEntry {
         preset: None,
         origin: None,
         processed: None,
+        file: None,
     }
 }
 
@@ -1911,6 +1912,162 @@ impl crate::models::ModelManager for FakeModels {
     }
 }
 
+/// A media decoder standing in for `voltip-media` (docs/dictation.md §31): every file decodes to
+/// `seconds` of a 440 Hz tone with 300 ms of silence at the end of every fourth second, or fails
+/// as configured. It writes `<out>.part` and renames it, reports its progress, and stops at a
+/// cancel, as the real one does.
+#[derive(Debug)]
+pub struct FakeMediaDecoder {
+    seconds: u64,
+    fail: Option<crate::import::MediaError>,
+    probes: AtomicUsize,
+    decodes: AtomicUsize,
+    /// Every decode waits here until released ([`FakeMediaDecoder::held`]).
+    gate: Option<Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>>,
+}
+
+impl FakeMediaDecoder {
+    /// Every file is `seconds` long.
+    pub fn new(seconds: u64) -> Self {
+        Self { seconds, fail: None, probes: AtomicUsize::new(0), decodes: AtomicUsize::new(0), gate: None }
+    }
+
+    /// Every file fails with `error`.
+    pub fn failing(error: crate::import::MediaError) -> Self {
+        Self { fail: Some(error), ..Self::new(0) }
+    }
+
+    /// Every decode waits for [`FakeMediaDecoder::release`] (or a cancel) before it writes.
+    pub fn held(seconds: u64) -> Self {
+        Self { gate: Some(Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()))), ..Self::new(seconds) }
+    }
+
+    /// Let the held decodes go on.
+    pub fn release(&self) {
+        if let Some(gate) = &self.gate {
+            *gate.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = true;
+            gate.1.notify_all();
+        }
+    }
+
+    /// Decodes started so far.
+    pub fn decodes(&self) -> usize {
+        self.decodes.load(Ordering::SeqCst)
+    }
+
+    /// Probes so far.
+    pub fn probes(&self) -> usize {
+        self.probes.load(Ordering::SeqCst)
+    }
+
+    fn info(&self) -> crate::import::MediaInfo {
+        crate::import::MediaInfo {
+            container: "mp4".into(),
+            codec: "aac".into(),
+            channels: 2,
+            sample_rate: 48_000,
+            duration_ms: Some(self.seconds * 1000),
+            audio_tracks: 1,
+        }
+    }
+
+    /// The decoded samples: the tone, silent for the last 300 ms of every fourth second.
+    pub fn samples(seconds: u64) -> impl Iterator<Item = i16> {
+        let rate = u64::from(SAMPLE_RATE_HZ);
+        (0..seconds * rate).map(move |i| {
+            if i % (4 * rate) >= 4 * rate - 3 * rate / 10 { 0 } else { ((i as f32 / rate as f32 * 440.0 * std::f32::consts::TAU).sin() * 16_000.0) as i16 }
+        })
+    }
+}
+
+impl crate::import::MediaDecoder for FakeMediaDecoder {
+    fn extensions(&self) -> &'static [&'static str] {
+        &["wav", "mp3", "m4a", "mp4", "mkv"]
+    }
+
+    fn probe(&self, _path: &std::path::Path) -> Result<crate::import::MediaInfo, crate::import::MediaError> {
+        self.probes.fetch_add(1, Ordering::SeqCst);
+        match &self.fail {
+            Some(e) => Err(e.clone()),
+            None => Ok(self.info()),
+        }
+    }
+
+    fn decode_to_pcm(
+        &self,
+        _path: &std::path::Path,
+        out: &std::path::Path,
+        progress: &dyn Fn(u64, Option<u64>),
+        cancel: &crate::models::CancelToken,
+    ) -> Result<crate::import::PcmInfo, crate::import::MediaError> {
+        self.decodes.fetch_add(1, Ordering::SeqCst);
+        if let Some(e) = &self.fail {
+            return Err(e.clone());
+        }
+        if let Some(gate) = &self.gate {
+            let mut released = gate.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let started = std::time::Instant::now();
+            while !*released && !cancel.is_cancelled() {
+                assert!(started.elapsed() < HOLD_LIMIT, "a held fake decode was not released within {HOLD_LIMIT:?}");
+                released = gate.1.wait_timeout(released, Duration::from_millis(10)).unwrap_or_else(std::sync::PoisonError::into_inner).0;
+            }
+        }
+        if cancel.is_cancelled() {
+            return Err(crate::import::MediaError::Cancelled);
+        }
+        let part = out.with_extension("pcm.part");
+        let mut bytes = Vec::with_capacity(usize::try_from(self.seconds * u64::from(SAMPLE_RATE_HZ) * 2).unwrap_or(0));
+        for v in Self::samples(self.seconds) {
+            bytes.extend_from_slice(&v.to_le_bytes());
+        }
+        let total = Some(self.seconds * 1000);
+        progress(0, total);
+        std::fs::write(&part, &bytes).map_err(|e| crate::import::MediaError::Write(e.to_string()))?;
+        progress(self.seconds * 500, total);
+        progress(self.seconds * 1000, total);
+        std::fs::rename(&part, out).map_err(|e| crate::import::MediaError::Write(e.to_string()))?;
+        Ok(crate::import::PcmInfo { samples: self.seconds * u64::from(SAMPLE_RATE_HZ), info: self.info() })
+    }
+}
+
+/// A segmenter factory whose segments are exactly `seconds` long (the last one what is left), with
+/// any bounds: the import tests know their segments. [`SegmenterFactory::create`] refuses, as a
+/// factory whose model is missing does.
+#[derive(Debug, Clone, Copy)]
+pub struct FixedSegmenterFactory(pub u64);
+
+impl super::ports::SegmenterFactory for FixedSegmenterFactory {
+    fn create(&self) -> Result<Box<dyn super::ports::Segmenter>, String> {
+        Err("fixed segments are for imports only".into())
+    }
+
+    fn create_with(&self, _bounds: super::ports::SegmentBounds) -> Result<Box<dyn super::ports::Segmenter>, String> {
+        Ok(Box::new(FixedSegmenter { every: self.0 * u64::from(SAMPLE_RATE_HZ), start: 0, pos: 0 }))
+    }
+}
+
+struct FixedSegmenter {
+    every: u64,
+    start: u64,
+    pos: u64,
+}
+
+impl super::ports::Segmenter for FixedSegmenter {
+    fn push(&mut self, samples: &[f32]) -> Vec<u64> {
+        self.pos += samples.len() as u64;
+        let mut cuts = Vec::new();
+        while self.pos - self.start >= self.every {
+            self.start += self.every;
+            cuts.push(self.start);
+        }
+        cuts
+    }
+
+    fn finish(&mut self) -> Option<u64> {
+        (self.pos > self.start).then_some(self.pos)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2124,7 +2281,7 @@ mod tests {
             ]
         );
         let fin = s.finish().unwrap();
-        assert_eq!(fin.committed, vec![Segment { text: "你好，世界。".into(), start_ms: 0, end_ms: 400 }]);
+        assert_eq!(fin.committed, vec![Segment { text: "你好，世界。".into(), refined: None, start_ms: 0, end_ms: 400 }]);
         assert_eq!(fin.tail, "今天");
         assert_eq!(fake.finishes(), 1);
         // Past the script the sentence stops growing; a session flushed right after an endpoint has no tail.

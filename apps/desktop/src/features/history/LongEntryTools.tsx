@@ -1,4 +1,13 @@
-import { BUILTIN_PRESETS, type ExportFormat, type HistoryEntry, presetLabel } from "@voltip/shared";
+import {
+  BUILTIN_PRESETS,
+  type ExportFormat,
+  type HistoryEntry,
+  SEGMENT_TEXTS,
+  type SegmentText,
+  hasPolishedSegments,
+  presetLabel,
+  stem,
+} from "@voltip/shared";
 import {
   Button,
   Progress,
@@ -16,7 +25,8 @@ import { useShell } from "../../app/shell-context";
 // phone's history.
 export { type ProcessView, exportName, isLongEntry, useHistoryProcess } from "@voltip/ui";
 
-/** 用 AI 预设处理 and the two exports of a long entry (docs/dictation.md §22). */
+/** 用 AI 预设处理 and the two exports of a long entry (docs/dictation.md §22). An imported file's
+ *  exports take its name, and its subtitles carry the polished text or what was recognised (§31). */
 export function LongEntryTools({
   entry,
   process,
@@ -29,6 +39,8 @@ export function LongEntryTools({
   const { t, locale } = useI18n();
   const { settings, presets } = useUiState();
   const [preset, setPreset] = useState<string>(settings.engines.refine_preset);
+  const [subtitles, setSubtitles] = useState<SegmentText>("refined");
+  const polished = hasPolishedSegments(entry);
   const view = process.view;
   const processed = view.state === "done" ? view.processed : entry.processed;
   const running = view.state === "running";
@@ -38,7 +50,10 @@ export function LongEntryTools({
     ...presets.map((p) => ({ value: p.id, label: p.name })),
   ];
   const save = async (format: ExportFormat) => {
-    const outcome = await backend.historyExport(entry.id, format, exportName(entry.at_ms));
+    const name = entry.file === undefined ? exportName(entry.at_ms) : stem(entry.file.name);
+    // Only an entry with polished segments has the choice; the core's default is the same.
+    const text = format === "srt" && polished ? subtitles : undefined;
+    const outcome = await backend.historyExport(entry.id, format, name, text);
     // `shared` is the phone's answer.
     if (outcome.kind === "cancelled" || outcome.kind === "shared") return;
     shell.toast(
@@ -112,6 +127,19 @@ export function LongEntryTools({
         {settings.engines.llm_provider === "builtin" && ` ${t("history.long.builtinNote")}`}
       </p>
       <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
+        {polished && (
+          <Select
+            aria-label={t("history.imports.subtitles.label")}
+            size="sm"
+            value={subtitles}
+            options={SEGMENT_TEXTS.map((value) => ({
+              value,
+              label: t(`history.imports.subtitles.${value}`),
+            }))}
+            data-testid="history-export-subtitles"
+            onChange={setSubtitles}
+          />
+        )}
         <Button
           size="sm"
           icon="download"

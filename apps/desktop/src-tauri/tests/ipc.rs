@@ -15,6 +15,7 @@ use tauri::webview::InvokeRequest;
 use tauri::{AppHandle, Listener as _, Manager as _, WebviewWindow};
 use voltip_core::dictation::fakes::fake_engines;
 use voltip_core::dictation::{DictationPorts, fakes};
+use voltip_core::import::{ImportState, ImportsView};
 use voltip_core::ui::{UI_EVENT_NAME, UiState, UpdateStatus};
 use voltip_core::{
     Activation, ContextSharing, CoreConfig, DictationPhase, EdgeSource, FailureCode, InjectMode, Locale, ModelInstallState, SecretSource, Settings,
@@ -46,8 +47,9 @@ fn core_config(dir: &Path, relay_url: Option<&str>) -> CoreConfig {
     SettingsStore::new(dir).save(&settings).unwrap();
     let mut cfg = CoreConfig::new(dir.to_path_buf());
     cfg.default_device_name = DEVICE_NAME.into();
-    // As in the shell's own configuration (docs/dictation.md §20.8).
+    // As in the shell's own configuration (docs/dictation.md §20.8, §31).
     cfg.sync_role = voltip_core::sync::SyncRole::Computer;
+    cfg.media_decoder = Some(Arc::new(voltip_media::Decoder));
     cfg
 }
 
@@ -1573,6 +1575,8 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
             "backup_discard",
             "audio_meter_start",
             "audio_meter_stop",
+            "imports_state",
+            "import_pick",
             "overlay_state",
             "update_status",
             "rules_export",
@@ -1622,6 +1626,45 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
         }
         let err = invoke(webview, "core_state_v2", json!({})).unwrap_err();
         assert!(err.as_str().unwrap().contains(NOT_FOUND));
+    });
+}
+
+/// docs/dictation.md §31: the import commands reach the core. A file joins the queue, is decoded by
+/// voltip-media and recognised, and its entry lands in the history; `imports_state` answers the
+/// queue the `imports` events carry, with the extensions a drop takes. A missing argument or a
+/// malformed id is an argument error; the built-in service is the core's refusal.
+#[test]
+fn an_import_goes_from_the_webview_into_the_history() {
+    with_running_app(|_, webview, rx| {
+        wait_state(webview, |s| s.identity.is_some());
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("讲话.wav");
+        std::fs::write(&file, fakes::speech_recording(5_000).wav).unwrap();
+        let queue: ImportsView = serde_json::from_value(invoke(webview, "imports_state", json!({})).unwrap()).unwrap();
+        assert!(queue.available && queue.jobs.is_empty(), "{queue:?}");
+        assert_eq!(queue.extensions, voltip_media::EXTENSIONS);
+
+        let asr = json!({ "kind": "remote", "provider": "custom", "model": voltip_core::engines::DEFAULT_ASR_MODEL });
+        invoke(webview, "import_add", json!({ "paths": [file.to_string_lossy()], "asr": asr, "language": "zh" })).unwrap();
+        let done = wait_state(webview, |s| s.imports.jobs.iter().any(|j| matches!(j.state, ImportState::Done { .. })));
+        let job = done.imports.jobs[0].clone();
+        let ImportState::Done { entry, .. } = job.state else { unreachable!() };
+        assert_eq!((job.name.as_str(), job.duration_ms), ("讲话.wav", Some(5_000)));
+        let entry = wait_state(webview, |s| s.history_recent.iter().any(|e| e.id == entry)).history_recent.into_iter().find(|e| e.id == entry).unwrap();
+        assert_eq!(entry.file.as_ref().map(|f| f.name.as_str()), Some("讲话.wav"));
+        let queue: ImportsView = serde_json::from_value(invoke(webview, "imports_state", json!({})).unwrap()).unwrap();
+        assert_eq!(queue, done.imports, "the query answers what the events said");
+
+        invoke(webview, "import_remove", json!({ "id": job.id })).unwrap();
+        wait_state(webview, |s| s.imports.jobs.is_empty());
+        assert!(invoke(webview, "import_cancel", json!({ "id": "not-a-uuid" })).is_err());
+        assert!(invoke(webview, "import_retry", json!({})).is_err(), "the id is required");
+        assert!(invoke(webview, "import_add", json!({ "paths": [] })).is_err(), "the recognition is required");
+        let builtin = json!({ "kind": "remote", "provider": "builtin", "model": "" });
+        invoke(webview, "import_add", json!({ "paths": [file.to_string_lossy()], "asr": builtin })).unwrap();
+        let refusal = voltip_core::import::ImportError::BuiltinNotAllowed.to_string();
+        wait_event(rx, "the refusal", |e| e["type"] == "error" && e["message"] == refusal.as_str());
+        assert!(core_state(webview).imports.jobs.is_empty());
     });
 }
 

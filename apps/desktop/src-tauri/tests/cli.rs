@@ -14,8 +14,8 @@ use voltip_asr_local::{
 use voltip_core::dictation::fakes::speech_recording;
 use voltip_core::{ChineseScript, DEFAULT_LOCAL_MODEL_ID, EdgeSource, EngineSettings, ProviderId, Settings, SettingsStore, TakeKind};
 use voltip_desktop_lib::cli::{
-    Action, Cli, ExitCode, Remote, TranscribeOutput, compute_for, copy_last_from_args, default_model, download_model, list_compute, list_devices, list_models,
-    quit_from_args, remote_from_args, run_headless, transcribe_file,
+    Action, Cli, ExitCode, Remote, TranscribeArgs, TranscribeOutput, compute_for, copy_last_from_args, default_model, download_model, list_compute,
+    list_devices, list_models, quit_from_args, remote_from_args, run_headless, transcribe_file, transcribe_path,
 };
 use voltip_tauri_bridge::UiCommand;
 use wiremock::matchers::{method, path};
@@ -36,7 +36,7 @@ fn cli_parses_flags_into_actions_and_remotes() {
     assert_eq!(parse(&["--list-models"]).unwrap().action(), Action::ListModels);
     assert_eq!(
         parse(&["--transcribe-file", "a.wav"]).unwrap().action(),
-        Action::TranscribeFile { path: PathBuf::from("a.wav"), model: None, json: false, device: None, gpu: None, threads: None }
+        Action::TranscribeFile { path: PathBuf::from("a.wav"), model: None, json: false, srt: None, device: None, gpu: None, threads: None }
     );
     assert_eq!(
         parse(&["--transcribe-file", "/tmp/a.wav", "--model", "sense-voice-small", "--json"]).unwrap().action(),
@@ -44,6 +44,7 @@ fn cli_parses_flags_into_actions_and_remotes() {
             path: PathBuf::from("/tmp/a.wav"),
             model: Some("sense-voice-small".into()),
             json: true,
+            srt: None,
             device: None,
             gpu: None,
             threads: None
@@ -57,13 +58,28 @@ fn cli_parses_flags_into_actions_and_remotes() {
             path: PathBuf::from("a.wav"),
             model: None,
             json: false,
+            srt: None,
             device: Some(LocalDevice::Gpu),
             gpu: Some("Vulkan0".into()),
             threads: Some(8)
         }
     );
+    // docs/dictation.md §31: the subtitles of the file recognised.
+    assert_eq!(
+        parse(&["--transcribe-file", "talk.mp4", "--srt", "talk.srt"]).unwrap().action(),
+        Action::TranscribeFile {
+            path: PathBuf::from("talk.mp4"),
+            model: None,
+            json: false,
+            srt: Some(PathBuf::from("talk.srt")),
+            device: None,
+            gpu: None,
+            threads: None
+        }
+    );
     for bad in [
-        &["--transcribe-file", "a.wav", "--device", "npu"][..],
+        &["--srt", "talk.srt"][..],
+        &["--transcribe-file", "a.wav", "--device", "npu"],
         &["--transcribe-file", "a.wav", "--threads", "0"],
         &["--device", "cpu"],
         &["--list-compute", "--list-models"],
@@ -232,8 +248,14 @@ fn install(root: &Path, id: &str) {
 }
 
 fn run(transcriber: &LocalTranscriber, path: &Path, json: bool) -> (ExitCode, String, String) {
+    run_with(transcriber, path, json, None)
+}
+
+/// [`run`] writing the subtitles to `srt`.
+fn run_with(transcriber: &LocalTranscriber, path: &Path, json: bool, srt: Option<&Path>) -> (ExitCode, String, String) {
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = transcribe_file(transcriber, path, json, Some("zh"), ChineseScript::Simplified, &mut out, &mut err);
+    let args = TranscribeArgs { path, json, srt, language: Some("zh"), script: ChineseScript::Simplified, segmenter: None };
+    let code = transcribe_file(transcriber, &args, &mut out, &mut err);
     (code, String::from_utf8(out).unwrap(), String::from_utf8(err).unwrap())
 }
 
@@ -265,7 +287,8 @@ fn transcribe_file_normalises_the_chinese_script() {
     for (script, expect) in [(ChineseScript::Simplified, "开放时间：早上九点至下午五点。"), (ChineseScript::AsIs, "開放時間：早上九點至下午五點。")]
     {
         let (mut out, mut err) = (Vec::new(), Vec::new());
-        assert_eq!(transcribe_file(&t, &wav, false, None, script, &mut out, &mut err), ExitCode::Ok);
+        let args = TranscribeArgs { path: &wav, json: false, srt: None, language: None, script, segmenter: None };
+        assert_eq!(transcribe_file(&t, &args, &mut out, &mut err), ExitCode::Ok);
         assert_eq!(String::from_utf8(out).unwrap(), format!("{expect}\n"), "{script:?}");
     }
 }
@@ -350,7 +373,8 @@ fn transcribe_file_headless_prints_text_or_json_and_fails_with_an_empty_stdout_w
     assert_eq!(String::from_utf8(out).unwrap(), listing);
     // The dispatcher's real-engine path over a model that is not installed: non-zero, empty stdout.
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let action = Action::TranscribeFile { path: wav.clone(), model: Some("qwen3-asr-0.6b".into()), json: true, device: None, gpu: None, threads: None };
+    let action =
+        Action::TranscribeFile { path: wav.clone(), model: Some("qwen3-asr-0.6b".into()), json: true, srt: None, device: None, gpu: None, threads: None };
     assert_eq!(run_headless(&action, dir.path(), &mut out, &mut err), ExitCode::Failed);
     assert!(out.is_empty());
     assert!(String::from_utf8(err).unwrap().contains("本地模型未下载"));
@@ -371,6 +395,91 @@ fn transcribe_file_headless_prints_text_or_json_and_fails_with_an_empty_stdout_w
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = run_headless(&Action::ListDevices, dir.path(), &mut out, &mut err);
     assert!(matches!(code, ExitCode::Ok | ExitCode::Failed));
+}
+
+/// A file of voltip-media's tests (docs/dictation.md §31): two seconds, a tone then silence.
+fn media_fixture(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../crates/voltip-media/tests/fixtures").join(name)
+}
+
+/// docs/dictation.md §31: `--transcribe-file` reads what the import reads, through the same decoder
+/// and segments; a file that has no sound or a codec it cannot decode fails with the reason and an
+/// empty stdout, the original file left as it was.
+#[test]
+fn transcribe_file_reads_every_format_the_import_reads() {
+    let dir = tempfile::tempdir().unwrap();
+    let models = dir.path().join("models");
+    install(&models, "sense-voice-small");
+    let t = LocalTranscriber::with_loader(&models, CATALOGUE, Arc::new(FakeLoader)).select("sense-voice-small");
+    for name in ["tone.mp3", "tone.m4a", "tone.mkv", "tone.webm", "tone.aac"] {
+        let file = media_fixture(name);
+        let before = std::fs::read(&file).unwrap();
+        let (code, out, err) = run(&t, &file, true);
+        assert_eq!(code, ExitCode::Ok, "{name}: {err}");
+        let parsed: TranscribeOutput = serde_json::from_str(out.trim_end()).unwrap();
+        assert!(parsed.text.starts_with("sense-voice-small@16000:"), "{name}: one segment of 16 kHz samples: {}", parsed.text);
+        assert_eq!(parsed.model, "sense-voice-small");
+        assert_eq!(std::fs::read(&file).unwrap(), before, "{name} is only read");
+    }
+    let (code, out, err) = run(&t, &media_fixture("video-only.mp4"), false);
+    assert_eq!((code, out.as_str()), (ExitCode::Failed, ""));
+    assert!(err.contains("no audio track"), "{err}");
+    let (code, out, err) = run(&t, &media_fixture("ac3.mkv"), false);
+    assert_eq!((code, out.as_str()), (ExitCode::Failed, ""));
+    assert!(err.contains("AC-3"), "{err}");
+}
+
+/// docs/dictation.md §31: a WAV is read whole, as before the import came: its output is what the
+/// recogniser makes of the file, byte for byte, at its own rate and channels.
+#[test]
+fn regression_a_wav_is_still_read_whole() {
+    let dir = tempfile::tempdir().unwrap();
+    let models = dir.path().join("models");
+    install(&models, "sense-voice-small");
+    let t = LocalTranscriber::with_loader(&models, CATALOGUE, Arc::new(FakeLoader)).select("sense-voice-small");
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    for (name, wav) in [("16k.wav", speech_recording(1500).wav), ("tone.wav", std::fs::read(media_fixture("tone.wav")).unwrap())] {
+        let path = dir.path().join(name);
+        std::fs::write(&path, wav).unwrap();
+        let whole = runtime.block_on(transcribe_path(&t, &path, Some("zh"), ChineseScript::Simplified)).unwrap();
+        let (code, out, _) = run(&t, &path, false);
+        assert_eq!((code, out), (ExitCode::Ok, format!("{}\n", whole.text)), "{name}");
+    }
+    let (_, out, _) = run(&t, &dir.path().join("tone.wav"), false);
+    assert_eq!(out, "sense-voice-small@12000:24000\n", "at the file's own 12 kHz, not decoded to 16 kHz");
+}
+
+/// docs/dictation.md §31: `--srt` writes the subtitles of the segments, a cue per line within each
+/// segment's time, before the text goes to stdout; a file it cannot write is an error with an empty
+/// stdout.
+#[test]
+fn transcribe_file_writes_the_subtitles_of_its_segments() {
+    let dir = tempfile::tempdir().unwrap();
+    let models = dir.path().join("models");
+    install(&models, "sense-voice-small");
+    let t = LocalTranscriber::with_loader(&models, CATALOGUE, Arc::new(FakeLoader)).select("sense-voice-small");
+    let srt = dir.path().join("tone.srt");
+    let (code, out, err) = run_with(&t, &media_fixture("tone.mp3"), false, Some(&srt));
+    assert_eq!(code, ExitCode::Ok, "{err}");
+    let subtitles = std::fs::read_to_string(&srt).unwrap();
+    assert!(subtitles.starts_with("1\r\n00:00:00,000 --> 00:00:02,000\r\n"), "{subtitles}");
+    assert!(subtitles.contains(out.trim_end()), "the cue is the text: {subtitles}");
+
+    // A long WAV goes through the segments too when subtitles are asked for: 3–15 s each, in order.
+    let long = dir.path().join("long.wav");
+    std::fs::write(&long, speech_recording(40_000).wav).unwrap();
+    let (code, out, err) = run_with(&t, &long, false, Some(&srt));
+    assert_eq!(code, ExitCode::Ok, "{err}");
+    let subtitles = std::fs::read_to_string(&srt).unwrap();
+    let times: Vec<(String, String)> = subtitles.lines().filter_map(|l| l.split_once(" --> ")).map(|(a, b)| (a.to_owned(), b.to_owned())).collect();
+    assert!(times.len() >= 3, "{subtitles}");
+    assert!(times.windows(2).all(|w| w[0].1 <= w[1].0 && w[0].0 < w[1].0), "in order: {times:?}");
+    assert_eq!(times.last().unwrap().1, "00:00:40,000");
+    assert_eq!(out.matches("sense-voice-small@16000").count(), times.len(), "one text per segment: {out}");
+
+    let (code, out, err) = run_with(&t, &media_fixture("tone.mp3"), false, Some(&dir.path().join("missing").join("x.srt")));
+    assert_eq!((code, out.as_str()), (ExitCode::Failed, ""));
+    assert!(err.contains("x.srt"), "{err}");
 }
 
 /// The real thing: `voltip --transcribe-file <wav> --json` against a downloaded model staged as the

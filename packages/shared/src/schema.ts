@@ -883,6 +883,8 @@ export const usageOriginSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("phone"), name: z.string() }),
   z.object({ kind: z.literal("retake") }),
   z.object({ kind: z.literal("serve") }),
+  /** An imported audio or video file (docs/dictation.md §31). */
+  z.object({ kind: z.literal("import") }),
 ]);
 export type UsageOrigin = z.infer<typeof usageOriginSchema>;
 
@@ -939,6 +941,9 @@ export const emptyUsageView = (): UsageView => usageViewSchema.parse({});
  *  with stream timestamps in milliseconds. */
 export const liveSegmentSchema = z.object({
   text: z.string(),
+  /** An imported file's segment polished on its own (docs/dictation.md §31): what its subtitles
+   *  may carry in the same time. Absent everywhere else. */
+  refined: z.string().optional(),
   start_ms: z.number().nonnegative(),
   end_ms: z.number().nonnegative(),
 });
@@ -1264,6 +1269,93 @@ export const emptyAudioCache = (): AudioCacheView => ({
   bytes: 0,
 });
 
+// ---- Imported audio and video files (docs/dictation.md §31) ----
+
+/** The polish of an import (`voltip_core::import::PolishModel`): a provider's model, with the
+ *  user's own key. */
+export const polishModelSchema = z.object({ provider: providerIdSchema, model: z.string().min(1) });
+export type PolishModel = z.infer<typeof polishModelSchema>;
+
+/** Why an import stopped (`voltip_core::import::ImportFailure`), by kind: the interface words it. */
+export const importFailureSchema = z.discriminatedUnion("code", [
+  /** The file could not be read (gone, or not readable); the system's words. */
+  z.object({ code: z.literal("unreadable"), detail: z.string() }),
+  z.object({ code: z.literal("unsupported_format") }),
+  z.object({ code: z.literal("no_audio") }),
+  /** Its audio's codec (`AC-3`, `DTS`, …) is not decoded. */
+  z.object({ code: z.literal("unsupported_codec"), codec: z.string() }),
+  /** Damaged or cut off. */
+  z.object({ code: z.literal("corrupt"), detail: z.string() }),
+  /** The decoded audio could not be kept, or the entry not saved. */
+  z.object({ code: z.literal("storage"), detail: z.string() }),
+  /** A segment was not recognised in two tries; the recogniser's words. */
+  z.object({ code: z.literal("recognition"), detail: z.string() }),
+  z.object({ code: z.literal("no_speech") }),
+]);
+export type ImportFailure = z.infer<typeof importFailureSchema>;
+
+/** Where an import is (`voltip_core::import::ImportState`). */
+export const importStateSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("queued") }),
+  /** `pct` once the file's length is known. */
+  z.object({ kind: z.literal("decoding"), pct: z.number().int().min(0).max(100).optional() }),
+  z.object({
+    kind: z.literal("recognizing"),
+    done: z.number().int().nonnegative(),
+    total: z.number().int().nonnegative(),
+  }),
+  z.object({
+    kind: z.literal("polishing"),
+    done: z.number().int().nonnegative(),
+    total: z.number().int().nonnegative(),
+  }),
+  /** In the history; `polish_failed` segments kept what was recognised. */
+  z.object({
+    kind: z.literal("done"),
+    entry: z.string(),
+    polish_failed: z.number().int().nonnegative().default(0),
+  }),
+  /** `resumable`: 重试 goes on from the first segment not recognised. */
+  z.object({ kind: z.literal("failed"), failure: importFailureSchema, resumable: z.boolean() }),
+]);
+export type ImportState = z.infer<typeof importStateSchema>;
+
+/** One file in the queue (`voltip_core::import::ImportJob`): its name, never its path. */
+export const importJobSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  size: z.number().nonnegative(),
+  duration_ms: z.number().nonnegative().optional(),
+  /** Waiting for a dictation to end before its next segment. */
+  paused: z.boolean().default(false),
+  state: importStateSchema,
+});
+export type ImportJob = z.infer<typeof importJobSchema>;
+
+/** `UiState.imports` (`voltip_core::import::ImportsView`): the queue in the order the files run;
+ *  `available` is false where the app imports nothing (the phone). `extensions` are the files a
+ *  drop takes. */
+export const importsViewSchema = z.object({
+  available: z.boolean().default(false),
+  extensions: z.array(z.string()).default(() => []),
+  jobs: z.array(importJobSchema).default(() => []),
+});
+export type ImportsView = z.infer<typeof importsViewSchema>;
+export const emptyImports = (): ImportsView => ({ available: false, extensions: [], jobs: [] });
+
+/** The file an imported entry came from (`voltip_core::history::ImportedFile`): its name and the
+ *  length of its sound. */
+export const importedFileSchema = z.object({
+  name: z.string(),
+  duration_ms: z.number().nonnegative(),
+});
+export type ImportedFile = z.infer<typeof importedFileSchema>;
+
+/** Which text an export's subtitles carry (`voltip_core::history::export::SegmentText`): what was
+ *  recognised, or each segment's polished text where it has one (the core's default). */
+export const SEGMENT_TEXTS = ["raw", "refined"] as const;
+export type SegmentText = (typeof SEGMENT_TEXTS)[number];
+
 /** The core's resting dictation state (also what a state without the field parses to). */
 export function idleDictation(): DictationStatus {
   return { session: 0, phase: { phase: "idle" }, kind: "dictation" };
@@ -1547,6 +1639,8 @@ export const historyEntrySchema = z.object({
   origin: entryOriginSchema.optional(),
   /** 用 AI 预设处理's result (docs/dictation.md §22); absent until it ran. */
   processed: processedTextSchema.optional(),
+  /** The audio or video file it was transcribed from (docs/dictation.md §31); absent for takes. */
+  file: importedFileSchema.optional(),
 });
 export type HistoryEntry = z.infer<typeof historyEntrySchema>;
 
@@ -2711,6 +2805,8 @@ export const uiStateSchema = z.object({
   history_total: z.number().int().nonnegative().default(0),
   /** The kept recordings (docs/dictation.md §26); not available on the phone. */
   audio_cache: audioCacheViewSchema.default(emptyAudioCache),
+  /** The files being imported (docs/dictation.md §31); not available on the phone. */
+  imports: importsViewSchema.default(emptyImports),
   engines: engineStatusSchema.default(emptyEngineStatus),
   update: updateStatusSchema.default(idleUpdate),
   /** The local model catalogue with install states; `[]` on the phone (no local models there). */
@@ -2820,6 +2916,8 @@ export const uiEventSchema = z.discriminatedUnion("type", [
   }),
   /** The kept recordings, whole, after every change (§26). */
   audioCacheViewSchema.extend({ type: z.literal("audio_cache") }),
+  /** The import queue, whole, after every change (§31). */
+  importsViewSchema.extend({ type: z.literal("imports") }),
   /** The phone's take to a desktop moved (§20); `null` before the first. */
   z.object({
     type: z.literal("phone_take"),
@@ -3110,6 +3208,21 @@ export interface CommandArgs {
    *  to the clipboard and into the history. Refused (an `error` event) while a take runs. */
   /** §26.4: `asr` / `refine` other models than the settings', for this take only. */
   audio_retake: { id: string; asr?: RecognitionChoice; refine?: PolishChoice };
+  /** 导入音频或视频 (§31): the files join the import queue with these models and language; the
+   *  queue follows as `imports` events, each entry as `history`. Refused (an `error` event) with
+   *  the built-in service, with the history off, and on the phone. */
+  import_add: { paths: string[]; asr: RecognitionChoice; refine?: PolishModel; language?: string };
+  /** 取消: an import that runs or waits leaves the queue; nothing goes into the history. */
+  import_cancel: { id: string };
+  /** 重试 on a failed import. */
+  import_retry: { id: string };
+  /** 移除: a finished or failed import leaves the queue. */
+  import_remove: { id: string };
+  /** Query: the import queue (`Backend.importsState`). */
+  imports_state: undefined;
+  /** Query: 导入音频或视频…'s open dialog, titled `title`, its filters named `media` and `all`
+   *  (`Backend.importPick`); the paths chosen. */
+  import_pick: { title: string; media: string; all: string };
   /** Where the dictation pill appears; the core persists it, the desktop shell follows. */
   settings_set_overlay: { placement: OverlayPlacement };
   /** One press / release edge into the activation machine (docs/dictation.md §13). The UI sends
@@ -3185,7 +3298,7 @@ export interface CommandArgs {
   /** Stop a `history_process`; nothing is stored. */
   history_process_cancel: { requestId: number };
   /** Query: 导出字幕 / 导出文本 through the save dialog (`Backend.historyExport`, §22). */
-  history_export: { id: string; format: ExportFormat; fileName: string };
+  history_export: { id: string; format: ExportFormat; fileName: string; subtitles?: SegmentText };
   /** Query (§4.6): 导出备份 through the save dialog (`Backend.backupExport`). */
   backup_export: { fileName: string };
   /** Query: 导入备份's open dialog titled `title`, then the file checked (`Backend.backupOpen`). */
@@ -3314,7 +3427,9 @@ export type QueryCommand =
   | "phone_clipboard_read"
   | "presets_builtin"
   | "scenes_builtin"
-  | "history_export";
+  | "history_export"
+  | "imports_state"
+  | "import_pick";
 export const QUERY_COMMANDS: readonly QueryCommand[] = [
   "core_state",
   "audio_devices",
@@ -3360,6 +3475,8 @@ export const QUERY_COMMANDS: readonly QueryCommand[] = [
   "presets_builtin",
   "scenes_builtin",
   "history_export",
+  "imports_state",
+  "import_pick",
 ];
 /** Commands the UI dispatches through `Backend.invoke` (everything except the queries / streams). */
 export type MutationCommand = Exclude<CommandName, QueryCommand>;
@@ -3449,6 +3566,10 @@ export function applyEvent(state: UiState, event: UiEvent): UiState {
     case "audio_cache": {
       const { type: _type, ...audio_cache } = event;
       return { ...state, audio_cache };
+    }
+    case "imports": {
+      const { type: _type, ...imports } = event;
+      return { ...state, imports };
     }
     case "engines": {
       const { type: _type, ...engines } = event;

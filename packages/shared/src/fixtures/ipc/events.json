@@ -112,6 +112,11 @@
       "recordings": [],
       "bytes": 0
     },
+    "imports": {
+      "available": false,
+      "extensions": [],
+      "jobs": []
+    },
     "engines": {
       "asr_provider": "builtin",
       "asr_ready": false,
@@ -5133,6 +5138,247 @@
     "available": false,
     "recordings": [],
     "bytes": 0
+  },
+  {
+    "type": "imports",
+    "available": true,
+    "extensions": ["mp3", "m4a", "mp4", "mkv"],
+    "jobs": [
+      {
+        "id": "a0000000-0000-4000-8000-000000000001",
+        "name": "季度会议.mp4",
+        "size": 48213504,
+        "duration_ms": 1800000,
+        "paused": true,
+        "state": {
+          "kind": "recognizing",
+          "done": 12,
+          "total": 240
+        }
+      },
+      {
+        "id": "a0000000-0000-4000-8000-000000000002",
+        "name": "访谈.m4a",
+        "size": 48213504,
+        "paused": false,
+        "state": {
+          "kind": "queued"
+        }
+      },
+      {
+        "id": "a0000000-0000-4000-8000-000000000003",
+        "name": "讲座.mov",
+        "size": 48213504,
+        "paused": false,
+        "state": {
+          "kind": "decoding",
+          "pct": 42
+        }
+      },
+      {
+        "id": "a0000000-0000-4000-8000-000000000004",
+        "name": "播客.mp3",
+        "size": 48213504,
+        "paused": false,
+        "state": {
+          "kind": "decoding"
+        }
+      },
+      {
+        "id": "a0000000-0000-4000-8000-000000000005",
+        "name": "课堂.webm",
+        "size": 48213504,
+        "duration_ms": 1800000,
+        "paused": false,
+        "state": {
+          "kind": "polishing",
+          "done": 3,
+          "total": 238
+        }
+      },
+      {
+        "id": "a0000000-0000-4000-8000-000000000006",
+        "name": "季度会议.mp4",
+        "size": 48213504,
+        "duration_ms": 9500,
+        "paused": false,
+        "state": {
+          "kind": "done",
+          "entry": "f1e2d3c4-b5a6-4978-8a6b-5c4d3e2f1a0b",
+          "polish_failed": 2
+        }
+      },
+      {
+        "id": "a0000000-0000-4000-8000-000000000007",
+        "name": "失败的文件.mkv",
+        "size": 48213504,
+        "paused": false,
+        "state": {
+          "kind": "failed",
+          "failure": {
+            "code": "recognition",
+            "detail": "额度已用完：quota exceeded (HTTP 429)"
+          },
+          "resumable": true
+        }
+      },
+      {
+        "id": "a0000000-0000-4000-8000-000000000008",
+        "name": "失败的文件.mkv",
+        "size": 48213504,
+        "paused": false,
+        "state": {
+          "kind": "failed",
+          "failure": {
+            "code": "unsupported_codec",
+            "codec": "AC-3"
+          },
+          "resumable": false
+        }
+      },
+      {
+        "id": "a0000000-0000-4000-8000-000000000009",
+        "name": "失败的文件.mkv",
+        "size": 48213504,
+        "paused": false,
+        "state": {
+          "kind": "failed",
+          "failure": {
+            "code": "unreadable",
+            "detail": "No such file or directory (os error 2)"
+          },
+          "resumable": false
+        }
+      },
+      {
+        "id": "a0000000-0000-4000-8000-00000000000a",
+        "name": "失败的文件.mkv",
+        "size": 48213504,
+        "paused": false,
+        "state": {
+          "kind": "failed",
+          "failure": {
+            "code": "unsupported_format"
+          },
+          "resumable": false
+        }
+      },
+      {
+        "id": "a0000000-0000-4000-8000-00000000000b",
+        "name": "失败的文件.mkv",
+        "size": 48213504,
+        "paused": false,
+        "state": {
+          "kind": "failed",
+          "failure": {
+            "code": "no_audio"
+          },
+          "resumable": false
+        }
+      },
+      {
+        "id": "a0000000-0000-4000-8000-00000000000c",
+        "name": "失败的文件.mkv",
+        "size": 48213504,
+        "paused": false,
+        "state": {
+          "kind": "failed",
+          "failure": {
+            "code": "corrupt",
+            "detail": "it ends after 12.0 s of 60.0 s"
+          },
+          "resumable": false
+        }
+      },
+      {
+        "id": "a0000000-0000-4000-8000-00000000000d",
+        "name": "失败的文件.mkv",
+        "size": 48213504,
+        "paused": false,
+        "state": {
+          "kind": "failed",
+          "failure": {
+            "code": "storage",
+            "detail": "No space left on device (os error 28)"
+          },
+          "resumable": false
+        }
+      }
+    ]
+  },
+  {
+    "type": "imports",
+    "available": true,
+    "extensions": ["wav"],
+    "jobs": [
+      {
+        "id": "a0000000-0000-4000-8000-000000000001",
+        "name": "静音.wav",
+        "size": 1024,
+        "duration_ms": 2000,
+        "paused": false,
+        "state": {
+          "kind": "failed",
+          "failure": {
+            "code": "no_speech"
+          },
+          "resumable": false
+        }
+      }
+    ]
+  },
+  {
+    "type": "imports",
+    "available": false,
+    "extensions": [],
+    "jobs": []
+  },
+  {
+    "type": "history",
+    "recent": [
+      {
+        "id": "f1e2d3c4-b5a6-4978-8a6b-5c4d3e2f1a0b",
+        "at_ms": 1758700360000,
+        "raw_text": "嗯今天我们讨论一下进度然后呢就是下周发布",
+        "text": "今天我们讨论一下进度。下周发布。",
+        "refined": true,
+        "asr_model": "whisper-large-v3",
+        "refine_model": "llama-3.3-70b-versatile",
+        "duration_ms": 9500,
+        "asr_ms": 1800,
+        "refine_ms": 1200,
+        "outcome": {
+          "kind": "inserted",
+          "via": "clipboard"
+        },
+        "starred": false,
+        "mode": "whole_take",
+        "segments": [
+          {
+            "text": "嗯今天我们讨论一下进度",
+            "refined": "今天我们讨论一下进度。",
+            "start_ms": 0,
+            "end_ms": 4000
+          },
+          {
+            "text": "然后呢就是下周发布",
+            "refined": "下周发布。",
+            "start_ms": 4000,
+            "end_ms": 9500
+          }
+        ],
+        "kind": "dictation",
+        "preset": {
+          "id": "proofread",
+          "name": "校对"
+        },
+        "file": {
+          "name": "季度会议.mp4",
+          "duration_ms": 9500
+        }
+      }
+    ],
+    "total": 1
   },
   {
     "type": "models_location",

@@ -21,7 +21,7 @@ use voltip_rn::update::{InstallSource, NOTHING_TO_INSTALL, PACKAGE, UpdateConfig
 const STEP_TIMEOUT: Duration = Duration::from_secs(15);
 const POLL: Duration = Duration::from_millis(20);
 /// Commands of the shared contract that only the desktop registers (docs/dictation.md §23.6, §25,
-/// §26, §28).
+/// §26, §28, §31).
 const DESKTOP_ONLY: &[&str] = &[
     "settings_set_serve",
     "serve_copy_token",
@@ -42,6 +42,13 @@ const DESKTOP_ONLY: &[&str] = &[
     "overlay_copy",
     "overlay_paste",
     "open_history",
+    // Importing audio and video files (docs/dictation.md §31) is the desktop's.
+    "import_add",
+    "import_cancel",
+    "import_retry",
+    "import_remove",
+    "imports_state",
+    "import_pick",
 ];
 
 fn repo_root() -> PathBuf {

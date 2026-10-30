@@ -653,7 +653,7 @@ async fn history_export<R: Runtime>(
     let entry = history_read(&bridge, move |b| b.history_entry(id)).await?;
     let failed = |code: &str, detail: &str| serde_json::json!({ "kind": "failed", "code": code, "detail": detail });
     let Some(entry) = entry else { return Ok(failed("gone", "the entry is not in the history")) };
-    let Some(content) = export::render(&entry, format) else { return Ok(failed("empty", "the entry has no segments")) };
+    let Some(content) = export::render(&entry, format, export::SegmentText::default()) else { return Ok(failed("empty", "the entry has no segments")) };
     let mime = match format {
         export::ExportFormat::Srt => "application/x-subrip",
         export::ExportFormat::Txt => "text/plain",

@@ -139,16 +139,21 @@ PS
 }
 
 # The real-model tests (crates/voltip-asr-local/tests/real.rs, `#[ignore]`d elsewhere) on the
-# machine's CPU: the same VOLTIP_LOCAL_* inputs as locally, copied to <dir>\models\ and handed to the
-# gate through <dir>\real.env.
+# machine's CPU: the same VOLTIP_LOCAL_* inputs as locally (and VOLTIP_IMPORT_CLIP when set), copied
+# to <dir>\models\ and handed to the gate through <dir>\real.env. A run of every test needs all five
+# VOLTIP_LOCAL_* inputs; a filtered run takes the ones that are set, for the tests it selects. The
+# import test finds ffmpeg on the machine's PATH.
 stage_real_models() {
-  local var src dest lines=()
-  for var in VOLTIP_LOCAL_MODEL_DIR VOLTIP_LOCAL_GGUF VOLTIP_LOCAL_STREAM_DIR VOLTIP_LOCAL_VAD_MODEL VOLTIP_LOCAL_SAMPLE_WAV; do
+  local filter=${1:-} var src dest lines=() staged=()
+  for var in VOLTIP_LOCAL_MODEL_DIR VOLTIP_LOCAL_GGUF VOLTIP_LOCAL_STREAM_DIR VOLTIP_LOCAL_VAD_MODEL VOLTIP_LOCAL_SAMPLE_WAV VOLTIP_IMPORT_CLIP; do
     src=${!var:-}
-    [ -n "$src" ] && [ -e "$src" ] || { echo "windows-remote: set $var to the local file / directory (see crates/voltip-asr-local/tests/real.rs)" >&2; exit 2; }
+    if [ -n "$src" ] && [ -e "$src" ]; then staged+=("$var"); continue; fi
+    [ -n "$src" ] && { echo "windows-remote: $var=$src does not exist" >&2; exit 2; }
+    [ "$var" = VOLTIP_IMPORT_CLIP ] || [ -n "$filter" ] ||
+      { echo "windows-remote: set $var to the local file / directory (see crates/voltip-asr-local/tests/real.rs)" >&2; exit 2; }
   done
   remote_ps <<<'Remove-Item -Recurse -Force (Join-Path $Dir "models") -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force (Join-Path $Dir "models") | Out-Null'
-  for var in VOLTIP_LOCAL_MODEL_DIR VOLTIP_LOCAL_GGUF VOLTIP_LOCAL_STREAM_DIR VOLTIP_LOCAL_VAD_MODEL VOLTIP_LOCAL_SAMPLE_WAV; do
+  for var in "${staged[@]}"; do
     src=${!var}
     dest=models/$(basename "$src")
     scp -q -r "${ssh_opts[@]}" "$src" "$host:$scp_dir/$dest"
@@ -190,7 +195,7 @@ gate() {
     echo) args='test --release -p voltip-audio --test echo -- --include-ignored --nocapture --test-threads=1' ;;
     *) echo "usage: $0 gate test|clippy|real|hooks|clipboard|loopback|echo [test-name filter]" >&2; exit 2 ;;
   esac
-  if [ "$name" = real ]; then stage_real_models; fi
+  if [ "$name" = real ]; then stage_real_models "${2:-}"; fi
   if [ "$name" = loopback ]; then stage_loopback; fi
   put '' scripts/windows-remote-gate.ps1
   remote_ps Gate="$name" CargoArgs="$args" <<'PS'

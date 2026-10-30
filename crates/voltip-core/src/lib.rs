@@ -14,6 +14,7 @@ pub mod dictation;
 pub mod engines;
 pub mod history;
 pub mod hotkey;
+pub mod import;
 pub mod last_result;
 mod list_file;
 pub mod mcp;
@@ -115,6 +116,9 @@ pub enum CoreError {
     /// A hotkey text the user typed or recorded is not a usable chord.
     #[error("hotkey: {0}")]
     Hotkey(#[from] hotkey::HotkeyError),
+    /// An import was refused (docs/dictation.md §31).
+    #[error(transparent)]
+    Import(#[from] import::ImportError),
     /// The core task is gone.
     #[error("core is not running")]
     NotRunning,

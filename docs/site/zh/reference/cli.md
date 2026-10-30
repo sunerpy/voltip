@@ -1,10 +1,10 @@
 ---
-description: voltip-desktop 的命令行选项，用于控制正在运行的应用，以及在不打开窗口的情况下识别音频文件；以及用于没有桌面的电脑的本机服务 voltip-server 的选项。
+description: voltip-desktop 的命令行选项，用于控制正在运行的应用，以及在不打开窗口的情况下识别音频或视频文件、导出字幕；以及用于没有桌面的电脑的本机服务 voltip-server 的选项。
 ---
 
 # 命令行
 
-Voltip 的程序 `voltip-desktop`（Windows 上为 `voltip-desktop.exe`）接受的选项有两种用途：控制已经在运行的 Voltip，以及在不打开窗口的情况下识别音频文件。
+Voltip 的程序 `voltip-desktop`（Windows 上为 `voltip-desktop.exe`）接受的选项有两种用途：控制已经在运行的 Voltip，以及在不打开窗口的情况下识别音频或视频文件。
 
 ## 控制正在运行的应用
 
@@ -31,7 +31,7 @@ Voltip 的程序 `voltip-desktop`（Windows 上为 `voltip-desktop.exe`）接受
 | `--list-models` | 本地模型及各自是否已安装 |
 | `--list-compute` | 处理器线程数，以及这个版本可以使用的每块显卡 |
 | `--download-model <id>` | 下载模型，可接着上次中断的位置继续，并校验哈希值。进度输出到标准错误 |
-| `--transcribe-file <文件.wav>` | 用本地模型识别 WAV 文件并输出文字 |
+| `--transcribe-file <文件>` | 用本地模型识别音频或视频文件并输出文字 |
 
 `--transcribe-file` 还接受以下选项：
 
@@ -39,25 +39,27 @@ Voltip 的程序 `voltip-desktop`（Windows 上为 `voltip-desktop.exe`）接受
 | --- | --- |
 | `--model <id>` | 使用的模型。默认为应用中选用的模型，否则为 Qwen3-ASR 0.6B |
 | `--json` | 输出 `{ "text", "model", "latency_ms", "backend" }`，而不只是文字 |
+| `--srt <文件.srt>` | 同时把字幕（SRT）写入这个文件 |
 | `--device auto\|cpu\|gpu` | 模型的运行设备。默认使用应用中的设置 |
 | `--gpu <名称>` | 使用哪块显卡，名称见 `--list-compute` 的输出 |
 | `--threads <n>` | 使用的处理器线程数 |
 
-文件最好是 16 kHz 单声道，其他采样率会自动转换。模型标识为 `qwen3-asr-0.6b`、`qwen3-asr-1.7b`、`sense-voice-small` 和 `paraformer-zh`。
+支持的格式与[导入音频或视频](/zh/dictation/history#导入音频或视频)相同：WAV、MP3、AAC、M4A、FLAC、Ogg（Vorbis、Opus）、MP4、MOV、MKV 和 WebM，视频文件识别其中的音轨。WAV 文件整段识别，最好是 16 kHz 单声道，其他采样率会自动转换。其他格式的文件，以及加了 `--srt` 的 WAV 文件，按停顿分成 3 到 15 秒的段依次识别，文字按顺序拼接；字幕中每段的时间与文件对应，较长的段分成几行。模型标识为 `qwen3-asr-0.6b`、`qwen3-asr-1.7b`、`sense-voice-small` 和 `paraformer-zh`。
 
 ## 退出码
 
 | 退出码 | 含义 |
 | --- | --- |
 | 0 | 成功 |
-| 1 | 模型未安装，或识别失败；原因输出到标准错误 |
-| 2 | 无法读取音频文件 |
+| 1 | 模型未安装、文件无法解码、识别失败，或字幕无法写入；原因输出到标准错误 |
+| 2 | 无法读取输入文件 |
 
 ## 示例
 
 ```bash
 voltip-desktop --download-model sense-voice-small
 voltip-desktop --transcribe-file meeting-note.wav --model sense-voice-small --json
+voltip-desktop --transcribe-file talk.mp4 --srt talk.srt
 ```
 
 在 Windows 上，程序按桌面应用构建，因此 PowerShell 不会直接显示它的输出。请把输出重定向到文件：`voltip-desktop.exe --transcribe-file a.wav --json > out.json`。

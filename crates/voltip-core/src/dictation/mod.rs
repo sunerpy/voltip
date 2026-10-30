@@ -27,9 +27,9 @@ pub use ports::{
     AudioSource, CONFIRM_WITHIN, Capture, CaptureOptions, ClipboardCode, DWELL, DWELL_WITH_TEXT, DictationError, FOCUS_READ_DEADLINE, FocusReader, FocusWatch,
     ForegroundApp, ForegroundProbe, GateCancel, InjectNote, Injection, Injector, InsertCheck, InsertGate, InsertSession, Inserted, LIVE_CHUNK_SAMPLES,
     LIVE_SAMPLE_RATE_HZ, LevelFrame, LivePcm, MAX_EDIT_SELECTION_CHARS, MAX_RECORDING, MAX_RECORDING_STREAMING, MIN_RECORDING, PARTIAL_THROTTLE,
-    PCM_SAMPLE_RATE_HZ, PROBE_DEADLINE, PcmStream, Recording, RefineContext, RefineHints, Refined, Refiner, Segment, Segmenter, SegmenterFactory,
-    SelectionTiming, ServiceProbe, Settled, StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber, Transcriber, Transcript, UnconfirmedWhy, Via,
-    max_recording,
+    PCM_SAMPLE_RATE_HZ, PROBE_DEADLINE, PcmStream, Recording, RefineContext, RefineHints, Refined, Refiner, Segment, SegmentBounds, Segmenter,
+    SegmenterFactory, SelectionTiming, ServiceProbe, Settled, StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber, Transcriber, Transcript,
+    UnconfirmedWhy, Via, max_recording,
 };
 
 /// What a take is for (docs/dictation.md §19): dictating text, or rewriting the text selected in
@@ -444,7 +444,10 @@ mod tests {
         let legacy: DictationStatus = serde_json::from_str(r#"{"phase":{"phase":"listening","started_at":5},"session":3}"#).unwrap();
         assert_eq!(legacy, st);
         let live = LiveText {
-            committed: vec![Segment { text: "你好。".into(), start_ms: 0, end_ms: 900 }, Segment { text: "hello world.".into(), start_ms: 900, end_ms: 2000 }],
+            committed: vec![
+                Segment { text: "你好。".into(), refined: None, start_ms: 0, end_ms: 900 },
+                Segment { text: "hello world.".into(), refined: None, start_ms: 900, end_ms: 2000 },
+            ],
             current: "今天".into(),
             degraded: None,
             injected: 0,
@@ -468,10 +471,17 @@ mod tests {
         assert!(serde_json::to_string(&degraded).unwrap().contains(r#""degraded":"tap overrun""#));
         assert_eq!(LiveText::default().preview(), "");
         assert_eq!(LiveText { current: "  a ".into(), ..LiveText::default() }.preview(), "a");
-        let latin = LiveText { committed: vec![Segment { text: "Hello.".into(), start_ms: 0, end_ms: 1 }], current: "How are".into(), ..LiveText::default() };
+        let latin = LiveText {
+            committed: vec![Segment { text: "Hello.".into(), refined: None, start_ms: 0, end_ms: 1 }],
+            current: "How are".into(),
+            ..LiveText::default()
+        };
         assert_eq!(latin.preview(), "Hello. How are", "Latin neighbours get a space");
-        let mixed =
-            LiveText { committed: vec![Segment { text: "你好，".into(), start_ms: 0, end_ms: 1 }], current: "Rust 很好".into(), ..LiveText::default() };
+        let mixed = LiveText {
+            committed: vec![Segment { text: "你好，".into(), refined: None, start_ms: 0, end_ms: 1 }],
+            current: "Rust 很好".into(),
+            ..LiveText::default()
+        };
         assert_eq!(mixed.preview(), "你好，Rust 很好", "a CJK boundary joins without a space");
         let idle: DictationStatus = serde_json::from_str(r#"{"phase":{"phase":"idle"},"session":0,"kind":"dictation"}"#).unwrap();
         assert_eq!(idle, DictationStatus::default());
@@ -517,7 +527,7 @@ mod tests {
             refine_error: None,
             refine_failure: None,
             mode: OutputMode::StreamingFinal,
-            segments: Some(vec![Segment { text: "你好。".into(), start_ms: 0, end_ms: 900 }]),
+            segments: Some(vec![Segment { text: "你好。".into(), refined: None, start_ms: 0, end_ms: 900 }]),
             live_error: Some("flush: asr: x".into()),
             clipboard_code: None,
             check: None,

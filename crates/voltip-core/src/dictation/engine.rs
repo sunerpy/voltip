@@ -2218,7 +2218,7 @@ impl DictationEngine {
         let tail = fin.tail.trim();
         if !tail.is_empty() {
             let start_ms = segments.last().map_or(0, |s| s.end_ms);
-            segments.push(Segment { text: tail.to_owned(), start_ms, end_ms: self.recording_ms.max(start_ms) });
+            segments.push(Segment { text: tail.to_owned(), refined: None, start_ms, end_ms: self.recording_ms.max(start_ms) });
         }
         self.take.inject.segments = segments;
         self.take.asr_ms = self.take.finalize_ms();
@@ -2266,7 +2266,7 @@ impl DictationEngine {
             let tail = fin.tail.trim();
             if !tail.is_empty() {
                 let start_ms = self.take.inject.last_end_ms;
-                self.queue_sentence(Segment { text: tail.to_owned(), start_ms, end_ms: duration_ms.max(start_ms) });
+                self.queue_sentence(Segment { text: tail.to_owned(), refined: None, start_ms, end_ms: duration_ms.max(start_ms) });
             }
             if self.take.inject.segments.is_empty() {
                 // The stream produced no text at all: the whole take is the safety net.
@@ -2308,7 +2308,7 @@ impl DictationEngine {
         match result {
             Ok(t) if !t.text.trim().is_empty() => {
                 let start_ms = self.take.inject.last_end_ms;
-                self.queue_sentence(Segment { text: t.text.trim().to_owned(), start_ms, end_ms: self.recording_ms.max(start_ms) });
+                self.queue_sentence(Segment { text: t.text.trim().to_owned(), refined: None, start_ms, end_ms: self.recording_ms.max(start_ms) });
                 self.served_by(t.model);
             }
             Ok(_) => tracing::info!(session, "the remainder transcribed to nothing"),
@@ -3107,7 +3107,7 @@ impl DictationEngine {
         if self.take.mode == OutputMode::LiveInject {
             let start_ms = self.take.inject.last_end_ms;
             if !text.trim().is_empty() {
-                self.queue_sentence(Segment { text, start_ms, end_ms: self.recording_ms.max(start_ms) });
+                self.queue_sentence(Segment { text, refined: None, start_ms, end_ms: self.recording_ms.max(start_ms) });
             }
             return self.close_live_inject();
         }
@@ -3264,6 +3264,7 @@ impl DictationEngine {
             preset: (refined && self.status.kind == TakeKind::Dictation).then(|| self.take_preset().to_ref()),
             origin: None,
             processed: None,
+            file: None,
         };
         let linked = kept.map(|recording| Effect::Kept { recording, status: KeptStatus::Recognized { entry: entry.id } });
         match injection {
@@ -3459,6 +3460,7 @@ fn long_history_segments(l: &LongTake) -> Vec<Segment> {
                 SegmentText::Done(t) => t.clone(),
                 SegmentText::Failed | SegmentText::Pending { .. } => long::unrecognised(s.start, s.end),
             },
+            refined: None,
             start_ms: ms(s.start.max(l.from)),
             end_ms: ms(s.end),
         })
@@ -3517,7 +3519,7 @@ fn run_live(job: LiveJob) {
                         StreamEvent::Error(e) => return Err(e),
                         StreamEvent::Endpoint { text, start_ms, end_ms } => {
                             throttle.reset();
-                            let segment = Segment { text: normalized(script, &text), start_ms, end_ms };
+                            let segment = Segment { text: normalized(script, &text), refined: None, start_ms, end_ms };
                             let _ = tx.blocking_send(Internal::Segment { session, segment });
                         }
                         StreamEvent::Partial { current } => {
@@ -4878,7 +4880,7 @@ mod tests {
         assert_eq!(lives[0].current, "你好", "the first word shows at once: {lives:?}");
         assert!(lives.iter().all(|l| l.degraded.is_none()));
         let committed: Vec<&LiveText> = lives.iter().filter(|l| !l.committed.is_empty()).collect();
-        assert_eq!(committed[0].committed, vec![Segment { text: "你好，世界。".into(), start_ms: 0, end_ms: 400 }]);
+        assert_eq!(committed[0].committed, vec![Segment { text: "你好，世界。".into(), refined: None, start_ms: 0, end_ms: 400 }]);
         assert_eq!(committed[0].current, "", "an endpoint clears the current sentence");
         assert!(
             lives.len() < FAKE_LIVE_WORDS_PARTIALS,
@@ -5136,7 +5138,8 @@ mod tests {
         r.engine.stop().unwrap();
         assert!(r.engine.on_internal(Internal::StreamFinished { session: 1, result: Err(DictationError::Asr("flush".into())), before: None }).is_empty());
         assert!(r.engine.on_internal(Internal::StreamFinished { session: 9, result: Ok(StreamFinal::default()), before: None }).is_empty());
-        let fin = StreamFinal { committed: vec![Segment { text: "迟到的".into(), start_ms: 0, end_ms: 1 }], tail: String::new(), model: None };
+        let fin =
+            StreamFinal { committed: vec![Segment { text: "迟到的".into(), refined: None, start_ms: 0, end_ms: 1 }], tail: String::new(), model: None };
         let fx = r.engine.on_internal(Internal::StreamFinished { session: 1, result: Ok(fin.clone()), before: None });
         assert!(matches!(phase(&fx), DictationPhase::Processing { preview: Some(p), .. } if p == "迟到的"), "a good flush fills an empty preview: {fx:?}");
         assert!(r.engine.on_internal(Internal::StreamFinished { session: 1, result: Ok(fin), before: None }).is_empty(), "same text: no update");
@@ -5144,13 +5147,18 @@ mod tests {
             r.engine.on_internal(Internal::StreamDegraded { session: 1, reason: "late".into(), model: None }).is_empty(),
             "degraded while processing: ignored"
         );
-        assert!(r.engine.on_internal(Internal::Segment { session: 1, segment: Segment { text: "x".into(), start_ms: 0, end_ms: 1 } }).is_empty());
+        assert!(
+            r.engine.on_internal(Internal::Segment { session: 1, segment: Segment { text: "x".into(), refined: None, start_ms: 0, end_ms: 1 } }).is_empty()
+        );
         let fx = r.run_to_terminal().await;
         assert!(matches!(phase(&fx), DictationPhase::Done { .. }));
         assert!(format!("{:?}", Internal::StreamDegraded { session: 1, reason: "r".into(), model: None }).contains("StreamDegraded"));
         assert!(format!("{:?}", Internal::Partial { session: 1, current: "秘密".into() }).contains("chars: 2"));
         assert!(!format!("{:?}", Internal::Partial { session: 1, current: "秘密".into() }).contains("秘密"), "preview text stays out of the log");
-        assert!(format!("{:?}", Internal::Segment { session: 1, segment: Segment { text: "s".into(), start_ms: 0, end_ms: 5 } }).contains("end_ms: 5"));
+        assert!(
+            format!("{:?}", Internal::Segment { session: 1, segment: Segment { text: "s".into(), refined: None, start_ms: 0, end_ms: 5 } })
+                .contains("end_ms: 5")
+        );
         assert!(format!("{:?}", Internal::StreamFinished { session: 1, result: Ok(StreamFinal::default()), before: None }).contains("segments: Ok(0)"));
     }
 
@@ -5367,8 +5375,10 @@ mod tests {
                 assert_eq!(
                     segments.as_deref(),
                     Some(
-                        &[Segment { text: "你好，世界。".into(), start_ms: 0, end_ms: 400 }, Segment { text: "今天天气".into(), start_ms: 400, end_ms: 1500 }]
-                            [..]
+                        &[
+                            Segment { text: "你好，世界。".into(), refined: None, start_ms: 0, end_ms: 400 },
+                            Segment { text: "今天天气".into(), refined: None, start_ms: 400, end_ms: 1500 }
+                        ][..]
                     )
                 );
                 assert!(live_error.is_none());
@@ -5460,9 +5470,9 @@ mod tests {
                     segments.as_deref(),
                     Some(
                         &[
-                            Segment { text: "Hello world.".into(), start_ms: 0, end_ms: 200 },
-                            Segment { text: "How are you.".into(), start_ms: 200, end_ms: 400 },
-                            Segment { text: "Fine".into(), start_ms: 400, end_ms: 1500 },
+                            Segment { text: "Hello world.".into(), refined: None, start_ms: 0, end_ms: 200 },
+                            Segment { text: "How are you.".into(), refined: None, start_ms: 200, end_ms: 400 },
+                            Segment { text: "Fine".into(), refined: None, start_ms: 400, end_ms: 1500 },
                         ][..]
                     )
                 );
@@ -5730,7 +5740,7 @@ mod tests {
         r.start_open().await;
         let phases = r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if l.degraded.is_some())).await;
         let DictationPhase::Listening { live: Some(live), .. } = phases.last().unwrap() else { panic!("{phases:?}") };
-        assert_eq!(live.committed, vec![Segment { text: "你好，世界。".into(), start_ms: 0, end_ms: 400 }]);
+        assert_eq!(live.committed, vec![Segment { text: "你好，世界。".into(), refined: None, start_ms: 0, end_ms: 400 }]);
         assert_eq!(live.degraded.as_deref(), Some("fake decoder failed"));
         assert_eq!(r.engine.current_mode(), OutputMode::LiveInject, "after a sentence the mode is kept");
         wait_until(|| r.injector.injected().len() == 1).await;
@@ -5749,8 +5759,10 @@ mod tests {
                 assert_eq!(
                     segments.as_deref(),
                     Some(
-                        &[Segment { text: "你好，世界。".into(), start_ms: 0, end_ms: 400 }, Segment { text: "剩下的话".into(), start_ms: 400, end_ms: 1500 }]
-                            [..]
+                        &[
+                            Segment { text: "你好，世界。".into(), refined: None, start_ms: 0, end_ms: 400 },
+                            Segment { text: "剩下的话".into(), refined: None, start_ms: 400, end_ms: 1500 }
+                        ][..]
                     )
                 );
                 assert_eq!(live_error.as_deref(), Some("fake decoder failed"));

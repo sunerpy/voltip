@@ -1,10 +1,10 @@
 ---
-description: The dictation history on your computer, what each entry shows, recognising or polishing again, how much is kept, the statistics on the home page, and backing up and moving to another computer.
+description: The dictation history on your computer, what each entry shows, importing audio or video files and exporting their subtitles, recognising or polishing again, how much is kept, the statistics on the home page, and backing up and moving to another computer.
 ---
 
 # History
 
-Every dictation, voice edit and text sent from a paired phone, and every copy a phone uploads of what it transcribed on its own, is listed on the **History** page. The history is stored on your computer; paired phones can read it, see [The computer's history and settings](/phone/#the-computer-s-history-and-settings).
+Every dictation, voice edit and text sent from a paired phone, every copy a phone uploads of what it transcribed on its own, and every [audio or video file imported](#import-audio-or-video) on the computer, is listed on the **History** page. The history is stored on your computer; paired phones can read it, see [The computer's history and settings](/phone/#the-computer-s-history-and-settings).
 
 The latest results are also listed on the home page: four, or more when the window is taller, up to 30. While there are recordings not recognised, the newest three are listed above the latest results, to recognise again or clear from there, see [Recognise or polish again](#recognise-or-polish-again).
 
@@ -24,16 +24,37 @@ From an entry you can:
 - recognise it again while its recording is still kept, or polish it again when AI polish failed, see [Recognise or polish again](#recognise-or-polish-again);
 - delete it.
 
-The search box finds text, apps, scenes and models, and works together with the filters, which narrow the list to today, this week or this month, to starred entries, or to entries whose text was not inserted, pastes marked **Not written** included. After a search or a filter the list starts again at its first page, and the foot of the list shows how many entries were found.
+The search box finds text, apps, scenes, models and the names of imported files, and works together with the filters, which narrow the list to today, this week or this month, to starred entries, or to entries whose text was not inserted, pastes marked **Not written** included. After a search or a filter the list starts again at its first page, and the foot of the list shows how many entries were found.
 
 On the computer the list is shown in pages. Choose 10, 20, 50, 100 or 200 entries per page at the foot of the list (10 at first; the page remembers your choice) and move between pages with the buttons beside it. A new dictation does not change the page you are on. The list and the details of the selected entry fill the window's height side by side, and each scrolls on its own when it holds more; another page starts at the top of the list. On a phone the list shows 100 entries at a time; scroll to the end, or tap **Load more**, to see the next ones.
 
 ## Long recordings
 
-An entry recorded for longer than 2 minutes, or with more than 2,000 characters, has two more tools in its detail:
+An entry recorded for longer than 2 minutes or with more than 2,000 characters, and an [imported audio or video file](#import-audio-or-video), has two more tools in its detail:
 
 - **Process with an AI preset**: choose a preset and select **Process**. The text is processed in parts of up to 1,500 characters, cut at sentence ends; the progress is shown and you can cancel. The result is saved as a processed text beside the original, which stays as it is, and appears under **Processed**. With Key points, the points of all parts are summarised once more when they fit one request; with Chinese ⇄ English, you get a translation. The built-in AI service runs on a free quota, so long texts take a while.
 - **Export subtitles (SRT)** and **Export text (TXT)**: choose where to save the file. Subtitles follow the segments of the recording, with at most 20 Chinese or 42 Latin characters per line. The text export uses the processed text when there is one.
+
+## Import audio or video
+
+On the computer you can import audio and video files into the history, such as a meeting recording, a lecture video or an interview. Voltip recognises the sound in the file (of a video, its audio track only) and saves each file as one entry, which you can export as subtitles (SRT) and text (TXT). The original files are only read, never changed or deleted.
+
+1. On the **History** page, select **Import audio or video** and choose one or more files, or drop the files on the **History** page.
+2. In the dialog, choose the speech model and the language. For AI polish, turn on **AI polish** and choose the polish model.
+3. Select **Import**.
+
+<ScreenFigure src="/screens/history-import-en-light.webp" width="1440" height="900"
+  alt="The Import audio or video dialog on the History page: two files, team-sync.mp4 and interview.m4a; the speech model Groq · whisper-large-v3-turbo, the language Auto-detect, AI polish on with the polish model Groq · qwen3.8-27b, and the note that imports use only local models or services with your own key."
+  caption="The lists hold only the local models you have downloaded and the providers you entered your own key for." />
+
+- **Formats**: WAV, MP3, AAC, M4A, FLAC, Ogg (Vorbis, Opus), MP4, MOV, MKV and WebM. Of a file with several audio tracks, the default track is recognised. AC-3, DTS and some other codecs are not supported; Voltip names the codec the file uses.
+- **Models**: an import uses only a local model you have downloaded, or a cloud provider with your own API key, never the built-in service, so it does not count toward the built-in service's usage. The models you choose are used for that import only; the settings stay as they are. When there is no model to use, the dialog offers **Manage speech models** or **Manage AI models**.
+- **Recognition and polish**: the file is recognised in segments of 3 to 15 seconds cut at pauses, and a segment that fails is tried once more. With AI polish on, each segment is polished once the file is recognised; a segment whose polish fails keeps its recognised text.
+- **The import list**: files are imported one after another, and the top of the **History** page lists each one with where it is and its progress. A file waiting or being imported can be cancelled with **Cancel**, and then nothing is saved; a file that failed can be retried with **Retry**, which goes on from the first unfinished segment when recognition stopped half-way; a finished file has **View entry**. Closing Voltip clears the import list; the original files are not affected.
+- **Dictation comes first**: you can dictate while files are imported. The import pauses during the dictation and goes on after it.
+- An imported entry carries an **Imported** mark and the file's name, and does not count in the statistics on the home page. Importing needs the history turned on.
+
+When you export an imported entry, the file name offered is the original file's. When its segments were polished, **Subtitle text** chooses **Polished** (the default) or **Recognised** for the subtitles. Both have exactly the same times, in step with the original file.
 
 ## Recognise or polish again
 
@@ -72,7 +93,7 @@ The home page adds up the dictations in the history for today, this week, this m
 
 Time saved is speaking time × 1.9. The factor comes from Ruan et al., 2016 (arXiv:1608.07323): in their experiments, speaking was about 2.9 times as fast as typing on a phone, in English (153 against 52 words per minute) and in Chinese (123 against 43 characters per minute). Typing the same text takes about 2.9 times as long as saying it, which saves 1.9 times the speaking time. **Basis**, next to **Time saved** on the home page, shows the same explanation.
 
-Only dictations kept in the history count. Voice edits, and text or clipboard content sent from the phone, do not; a recording made on the phone and recognised on this computer does, and so does a copy a phone uploads of what it transcribed on its own.
+Only dictations kept in the history count. Voice edits, text or clipboard content sent from the phone, and imported audio or video files do not; a recording made on the phone and recognised on this computer does, and so does a copy a phone uploads of what it transcribed on its own.
 
 ## Backup and moving to another computer
 

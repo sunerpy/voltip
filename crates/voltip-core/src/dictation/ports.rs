@@ -256,12 +256,31 @@ pub trait Segmenter: Send {
     fn finish(&mut self) -> Option<u64>;
 }
 
+/// How long a segment may be, in samples at [`PCM_SAMPLE_RATE_HZ`]: one ends at a pause once it
+/// is `min` long, and is cut once it reaches `max` (docs/dictation.md §22, §31).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SegmentBounds {
+    /// No cut before this.
+    pub min: u64,
+    /// A cut by this, pause or not.
+    pub max: u64,
+}
+
 /// Makes a [`Segmenter`] for each long take (the desktop's cuts where the speech pauses,
 /// docs/dictation.md §22).
 pub trait SegmenterFactory: Send + Sync {
     /// A segmenter for one take, or why there is none now (its model is missing): the core cuts
     /// with its own fallback then.
     fn create(&self) -> Result<Box<dyn Segmenter>, String>;
+
+    /// A segmenter whose segments keep to `bounds` instead of a long take's (an imported file's,
+    /// docs/dictation.md §31), or why there is none: the core then cuts with its own fallback
+    /// within the bounds ([`crate::dictation::long::EnergySegmenter::bounded`]). By default there
+    /// is none.
+    fn create_with(&self, bounds: SegmentBounds) -> Result<Box<dyn Segmenter>, String> {
+        let _ = bounds;
+        Err("this segmenter has no length bounds".into())
+    }
 }
 
 /// The consumer end of a long take's stream (docs/dictation.md §22): the whole take as mono `f32`
@@ -341,6 +360,11 @@ pub trait Transcriber: Send + Sync {
 pub struct Segment {
     /// The sentence, as the streaming model wrote it (punctuation included).
     pub text: String,
+    /// An imported file's segment polished on its own (docs/dictation.md §31): its subtitles may
+    /// carry this text in the segment's time. Absent when the segment was not polished (or its
+    /// polish failed), and in every other entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refined: Option<String>,
     /// Where it started.
     pub start_ms: u64,
     /// Where the endpoint was detected.
@@ -859,7 +883,7 @@ mod tests {
         let frame = LevelFrame { rms_dbfs: -20.0, peak_dbfs: -3.0, clipping: false, sample_rate_hz: 16_000, channels: 1, seq: 7 };
         let json = serde_json::to_string(&frame).unwrap();
         assert!(json.contains(r#""rms_dbfs":-20.0"#) && json.contains(r#""seq":7"#), "{json}");
-        let segment = Segment { text: "你好。".into(), start_ms: 120, end_ms: 1480 };
+        let segment = Segment { text: "你好。".into(), refined: None, start_ms: 120, end_ms: 1480 };
         assert_eq!(serde_json::to_string(&segment).unwrap(), r#"{"text":"你好。","start_ms":120,"end_ms":1480}"#);
         assert_eq!(StreamFinal::default(), StreamFinal { committed: Vec::new(), tail: String::new(), model: None });
         assert_eq!(PARTIAL_THROTTLE, Duration::from_millis(80));

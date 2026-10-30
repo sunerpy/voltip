@@ -18,10 +18,12 @@ import {
 /** `voltip_core::history::derived::CORRECTION_PIECE_CHARS`. */
 export const CORRECTION_PIECE_CHARS = 2000;
 
-/** Dictations count; voice edits, and texts or the clipboard a phone sent, do not. */
+/** Dictations count; voice edits, texts or the clipboard a phone sent, and imported files
+ *  (docs/dictation.md §31) do not. */
 export function countsForStats(entry: HistoryEntry): boolean {
   return (
     entry.kind === "dictation" &&
+    entry.file === undefined &&
     entry.origin?.kind !== "typed" &&
     entry.origin?.kind !== "clipboard"
   );
@@ -84,6 +86,7 @@ export function matchesHistoryQuery(entry: HistoryEntry, query: string): boolean
     entry.scene?.name ?? "",
     entry.edit?.instruction ?? "",
     entry.edit?.selection ?? "",
+    entry.file?.name ?? "",
   ].some((s) => s.toLowerCase().includes(q));
 }
 

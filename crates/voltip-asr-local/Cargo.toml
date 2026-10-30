@@ -54,5 +54,7 @@ vulkan = ["transcribe-cpp/vulkan"]
 
 [dev-dependencies]
 tempfile.workspace = true
+# The import's decoder, for the real import test (tests/real.rs, docs/dictation.md §31).
+voltip-media.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 wiremock.workspace = true

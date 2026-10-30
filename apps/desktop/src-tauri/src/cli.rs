@@ -16,8 +16,10 @@ use std::time::Instant;
 
 use clap::Parser;
 pub use voltip_asr_local::cli::{ExitCode, download_model, list_compute, list_models};
-use voltip_asr_local::{Compute, LocalDevice, LocalTranscriber, ModelStore};
-use voltip_core::dictation::Transcriber as _;
+use voltip_asr_local::{Compute, LocalDevice, LocalTranscriber, ModelStore, VadSegmenterFactory};
+use voltip_core::dictation::long::{self, SEGMENT_ATTEMPTS};
+use voltip_core::dictation::{Segment, SegmenterFactory, Transcriber as _};
+use voltip_core::history::export::{SegmentText, srt};
 use voltip_core::{ChineseScript, CoreConfig, DEFAULT_LOCAL_MODEL_ID, DictationError, EdgeSource, ProviderId, SettingsStore, TakeKind};
 use voltip_tauri_bridge::UiCommand;
 
@@ -63,11 +65,16 @@ pub struct Cli {
     /// success stdout carries `id<TAB>installed<TAB>dir`.
     #[arg(long, value_name = "ID", conflicts_with_all = ["toggle", "cancel", "start_hidden", "list_devices", "transcribe_file"])]
     pub download_model: Option<String>,
-    /// Transcribe a WAV file (16 kHz mono preferred; other rates are resampled) with a local model
-    /// and exit. Headless: no window, tray, hotkey or microphone. Exit 0 with the text on stdout;
-    /// non-zero with an empty stdout when the model is not installed or recognition fails.
-    #[arg(long, value_name = "WAV16K")]
+    /// Transcribe an audio or video file with a local model and exit: WAV, MP3, AAC, M4A, FLAC,
+    /// Ogg (Vorbis, Opus), MP4, MOV, MKV or WebM (of a video, its sound). Headless: no window, tray,
+    /// hotkey or microphone. Exit 0 with the text on stdout; non-zero with an empty stdout when the
+    /// model is not installed, the file cannot be read or decoded, or recognition fails.
+    #[arg(long, value_name = "FILE")]
     pub transcribe_file: Option<PathBuf>,
+    /// With --transcribe-file: also write the subtitles (SRT) to this file. The file is recognised
+    /// in segments of 3 to 15 s; each line of a segment's text is a cue within its time.
+    #[arg(long, value_name = "SRT", requires = "transcribe_file")]
+    pub srt: Option<PathBuf>,
     /// Catalogue id of the local model for --transcribe-file (default: the model the settings
     /// select in local mode, else the catalogue default).
     #[arg(long, value_name = "ID", requires = "transcribe_file")]
@@ -151,12 +158,14 @@ pub enum Action {
     },
     /// `--transcribe-file`.
     TranscribeFile {
-        /// The WAV.
+        /// The audio or video file.
         path: PathBuf,
         /// `--model`.
         model: Option<String>,
         /// `--json`.
         json: bool,
+        /// `--srt`.
+        srt: Option<PathBuf>,
         /// `--device` / `--gpu` / `--threads`, each `None` when absent (the settings decide).
         device: Option<LocalDevice>,
         /// `--gpu`.
@@ -197,6 +206,7 @@ impl Cli {
                 path: path.clone(),
                 model: self.model.clone(),
                 json: self.json,
+                srt: self.srt.clone(),
                 device: self.device,
                 gpu: self.gpu.clone(),
                 threads: self.threads,
@@ -266,8 +276,8 @@ pub fn default_model(data_dir: &Path) -> String {
 }
 
 /// Recognise `path` with `transcriber` (already pointed at the model) and bring the text to
-/// `script` like the pipeline does (docs/dictation.md §17). Errors are the core's
-/// `DictationError`s, mapped to exit codes by [`transcribe_file`].
+/// `script` like the pipeline does (docs/dictation.md §17): a WAV whole, as the recogniser reads
+/// it. Errors are the core's `DictationError`s, mapped to exit codes by [`transcribe_file`].
 pub async fn transcribe_path(
     transcriber: &LocalTranscriber,
     path: &Path,
@@ -285,19 +295,116 @@ pub async fn transcribe_path(
     })
 }
 
+/// What `--transcribe-file` reads and writes, beside the recogniser.
+pub struct TranscribeArgs<'a> {
+    /// The audio or video file.
+    pub path: &'a Path,
+    /// `--json`.
+    pub json: bool,
+    /// `--srt`: where the subtitles go.
+    pub srt: Option<&'a Path>,
+    /// The settings' language hint.
+    pub language: Option<&'a str>,
+    /// The settings' Chinese script (docs/dictation.md §17).
+    pub script: ChineseScript,
+    /// Cuts a decoded file into segments (the voice-activity model's, once installed); `None`: the
+    /// core's own cutter.
+    pub segmenter: Option<&'a dyn SegmenterFactory>,
+}
+
+/// Why `--transcribe-file` printed nothing: its input, or the rest.
+enum Failure {
+    /// The file could not be read (exit 2).
+    Input(String),
+    /// The model, the decoding, the recognition or the subtitles (exit 1).
+    Other(String),
+}
+
+impl From<DictationError> for Failure {
+    fn from(e: DictationError) -> Self {
+        match e {
+            DictationError::Audio(reason) => Self::Input(reason),
+            e => Self::Other(e.to_string()),
+        }
+    }
+}
+
+/// A WAV file (`RIFF` … `WAVE`): read whole, as before the import (docs/dictation.md §31).
+fn is_wav(path: &Path) -> bool {
+    let mut head = [0u8; 12];
+    std::fs::File::open(path).and_then(|mut f| std::io::Read::read_exact(&mut f, &mut head)).is_ok() && &head[..4] == b"RIFF" && &head[8..] == b"WAVE"
+}
+
+/// The selected model, installed: the check `transcribe` makes first, made before a long file is
+/// decoded for nothing.
+fn model_ready(transcriber: &LocalTranscriber) -> Result<(), Failure> {
+    let models = ModelStore::new(transcriber.root()).scan();
+    match models.iter().find(|m| m.id == transcriber.selected()) {
+        None => Err(Failure::Other(DictationError::Asr(format!("本地模型不在目录中：{}", transcriber.selected())).to_string())),
+        Some(m) if !m.state.is_installed() => Err(Failure::Other(DictationError::Asr(format!("本地模型未下载：{}", m.name)).to_string())),
+        Some(_) => Ok(()),
+    }
+}
+
+/// A decoded file under the system's temporary directory, removed when dropped.
+struct TempPcm(PathBuf);
+
+impl Drop for TempPcm {
+    fn drop(&mut self) {
+        for path in [self.0.clone(), self.0.with_extension("pcm.part")] {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+/// Any file the import reads (docs/dictation.md §31): decoded by the same decoder, cut into the
+/// same 3–15 s segments, each recognised in at most two tries; the text joined as a long take's,
+/// and the subtitles of the segments when asked.
+async fn transcribe_media(transcriber: &LocalTranscriber, args: &TranscribeArgs<'_>) -> Result<(TranscribeOutput, Option<String>), Failure> {
+    model_ready(transcriber)?;
+    let pcm = TempPcm(std::env::temp_dir().join(format!("voltip-transcribe-{}.pcm", uuid::Uuid::new_v4())));
+    let (source, out) = (args.path.to_path_buf(), pcm.0.clone());
+    let decoded = tokio::task::spawn_blocking(move || voltip_media::decode_to_pcm(&source, &out, &|_, _| {}, &voltip_core::CancelToken::new()))
+        .await
+        .map_err(|e| Failure::Other(e.to_string()))?
+        .map_err(|e| match e {
+            voltip_core::import::MediaError::Unreadable(reason) => Failure::Input(format!("{}: {reason}", args.path.display())),
+            e => Failure::Other(format!("{}: {e}", args.path.display())),
+        })?;
+    let cuts = voltip_core::import::run::cut_points(&pcm.0, decoded.samples, args.segmenter).map_err(Failure::Other)?;
+    let started = Instant::now();
+    let mut segments = Vec::new();
+    let mut start = 0;
+    for end in cuts {
+        let wav = long::read_segment(&pcm.0, start, end).map_err(|e| Failure::Other(e.to_string()))?;
+        let mut answer = Err(DictationError::NoSpeech);
+        for _ in 0..SEGMENT_ATTEMPTS {
+            answer = long::recognize_segment(transcriber, &wav, args.language, &[], args.script, &voltip_core::usage::AsrCall::default()).await;
+            if answer.is_ok() {
+                break;
+            }
+        }
+        let ms = |sample: u64| sample * 1000 / long::RATE;
+        segments.push(Segment { text: answer?.text, refined: None, start_ms: ms(start), end_ms: ms(end) });
+        start = end;
+    }
+    let pieces: Vec<(u64, u64, Option<String>)> = segments.iter().map(|s| (s.start_ms, s.end_ms, Some(s.text.clone()))).collect();
+    let output = TranscribeOutput {
+        text: long::assemble(&pieces, &[]),
+        model: transcriber.selected().to_owned(),
+        latency_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        backend: transcriber.loaded_backend().unwrap_or_default(),
+    };
+    Ok((output, args.srt.map(|_| srt(&segments, SegmentText::Raw))))
+}
+
 /// The whole `--transcribe-file` action over an injected transcriber: writes the text (or the
-/// JSON) plus a newline to `out` on success and nothing otherwise; the reason goes to `err`.
-/// `main` maps the returned code to the process exit status. Tests call this with a fake
-/// recogniser; the binary passes `LocalTranscriber::new(models_root).select(model)`.
-pub fn transcribe_file(
-    transcriber: &LocalTranscriber,
-    path: &Path,
-    json: bool,
-    language: Option<&str>,
-    script: ChineseScript,
-    out: &mut dyn Write,
-    err: &mut dyn Write,
-) -> ExitCode {
+/// JSON) plus a newline to `out` on success, after the subtitles when `--srt` asks for them, and
+/// nothing otherwise; the reason goes to `err`. A WAV without `--srt` is read whole, as before;
+/// everything else goes through the import's decoder and segments ([`transcribe_media`]). `main`
+/// maps the returned code to the process exit status. Tests call this with a fake recogniser; the
+/// binary passes `LocalTranscriber::new(models_root).select(model)`.
+pub fn transcribe_file(transcriber: &LocalTranscriber, args: &TranscribeArgs<'_>, out: &mut dyn Write, err: &mut dyn Write) -> ExitCode {
     let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
         Ok(rt) => rt,
         Err(e) => {
@@ -305,18 +412,27 @@ pub fn transcribe_file(
             return ExitCode::Failed;
         }
     };
-    match runtime.block_on(transcribe_path(transcriber, path, language, script)) {
+    let result = if args.srt.is_none() && is_wav(args.path) {
+        runtime.block_on(transcribe_path(transcriber, args.path, args.language, args.script)).map(|output| (output, None)).map_err(Failure::from)
+    } else {
+        runtime.block_on(transcribe_media(transcriber, args))
+    };
+    let result = result.and_then(|(output, subtitles)| match (args.srt, subtitles) {
+        (Some(path), Some(subtitles)) => std::fs::write(path, subtitles).map(|()| output).map_err(|e| Failure::Other(format!("{}: {e}", path.display()))),
+        _ => Ok(output),
+    });
+    match result {
         Ok(output) => {
-            let line = if json { serde_json::to_string(&output).unwrap_or_else(|_| output.text.clone()) } else { output.text.clone() };
+            let line = if args.json { serde_json::to_string(&output).unwrap_or_else(|_| output.text.clone()) } else { output.text.clone() };
             let _ = writeln!(out, "{line}");
             ExitCode::Ok
         }
-        Err(DictationError::Audio(reason)) => {
+        Err(Failure::Input(reason)) => {
             let _ = writeln!(err, "voltip: {reason}");
             ExitCode::BadInput
         }
-        Err(e) => {
-            let _ = writeln!(err, "voltip: {e}");
+        Err(Failure::Other(reason)) => {
+            let _ = writeln!(err, "voltip: {reason}");
             ExitCode::Failed
         }
     }
@@ -369,12 +485,21 @@ pub fn run_headless(action: &Action, data_dir: &Path, out: &mut dyn Write, err: 
         Action::ListCompute => list_compute(out),
         Action::ListModels => list_models(&models_root, out),
         Action::DownloadModel { id } => download_model(&ModelStore::new(models_root).with_network(&network(data_dir, err)), id, out, err),
-        Action::TranscribeFile { path, model, json, device, gpu, threads } => {
+        Action::TranscribeFile { path, model, json, srt, device, gpu, threads } => {
             let settings = SettingsStore::new(data_dir).load().unwrap_or_default();
             let model = model.clone().unwrap_or_else(|| default_model(data_dir));
             let compute = compute_for(&settings.engines, *device, gpu.as_deref(), *threads);
-            let transcriber = LocalTranscriber::new(models_root).select(&model).with_compute(compute);
-            transcribe_file(&transcriber, path, *json, settings.engines.language.as_deref(), settings.engines.chinese_script, out, err)
+            let transcriber = LocalTranscriber::new(models_root.clone()).select(&model).with_compute(compute);
+            let segmenter = VadSegmenterFactory::new(models_root, None);
+            let args = TranscribeArgs {
+                path,
+                json: *json,
+                srt: srt.as_deref(),
+                language: settings.engines.language.as_deref(),
+                script: settings.engines.chinese_script,
+                segmenter: Some(&segmenter),
+            };
+            transcribe_file(&transcriber, &args, out, err)
         }
         Action::Gui { .. } | Action::Quit | Action::CopyLast => ExitCode::Ok,
     }

@@ -284,6 +284,9 @@ describe("Mobile app flow", () => {
       mirrorHistoryQuery: inner.mirrorHistoryQuery.bind(inner),
       mirrorHistoryEntry: inner.mirrorHistoryEntry.bind(inner),
       mirrorProfile: inner.mirrorProfile.bind(inner),
+      importsState: inner.importsState.bind(inner),
+      importPick: inner.importPick.bind(inner),
+      onFileDrop: inner.onFileDrop.bind(inner),
     };
     const first = render(<TestApp backend={backend} />);
     expect(await screen.findByText("正在启动…")).toBeInTheDocument();
@@ -300,6 +303,9 @@ describe("Mobile app flow", () => {
       audioDevices: identityless.audioDevices.bind(identityless),
       audioOutputs: identityless.audioOutputs.bind(identityless),
       historyExport: identityless.historyExport.bind(identityless),
+      importsState: identityless.importsState.bind(identityless),
+      importPick: identityless.importPick.bind(identityless),
+      onFileDrop: identityless.onFileDrop.bind(identityless),
       backupExport: identityless.backupExport.bind(identityless),
       backupOpen: identityless.backupOpen.bind(identityless),
       backupImport: identityless.backupImport.bind(identityless),

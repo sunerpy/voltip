@@ -284,7 +284,8 @@ impl HistoryReader {
     }
 
     /// The newest `limit` (1..=[`MAX_RECENT_TEXTS`]) recognised takes, newest first: dictations
-    /// only — no voice edits, and none of the texts a phone sent as text, which nothing recognised.
+    /// only — no voice edits, none of the texts a phone sent as text, which nothing recognised, and
+    /// no imported file (docs/dictation.md §31), which may hold other people's words.
     pub fn recent_texts(&self, limit: usize) -> Result<Vec<HistoryText>, CoreError> {
         if !(1..=MAX_RECENT_TEXTS).contains(&limit) {
             return Err(CoreError::Invalid(format!("recent_texts: limit 1–{MAX_RECENT_TEXTS}")));
@@ -293,7 +294,8 @@ impl HistoryReader {
             let mut stmt = conn.prepare(&format!(
                 "SELECT id, at_ms, json_extract(json, '$.raw_text'), json_extract(json, '$.text'), json_extract(json, '$.refined'), \
                  json_extract(json, '$.vocabulary') FROM entries \
-                 WHERE kind = 'dictation' AND COALESCE(json_extract(json, '$.origin.kind'), '') NOT IN ('typed', 'clipboard') {NEWEST_FIRST} LIMIT ?1"
+                 WHERE kind = 'dictation' AND COALESCE(json_extract(json, '$.origin.kind'), '') NOT IN ('typed', 'clipboard') \
+                 AND json_extract(json, '$.file') IS NULL {NEWEST_FIRST} LIMIT ?1"
             ))?;
             let rows = stmt.query_map([i64::try_from(limit).unwrap_or(i64::MAX)], |row| {
                 Ok((

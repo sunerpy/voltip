@@ -6,6 +6,7 @@ import {
   type TFunction,
   type VocabularyHit,
   formatCount,
+  isImported,
 } from "@voltip/shared";
 import { Lamp, useUiState } from "@voltip/ui";
 import { textChars } from "../../features/history/stats";
@@ -118,7 +119,9 @@ export function TimingBar({ entry, t }: { entry: HistoryEntry; t: TFunction }) {
   const pct = (n: number) => `${(n / total) * 100}%`;
   return (
     <div>
-      <div className="eyebrow">{t("history.timing.title")}</div>
+      <div className="eyebrow">
+        {t(isImported(entry) ? "history.timing.titleImport" : "history.timing.title")}
+      </div>
       <div
         className="mt-2 flex h-3 w-full overflow-hidden rounded-pill bg-led-off"
         role="img"

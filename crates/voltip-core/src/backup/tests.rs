@@ -122,7 +122,7 @@ fn a_backup_carries_every_part_as_stored_and_the_statistics_follow() {
     let mut rich = take(3, AT + 3);
     rich.scene = Some(SceneRef { id: Uuid::new_v4(), name: "coding".into(), builtin: Some(BuiltinScene::Coding) });
     rich.preset = Some(PresetRef { id: PresetId::Builtin(BuiltinPreset::Formal), name: "书面语".into() });
-    rich.segments = Some(vec![crate::dictation::Segment { text: "一段".into(), start_ms: 0, end_ms: 900 }]);
+    rich.segments = Some(vec![crate::dictation::Segment { text: "一段".into(), refined: None, start_ms: 0, end_ms: 900 }]);
     rich.processed = Some(Box::new(crate::history::ProcessedText {
         text: "处理后".into(),
         preset: PresetRef { id: PresetId::Builtin(BuiltinPreset::Notes), name: "要点纪要".into() },

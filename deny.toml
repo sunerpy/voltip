@@ -51,10 +51,11 @@ allow = [
     "ISC",
     "MIT",
     "MIT-0",
-    "MPL-2.0",     # option-ext (via directories). File-level copyleft; MPL-2.0 s3.3 permits
-                   # distribution of the larger work under other terms as long as the MPL files
-                   # themselves stay MPL, so a closed application may link it. Modifications to
-                   # the MPL files stay MPL.
+    "MPL-2.0",     # option-ext (via directories), and Symphonia's crates (voltip-media, the
+                   # import's decoder, docs/dictation.md §31), used unmodified. File-level copyleft;
+                   # MPL-2.0 s3.3 permits distribution of the larger work under other terms as long
+                   # as the MPL files themselves stay MPL, so a closed application may link it.
+                   # Modifications to the MPL files stay MPL.
     "Unicode-3.0", # unicode-ident
     "Unlicense",
     "Zlib",
