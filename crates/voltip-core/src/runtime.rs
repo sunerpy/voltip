@@ -1556,6 +1556,13 @@ impl Runtime {
             // windows allow.
             self.sync_step().await;
         }
+        // Commands that came after Shutdown do not run, and their callers hear so: the queue is
+        // closed and emptied, which drops any reply in it. A sender that took its place before the
+        // close puts its command in afterwards; `recv` waits for it, where dropping the queue would
+        // leave that command, and its caller (the shell's backup before an update), waiting for as
+        // long as a handle lives.
+        cmd_rx.close();
+        while cmd_rx.recv().await.is_some() {}
         for (_, d) in self.downloads.drain() {
             d.cancel.cancel();
             d.task.abort();

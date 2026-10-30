@@ -781,6 +781,32 @@ mod tests {
         assert_eq!(rig_in(dir, backup, true).rt.auto_view().notice, None, "not again");
     }
 
+    /// Regression (stress run 2026-10-30, 1 in about 1000 under full load): the shell's backup before
+    /// an update, asked for just as the core stopped, waited for good. Its sender took a place in
+    /// the command queue before the core closed it and put the command in after the core had
+    /// dropped the queue's contents; the command, and the reply in it, then stayed as long as any
+    /// handle lived. A stopping core now closes the queue and takes everything out of it, so the
+    /// caller hears that it stopped.
+    #[tokio::test]
+    async fn regression_a_backup_asked_for_as_the_core_stops_does_not_leave_its_caller_waiting() {
+        let dir = tempfile::tempdir().unwrap();
+        SettingsStore::new(dir.path()).save(&Settings { relay_enabled: false, ..Settings::default() }).unwrap();
+        let mut config = CoreConfig::new(dir.path().to_path_buf());
+        config.auto_backup = true;
+        let store: Arc<dyn voltip_identity::SecretStore> = Arc::new(voltip_identity::MemorySecretStore::new());
+        let (rt, inbox, handle, _events) = AppCore::build(config, store, crate::dictation::fakes::ports()).unwrap();
+        handle.cmd.try_send(CoreCommand::Shutdown).unwrap();
+        // The place in the queue is taken before the core closes it; the command goes in after.
+        let place = handle.cmd.reserve().await.unwrap();
+        let core = tokio::spawn(rt.run(inbox));
+        tokio::time::timeout(Duration::from_secs(30), handle.cmd.closed()).await.expect("the core stops and closes its queue");
+        let (reply, answer) = AutoReply::channel();
+        place.send(CoreCommand::BackupAuto { kind: AutoKind::Update, reply });
+        let heard = tokio::time::timeout(Duration::from_secs(5), answer).await;
+        assert!(matches!(heard, Ok(Err(_))), "the reply is dropped, not left in the queue: {heard:?}");
+        tokio::time::timeout(Duration::from_secs(30), core).await.expect("the core ends").unwrap();
+    }
+
     /// The backup before a replacing import is written on the core task itself, at once.
     #[tokio::test]
     async fn the_backup_before_an_import_is_written_at_once() {
