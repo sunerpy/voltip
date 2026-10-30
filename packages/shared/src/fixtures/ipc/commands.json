@@ -671,6 +671,40 @@
   },
   {
     "args": {
+      "asr": {
+        "kind": "remote",
+        "model": "whisper-large-v3",
+        "provider": "groq"
+      },
+      "language": "zh",
+      "paths": ["C:\\Users\\me\\Videos\\季度会议.mp4", "/home/me/播客.mp3"],
+      "refine": {
+        "model": "qwen-plus",
+        "provider": "aliyun"
+      }
+    },
+    "name": "import_add"
+  },
+  {
+    "args": {
+      "id": "a0000000-0000-4000-8000-000000000001"
+    },
+    "name": "import_cancel"
+  },
+  {
+    "args": {
+      "id": "a0000000-0000-4000-8000-000000000007"
+    },
+    "name": "import_retry"
+  },
+  {
+    "args": {
+      "id": "a0000000-0000-4000-8000-000000000006"
+    },
+    "name": "import_remove"
+  },
+  {
+    "args": {
       "active": true
     },
     "name": "hotkey_capture"

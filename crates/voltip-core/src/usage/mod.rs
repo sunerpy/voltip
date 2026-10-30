@@ -75,6 +75,8 @@ pub enum UsageOrigin {
     Retake,
     /// The local speech service (docs/dictation.md §23).
     Serve,
+    /// An imported audio or video file (docs/dictation.md §31).
+    Import,
 }
 
 /// One recognition call: what it is for and, when the caller knows it, where the take came from

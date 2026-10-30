@@ -152,7 +152,7 @@ async fn drive(options: &DuplexOptions, mut inbox: mpsc::UnboundedReceiver<Comma
                 }
                 DuplexEvent::Sentence { text, begin_ms, end_ms } => {
                     current.clear();
-                    committed.push(Segment { text: text.clone(), start_ms: begin_ms, end_ms });
+                    committed.push(Segment { text: text.clone(), refined: None, start_ms: begin_ms, end_ms });
                     let _ = events.send(StreamEvent::Endpoint { text, start_ms: begin_ms, end_ms });
                 }
                 DuplexEvent::Finished => {

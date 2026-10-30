@@ -827,7 +827,7 @@ CLI（桌面 `apps/desktop/src-tauri/src/cli.rs`，`clap` 4.6.6；手机端无 C
 | `--quit` | 让运行实例退出（与托盘的「退出 Voltip」相同），与其他参数互斥；应用照常构建，好让插件把参数转给运行实例，构建完仍在说明没有运行实例，直接退出，不起 GUI | 0 |
 | `--list-devices` | `voltip_audio::list_input_devices()`，每行 `id<TAB>name[<TAB>(default)]` | 0 / 1（枚举失败） |
 | `--list-models` | `ModelStore::scan()`，每行 `id<TAB>state<TAB>name`（`installed` / `not_installed` / …） | 0 |
-| `--transcribe-file <wav16k> [--model <id>] [--json]` | headless：不起窗口 / 托盘 / 热键 / 麦克风；`LocalTranscriber::new(<data_dir>/models).select(model)` 识别文件（其他采样率会重采样）；`--model` 缺省取 `settings.json` 本地模式所选模型，否则目录默认；语言取 `engines.language`。stdout 输出文本，或 `{ "text", "model", "latency_ms" }` 一行 JSON | 0；模型未下载 / 识别失败 1、文件读不到 2，非零时 stdout 为空，原因在 stderr |
+| `--transcribe-file <文件> [--model <id>] [--json] [--srt <OUT>]` | headless：不起窗口 / 托盘 / 热键 / 麦克风；文件经导入的解码器（§31.7）转成 16 kHz 单声道，`LocalTranscriber::new(<data_dir>/models).select(model)` 识别（不带 `--srt` 的 WAV 整段识别，其余按 3–15 s 分段）；`--model` 缺省取 `settings.json` 本地模式所选模型，否则目录默认；语言取 `engines.language`。stdout 输出文本，或 `{ "text", "model", "latency_ms" }` 一行 JSON | 0；模型未下载 / 识别失败 1、文件读不到 2，非零时 stdout 为空，原因在 stderr |
 
 Windows 发行版是 GUI 子系统（`windows_subsystem = "windows"`）：headless 参数在 PowerShell 里直接打印不到控制台，重定向（`voltip.exe --transcribe-file a.wav --json > out.json`）或 Linux / macOS 终端正常；退出码不受影响。
 
@@ -1870,6 +1870,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 - `history_export { id, format: "srt" | "txt", fileName }`（查询，桌面）：弹出系统的保存对话框（`tauri-plugin-dialog` =2.7.3，只从 Rust 调用），默认文件名是页面给的 `Voltip YYYY-MM-DD HH.mm`（去掉文件系统不接受的字符，最长 120 字），文件由 Rust 写入。结果 `saved { path }`、`cancelled` 或 `failed { code: gone | empty | write, detail }`。手机没有保存对话框：同一条命令把内容作为文件交给系统分享面板（`SharePlugin.kt` 的 `shareFile`，文件写在应用缓存里，经清单里的 FileProvider 交给目标应用，不受 intent 大小限制），结果 `shared`，面板没能打开时 `failed { code: share, detail }`（§20.7）。
 - **SRT**：按分段生成，每段的文字折成行：每行不超过 20 个汉字或 42 个英文字符（按宽度计：汉字 21、其他 10，上限 420），优先在后半行的标点之后折，其次在最后一个空格处，都没有就在满行处；每行一条字幕，这一段的时间按各行宽度比例切分。编号从 1 开始，CRLF 换行，UTF-8。没有文字的段不出字幕；没有分段的条目不能导出字幕。
 - **TXT**：有处理后文本就用处理后的，否则用条目的文字。
+- 导入的音视频文件（§31）：字幕可以选用逐段润色后的文字（`history_export` 的 `subtitles`，时间码不变），默认文件名是原文件名，见 §31.5。
 
 ### 22.6 混合录音的回声消除（2026-10-01）
 
@@ -2503,3 +2504,88 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 - `focus_macos` 只在 Apple 芯片腿上跑（与 event tap 相同），Intel 腿的时长离发版候选的 45 分钟门槛不远。
 - 粘贴之前还不判断焦点控件能否编辑（docs/roadmap.md 第 2 条）；不可编辑时照常粘贴，再由插入确认报「没有写进去」。
 - Linux 上基于 Chromium 的应用和没有开启辅助功能的会话读不到，Windows 与 macOS 上只提供整段值的控件只能证明写入：这些情形都是「无法确认」，不出卡片。
+
+## 31. 音视频文件导入与字幕（2026-10-30）
+
+**目标**（R10，用户决定 7、D6、D20）：电脑端导入音频或视频文件（视频只取音轨），排队逐个转写，有进度、取消和单项重试；原文件只读取，不改动、不删除。每个文件的结果是一条历史记录，可以导出 TXT 和 SRT。识别只用本机模型、用户自己密钥的云端服务，或用户自己设置的自定义接口（不填密钥也可以）；润色可选，同样只用这些服务，以及用户设置的 Ollama，字幕可以用润色后的文字。内置识别与内置润色不出现在选项里，核心也拒绝。说话人分离、会议检测不做（`docs/roadmap.md`「刻意不做」）。
+
+### 31.1 解码（`crates/voltip-media`）
+
+- 端口 `voltip_core::import::MediaDecoder`（`CoreConfig.media_decoder`）：`extensions()`、`probe(path)`、`decode_to_pcm(path, out, progress, cancel)`。桌面壳接 `voltip_media::Decoder`；手机没有解码器，`UiState.imports.available` 为假，导入命令被拒绝。
+- 输出与长录音的录音文件相同（§22.3）：16 kHz 单声道 16 位小端裸 PCM。先写 `<out>.part`，完成后改名，所以 `out` 只在完整时存在；取消时报 `Cancelled` 并删除 `.part`。
+- 逐包读取、逐块解码，多声道按平均值混成单声道，用本机语音服务的 `StreamResampler`（§23）逐块重采样后写出。内存里只有一个包和一块样本，与文件长度无关。
+- 格式：Symphonia =0.5.5（特性 `aac alac flac isomp4 mkv mp3 ogg pcm vorbis wav`，没有默认特性）读容器并解码，Opus 由 `opus-rs` =0.1.34 解码。
+
+  | 容器 | 扩展名（`EXTENSIONS`） | 音频编码 |
+  |---|---|---|
+  | WAV | wav | PCM |
+  | MP3 | mp3 | MP3 |
+  | ADTS（裸 AAC） | aac | AAC |
+  | MP4 / QuickTime | mp4、m4a、m4b、m4v、mov | AAC、ALAC |
+  | FLAC | flac | FLAC |
+  | Ogg | ogg、oga、opus | Vorbis、Opus、FLAC |
+  | Matroska / WebM | mkv、mka、webm | Vorbis、Opus、FLAC、AAC、MP3、PCM |
+
+- 只读一条音轨：读取器的默认音轨，没有就第一条；视频轨跳过。MP4 按编辑列表去掉编码器的前导样本（`mp4.rs`）；Opus 去掉 pre-skip。
+- 错误（`MediaError` → `ImportFailure`）：读不了 `unreadable`（系统的原话）；不是能读的音视频文件 `unsupported_format`；没有音轨 `no_audio`；音轨的编码没有解码器 `unsupported_codec`，按容器的标记写明编码名（`sniff.rs`：AC-3、E-AC-3、AC-4、DTS、TrueHD、MLP、AMR、MPEG-H、WavPack、TTA 等）；损坏或截断 `corrupt`；写不了 `storage`。MP3（没有编码器头时）和 ADTS 的时长是读取器估计的，不用来判断截断。
+
+### 31.2 队列（`voltip_core::import`、`runtime/import.rs`）
+
+- 命令：`import_add { paths, asr, refine?, language? }`、`import_cancel { id }`、`import_retry { id }`、`import_remove { id }`；查询：`imports_state`、`import_pick { title, media, all }`（系统的多选打开对话框，过滤器「音频和视频文件」用 `extensions()`，另有「所有文件」；macOS 的对话框把过滤器合成一个，没有「所有文件」）。队列每次变化发 `imports` 事件（`ImportsView { available, extensions, jobs }`），完成的记录照常发 `history`。
+- `import_add` 先检查：没有解码器（手机）→ `这台设备不能导入音视频文件`；历史记录关闭 → `历史记录已关闭：导入的文字保存在历史记录里，请先打开历史记录`；每个请求的模型（§31.4）。都通过后，每个普通文件按读到的大小排进队列，读不了的文件不排队，错误写明它们的名字（`无法读取文件：a.mp4、b.mkv`）。
+- `ImportJob { id, name, size, duration_ms?, paused, state }`：只有文件名，不存路径。状态 `queued → decoding { pct? } → recognizing { done, total } → polishing { done, total } → done { entry, polish_failed } | failed { failure, resumable }`。
+- 一次只跑一个任务，按排队顺序。解码文件在 `<数据目录>/imports/<任务 id>.pcm`；核心启动时清空这个目录，退出时停掉正在跑的任务并删除整个目录。队列只在内存里：退出应用即清空，原文件不受影响，界面写明。
+- **取消**：正在跑或在排队的任务立即离开队列，正在跑的停止，不写历史，删除解码文件。**移除**：完成或失败的任务离开队列，删除留着的解码文件。
+- **重试**：失败任务重新排队。`resumable` 为真（解码完成后某段两次都没识别出来）时保留解码文件和已识别的段，从第一个没识别的段继续；否则从头开始。任务开始前再检查一次模型与历史记录：轮到时已经不能运行（密钥删了、历史关了）的任务直接失败，下一个接着开始。
+- **听写优先**：每段识别和每段润色开始前，听写处在 Listening / Processing（`PhaseHint` 不是 `Idle`）时，任务等它结束（`paused: true`，界面写「正在听写，导入将在听写结束后继续」），之后继续。重新识别和长录音也是听写，同样优先。导入有自己的客户端，不占用听写引擎：导入进行时随时可以开始听写。
+- 完成时历史记录关闭了：任务失败为 `storage`，不写历史。
+
+### 31.3 转写与润色（`import/run.rs`）
+
+- **切段**：`SegmentBounds { min: 3 s, max: 15 s }`（`SEGMENT_BOUNDS`），比长录音的 20–45 s 细，让每条字幕贴近它的声音。桌面用 `VadSegmenterFactory::create_with(bounds)`：同一个 Silero VAD，段满 3 s 后在下一个停顿处切，到 15 s 还没停顿就在最后 5 s 里能量最低的 200 ms 中间切断；VAD 模型没下载时用核心的 `EnergySegmenter::bounded(bounds)`（只按能量在 15 s 前切），同时在后台下载模型。`SegmenterFactory::create_with` 有默认实现（回答没有），长录音的 `create` 不变。
+- **识别**：逐段读出、交给所选的识别客户端，每段最多 2 次（`SEGMENT_ATTEMPTS`，与长录音相同）；全静音的段不上传。两次都失败时任务失败（`recognition`，识别服务的原话，可续）。所有段都没有文字时为 `no_speech`。识别请求的用量来源是 `import`（`UsageOrigin::Import`）。
+- **词典与规则**：每段识别结果先过词典（§16），润色之后（没润色就是词典之后）再过替换规则；命中记入条目的 `vocabulary`。
+- **润色**（可选，D6）：识别完成后，逐段把有文字的段交给所选服务润色，预设用默认的 AI 预设（校对，§21），与听写的整段润色是同一个 `Refiner::refine`，用量来源同样是 `import`。每段结果存为 `Segment.refined`（`#[serde(default, skip_serializing_if)]`，其他记录没有这个字段）。某段润色失败时保留它的原文，`done.polish_failed` 计数；所有段都失败时，条目像整段润色失败一样带 `refine_failure` / `refine_error`。
+- **条目**：一条历史记录。`raw_text` 是各段识别原文按句子拼接，`text` 是各段最终文字（润色过的用润色后）拼接；`segments` 带每段的时间；`file: { name, duration_ms }`（只存文件名）；`outcome` 是 `inserted { via: clipboard }`（导入的文字不粘贴到任何地方，界面写「从文件导入」）；润色过时 `preset` 记默认预设。
+- 带 `file` 的记录不是用户自己的听写：不计入首页统计与「节省时间」（`counts_for_stats`），不进 `recent_texts`（词典建议与回测，§16.9；文件里可能是别人的话）。搜索能按文件名找到它。
+
+### 31.4 只用本机模型或自己设置的服务
+
+- `ImportRequest.asr` 是 `RecognitionChoice`（已安装的本机模型，或服务商与模型），`refine` 是 `PolishModel { provider, model }`（不润色时为空）。只对这次导入生效，设置不变。
+- 核心检查（`import_engines`）：所选识别或润色是 `builtin` → `导入只能使用本机模型或你自己设置的服务，不能使用内置服务`。所选识别或润色是需要密钥的云端服务商（`KeyPolicy::Required`），而用户没有为它（这个服务商的这项服务）填写自己的密钥 → `这个云端服务需要填写你自己的密钥，才能用于导入`（`ImportError::NoOwnKey`）。用户自己设置的、不收密钥或密钥可选的服务（Ollama 为 `KeyPolicy::None`，自定义接口为 `KeyPolicy::Optional`，例如局域网里的 vLLM 或 OpenAI 兼容服务）不填密钥也可以用于识别和润色（用户决定 D20「放开不收密钥的自定义服务」，放宽了 D6「只用密钥服务」的这一条；内置服务仍然拒绝）。排队的任务轮到时再查一次，期间删掉了云端服务商密钥的任务以这句话失败。之后把所选模型套到设置的一份副本上，**清空两个候补计划**（`asr_fallback`、`llm_fallback`，§3.5），所以额度用完也不会顺延到内置服务；解析后识别（或要润色时的润色）仍是内置服务时同样拒绝；模型不能运行（本机模型没下载、服务商没有密钥）时报设置检查的原话。
+- 客户端经 `clients_for(resolved, Some(polish))` 构造，带计量包装，不组候补链。不润色时 `TakeClients.refine == Some(false)`，保存的内置润色不会被调用。
+- 界面（§31.6）按同样的规则列出：没有内置服务；需要密钥的服务商要在服务状态里有用户自己的密钥（`key.set && key.source == "user"`）才列出；`key` 为 `none` 或 `optional` 的服务商（Ollama、自定义接口）设置好就列出。
+
+### 31.5 字幕（`history::export`）
+
+- `history_export { id, format, fileName, subtitles? }`：`subtitles` 为 `raw`（识别原文）或 `refined`（默认）。`srt(segments, SegmentText)`：`refined` 时每段用它的 `refined`（没有就用原文），时间仍是这一段的 `start_ms`–`end_ms`，段内折行与按字宽分配时间不变（§22.5）。润色只在段内改写，所以两份字幕的时间码完全相同，都对得上原视频。没有 `refined` 的记录两种选择结果相同。
+- TXT 不变：有处理后文本就用处理后的（§22.4），否则用 `text`。
+- 导入的记录总有长条目的工具（`isLongEntry` 对带 `file` 的记录为真）：用 AI 预设处理、导出字幕、导出文本。导出的默认文件名是原文件名去掉扩展名。
+
+### 31.6 界面（`apps/desktop`）
+
+- 历史页顶部卡片的「导入音频或视频」（手机上没有）：打开系统的多选对话框。也可以把文件拖到历史页：只有历史页处理 `tauri://drag-drop`，其他页面不理会；按 `extensions` 过滤，跳过的文件写明名字（多个时写个数）：选项对话框开着或随这次拖放打开时写在对话框的文件列表下（提示条在对话框下层，会被遮住），没有可导入的文件时用提示条。历史记录关闭时，按钮和拖放都只提示「导入需要先开启「保存听写历史」」，提示里的「去设置」打开「设置 › 隐私与历史」。提示条是固定宽度、超长截断的一行（320×44），这些提示都写得能放下。
+- 选项对话框：文件列表（前 4 个名字，其余「还有 N 个文件」）；语音模型（按服务商分组：用户填了自己密钥的云端服务商、设置好的自定义接口的模型，以及已安装的本机模型，没有内置服务；默认当前识别服务，是内置时默认列表第一项）；识别语言（默认设置里的语言）；AI 润色开关（默认关；打开后选润色模型，同样包括设置好的 Ollama 与自定义接口，没有内置服务）；说明「只使用本机模型和你自己设置的服务，不使用内置服务；原文件只会被读取」。没有可用的语音模型时说明原因（下载本机模型、填写云端服务商的密钥或设置自定义接口）并给出「管理语音模型」，开始按钮置灰；打开润色却没有可用模型时同样处理（「管理 AI 模型」）。对话框开着时再拖进的文件加进列表。
+- 队列条（历史页顶部，有任务时出现）：每个文件一行：名字、大小、时长、状态与进度条；排队和运行中的有「取消」，失败的有「重试」（可续时提示从未完成的段继续）和「移除」，失败原因里客户端的英文措辞按界面语言显示（同听写，§3.12：`识别失败：请求超时`），完成的有「查看记录」和「移除」；标题旁写等待的个数和「关闭 Voltip 会清空导入列表，原文件不受影响」。
+- 列表里导入的记录带「导入」标记和文件名，元信息写模型、文件时长和「从文件导入」；详情的标题处同样有「导入」，信息区有「文件」一栏，耗时的标题是「耗时 · 导入这个文件」（不是听写的「从松开快捷键到插入」）。导出区在记录有润色段时多一个「字幕文字：润色后 / 识别原文」（默认润色后）。
+
+### 31.7 CLI（`apps/desktop/src-tauri/src/cli.rs`）
+
+- `--transcribe-file <FILE>` 接受解码器能读的任何文件，视频取音轨；其余参数（`--model`、`--json`、`--device`、`--gpu`、`--threads`）、退出码和标准输出约定不变。仍只用本机模型，不读密钥、不写历史，在 Tauri 启动前退出。
+- 每个输入文件（WAV 也一样）都经同一个 `voltip_media` 解码到系统临时目录（16 kHz 单声道，结束时删除）。不带 `--srt` 的 WAV 解码后照旧整段识别（一次请求）：16 kHz 单声道 16 位的 WAV 解出的样本与文件里的相同，输出与以前逐字节相同（测试钉住）；其他采样率的 WAV 由解码器转成 16 kHz 后整段识别。其他文件（以及带 `--srt` 的 WAV）按导入的 3–15 s 切段逐段识别（每段最多 2 次），文字按长录音的方式拼接。模型没装好时在解码之前就失败。
+- `--srt <OUT>`（需要 `--transcribe-file`）：另外把字幕写到这个文件（识别原文，SRT 规则同 §22.5）。读不了输入文件退出码 2（`BadInput`），解码、识别或写字幕失败退出码 1。
+
+### 31.8 门禁
+
+- `voltip-media`（`tests/decode.rs`，夹具在 `tests/fixtures/`，生成命令见同目录 README，每个不超过 64 KB）：WAV、MP3、ADTS、M4A、FLAC、Ogg Vorbis、Opus、MP4、MOV、MKV、WebM 都解成 16 kHz 单声道，时长误差不超过一帧、静音位置与 440 Hz（过零计数）正确；立体声混音；不支持的编码与没有音轨的错误；截断文件；估计时长不判损坏（`regression_a_length_the_reader_estimates_is_no_proof_of_damage`）；取消后 `.part` 被删；Opus pre-skip；每个能读的文件扩展名都在 `EXTENSIONS` 里。
+- 核心：`import::run` 单测（`a_file_becomes_one_entry_whose_segments_keep_their_times`、`the_polish_runs_segment_by_segment_and_a_failed_one_keeps_its_text`、`without_a_polish_the_refiner_is_never_asked`、`a_segment_that_fails_twice_stops_the_job_and_a_retry_goes_on_from_it`、`the_job_waits_for_a_dictation_before_its_next_segment`、解码失败、无语音、取消、`the_dictionary_and_the_rules_work_on_every_segment`）；`runtime::import` 单测 `regression_builtin_is_refused_for_imports`、`an_import_takes_a_keyless_custom_endpoint_and_ollama_but_a_cloud_provider_only_with_its_key`（D20：不填密钥的自定义接口能识别和润色，Ollama 能润色；没填密钥的云端服务商被拒绝）、`regression_an_import_without_polish_ignores_the_saved_builtin_llm`、`an_import_needs_its_model_installed_and_its_key`；`tests/import.rs`（真实核心任务 + 假解码器、假识别器、假润色器）：导入成一条记录且原文件字节不变、`regression_an_import_never_reaches_a_saved_builtin_fallback`、分段润色、失败不挡下一个且重试从未完成的段继续、解码失败、取消不留东西、听写进行时等待（用量来源 `import` 与 `this_device` 各自记录）、手机 / 历史关闭 / 内置服务被拒绝、本机模型导入、启动与退出时清理解码文件；`history::export` 的 `regression_srt_with_refined_text_keeps_the_segment_timings`；`history::tests` 的 `regression_imported_files_stay_out_of_the_recent_texts`、`an_imported_entry_is_found_by_its_file_name` 与统计排除；切段 `bounds_from_an_import_replace_the_long_takes`（VAD）与 `a_bounded_cutter_keeps_its_segments_within_the_bounds`（能量）。
+- 桌面：`tests/ipc.rs` 的 `an_import_goes_from_the_webview_into_the_history`（没填密钥的云端服务商以 `NoOwnKey` 被拒绝，不填密钥的自定义接口导入成功）与命令清单；`tests/cli.rs` 的 `regression_a_wav_is_still_read_whole`（WAV 也经解码器，16 kHz 单声道 WAV 的输出不变，12 kHz 的解成 16 kHz 后仍整段识别）、`transcribe_file_reads_every_format_the_import_reads`（MP3、M4A 等夹具）、`transcribe_file_writes_the_subtitles_of_its_segments`（`--srt`）。
+- TS：schema 与契约回放（`imports` 状态与事件、四条命令）；`MockBackend` 的导入队列；`imports.test.ts`；`Imports.test.tsx`（按钮与对话框不含内置服务、本机模型与语言、没有可用模型、拖放只在历史页且按扩展名过滤、跳过的文件写在对话框里、历史关闭的提示与「去设置」、队列各状态、听写时暂停、导入记录的标记与两种字幕导出、`regression: its timing is the file's import, not a shortcut take`）；`imports.test.ts` 的 `regression: a recognition failure reads in the interface's language, not the client's`；`import-options.test.ts` 的 `offers a custom endpoint and Ollama the user set up without a key, a cloud provider only with one`；`MockBackend` 的 `takes a custom endpoint and Ollama without a key, a cloud provider only with the user's key`。
+- 真模型（`#[ignore]`，Linux 本机与 Windows 构建机 `gate real`）：`voltip-asr-local` `tests/real.rs` 的 `real_imports_of_one_clip_agree_across_containers`：一段 60 s 中文语音，ffmpeg 当场转成 MP3、M4A、MKV(Opus)，本机模型转写，三种格式的文字一致、字幕时间单调递增。依赖时间与线程的测试在满载下各跑 200 次。
+
+### 31.9 未做与限制
+
+- 只读一条音轨；不分离说话人，不检测会议，不做双语字幕。
+- 队列不持久化：退出应用即清空（原文件不受影响）。
+- 手机端不导入文件。
+- 没有解码器的编码（AC-3、DTS 等）报错写明编码名，不调用外部工具转码。

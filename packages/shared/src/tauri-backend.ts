@@ -2,7 +2,7 @@ import { Channel, invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 import { listen as tauriListen } from "@tauri-apps/api/event";
 
-import type { Backend, EventListener, FrameListener, Unsubscribe } from "./backend";
+import type { Backend, DropListener, EventListener, FrameListener, Unsubscribe } from "./backend";
 import {
   type ArgsOf,
   type AttachmentFile,
@@ -18,6 +18,7 @@ import {
   type GuidePage,
   type ProjectLink,
   type ProviderId,
+  type SegmentText,
   type SiteId,
   type VocabularyBacktestArgs,
   UI_EVENT_NAME,
@@ -38,6 +39,7 @@ import {
   mirrorProfileSchema,
   historyPageSchema,
   historyStatsSchema,
+  importsViewSchema,
   injectPreflightSchema,
   levelFrameSchema,
   pasteOutcomeSchema,
@@ -81,6 +83,10 @@ export interface TauriTransport {
 
 const newChannel = (): ChannelLike => new Channel();
 
+/** The event Tauri emits when files are dropped on the window, with their paths. */
+export const DRAG_DROP_EVENT = "tauri://drag-drop";
+const dropPayloadSchema = z.object({ paths: z.array(z.string()) });
+
 const defaultTransport: TauriTransport = {
   invoke: (command, args) => tauriInvoke(command, args),
   invokeRaw: (command, bytes, headers) => tauriInvoke(command, bytes, { headers }),
@@ -116,9 +122,42 @@ export class TauriBackend implements Backend {
     return audioOutputsSchema.parse(raw);
   }
 
-  async historyExport(id: string, format: ExportFormat, fileName: string) {
-    const raw = await this.transport.invoke("history_export", { id, format, fileName });
+  async historyExport(id: string, format: ExportFormat, fileName: string, subtitles?: SegmentText) {
+    const raw = await this.transport.invoke("history_export", {
+      id,
+      format,
+      fileName,
+      ...(subtitles === undefined ? {} : { subtitles }),
+    });
     return exportOutcomeSchema.parse(raw);
+  }
+
+  async importsState() {
+    const raw = await this.transport.invoke("imports_state");
+    return importsViewSchema.parse(raw);
+  }
+
+  async importPick(title: string, media: string, all: string) {
+    const raw = await this.transport.invoke("import_pick", { title, media, all });
+    return z.array(z.string()).parse(raw);
+  }
+
+  /** `tauri://drag-drop`, the window's system drop: its payload names the files. */
+  onFileDrop(listener: DropListener): Unsubscribe {
+    let disposed = false;
+    const warn = this.warn();
+    const ready = this.transport.listen(DRAG_DROP_EVENT, ({ payload }) => {
+      if (disposed) return;
+      const parsed = dropPayloadSchema.safeParse(payload);
+      if (parsed.success) listener(parsed.data.paths);
+      else warn("tauri://drag-drop dropped: payload failed validation", parsed.error.issues);
+    });
+    return () => {
+      disposed = true;
+      void ready.then((unlisten) => {
+        unlisten();
+      });
+    };
   }
 
   async backupExport(fileName: string) {

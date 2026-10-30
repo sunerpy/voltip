@@ -675,9 +675,25 @@ export function HistoryDetail({
         )}
         <Readout
           label={t("history.detail.outcome")}
-          value={outcomeDetailText(entry.outcome, locale)}
+          value={
+            entry.file === undefined
+              ? outcomeDetailText(entry.outcome, locale)
+              : t("history.imports.outcome")
+          }
           size="sm"
         />
+        {entry.file !== undefined && (
+          // docs/dictation.md §31: the file it was imported from, by its name.
+          <Readout
+            label={t("history.imports.file")}
+            value={
+              <span data-user-text data-testid="history-detail-file-name">
+                {entry.file.name}
+              </span>
+            }
+            size="sm"
+          />
+        )}
         <Readout
           label={t("history.detail.duration")}
           value={formatTakeLength(entry.duration_ms, locale)}

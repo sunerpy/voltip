@@ -23,6 +23,7 @@ pub mod copy_last;
 pub mod dictation;
 pub mod exit;
 pub mod export;
+pub mod imports;
 /// In-app feedback (docs/feedback.md): the client lives in `voltip-cloud`, shared with the phone.
 pub use voltip_cloud::feedback;
 pub mod hotkey;
@@ -54,7 +55,7 @@ pub const DEV_DATA_DIR_ENV: &str = "VOLTIP_DEV_DATA_DIR";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 140] = [
+pub const COMMANDS: [&str; 146] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -118,6 +119,12 @@ pub const COMMANDS: [&str; 140] = [
     "audio_cache_clear",
     "audio_cache_delete",
     "audio_retake",
+    "import_add",
+    "import_cancel",
+    "import_retry",
+    "import_remove",
+    "imports_state",
+    "import_pick",
     "history_export",
     "backup_export",
     "backup_open",
@@ -688,8 +695,54 @@ fn audio_retake(
     Ok(bridge.dispatch(UiCommand::AudioRetake { id, asr, refine })?)
 }
 
+/// 导入音频或视频 (docs/dictation.md §31): the files join the import queue with the same models and
+/// language; the queue follows as `imports` events.
+#[tauri::command]
+fn import_add(
+    bridge: tauri::State<'_, Bridge>,
+    paths: Vec<String>,
+    asr: voltip_core::audio_cache::RecognitionChoice,
+    refine: Option<voltip_core::import::PolishModel>,
+    language: Option<String>,
+) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::ImportAdd { paths, asr, refine, language })?)
+}
+
+/// 取消 on an import that runs or waits: nothing goes into the history.
+#[tauri::command]
+fn import_cancel(bridge: tauri::State<'_, Bridge>, id: String) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::ImportCancel { id })?)
+}
+
+/// 重试 on a failed import.
+#[tauri::command]
+fn import_retry(bridge: tauri::State<'_, Bridge>, id: String) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::ImportRetry { id })?)
+}
+
+/// 移除: a finished or failed import leaves the queue.
+#[tauri::command]
+fn import_remove(bridge: tauri::State<'_, Bridge>, id: String) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::ImportRemove { id })?)
+}
+
+/// The import queue (query; the history page pulls it on mount, then follows `imports` events).
+#[tauri::command]
+fn imports_state(bridge: tauri::State<'_, Bridge>) -> voltip_core::import::ImportsView {
+    bridge.state().imports
+}
+
+/// 导入音频或视频…: the open dialog, titled `title`, for several files at once (`media` names the
+/// filter of the files the import reads, `all` the one of any file); the paths chosen, none when it
+/// was closed.
+#[tauri::command]
+async fn import_pick<R: Runtime>(app: tauri::AppHandle<R>, title: String, media: String, all: String) -> Vec<String> {
+    imports::pick(&app, &title, &media, &all).await
+}
+
 /// 导出字幕 / 导出文本 (docs/dictation.md §22): the save dialog offers `file_name`, and the file is
-/// written here.
+/// written here. `subtitles` picks the text of an imported file's polished subtitles (§31); absent:
+/// the polished one.
 #[tauri::command]
 async fn history_export<R: Runtime>(
     app: tauri::AppHandle<R>,
@@ -697,9 +750,10 @@ async fn history_export<R: Runtime>(
     id: uuid::Uuid,
     format: voltip_core::history::export::ExportFormat,
     file_name: String,
+    subtitles: Option<voltip_core::history::export::SegmentText>,
 ) -> Result<export::ExportOutcome, String> {
     let entry = history_read(&bridge, move |b| b.history_entry(id)).await?;
-    Ok(match export::content(entry.as_ref(), format) {
+    Ok(match export::content(entry.as_ref(), format, subtitles.unwrap_or_default()) {
         Ok(content) => export::save(&app, content, format, &file_name).await,
         Err(outcome) => outcome,
     })
@@ -1595,6 +1649,12 @@ pub fn build_app<R: Runtime>(
             audio_cache_clear,
             audio_cache_delete,
             audio_retake,
+            import_add,
+            import_cancel,
+            import_retry,
+            import_remove,
+            imports_state,
+            import_pick,
             history_export,
             backup_export,
             backup_open,
@@ -1737,6 +1797,8 @@ pub fn run() {
     config.serve_host = Some(std::sync::Arc::new(voltip_serve::HttpHost));
     // docs/dictation.md §25: the MCP service for the AI tools on this computer, likewise.
     config.mcp_host = Some(std::sync::Arc::new(voltip_mcp::HttpHost));
+    // docs/dictation.md §31: the history imports audio and video files.
+    config.media_decoder = Some(Arc::new(voltip_media::Decoder));
     let ports = dictation::production_ports(config.models_root.clone(), &config.network);
     let mut app = match build_app(tauri::Builder::default(), config, secret_store(), ShellOptions::PRODUCTION.hidden(start_hidden), ports).build(context) {
         Ok(app) => app,

@@ -540,6 +540,7 @@ impl Runtime {
             preset: None,
             origin: Some(EntryOrigin { device: computer, kind: OriginKind::Sent }),
             processed: None,
+            file: None,
         }
     }
 }

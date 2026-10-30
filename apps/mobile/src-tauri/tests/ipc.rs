@@ -774,9 +774,9 @@ fn sorted(mut names: Vec<String>) -> Vec<String> {
 const PENDING_TYPESCRIPT: &[&str] = &[];
 
 /// Commands of the shared contract (schema.ts, the fixtures) that only the desktop shell registers:
-/// the local speech service, the MCP service, the recording cache and the result cards run on a
-/// computer only (docs/dictation.md §23.6, §25, §26, §28), so the phone offers no command for them
-/// and an invoke is "not found".
+/// the local speech service, the MCP service, the recording cache, the result cards and the import
+/// of audio and video files run on a computer only (docs/dictation.md §23.6, §25, §26, §28, §31), so
+/// the phone offers no command for them and an invoke is "not found".
 const DESKTOP_ONLY: &[&str] = &[
     "settings_set_serve",
     "serve_copy_token",
@@ -797,6 +797,13 @@ const DESKTOP_ONLY: &[&str] = &[
     "overlay_copy",
     "overlay_paste",
     "open_history",
+    // Importing audio and video files (docs/dictation.md §31) is the desktop's.
+    "import_add",
+    "import_cancel",
+    "import_retry",
+    "import_remove",
+    "imports_state",
+    "import_pick",
 ];
 
 #[test]
@@ -816,7 +823,8 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
         sorted(PENDING_TYPESCRIPT.iter().map(|s| (*s).to_owned()).collect()),
         "schema.ts CommandArgs keys != Rust COMMANDS (beyond the declared PENDING_TYPESCRIPT set)"
     );
-    // The desktop's own queries (the result card's, docs/dictation.md §28) are "not found" here.
+    // The desktop's own queries (the result card's, docs/dictation.md §28; `imports_state` and
+    // `import_pick`, §31) are "not found" here; the desktop's test checks them.
     for name in typescript_literal_invokes().into_iter().filter(|n| !DESKTOP_ONLY.contains(&n.as_str())) {
         assert!(rust.contains(&name), "tauri-backend.ts invokes unknown command {name}");
     }

@@ -5,14 +5,16 @@
 //! no pause is cut at [`MAX_SEGMENT`], in the quietest 200 ms of its last 5 s (the core's
 //! [`EnergySegmenter`]). The detector is loaded for each take on its recording thread, never on
 //! the core's task. Without the model the factory answers why and fetches it in the background;
-//! that take is cut by the core every 30 s, the next ones where the speech pauses.
+//! that take is cut by the core every 30 s, the next ones where the speech pauses. An imported file
+//! asks for shorter segments ([`SegmenterFactory::create_with`], docs/dictation.md §31): the same
+//! cuts within its bounds.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use voltip_core::dictation::long::{EnergySegmenter, RATE};
-use voltip_core::dictation::{Segmenter, SegmenterFactory};
+use voltip_core::dictation::{SegmentBounds, Segmenter, SegmenterFactory};
 
 use crate::catalogue::{ModelEntry, vad_entry};
 use crate::root::ModelsRoot;
@@ -57,8 +59,17 @@ impl VadSegmenterFactory {
     }
 }
 
+/// A long take's bounds: [`MIN_SEGMENT`] to [`MAX_SEGMENT`].
+const LONG_TAKE: SegmentBounds = SegmentBounds { min: MIN_SEGMENT, max: MAX_SEGMENT };
+
 impl SegmenterFactory for VadSegmenterFactory {
     fn create(&self) -> Result<Box<dyn Segmenter>, String> {
+        self.create_with(LONG_TAKE)
+    }
+
+    /// The same detector with other bounds: an imported file's shorter segments (docs/dictation.md
+    /// §31) end at the first pause past `bounds.min`.
+    fn create_with(&self, bounds: SegmentBounds) -> Result<Box<dyn Segmenter>, String> {
         let dir = self.root.join(self.entry.id);
         if !store::is_installed(&dir, self.entry) {
             if self.store.as_ref().is_some_and(ModelStore::spawn_auxiliary_fetch) {
@@ -66,7 +77,7 @@ impl SegmenterFactory for VadSegmenterFactory {
             }
             return Err(format!("VAD 模型未下载：{}", self.entry.name));
         }
-        Ok(Box::new(VadSegmenter::new(Detector::Pending { loader: self.loader.clone(), entry: self.entry, dir })))
+        Ok(Box::new(VadSegmenter::with_bounds(Detector::Pending { loader: self.loader.clone(), entry: self.entry, dir }, bounds)))
     }
 }
 
@@ -85,6 +96,8 @@ enum Detector {
 /// Cuts one long take where the speech pauses; see the module documentation.
 pub struct VadSegmenter {
     detector: Detector,
+    /// A pause ends a segment once it is this long.
+    min: u64,
     /// The cut of a segment that found no pause.
     forced: EnergySegmenter,
     /// Where the current segment starts, and the samples pushed so far.
@@ -93,8 +106,15 @@ pub struct VadSegmenter {
 }
 
 impl VadSegmenter {
+    #[cfg(test)]
     fn new(detector: Detector) -> Self {
-        Self { detector, forced: EnergySegmenter::cutting_after(MAX_SEGMENT), start: 0, pos: 0 }
+        Self::with_bounds(detector, LONG_TAKE)
+    }
+
+    /// Segments of `bounds`: a pause ends one past `bounds.min`, and one without a pause is cut by
+    /// `bounds.max` (for a long take's bounds the same as `EnergySegmenter::cutting_after(45 s)`).
+    fn with_bounds(detector: Detector, bounds: SegmentBounds) -> Self {
+        Self { detector, min: bounds.min, forced: EnergySegmenter::bounded(bounds), start: 0, pos: 0 }
     }
 
     /// The pauses the detector reports in `samples`, as positions a cut may go at.
@@ -132,7 +152,7 @@ impl Segmenter for VadSegmenter {
         }
         self.pos += samples.len() as u64;
         for pause in self.pauses(samples) {
-            if pause >= self.start + MIN_SEGMENT {
+            if pause >= self.start + self.min {
                 cuts.push(pause);
                 self.start = pause;
                 self.forced.cut_at(pause);
@@ -232,6 +252,30 @@ mod tests {
             assert!((breath_ends_at * RATE - 150 * RATE / 1000..breath_ends_at * RATE).contains(cut), "cut at {} s", *cut as f64 / RATE as f64);
         }
         assert_eq!(segmenter.finish(), Some(60 * RATE));
+    }
+
+    /// docs/dictation.md §31: an imported file's 3–15 s segments. A pause every 4 s ends each one
+    /// at the first pause past 3 s; sound without a pause is cut by 15 s.
+    #[test]
+    fn bounds_from_an_import_replace_the_long_takes() {
+        let dir = tempfile::tempdir().unwrap();
+        install_vad(dir.path());
+        let bounds = SegmentBounds { min: 3 * RATE, max: 15 * RATE };
+        let lengths = |cuts: &[u64]| -> Vec<u64> { cuts.iter().scan(0, |start, &cut| Some(cut - std::mem::replace(start, cut))).collect() };
+        let mut segmenter = factory(dir.path(), Arc::new(FakeVadLoader::energy())).create_with(bounds).unwrap();
+        let cuts = cut_all(segmenter.as_mut(), &talk(60, 4, 600));
+        assert!(cuts.len() >= 12, "a cut at nearly every pause: {cuts:?}");
+        assert!(lengths(&cuts).iter().all(|l| (bounds.min..=bounds.max).contains(l)), "{:?}", lengths(&cuts));
+        assert_eq!(segmenter.finish(), Some(60 * RATE));
+
+        let mut segmenter = factory(dir.path(), Arc::new(FakeVadLoader::energy())).create_with(bounds).unwrap();
+        let cuts = cut_all(segmenter.as_mut(), &talk(60, 1_000, 0));
+        assert!(cuts.len() >= 4, "{cuts:?}");
+        assert!(lengths(&cuts).iter().all(|l| (10 * RATE..=bounds.max).contains(l)), "the forced cut: {:?}", lengths(&cuts));
+
+        let missing = tempfile::tempdir().unwrap();
+        let err = factory(missing.path(), Arc::new(FakeVadLoader::energy())).create_with(bounds).err().unwrap();
+        assert!(err.contains("未下载"), "{err}");
     }
 
     /// A pause before 20 s is no cut.

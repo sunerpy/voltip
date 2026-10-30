@@ -234,8 +234,8 @@ async fn a_long_take_is_recognised_in_segments_while_it_records() {
     assert_eq!(entry.raw_text, expected);
     let segments = entry.segments.unwrap();
     assert_eq!(segments.len(), 20, "the silent piece is left out");
-    assert_eq!(segments[0], Segment { text: "第1段。".into(), start_ms: 0, end_ms: 29_900 });
-    assert_eq!(segments[19], Segment { text: "第20段。".into(), start_ms: 569_900, end_ms: 599_900 });
+    assert_eq!(segments[0], Segment { text: "第1段。".into(), refined: None, start_ms: 0, end_ms: 29_900 });
+    assert_eq!(segments[19], Segment { text: "第20段。".into(), refined: None, start_ms: 569_900, end_ms: 599_900 });
     let cache = cache_until(&mut node, |v| v.recordings.first().is_some_and(|r| r.status == KeptStatus::Recognized { entry: entry.id })).await;
     let [kept] = cache.recordings.as_slice() else { panic!("{cache:?}") };
     assert_eq!((kept.format, kept.duration_ms), (KeptFormat::Opus, 600_000));
@@ -313,7 +313,7 @@ async fn what_was_not_recognised_is_marked_and_the_rest_goes_on() {
     assert!(matches!(&done, DictationPhase::Done { raw_text, .. } if raw_text == expected), "{done:?}");
     let segments = newest_entry(&mut node).await.segments.unwrap();
     assert_eq!(segments.len(), 7);
-    assert_eq!(segments[1], Segment { text: "[未识别 00:00:29–00:00:59]".into(), start_ms: 29_900, end_ms: 59_900 });
+    assert_eq!(segments[1], Segment { text: "[未识别 00:00:29–00:00:59]".into(), refined: None, start_ms: 29_900, end_ms: 59_900 });
     assert_eq!(segments[3].text, "第5段。", "the lost samples are marked in the text only");
     wait_no_recordings(node.dir.path()).await;
     node.handle.send(CoreCommand::Shutdown).await.unwrap();
@@ -616,7 +616,12 @@ async fn a_long_live_inject_take_that_falls_back_pastes_the_rest_from_the_file()
             assert_eq!(*mode, OutputMode::LiveInject);
             assert_eq!(
                 segments.as_deref(),
-                Some(&[Segment { text: "你好，世界。".into(), start_ms: 0, end_ms: 400 }, Segment { text: rest.clone(), start_ms: 400, end_ms: 150_000 }][..])
+                Some(
+                    &[
+                        Segment { text: "你好，世界。".into(), refined: None, start_ms: 0, end_ms: 400 },
+                        Segment { text: rest.clone(), refined: None, start_ms: 400, end_ms: 150_000 }
+                    ][..]
+                )
             );
             assert_eq!(live_error.as_deref(), Some("fake decoder failed"));
         }

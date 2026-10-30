@@ -166,7 +166,7 @@ impl StreamingSession for OnlineSession {
             if text.is_empty() {
                 return StreamEvent::Idle;
             }
-            self.committed.push(Segment { text: text.clone(), start_ms, end_ms });
+            self.committed.push(Segment { text: text.clone(), refined: None, start_ms, end_ms });
             return StreamEvent::Endpoint { text, start_ms, end_ms };
         }
         let text = self.text();

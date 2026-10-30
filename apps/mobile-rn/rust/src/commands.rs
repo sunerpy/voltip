@@ -427,7 +427,7 @@ async fn history_export(shell: &Shell, command: &str, args: &Args) -> Result<Val
     let entry = shell.inner.runtime.spawn_blocking(move || bridge.history_entry(id)).await.map_err(|e| e.to_string())?.map_err(String::from)?;
     let failed = |code: &str, detail: &str| json!({ "kind": "failed", "code": code, "detail": detail });
     let Some(entry) = entry else { return Ok(failed("gone", "the entry is not in the history")) };
-    let Some(content) = export::render(&entry, format) else { return Ok(failed("empty", "the entry has no segments")) };
+    let Some(content) = export::render(&entry, format, export::SegmentText::default()) else { return Ok(failed("empty", "the entry has no segments")) };
     let mime = match format {
         export::ExportFormat::Srt => "application/x-subrip",
         export::ExportFormat::Txt => "text/plain",

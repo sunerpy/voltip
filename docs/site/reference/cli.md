@@ -1,10 +1,10 @@
 ---
-description: The voltip-desktop command-line options, for controlling the running app and for recognising files without a window, and the options of voltip-server, the local service for computers without a desktop.
+description: The voltip-desktop command-line options, for controlling the running app and for recognising audio or video files and exporting subtitles without a window, and the options of voltip-server, the local service for computers without a desktop.
 ---
 
 # Command line
 
-The Voltip program, `voltip-desktop` (`voltip-desktop.exe` on Windows), accepts options for two purposes: controlling the Voltip that is already running, and recognising audio files without opening a window.
+The Voltip program, `voltip-desktop` (`voltip-desktop.exe` on Windows), accepts options for two purposes: controlling the Voltip that is already running, and recognising audio or video files without opening a window.
 
 ## Controlling the running app
 
@@ -31,7 +31,7 @@ These options print their result and exit. They open no window, tray icon, short
 | `--list-models` | The local models and whether each is installed |
 | `--list-compute` | The processor threads, and each graphics card this build can use |
 | `--download-model <id>` | Downloads a model, resuming an earlier attempt, and checks its hash. Progress goes to standard error |
-| `--transcribe-file <file.wav>` | Recognises a WAV file with a local model and prints the text |
+| `--transcribe-file <file>` | Recognises an audio or video file with a local model and prints the text |
 
 `--transcribe-file` accepts these further options:
 
@@ -39,25 +39,27 @@ These options print their result and exit. They open no window, tray icon, short
 | --- | --- |
 | `--model <id>` | The model to use. Default: the one selected in the app, or Qwen3-ASR 0.6B |
 | `--json` | Prints `{ "text", "model", "latency_ms", "backend" }` instead of the text alone |
+| `--srt <file.srt>` | Also writes the subtitles (SRT) to this file |
 | `--device auto\|cpu\|gpu` | Where the model runs. Default: the app's setting |
 | `--gpu <name>` | Which graphics card, as listed by `--list-compute` |
 | `--threads <n>` | How many processor threads to use |
 
-The file should be 16 kHz mono; other sample rates are converted. The model identifiers are `qwen3-asr-0.6b`, `qwen3-asr-1.7b`, `sense-voice-small` and `paraformer-zh`.
+It reads the same formats as [Import audio or video](/dictation/history#import-audio-or-video): WAV, MP3, AAC, M4A, FLAC, Ogg (Vorbis, Opus), MP4, MOV, MKV and WebM; of a video file, its sound. A WAV file is recognised whole and should be 16 kHz mono; other sample rates are converted. Files in the other formats, and a WAV file with `--srt`, are recognised in segments of 3 to 15 seconds cut at pauses, and the text is joined in order; in the subtitles each segment keeps its time in the file, a long one split over several lines. The model identifiers are `qwen3-asr-0.6b`, `qwen3-asr-1.7b`, `sense-voice-small` and `paraformer-zh`.
 
 ## Exit codes
 
 | Code | Meaning |
 | --- | --- |
 | 0 | Success |
-| 1 | The model is not installed, or recognition failed; the reason is on standard error |
-| 2 | The audio file could not be read |
+| 1 | The model is not installed, the file could not be decoded, recognition failed, or the subtitles could not be written; the reason is on standard error |
+| 2 | The input file could not be read |
 
 ## Example
 
 ```bash
 voltip-desktop --download-model sense-voice-small
 voltip-desktop --transcribe-file meeting-note.wav --model sense-voice-small --json
+voltip-desktop --transcribe-file talk.mp4 --srt talk.srt
 ```
 
 On Windows the program is built as a desktop app, so PowerShell does not show its output directly. Redirect it to a file instead: `voltip-desktop.exe --transcribe-file a.wav --json > out.json`.

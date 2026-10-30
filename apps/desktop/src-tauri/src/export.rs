@@ -5,7 +5,7 @@ use serde::Serialize;
 use tauri::Runtime;
 use tauri_plugin_dialog::DialogExt as _;
 use voltip_core::HistoryEntry;
-use voltip_core::history::export::{self, ExportFormat};
+use voltip_core::history::export::{self, ExportFormat, SegmentText};
 
 /// Why an export wrote nothing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -45,10 +45,10 @@ impl ExportOutcome {
     }
 }
 
-/// What `entry` exports to in `format`, or why nothing.
-pub fn content(entry: Option<&HistoryEntry>, format: ExportFormat) -> Result<String, ExportOutcome> {
+/// What `entry` exports to in `format` (its subtitles carrying `text`), or why nothing.
+pub fn content(entry: Option<&HistoryEntry>, format: ExportFormat, text: SegmentText) -> Result<String, ExportOutcome> {
     let entry = entry.ok_or_else(|| ExportOutcome::failed(ExportFailure::Gone, "the entry is not in the history"))?;
-    export::render(entry, format).ok_or_else(|| ExportOutcome::failed(ExportFailure::Empty, "the entry has no segments"))
+    export::render(entry, format, text).ok_or_else(|| ExportOutcome::failed(ExportFailure::Empty, "the entry has no segments"))
 }
 
 /// Ask where `content` goes (the dialog offers `name`), then write it there.
@@ -84,10 +84,15 @@ mod tests {
 
     #[test]
     fn an_export_needs_the_entry_and_for_subtitles_its_segments() {
-        assert!(matches!(content(None, ExportFormat::Txt), Err(ExportOutcome::Failed { code: ExportFailure::Gone, .. })));
-        let text = voltip_core::dictation::fakes::history_entry("会议记录。");
-        assert_eq!(content(Some(&text), ExportFormat::Txt).unwrap(), "会议记录。\n");
-        assert!(matches!(content(Some(&text), ExportFormat::Srt), Err(ExportOutcome::Failed { code: ExportFailure::Empty, .. })));
+        assert!(matches!(content(None, ExportFormat::Txt, SegmentText::Refined), Err(ExportOutcome::Failed { code: ExportFailure::Gone, .. })));
+        let mut text = voltip_core::dictation::fakes::history_entry("会议记录。");
+        assert_eq!(content(Some(&text), ExportFormat::Txt, SegmentText::Refined).unwrap(), "会议记录。\n");
+        assert!(matches!(content(Some(&text), ExportFormat::Srt, SegmentText::Refined), Err(ExportOutcome::Failed { code: ExportFailure::Empty, .. })));
+        // docs/dictation.md §31: the subtitles carry the text asked for.
+        text.segments =
+            Some(vec![voltip_core::Segment { text: "嗯会议记录".into(), refined: Some("会议记录。".into()), start_ms: 0, end_ms: 2_000 }]);
+        assert!(content(Some(&text), ExportFormat::Srt, SegmentText::Refined).unwrap().contains("\r\n会议记录。\r\n"));
+        assert!(content(Some(&text), ExportFormat::Srt, SegmentText::Raw).unwrap().contains("\r\n嗯会议记录\r\n"));
         let json = serde_json::to_value(ExportOutcome::failed(ExportFailure::Write, "disk full")).unwrap();
         assert_eq!(json, serde_json::json!({ "kind": "failed", "code": "write", "detail": "disk full" }));
         assert_eq!(serde_json::to_value(ExportOutcome::Cancelled).unwrap(), serde_json::json!({ "kind": "cancelled" }));

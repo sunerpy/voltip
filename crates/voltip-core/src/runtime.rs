@@ -45,6 +45,7 @@ mod audio;
 use audio::{Recovery, audio_at_start, keeps_audio, leftovers_at_start};
 mod backup;
 mod check;
+mod import;
 mod listing;
 mod mcp;
 mod models_move;
@@ -143,6 +144,9 @@ pub struct CoreConfig {
     /// Starts the local MCP service's listener (docs/dictation.md §25); `None` on shells that cannot
     /// host it (the phone), whose MCP commands are then refused.
     pub mcp_host: Option<Arc<dyn crate::mcp::McpHost>>,
+    /// Decodes the audio and video files the history imports (docs/dictation.md §31); `None` on
+    /// shells that import none (the phone), whose import commands are then refused.
+    pub media_decoder: Option<Arc<dyn crate::import::MediaDecoder>>,
     /// Which side of the sync this core plays (docs/dictation.md §20.8): the desktop shell sets
     /// `Computer`, the phone shell `Phone`.
     pub sync_role: crate::sync::SyncRole,
@@ -237,6 +241,7 @@ impl CoreConfig {
             manual_scenes: false,
             serve_host: None,
             mcp_host: None,
+            media_decoder: None,
             sync_role: crate::sync::SyncRole::Off,
             sync_request_timeout: Duration::from_secs(30),
             sync_request_timeout_max: Duration::from_secs(300),
@@ -639,6 +644,17 @@ pub enum CoreCommand {
     UsageRefresh,
     /// Close a usage notice for the rest of the day (docs/dictation.md §27).
     UsageNoticeDismiss(crate::usage::UsageNotice),
+    /// Import audio or video files (docs/dictation.md §31): each joins the queue and is decoded,
+    /// recognised and, when asked, polished after the ones before it; its text becomes one history
+    /// entry. Refused with the built-in service, with the history off, and where the app imports
+    /// nothing.
+    ImportAdd(Vec<crate::import::ImportRequest>),
+    /// Stop a running or waiting import: nothing goes into the history.
+    ImportCancel(Uuid),
+    /// Run a failed import again, from its first segment not recognised when it can.
+    ImportRetry(Uuid),
+    /// Take a finished or failed import off the queue.
+    ImportRemove(Uuid),
     /// Stop the core.
     Shutdown,
 }
@@ -660,6 +676,7 @@ struct Inbox {
     mcp_rx: mpsc::Receiver<crate::mcp::McpInbound>,
     recover_rx: mpsc::Receiver<audio::Recovered>,
     usage_rx: mpsc::Receiver<usage::UsageInbound>,
+    import_rx: mpsc::Receiver<import::ImportInbound>,
 }
 
 /// Events to the UI.
@@ -786,6 +803,8 @@ pub enum CoreEvent {
     /// The built-in service's usage and this device's record (docs/dictation.md §27); on `Ready`
     /// and after every change.
     Usage(crate::usage::UsageView),
+    /// The import queue (docs/dictation.md §31); on `Ready` and after every change.
+    Imports(crate::import::ImportsView),
     /// Non-fatal error for the UI.
     Error(String),
 }
@@ -920,6 +939,7 @@ impl AppCore {
         let activation = ActivationState::new(ActivationConfig::from(&settings));
         let serve_host = config.serve_host.clone();
         let (mcp, mcp_notice) = mcp::McpRuntime::new(config.mcp_host.clone(), &config.data_dir, mcp_tx);
+        let (imports, import_rx) = import::ImportRuntime::new(config.media_decoder.clone(), &config.data_dir);
         let mut rt = Runtime {
             config,
             manager,
@@ -988,10 +1008,11 @@ impl AppCore {
             system_fingerprint: 0,
             usage,
             last_result: None,
+            imports,
         };
         rt.system_fingerprint = rt.config.network.system_fingerprint();
         rt.connect_relay()?;
-        let inbox = Inbox { cmd_rx, link_rx, dict_rx, model_rx, act_rx, phone_rx, check_rx, process_rx, listed_rx, mcp_rx, recover_rx, usage_rx };
+        let inbox = Inbox { cmd_rx, link_rx, dict_rx, model_rx, act_rx, phone_rx, check_rx, process_rx, listed_rx, mcp_rx, recover_rx, usage_rx, import_rx };
         Ok((rt, inbox, CoreHandle { cmd: cmd_tx, levels: levels_tx }, evt_rx))
     }
 }
@@ -1256,6 +1277,8 @@ struct Runtime {
     usage: usage::UsageRuntime,
     /// The newest result's text for 复制上一条结果 (docs/dictation.md §28): in memory only.
     last_result: Option<String>,
+    /// The import queue (docs/dictation.md §31).
+    imports: import::ImportRuntime,
 }
 
 impl Runtime {
@@ -1377,6 +1400,7 @@ impl Runtime {
             mut mcp_rx,
             mut recover_rx,
             mut usage_rx,
+            mut import_rx,
         } = inbox;
         self.emit(CoreEvent::Ready {
             identity: self.identity.public(),
@@ -1403,6 +1427,7 @@ impl Runtime {
         self.emit(CoreEvent::Mcp(self.mcp.status()));
         self.emit_network();
         self.emit_usage();
+        self.emit_imports();
         self.apply_serve().await;
         self.apply_mcp().await;
         let mut ticker = tokio::time::interval(self.config.tick);
@@ -1430,6 +1455,7 @@ impl Runtime {
                 Some(inbound) = mcp_rx.recv() => self.on_mcp(inbound),
                 Some(recovered) = recover_rx.recv() => self.on_recovered(recovered),
                 Some(inbound) = usage_rx.recv() => self.on_usage(inbound),
+                Some(inbound) = import_rx.recv() => self.on_import(inbound),
                 Ok(()) = quota_rx.changed() => self.emit(CoreEvent::Engines(self.engine_status())),
                 _ = ticker.tick() => self.tick().await,
             }
@@ -1455,6 +1481,7 @@ impl Runtime {
         }
         self.stop_serve();
         self.stop_mcp();
+        self.imports.stop();
         if let Some((l, _)) = self.relay.take() {
             l.close().await;
         }
@@ -1688,6 +1715,9 @@ impl Runtime {
                 self.dismiss_usage_notice(notice);
                 Ok(())
             }
+            CoreCommand::ImportAdd(requests) => self.import_add(requests),
+            CoreCommand::ImportCancel(id) | CoreCommand::ImportRemove(id) => self.import_drop(id),
+            CoreCommand::ImportRetry(id) => self.import_retry(id),
             CoreCommand::Shutdown => Ok(()),
         };
         if let Err(e) = result {
@@ -2454,6 +2484,8 @@ impl Runtime {
                         _ => self.activation.locked = false,
                     }
                     let hint = if self.activation.deferred_stop.is_some() { PhaseHint::Processing } else { PhaseHint::from(&status.phase) };
+                    // docs/dictation.md §31: an import waits at its next segment while a take runs.
+                    self.imports.set_busy(hint != PhaseHint::Idle);
                     let kind = status.kind;
                     // docs/dictation.md §28: 复制上一条结果 has the newest text, whatever the history.
                     if let Some(text) = crate::last_result::result_text(&status.phase) {
@@ -2494,20 +2526,22 @@ impl Runtime {
         if !self.settings.history.enabled {
             return;
         }
-        let keep = self.settings.history.keep as usize;
-        match self.history.push(entry, keep) {
-            Ok(()) => {
-                self.emit_history();
-                // A full history dropped its oldest entry: a recording of it goes too (§26).
-                if self.history.total() >= keep {
-                    self.audio_follow_history();
-                }
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "history append failed");
-                self.emit(CoreEvent::Error(e.to_string()));
-            }
+        if let Err(e) = self.push_history(entry) {
+            tracing::warn!(error = %e, "history append failed");
+            self.emit(CoreEvent::Error(e.to_string()));
         }
+    }
+
+    /// Put `entry` into the history and say so.
+    fn push_history(&mut self, entry: crate::history::HistoryEntry) -> Result<(), CoreError> {
+        let keep = self.settings.history.keep as usize;
+        self.history.push(entry, keep)?;
+        self.emit_history();
+        // A full history dropped its oldest entry: a recording of it goes too (§26).
+        if self.history.total() >= keep {
+            self.audio_follow_history();
+        }
+        Ok(())
     }
 
     // ---------------- pairing ----------------

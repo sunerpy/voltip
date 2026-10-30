@@ -92,6 +92,9 @@ voltip-focus = { path = "../../../crates/voltip-focus" }
 voltip-refine.workspace = true
 # The local speech service's HTTP layer (docs/dictation.md §23.6).
 voltip-serve.workspace = true
+# Decoding the audio and video files the history imports, and `--transcribe-file`'s
+# (docs/dictation.md §31).
+voltip-media.workspace = true
 # The local MCP service's HTTP layer (docs/dictation.md §25).
 voltip-mcp.workspace = true
 voltip-tauri-bridge.workspace = true

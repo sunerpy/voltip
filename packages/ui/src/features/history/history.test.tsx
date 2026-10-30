@@ -117,6 +117,8 @@ describe("the history hooks (the desktop's and the phone's history pages)", () =
     const long = take(1, { text: "今天的会议讨论了三件事。".repeat(300), duration_ms: 600_000 });
     expect(isLongEntry(long)).toBe(true);
     expect(isLongEntry(take(2))).toBe(false);
+    // An imported file of any length gets the exports (docs/dictation.md §31).
+    expect(isLongEntry(take(3, { file: { name: "clip.mp4", duration_ms: 9000 } }))).toBe(true);
     expect(exportName(new Date(2026, 8, 30, 15, 30).getTime())).toBe("Voltip 2026-09-30 15.30");
     const backend = new MockBackend({ history: [long, take(2)] });
     const { result, rerender } = renderHook(({ id }: { id: string }) => useHistoryProcess(id), {

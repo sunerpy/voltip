@@ -14,7 +14,7 @@ use tokio::sync::mpsc;
 use super::archive::ArchiveWriter;
 use super::engine::Internal;
 use super::inject_separator;
-use super::ports::{DictationError, PCM_SAMPLE_RATE_HZ, PcmStream, Segmenter, Transcriber, Transcript};
+use super::ports::{DictationError, PCM_SAMPLE_RATE_HZ, PcmStream, SegmentBounds, Segmenter, Transcriber, Transcript};
 use super::wav;
 use crate::engines::ChineseScript;
 use crate::script::normalized;
@@ -58,11 +58,13 @@ const SYNC_EVERY: u64 = 5 * RATE;
 pub struct EnergySegmenter {
     /// A segment this long is cut.
     cut_after: u64,
+    /// …in the quietest block of its last this many samples.
+    search: u64,
     /// Where the current segment starts.
     start: u64,
     /// Samples pushed so far.
     pos: u64,
-    /// The whole blocks of the last [`FALLBACK_SEARCH`]: where each starts and its energy.
+    /// The whole blocks of the last `search` samples: where each starts and its energy.
     blocks: VecDeque<(u64, f64)>,
     /// The block being filled: its sum of squares and how many samples it has.
     sum: f64,
@@ -83,7 +85,15 @@ impl EnergySegmenter {
 
     /// A cutter that cuts segments once they are `samples` long (at least 5 s) instead of 30 s.
     pub fn cutting_after(samples: u64) -> Self {
-        Self { cut_after: samples.max(FALLBACK_SEARCH), start: 0, pos: 0, blocks: VecDeque::new(), sum: 0.0, filled: 0 }
+        Self { cut_after: samples.max(FALLBACK_SEARCH), search: FALLBACK_SEARCH, start: 0, pos: 0, blocks: VecDeque::new(), sum: 0.0, filled: 0 }
+    }
+
+    /// A cutter whose segments keep to `bounds` (docs/dictation.md §31): cut once `max` long, in
+    /// the quietest block of the last 5 s, or of the span past `min` when that is shorter.
+    pub fn bounded(bounds: SegmentBounds) -> Self {
+        let max = bounds.max.max(2 * BLOCK);
+        let search = FALLBACK_SEARCH.min(max.saturating_sub(bounds.min)).max(BLOCK);
+        Self { cut_after: max, search, ..Self::cutting_after(max) }
     }
 
     /// The take was cut at `at` by someone else (a pause found there): the current segment starts
@@ -109,7 +119,7 @@ impl Segmenter for EnergySegmenter {
             }
             self.blocks.push_back((self.pos - BLOCK, self.sum));
             (self.sum, self.filled) = (0.0, 0);
-            while self.blocks.front().is_some_and(|&(at, _)| at + FALLBACK_SEARCH < self.pos) {
+            while self.blocks.front().is_some_and(|&(at, _)| at + self.search < self.pos) {
                 self.blocks.pop_front();
             }
             if self.pos - self.start < self.cut_after {
@@ -414,6 +424,49 @@ mod tests {
         }
         assert_eq!(segmenter.finish(), Some(95 * RATE), "the rest ends the take");
         assert_eq!(segmenter.finish(), Some(95 * RATE));
+    }
+
+    /// The segments' lengths, the last one left out (it ends where the take does).
+    fn lengths(cuts: &[u64]) -> Vec<u64> {
+        let mut start = 0;
+        cuts.iter()
+            .map(|&cut| {
+                let length = cut - start;
+                start = cut;
+                length
+            })
+            .collect()
+    }
+
+    /// docs/dictation.md §31: an imported file's 3–15 s segments, cut where it is quietest in the
+    /// last 5 s before 15 s; a pause every 4 s puts every cut in a pause.
+    #[test]
+    fn a_bounded_cutter_keeps_its_segments_within_the_bounds() {
+        let bounds = SegmentBounds { min: 3 * RATE, max: 15 * RATE };
+        let loud: Vec<f32> = vec![0.3; (100 * RATE) as usize];
+        let mut segmenter = EnergySegmenter::bounded(bounds);
+        let mut cuts = Vec::new();
+        for chunk in loud.chunks(1234) {
+            cuts.extend(segmenter.push(chunk));
+        }
+        assert!(cuts.len() >= 6, "{cuts:?}");
+        assert!(lengths(&cuts).iter().all(|l| (bounds.min..=bounds.max).contains(l)), "{:?}", lengths(&cuts));
+
+        let paused: Vec<f32> = (0..100 * RATE).map(|i| if i % (4 * RATE) >= 4 * RATE - 3 * BLOCK / 2 { 0.0 } else { 0.3 }).collect();
+        let mut segmenter = EnergySegmenter::bounded(bounds);
+        let mut cuts = Vec::new();
+        for chunk in paused.chunks(1234) {
+            cuts.extend(segmenter.push(chunk));
+        }
+        assert!(lengths(&cuts).iter().all(|l| (bounds.min..=bounds.max).contains(l)), "{:?}", lengths(&cuts));
+        for cut in &cuts {
+            assert_eq!(paused[usize::try_from(*cut).unwrap()], 0.0, "cut at {} s is inside the sound", *cut as f64 / RATE as f64);
+        }
+        // Bounds narrower than the search window: the window shrinks to them.
+        let tight = SegmentBounds { min: 4 * RATE, max: 6 * RATE };
+        let mut segmenter = EnergySegmenter::bounded(tight);
+        let cuts = segmenter.push(&loud[..(60 * RATE) as usize]);
+        assert!(lengths(&cuts).iter().all(|l| (tight.min..=tight.max).contains(l)), "{:?}", lengths(&cuts));
     }
 
     /// Another length: a cut after 45 s, and a cut someone else made restarts the count.

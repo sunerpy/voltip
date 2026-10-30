@@ -3,10 +3,12 @@ import { useEffect, useRef, useState } from "react";
 import { useBackend } from "../../backend/BackendProvider";
 
 /** docs/dictation.md §22: a take longer than two minutes, or a text past the 2000 characters the
- *  clean-up takes at once, is a long entry — the one the tools below are for. */
+ *  clean-up takes at once, is a long entry — the one the tools below are for. So is an imported
+ *  file of any length (§31): its subtitles are what it was imported for. */
 export function isLongEntry(entry: HistoryEntry): boolean {
   return (
-    entry.kind === "dictation" && (entry.duration_ms > 120_000 || textChars(entry.text) > 2000)
+    entry.kind === "dictation" &&
+    (entry.file !== undefined || entry.duration_ms > 120_000 || textChars(entry.text) > 2000)
   );
 }
 

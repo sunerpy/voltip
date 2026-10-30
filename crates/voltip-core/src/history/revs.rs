@@ -282,6 +282,7 @@ fn shallow(entry: &HistoryEntry) -> HistoryEntry {
         preset: None,
         origin: None,
         processed: None,
+        file: None,
     }
 }
 
