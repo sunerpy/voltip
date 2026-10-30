@@ -11,10 +11,10 @@ import type { MenuSection, SelectOption } from "@voltip/ui";
 import { parseChoice, polishMenuSections, speechMenuSections } from "../switchers/switchers";
 
 /** The models an import may use, as the import dialog offers them (docs/dictation.md §31): the
- *  rows of the 语音模型 and AI 润色模型 menus that are installed local models or services with the
- *  user's own key (§31.4), never the built-in service nor an endpoint without a key (the core
- *  refuses both too). Each list starts on the model in use, else on its first row; `undefined`
- *  when it has none. */
+ *  rows of the 语音模型 and AI 润色模型 menus that are installed local models, cloud providers with
+ *  the user's own key, or Ollama and the custom endpoint as the user set them up, key or not
+ *  (§31.4, user decision D20); never the built-in service (the core refuses it too). Each list
+ *  starts on the model in use, else on its first row; `undefined` when it has none. */
 export interface ImportOptions {
   speech: SelectOption<string>[];
   polish: SelectOption<string>[];
@@ -22,8 +22,8 @@ export interface ImportOptions {
   polishDefault: string | undefined;
 }
 
-/** The choosable rows of `sections` that an import may use (a local model, or a provider with the
- *  user's own key for `kind`), each named after its section (the provider, or 本地模型) so that the
+/** The choosable rows of `sections` that an import may use (a local model, or a provider of the
+ *  user's own for `kind`), each named after its section (the provider, or 本地模型) so that the
  *  closed select says whose model it is, and the row that is checked. */
 function allowedRows(
   sections: readonly MenuSection[],
@@ -39,7 +39,7 @@ function allowedRows(
     for (const item of section.items) {
       if (item.kind !== "radio" || item.disabled === true) continue;
       const choice = parseChoice(item.id);
-      if (choice?.kind === "remote" && !ownKey(status, choice.provider, kind)) continue;
+      if (choice?.kind === "remote" && !usersOwn(status, choice.provider, kind)) continue;
       const name = item.detail === undefined ? item.label : `${item.label} · ${item.detail}`;
       options.push({
         value: item.id,
@@ -51,11 +51,14 @@ function allowedRows(
   return { options, checked };
 }
 
-/** The user has entered a key of their own for `provider`'s `kind` service (the built-in
- *  service's is the build's). */
-function ownKey(status: EngineStatus, provider: string, kind: ServiceKind): boolean {
-  const key = status.providers.find((p) => p.id === provider)?.[kind]?.key;
-  return key?.set === true && key.source === "user";
+/** `provider`'s `kind` service is the user's own, as the core checks it (`import_engines`): one
+ *  they set up that takes no key or may go without one (Ollama, the custom endpoint), or one with
+ *  the key they entered. The built-in service is never theirs: its key is the build's. */
+function usersOwn(status: EngineStatus, provider: string, kind: ServiceKind): boolean {
+  const entry = status.providers.find((p) => p.id === provider);
+  if (entry?.key === "none" || entry?.key === "optional") return true;
+  const key = entry?.[kind]?.key;
+  return entry?.key === "required" && key?.set === true && key.source === "user";
 }
 
 export function importOptions(

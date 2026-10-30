@@ -19,6 +19,7 @@ use crate::engines::{FallbackSettings, ProviderId, ResolvedEngines, ServiceKind}
 use crate::import::run::{self, Outcome, Partial, Progress, Report};
 use crate::import::{ImportError, ImportFailure, ImportJob, ImportRequest, ImportState, ImportsView, MediaDecoder, file_name};
 use crate::models::CancelToken;
+use crate::providers::KeyPolicy;
 use crate::vocabulary::Vocabulary;
 
 /// Progress reports a job may have queued before the core reads them; more are dropped (the
@@ -370,10 +371,12 @@ impl Runtime {
         {
             return Err(ImportError::BuiltinNotAllowed);
         }
-        // §31.4: a service is the user's own by their key, also where the provider takes none.
-        let keyless = |provider: ProviderId, kind: ServiceKind| self.user_secrets.get(provider, kind).is_none();
-        if matches!(&request.asr, RecognitionChoice::Remote { provider, .. } if keyless(*provider, ServiceKind::Asr))
-            || request.refine.as_ref().is_some_and(|r| keyless(r.provider, ServiceKind::Llm))
+        // §31.4 (D20): a cloud provider is the user's own by their key; a service the user set up
+        // that takes no key or may go without one (Ollama, the custom endpoint) is theirs as it is.
+        let missing_key =
+            |provider: ProviderId, kind: ServiceKind| provider.spec().key == KeyPolicy::Required && self.user_secrets.get(provider, kind).is_none();
+        if matches!(&request.asr, RecognitionChoice::Remote { provider, .. } if missing_key(*provider, ServiceKind::Asr))
+            || request.refine.as_ref().is_some_and(|r| missing_key(r.provider, ServiceKind::Llm))
         {
             return Err(ImportError::NoOwnKey);
         }
@@ -612,11 +615,12 @@ mod tests {
         handle.send(crate::CoreCommand::Shutdown).await.unwrap();
     }
 
-    /// docs/dictation.md §31.4: a service an import uses on another machine needs the user's own
-    /// key, also where the provider takes none (a custom endpoint, Ollama): the import's choices
-    /// are the installed local models and the services with the user's key.
+    /// docs/dictation.md §31.4 (user decision D20): a service the user set up that takes no key
+    /// (Ollama) or may go without one (a custom endpoint, such as a vLLM server on the network) is
+    /// theirs to import with, key or not; a cloud provider that needs a key only with the key the
+    /// user entered.
     #[tokio::test]
-    async fn regression_an_import_takes_a_service_only_with_the_users_own_key() {
+    async fn an_import_takes_a_keyless_custom_endpoint_and_ollama_but_a_cloud_provider_only_with_its_key() {
         let fakes = fakes();
         let mut settings = engines(ProviderId::Groq);
         settings.providers.insert(
@@ -630,26 +634,22 @@ mod tests {
             },
         );
         settings.providers.insert(ProviderId::Ollama, ProviderSettings { llm_model: Some("llama-3.3-70b".into()), ..Default::default() });
+        // The store holds the Groq key only.
         let dir = tempfile::tempdir().unwrap();
-        let rt = runtime(dir.path(), settings.clone(), BUILT_IN, &fakes);
-        let custom = request(remote(ProviderId::Custom, "whisper-large-v3"), None);
-        assert_eq!(refused(rt.import_clients(&custom)), ImportError::NoOwnKey);
-        let groq = remote(ProviderId::Groq, "whisper-large-v3");
+        let rt = runtime(dir.path(), settings, BUILT_IN, &fakes);
+        let custom = remote(ProviderId::Custom, "whisper-large-v3");
+        assert_eq!(rt.import_clients(&request(custom.clone(), None)).unwrap().asr_model, "whisper-large-v3");
         for polish in [ProviderId::Custom, ProviderId::Ollama] {
-            let polished = request(groq.clone(), Some(PolishModel { provider: polish, model: "llama-3.3-70b".into() }));
-            assert_eq!(refused(rt.import_clients(&polished)), ImportError::NoOwnKey, "{polish:?}");
+            let polished = request(custom.clone(), Some(PolishModel { provider: polish, model: "llama-3.3-70b".into() }));
+            let clients = rt.import_clients(&polished).unwrap_or_else(|e| panic!("{polish:?} refused: {e}"));
+            assert_eq!((clients.refine_model.as_str(), clients.refine), ("llama-3.3-70b", Some(true)), "{polish:?}");
         }
 
-        // With the user's keys the custom endpoint is theirs to use.
-        let dir = tempfile::tempdir().unwrap();
-        SettingsStore::new(dir.path()).save(&Settings { relay_enabled: false, engines: settings, ..Settings::default() }).unwrap();
-        let keys = voltip_identity::MemorySecretStore::new();
-        for (entry, key) in [("provider-key.groq", "gsk-test"), ("provider-key.custom-asr", "asr-own"), ("provider-key.custom-llm", "llm-own")] {
-            keys.set(entry, key.as_bytes()).unwrap();
-        }
-        let rt = AppCore::build(config(dir.path(), BUILT_IN), Arc::new(keys), core_ports(&fakes)).unwrap().0;
-        let own = request(remote(ProviderId::Custom, "whisper-large-v3"), Some(PolishModel { provider: ProviderId::Custom, model: "llama-3.3-70b".into() }));
-        assert_eq!(rt.import_clients(&own).unwrap().refine, Some(true));
+        // A cloud provider without the user's key is refused, for the recognition and the polish.
+        let openai = request(remote(ProviderId::Openai, "whisper-1"), None);
+        assert_eq!(refused(rt.import_clients(&openai)), ImportError::NoOwnKey);
+        let deepseek = request(custom, Some(PolishModel { provider: ProviderId::Deepseek, model: "deepseek-flash".into() }));
+        assert_eq!(refused(rt.import_clients(&deepseek)), ImportError::NoOwnKey);
     }
 
     /// The local model chosen for an import must be installed; another provider than the one the

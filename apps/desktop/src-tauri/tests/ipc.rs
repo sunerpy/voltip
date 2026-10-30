@@ -1632,13 +1632,10 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
 /// docs/dictation.md §31: the import commands reach the core. A file joins the queue, is decoded by
 /// voltip-media and recognised, and its entry lands in the history; `imports_state` answers the
 /// queue the `imports` events carry, with the extensions a drop takes. A missing argument or a
-/// malformed id is an argument error; the built-in service, and a custom endpoint before the user
-/// has entered its key (§31.4), are the core's refusals.
+/// malformed id is an argument error; the built-in service, and a cloud provider without the
+/// user's key (§31.4), are the core's refusals. The custom endpoint imports without a key (D20).
 #[test]
 fn an_import_goes_from_the_webview_into_the_history() {
-    fn custom_key(s: &UiState) -> Option<voltip_core::SecretState> {
-        s.engines.providers.iter().find(|p| p.id == voltip_core::ProviderId::Custom).and_then(|p| p.asr.as_ref()).map(|a| a.key)
-    }
     with_running_app(|_, webview, rx| {
         wait_state(webview, |s| s.identity.is_some());
         let dir = tempfile::tempdir().unwrap();
@@ -1648,15 +1645,13 @@ fn an_import_goes_from_the_webview_into_the_history() {
         assert!(queue.available && queue.jobs.is_empty(), "{queue:?}");
         assert_eq!(queue.extensions, voltip_media::EXTENSIONS);
 
-        let asr = json!({ "kind": "remote", "provider": "custom", "model": voltip_core::engines::DEFAULT_ASR_MODEL });
-        let add = json!({ "paths": [file.to_string_lossy()], "asr": asr, "language": "zh" });
-        invoke(webview, "import_add", add.clone()).unwrap();
+        let openai = json!({ "kind": "remote", "provider": "openai", "model": "whisper-1" });
+        invoke(webview, "import_add", json!({ "paths": [file.to_string_lossy()], "asr": openai })).unwrap();
         let no_key = voltip_core::import::ImportError::NoOwnKey.to_string();
         wait_event(rx, "the refusal without the user's key", |e| e["type"] == "error" && e["message"] == no_key.as_str());
         assert!(core_state(webview).imports.jobs.is_empty());
-        assert_eq!(invoke(webview, "provider_key_set", json!({ "provider": "custom", "kind": "asr", "value": "test-key" })), Ok(Value::Null));
-        wait_state(webview, |s| custom_key(s).is_some_and(|k| k.source == SecretSource::User));
-        invoke(webview, "import_add", add).unwrap();
+        let asr = json!({ "kind": "remote", "provider": "custom", "model": voltip_core::engines::DEFAULT_ASR_MODEL });
+        invoke(webview, "import_add", json!({ "paths": [file.to_string_lossy()], "asr": asr, "language": "zh" })).unwrap();
         let done = wait_state(webview, |s| s.imports.jobs.iter().any(|j| matches!(j.state, ImportState::Done { .. })));
         let job = done.imports.jobs[0].clone();
         let ImportState::Done { entry, .. } = job.state else { unreachable!() };

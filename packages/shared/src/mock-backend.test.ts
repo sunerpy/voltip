@@ -4350,9 +4350,9 @@ describe("MockBackend file import (docs/dictation.md §31)", () => {
     expect(await phone.importPick("t", "m", "a")).toEqual([]);
   });
 
-  it("regression: refuses a service without the user's own key, also where the provider takes none", async () => {
-    // docs/dictation.md §31.4, as the core: a custom endpoint or Ollama runs without a key, an
-    // import does not until the user has entered one.
+  it("takes a custom endpoint and Ollama without a key, a cloud provider only with the user's key", async () => {
+    // docs/dictation.md §31.4 (user decision D20), as the core: a custom endpoint and Ollama are
+    // the user's own as configured; a provider that needs a key is not without the user's.
     const settings = {
       engines: {
         ...defaultEngineSettings(),
@@ -4362,28 +4362,31 @@ describe("MockBackend file import (docs/dictation.md §31)", () => {
         },
       },
     };
-    const backend = new MockBackend({
-      now: () => clock,
-      history: [],
-      settings,
-      providerKeys: [{ provider: "groq", kind: "asr" }],
-    });
+    const backend = new MockBackend({ now: () => clock, history: [], settings });
     const events = collect(backend);
     const custom = { kind: "remote", provider: "custom", model: "my-asr" } as const;
-    await backend.invoke("import_add", { paths: ["/a.mp3"], asr: custom });
+    await backend.invoke("import_add", { paths: ["/a.mp3"], asr: groq });
     await backend.invoke("import_add", {
       paths: ["/a.mp3"],
-      asr: groq,
-      refine: { provider: "ollama", model: "qwen3:8b" },
+      asr: custom,
+      refine: { provider: "deepseek", model: "deepseek-flash" },
     });
     expect(events).toEqual([
       { type: "error", message: MOCK_IMPORT_NO_KEY },
       { type: "error", message: MOCK_IMPORT_NO_KEY },
     ]);
     expect(jobs(backend)).toEqual([]);
-    await backend.invoke("provider_key_set", { provider: "custom", kind: "asr", value: "asr-own" });
-    await backend.invoke("import_add", { paths: ["/a.mp3"], asr: custom });
+    await backend.invoke("import_add", {
+      paths: ["/a.mp3"],
+      asr: custom,
+      refine: { provider: "ollama", model: "qwen3:8b" },
+    });
+    expect(events.filter((e) => e.type === "error")).toHaveLength(2);
     expect(jobs(backend).map((j) => j.name)).toEqual(["a.mp3"]);
+    // Recognised, then polished segment by segment.
+    tick((WHOLE + SEGMENTS) * STEP);
+    expect(jobs(backend)[0]?.state.kind).toBe("done");
+    expect(backend.peek().history_recent[0]?.refine_model).toBe("qwen3:8b");
   });
 
   it("runs on an installed local model, named as the catalogue names it", async () => {
@@ -4503,7 +4506,7 @@ describe("MockBackend file import (docs/dictation.md §31)", () => {
     tick(WHOLE * STEP);
     const [a, b] = jobs(backend);
     expect(a?.state.kind).toBe("done");
-    // As the core: the key is gone, so the service is no longer the user's own (§31.4).
+    // As the core: the key is gone, so the cloud provider can no longer be used (§31.4).
     expect(b?.state).toEqual({
       kind: "failed",
       failure: { code: "recognition", detail: MOCK_IMPORT_NO_KEY },

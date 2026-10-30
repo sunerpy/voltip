@@ -8,8 +8,9 @@ import { importOptions, polishOf, recognitionOf } from "./import-options";
 const SHOWN_FILES = 4;
 
 /** 导入音频或视频's options (docs/dictation.md §31): the files, the speech model, the language and
- *  the polish, which is off until it is turned on. Only an installed local model or a provider
- *  with the user's own key is offered; the settings stay as they are. */
+ *  the polish, which is off until it is turned on. Only an installed local model, a cloud provider
+ *  with the user's own key, or Ollama and the custom endpoint as the user set them up are offered
+ *  (§31.4); the settings stay as they are. */
 export function ImportDialog({
   paths,
   skipped,

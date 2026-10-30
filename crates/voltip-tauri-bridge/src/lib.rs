@@ -561,7 +561,8 @@ pub enum UiCommand {
     ImportAdd {
         /// The files, as the file dialog or a drop named them.
         paths: Vec<String>,
-        /// The recognition: an installed local model or a provider's model with the user's key.
+        /// The recognition: an installed local model, or a provider's model (a cloud provider's
+        /// with the user's key, or the custom endpoint's).
         asr: voltip_core::audio_cache::RecognitionChoice,
         /// The polish, when the text is polished.
         #[serde(default)]

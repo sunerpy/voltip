@@ -6,7 +6,8 @@
 //!
 //! The jobs wait in a queue in memory and run one at a time (`crate::runtime`'s import side); a
 //! dictation always goes first: a job waits at the next segment while one runs. Imports never use
-//! the built-in service: only an installed local model, or a provider with the user's own key.
+//! the built-in service: only an installed local model, a cloud provider with the user's own key,
+//! or Ollama and the custom endpoint as the user set them up, key or not (user decision D20).
 
 pub mod run;
 
@@ -98,7 +99,8 @@ pub trait MediaDecoder: Send + Sync + std::fmt::Debug {
     fn decode_to_pcm(&self, path: &Path, out: &Path, progress: &dyn Fn(u64, Option<u64>), cancel: &CancelToken) -> Result<PcmInfo, MediaError>;
 }
 
-/// The polish of an import: a provider's model, with the user's own key.
+/// The polish of an import: a provider's model (a cloud provider's with the user's own key, or
+/// Ollama's or the custom endpoint's as the user set it up).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PolishModel {
     /// Whose model.
@@ -113,7 +115,8 @@ pub struct PolishModel {
 pub struct ImportRequest {
     /// The file.
     pub path: PathBuf,
-    /// The recognition: an installed local model or a provider's model with the user's key.
+    /// The recognition: an installed local model, or a provider's model (a cloud provider's with
+    /// the user's key, or the custom endpoint's).
     pub asr: RecognitionChoice,
     /// The polish, when the text is polished; `None`: it is not.
     pub refine: Option<PolishModel>,
@@ -125,11 +128,11 @@ pub struct ImportRequest {
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ImportError {
     /// The built-in service was chosen, or is what the choice resolves to.
-    #[error("导入只能使用本机模型或自己密钥的服务，不能使用内置服务")]
+    #[error("导入只能使用本机模型或你自己设置的服务，不能使用内置服务")]
     BuiltinNotAllowed,
-    /// A service on another machine without the user's own key (a custom endpoint or Ollama takes
-    /// none).
-    #[error("导入只能使用本机模型或自己密钥的服务，这个服务没有填写你自己的密钥")]
+    /// A cloud provider that needs a key, without the user's own (Ollama and the custom endpoint
+    /// import without one, user decision D20).
+    #[error("这个云端服务需要填写你自己的密钥，才能用于导入")]
     NoOwnKey,
     /// This app imports nothing (the phone).
     #[error("这台设备不能导入音视频文件")]

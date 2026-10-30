@@ -465,9 +465,8 @@ export const MOCK_IMPORT_SEGMENT_MS = 12_000;
 /** What a path holds when `simulateImportFile` said nothing of it: 1 min 40 s of speech. */
 export const MOCK_IMPORT_FILE: MockImportFile = { size: 18_400_000, duration_ms: 100_000 };
 /** `ImportError` (docs/dictation.md §31) as the core words it. */
-export const MOCK_IMPORT_BUILTIN = "导入只能使用本机模型或自己密钥的服务，不能使用内置服务";
-export const MOCK_IMPORT_NO_KEY =
-  "导入只能使用本机模型或自己密钥的服务，这个服务没有填写你自己的密钥";
+export const MOCK_IMPORT_BUILTIN = "导入只能使用本机模型或你自己设置的服务，不能使用内置服务";
+export const MOCK_IMPORT_NO_KEY = "这个云端服务需要填写你自己的密钥，才能用于导入";
 export const MOCK_IMPORT_UNAVAILABLE = "这台设备不能导入音视频文件";
 export const MOCK_IMPORT_HISTORY_OFF =
   "历史记录已关闭：导入的文字保存在历史记录里，请先打开历史记录";
@@ -4216,20 +4215,23 @@ export class MockBackend implements Backend {
   }
 
   /** Why an import with these models is refused, as the core words it; `undefined` when it may
-   *  run. Only an installed local model or a provider with the user's own key will do. */
+   *  run. An installed local model, a cloud provider with the user's own key, or Ollama and the
+   *  custom endpoint as the user set them up (D20) will do. */
   private importRefusal(asr: RecognitionChoice, refine: PolishModel | undefined) {
     if (!this.state.imports.available) return MOCK_IMPORT_UNAVAILABLE;
     if (!this.state.settings.history.enabled) return MOCK_IMPORT_HISTORY_OFF;
     if ((asr.kind === "remote" && asr.provider === "builtin") || refine?.provider === "builtin")
       return MOCK_IMPORT_BUILTIN;
-    // §31.4: a service is the user's own by their key, also where the provider takes none.
-    const keyless = (provider: ProviderId, kind: ServiceKind) => {
+    // §31.4 (D20): a cloud provider is the user's own by their key; Ollama and the custom endpoint
+    // are as the user set them up, key or not.
+    const missingKey = (provider: ProviderId, kind: ServiceKind) => {
+      if (providerSpec(provider).key !== "required") return false;
       const entry = keyEntry(provider, kind);
       return entry === undefined || !this.userKeys.has(entry);
     };
     if (
-      (asr.kind === "remote" && keyless(asr.provider, "asr")) ||
-      (refine !== undefined && keyless(refine.provider, "llm"))
+      (asr.kind === "remote" && missingKey(asr.provider, "asr")) ||
+      (refine !== undefined && missingKey(refine.provider, "llm"))
     )
       return MOCK_IMPORT_NO_KEY;
     // An import never falls back to another model (docs/dictation.md §31).

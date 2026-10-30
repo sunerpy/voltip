@@ -877,11 +877,12 @@ export const en: Messages = {
         polish: "AI polish",
         polishHint: "Each segment is polished; subtitles can use the polished text",
         polishModel: "Polish model",
-        note: "Imports use only local models or services with your own key, never the built-in service. The original files are only read, never changed or deleted.",
+        note: "Imports use only local models and services you set up yourself, never the built-in service. The original files are only read, never changed or deleted.",
         noSpeech:
-          "No speech model can be used for imports. Download a local model, or enter your own key for a cloud provider.",
+          "No speech model can be used for imports. Download a local model, enter your own key for a cloud provider, or set up a custom endpoint.",
         manageSpeech: "Manage speech models",
-        noPolish: "No polish model can be used for imports. Enter your own key for an AI provider.",
+        noPolish:
+          "No polish model can be used for imports. Enter your own key for an AI provider, or set up Ollama or a custom endpoint.",
         manageAi: "Manage AI models",
         start: "Import",
       },

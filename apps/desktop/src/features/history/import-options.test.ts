@@ -50,9 +50,9 @@ describe("import options (docs/dictation.md §31)", () => {
     expect(none.polishDefault).toBeUndefined();
   });
 
-  it("regression: offers a service only with the user's own key, also where the provider takes none", () => {
-    // docs/dictation.md §31.4: a custom endpoint and Ollama run without a key; an import uses
-    // neither until the user has entered one (Ollama never asks for one).
+  it("offers a custom endpoint and Ollama the user set up without a key, a cloud provider only with one", () => {
+    // docs/dictation.md §31.4 (user decision D20): a custom endpoint and Ollama are the user's own
+    // as configured, key or not; a provider that needs a key is listed once the user entered it.
     const settings = {
       engines: {
         ...defaultEngineSettings(),
@@ -64,23 +64,29 @@ describe("import options (docs/dictation.md §31)", () => {
             llm_model: "my-llm",
           },
           ollama: { llm_model: "qwen3:8b" },
+          groq: { asr_model: "whisper-large-v3", llm_model: "qwen/qwen3.8-27b" },
         },
       },
     };
     const keyless = new MockBackend({ settings }).peek();
-    const none = importOptions(keyless.engines, keyless.models, t, "zh-CN");
-    expect(none.speech.map((o) => o.value)).not.toContain("remote:custom:my-asr");
-    expect(none.polish.map((o) => o.value)).toEqual([]);
-    const own = new MockBackend({
+    const options = importOptions(keyless.engines, keyless.models, t, "zh-CN");
+    const speech = options.speech.map((o) => o.value);
+    const polish = options.polish.map((o) => o.value);
+    expect(speech).toEqual(["remote:custom:my-asr"]);
+    expect(polish).toEqual(["remote:ollama:qwen3:8b", "remote:custom:my-llm"]);
+    // The custom endpoint is named as the menus name it.
+    expect(options.speech[0]?.label).toBe("自定义接口 · my-asr");
+
+    const keyed = new MockBackend({
       settings,
-      providerKeys: [
-        { provider: "custom", kind: "asr" },
-        { provider: "custom", kind: "llm" },
-      ],
+      providerKeys: [{ provider: "groq", kind: "asr" }],
     }).peek();
-    const options = importOptions(own.engines, own.models, t, "zh-CN");
-    expect(options.speech.map((o) => o.value)).toContain("remote:custom:my-asr");
-    expect(options.polish.map((o) => o.value)).toEqual(["remote:custom:my-llm"]);
+    const withGroq = importOptions(keyed.engines, keyed.models, t, "zh-CN");
+    expect(withGroq.speech.map((o) => o.value)).toContain("remote:groq:whisper-large-v3");
+    expect(withGroq.polish.map((o) => o.value)).toContain("remote:groq:qwen/qwen3.8-27b");
+    expect(
+      [...withGroq.speech, ...withGroq.polish].some((o) => o.value.startsWith("remote:builtin:")),
+    ).toBe(false);
   });
 
   it("turns a row back into what import_add sends", () => {

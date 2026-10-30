@@ -1271,8 +1271,8 @@ export const emptyAudioCache = (): AudioCacheView => ({
 
 // ---- Imported audio and video files (docs/dictation.md §31) ----
 
-/** The polish of an import (`voltip_core::import::PolishModel`): a provider's model, with the
- *  user's own key. */
+/** The polish of an import (`voltip_core::import::PolishModel`): a provider's model, a cloud
+ *  provider's with the user's own key or Ollama's or the custom endpoint's as set up (§31.4). */
 export const polishModelSchema = z.object({ provider: providerIdSchema, model: z.string().min(1) });
 export type PolishModel = z.infer<typeof polishModelSchema>;
 
