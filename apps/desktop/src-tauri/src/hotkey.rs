@@ -351,6 +351,29 @@ impl HotkeyRegistry {
         self.held.lock().poll(take, now_ms, |key| reader.read(key))
     }
 
+    /// Store the status [`apply`] built and return what to publish. When the lone key's hook stayed
+    /// (`kept`), what its edges said is still true and comes along: held, being brought back and
+    /// why, last put back (docs/dictation.md §29.3); a chord changing says nothing about the hook.
+    /// The merge runs under the lock the hook's edges take, so an edge that lands meanwhile is not
+    /// overwritten.
+    fn store_applied(&self, mut status: HotkeyStatus, kept: bool) -> HotkeyStatus {
+        let mut current = self.status.lock();
+        if kept {
+            status.solo_pressed = current.solo_pressed;
+            status.solo_loss = current.solo_loss;
+            status.solo_recovered_at = current.solo_recovered_at;
+        }
+        *current = status.clone();
+        status
+    }
+
+    /// Fold one lone-key edge into the status ([`solo_health`]): the status to publish, if the
+    /// settings page needs it.
+    fn solo_edge(&self, edge: SoloEdge, key: SoloKey, now_ms: u64) -> Option<HotkeyStatus> {
+        let mut st = self.status.lock();
+        solo_health(&mut st, edge, key, now_ms).then(|| st.clone())
+    }
+
     /// A release sent for a key that read as up: the settings page no longer shows it held.
     pub fn released_by_reading(&self, bridge: &Bridge, source: held::Source) {
         let mut st = self.status.lock();
@@ -435,20 +458,21 @@ pub fn apply<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge, registry: &Arc<Hot
             }
         }
     }
-    sync_solo(bridge, registry, chords.solo_key, session, &mut status);
-    *registry.status.lock() = status.clone();
+    let kept = sync_solo(bridge, registry, chords.solo_key, session, &mut status);
+    let status = registry.store_applied(status, kept);
     bridge.publish(UiEvent::Hotkey(status));
     // A take running across a settings change keeps its cancel key.
     sync_cancel_key(app, bridge, registry);
 }
 
-/// Install, keep or remove the lone-key hook for `key` and say so in `status`. A running hook for
-/// the same key stays; a different key replaces it (the old hook goes first: the Windows hook
-/// procedures share one state); a key that failed is tried again, and so is a hook whose thread
-/// ended (docs/dictation.md §29).
-fn sync_solo(bridge: &Bridge, registry: &Arc<HotkeyRegistry>, key: Option<SoloKey>, session: Option<SessionKind>, status: &mut HotkeyStatus) {
+/// Install, keep or remove the lone-key hook for `key` and say so in `status`; whether the running
+/// hook stayed. A running hook for the same key stays; a different key replaces it (the old hook
+/// goes first: the Windows hook procedures share one state); a key that failed is tried again, and
+/// so is a hook whose thread ended (docs/dictation.md §29).
+fn sync_solo(bridge: &Bridge, registry: &Arc<HotkeyRegistry>, key: Option<SoloKey>, session: Option<SessionKind>, status: &mut HotkeyStatus) -> bool {
     let mut slot = registry.solo.lock();
-    if !keeps_solo_hook(slot.as_ref().map(|hook| (hook.key(), hook.is_alive())), key) {
+    let kept = keeps_solo_hook(slot.as_ref().map(|hook| (hook.key(), hook.is_alive())), key);
+    if !kept {
         if slot.as_ref().is_some_and(|hook| !hook.is_alive()) {
             tracing::warn!(?key, "the lone-key hook had stopped; installing it again");
         }
@@ -467,6 +491,7 @@ fn sync_solo(bridge: &Bridge, registry: &Arc<HotkeyRegistry>, key: Option<SoloKe
         }
     }
     status.solo_registered = slot.as_ref().map(SoloHook::key);
+    kept
 }
 
 /// Whether the running hook (its key, whether its thread still runs) is the one `key` wants.
@@ -525,8 +550,8 @@ pub fn after_permission_read(bridge: &Bridge, registry: &Arc<HotkeyRegistry>, ac
     tracing::info!(?key, "Accessibility granted: watching the lone-key trigger again");
     let mut status = registry.status();
     status.solo_error = None;
-    sync_solo(bridge, registry, key, linux_session().map(|s| s.kind), &mut status);
-    *registry.status.lock() = status.clone();
+    let kept = sync_solo(bridge, registry, key, linux_session().map(|s| s.kind), &mut status);
+    let status = registry.store_applied(status, kept);
     bridge.publish(UiEvent::Hotkey(status));
 }
 
@@ -539,13 +564,8 @@ fn solo_sink(bridge: Bridge, registry: Weak<HotkeyRegistry>, key: SoloKey) -> im
         if registry.capturing() {
             return;
         }
-        {
-            let mut st = registry.status.lock();
-            if solo_health(&mut st, edge, key, now_ms()) {
-                let snapshot = st.clone();
-                drop(st);
-                bridge.publish(UiEvent::Hotkey(snapshot));
-            }
+        if let Some(snapshot) = registry.solo_edge(edge, key, now_ms()) {
+            bridge.publish(UiEvent::Hotkey(snapshot));
         }
         let command = match edge {
             SoloEdge::Press => {
@@ -794,6 +814,45 @@ mod tests {
             assert!(solo_health(&mut other, SoloEdge::Lost(loss), SoloKey::Fn, 1));
             assert_eq!((other.solo_loss, other.solo_error), (Some(loss), None));
         }
+    }
+
+    /// Goal review 2026-10-30 (macOS, docs/dictation.md §29.3): the lone key's hook is being
+    /// brought back (its tap is refused again and again) and another shortcut changes. The hook for
+    /// the same key stays, and so does what its edges said: still being brought back, held, last
+    /// put back. The rebuilt status used to drop `solo_loss`, and the settings page said the key
+    /// worked while it did not. Only the hook's own `Recovered` clears the loss; a hook installed
+    /// anew starts from its own edges.
+    #[test]
+    fn regression_a_lone_key_being_brought_back_stays_so_when_another_shortcut_changes() {
+        let key = SoloKey::RightCtrl;
+        let registry = HotkeyRegistry::default();
+        let rebuilt = |chord: &str, solo: SoloKey| HotkeyStatus { registered: Some(chord.into()), solo_registered: Some(solo), ..HotkeyStatus::default() };
+        registry.store_applied(rebuilt("Ctrl+Alt+Space", key), false);
+        assert!(registry.solo_edge(SoloEdge::Recovered, key, 10).is_some());
+        let lost = registry.solo_edge(SoloEdge::Lost(SoloLoss::Accessibility), key, 20).unwrap();
+        assert_eq!(lost.solo_loss, Some(SoloLoss::Accessibility));
+
+        // The dictation shortcut changes while every retry still fails: no `Recovered` comes.
+        let applied = registry.store_applied(rebuilt("Ctrl+Alt+V", key), true);
+        assert_eq!(applied.registered.as_deref(), Some("Ctrl+Alt+V"), "the new chord");
+        assert_eq!(applied.solo_loss, Some(SoloLoss::Accessibility), "still being brought back, not working");
+        assert_eq!((applied.solo_recovered_at, applied.solo_registered), (Some(10), Some(key)));
+        assert_eq!(registry.status(), applied, "what is stored is what is published");
+
+        // Held across the change: still held, until its release.
+        registry.solo_edge(SoloEdge::Press, key, 30);
+        assert!(registry.store_applied(rebuilt("Ctrl+Alt+B", key), true).solo_pressed);
+        assert!(!registry.solo_edge(SoloEdge::Release, key, 40).unwrap().solo_pressed);
+
+        // Its own recovery clears the loss and keeps the new chord.
+        let back = registry.solo_edge(SoloEdge::Recovered, key, 50).unwrap();
+        assert_eq!((back.solo_loss, back.solo_recovered_at, back.registered.as_deref()), (None, Some(50), Some("Ctrl+Alt+B")));
+
+        // A hook installed anew (another key, a thread that ended, after the recorder) owes nothing
+        // to the old one.
+        registry.solo_edge(SoloEdge::Lost(SoloLoss::Hook), key, 60);
+        let replaced = registry.store_applied(rebuilt("Ctrl+Alt+B", SoloKey::RightAlt), false);
+        assert_eq!((replaced.solo_loss, replaced.solo_recovered_at, replaced.solo_pressed), (None, None, false));
     }
 
     /// docs/dictation.md §29: a hook whose thread ended is replaced at the next sync instead of
