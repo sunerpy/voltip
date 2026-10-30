@@ -612,7 +612,12 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
   });
 
   it("docs/dictation.md §14.3: another window in front copies the text, says so, and stays as long as a failure", async () => {
-    const backend = new MockBackend({ now: () => clock, history: [] });
+    // §28: with 识别结果卡片常驻 off the card leaves after its usual time.
+    const backend = new MockBackend({
+      now: () => clock,
+      history: [],
+      settings: { engines: { ...defaultEngineSettings(), result_cards_stay: false } },
+    });
     const take = async () => {
       await backend.invoke("dictation_start");
       tick(MOCK_MIC_READY_MS + 3200);
@@ -972,7 +977,12 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
   });
 
   it("simulateDictationFailed reports the failure and dwells longer when the text was kept on the clipboard", async () => {
-    const backend = new MockBackend({ now: () => clock, history: [] });
+    // §28: with 识别结果卡片常驻 off the card leaves after its usual time.
+    const backend = new MockBackend({
+      now: () => clock,
+      history: [],
+      settings: { engines: { ...defaultEngineSettings(), result_cards_stay: false } },
+    });
     await backend.invoke("dictation_start");
     backend.simulateDictationFailed("没有听到声音");
     expect(backend.peek().dictation.phase).toEqual({ phase: "failed", message: "没有听到声音" });
@@ -989,6 +999,111 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
     expect(backend.peek().dictation.phase.phase).toBe("failed");
     tick(MOCK_DICTATION_FAILED_DWELL_MS - MOCK_DICTATION_DWELL_MS);
     expect(backend.peek().dictation.phase).toEqual({ phase: "idle" });
+    backend.destroy();
+  });
+
+  it("docs/dictation.md §28: result cards stay until 关闭 or the next take; off, they leave after their usual time", async () => {
+    const backend = new MockBackend({ now: () => clock, history: [] });
+    const take = async () => {
+      await backend.invoke("dictation_start");
+      tick(MOCK_MIC_READY_MS + 3200);
+      await backend.invoke("dictation_stop");
+      tick(MOCK_ASR_MS + MOCK_REFINE_MS);
+      return backend.peek().dictation.phase;
+    };
+    backend.simulateWindowSwitch(true);
+    expect(await take()).toMatchObject({ phase: "done", clipboard_code: "target_changed" });
+    tick(MOCK_DICTATION_FAILED_DWELL_MS * 10);
+    expect(backend.peek().dictation.phase.phase).toBe("done");
+    await backend.invoke("dictation_dismiss", { session: backend.peek().dictation.session });
+    expect(backend.peek().dictation.phase).toEqual({ phase: "idle" });
+    // A failure that kept its text stays too, and the next take replaces it.
+    await backend.invoke("dictation_start");
+    backend.simulateDictationFailed("粘贴超时", "kept text");
+    tick(MOCK_DICTATION_FAILED_DWELL_MS * 10);
+    expect(backend.peek().dictation.phase.phase).toBe("failed");
+    await backend.invoke("dictation_start");
+    expect(backend.peek().dictation.phase.phase).toBe("listening");
+    // Dismissing a take under way changes nothing.
+    await backend.invoke("dictation_dismiss", { session: backend.peek().dictation.session });
+    expect(backend.peek().dictation.phase.phase).toBe("listening");
+    // Switched off while a card stays: it leaves after its usual time from that moment.
+    backend.simulateDictationFailed("粘贴超时", "kept text");
+    tick(MOCK_DICTATION_FAILED_DWELL_MS * 10);
+    await backend.invoke("settings_set_engines", {
+      engines: { ...defaultEngineSettings(), result_cards_stay: false },
+    });
+    tick(MOCK_DICTATION_FAILED_DWELL_MS - 1);
+    expect(backend.peek().dictation.phase.phase).toBe("failed");
+    tick(1);
+    expect(backend.peek().dictation.phase).toEqual({ phase: "idle" });
+    // A failure without text or a kept recording is no card.
+    await backend.invoke("settings_set_engines", { engines: defaultEngineSettings() });
+    await backend.invoke("dictation_start");
+    backend.simulateDictationFailed("识别失败");
+    tick(MOCK_DICTATION_DWELL_MS);
+    expect(backend.peek().dictation.phase).toEqual({ phase: "idle" });
+    backend.destroy();
+  });
+
+  it("regression: a dismiss for an earlier take leaves the next take's card", async () => {
+    // docs/dictation.md §28.4: 关闭 and a 粘贴 that went in name the take whose card it was; one
+    // that arrives after the next take has put up its own card changes nothing.
+    const backend = new MockBackend({ now: () => clock, history: [] });
+    await backend.invoke("dictation_start");
+    backend.simulateDictationFailed("粘贴超时", "first");
+    const first = backend.peek().dictation.session;
+    await backend.invoke("dictation_start");
+    backend.simulateDictationFailed("粘贴超时", "second");
+    expect(backend.peek().dictation.session).toBe(first + 1);
+    await backend.invoke("dictation_dismiss", { session: first });
+    expect(backend.peek().dictation.phase).toMatchObject({ phase: "failed", text: "second" });
+    await backend.invoke("dictation_dismiss", { session: first + 1 });
+    expect(backend.peek().dictation.phase).toEqual({ phase: "idle" });
+    backend.destroy();
+  });
+
+  it("docs/dictation.md §28: the phone shows no cards, whatever the setting", async () => {
+    const backend = new MockBackend({ role: "phone", now: () => clock, history: [] });
+    await backend.invoke("dictation_start");
+    backend.simulateDictationFailed("粘贴超时", "kept text");
+    tick(MOCK_DICTATION_FAILED_DWELL_MS);
+    expect(backend.peek().dictation.phase).toEqual({ phase: "idle" });
+    backend.destroy();
+  });
+
+  it("docs/dictation.md §28: a paste take carries its insert check; 没有写进去 is a card, a copy is never checked", async () => {
+    const backend = new MockBackend({ now: () => clock, history: [], insertCheck: "not_written" });
+    const take = async () => {
+      await backend.invoke("dictation_start");
+      tick(MOCK_MIC_READY_MS + 3200);
+      await backend.invoke("dictation_stop");
+      tick(MOCK_ASR_MS + MOCK_REFINE_MS);
+      return backend.peek().dictation.phase;
+    };
+    expect(await take()).toMatchObject({ phase: "done", via: "paste", check: "not_written" });
+    expect(backend.peek().history_recent[0]?.outcome).toEqual({
+      kind: "inserted",
+      via: "paste",
+      check: "not_written",
+    });
+    tick(MOCK_DICTATION_FAILED_DWELL_MS * 10);
+    expect(backend.peek().dictation.phase.phase).toBe("done");
+    await backend.invoke("dictation_dismiss", { session: backend.peek().dictation.session });
+    backend.setInsertCheck("written");
+    expect(await take()).toMatchObject({ phase: "done", check: "written" });
+    tick(MOCK_DICTATION_DWELL_MS);
+    expect(backend.peek().dictation.phase).toEqual({ phase: "idle" });
+    // 检查文字是否写入 off: no check at all.
+    await backend.invoke("settings_set_engines", {
+      engines: { ...defaultEngineSettings(), insert_check: false },
+    });
+    expect(await take()).not.toHaveProperty("check");
+    tick(MOCK_DICTATION_DWELL_MS);
+    // A copy (the window changed) is never checked.
+    await backend.invoke("settings_set_engines", { engines: defaultEngineSettings() });
+    backend.simulateWindowSwitch(true);
+    expect(await take()).not.toHaveProperty("check");
     backend.destroy();
   });
 
@@ -3501,6 +3616,40 @@ describe("MockBackend voice edit (section 19)", () => {
     seeded.destroy();
     backend.destroy();
   });
+
+  it("docs/dictation.md §28: settings_set_copy_last_hotkey is one of three distinct chords, none by default", async () => {
+    const backend = new MockBackend({ now: () => clock, history: [] });
+    const events = collect(backend);
+    const errors = () => events.flatMap((e) => (e.type === "error" ? [e.message] : []));
+    expect(backend.peek().settings.copy_last_hotkey).toBeUndefined();
+    expect(backend.peek().hotkey.copy_last_registered).toBeUndefined();
+    await backend.invoke("settings_set_copy_last_hotkey", { hotkey: "Ctrl+Shift+V" });
+    expect(backend.peek().settings.copy_last_hotkey).toBe("Ctrl+Shift+V");
+    expect(backend.peek().hotkey.copy_last_registered).toBe("Ctrl+Shift+V");
+    await backend.invoke("settings_set_copy_last_hotkey", { hotkey: "V" });
+    await backend.invoke("settings_set_copy_last_hotkey", { hotkey: "alt+ctrl+space" });
+    await backend.invoke("settings_set_copy_last_hotkey", { hotkey: "ctrl+alt+e" });
+    await backend.invoke("settings_set_hotkey", { hotkey: "shift+ctrl+v" });
+    await backend.invoke("settings_set_edit_hotkey", { hotkey: "ctrl+shift+v" });
+    expect(errors()).toEqual([
+      expect.stringContaining("修饰键"),
+      "copy_last_hotkey: alt+ctrl+space 已用作听写快捷键",
+      "copy_last_hotkey: ctrl+alt+e 已用作「编辑选中文本」的快捷键",
+      "hotkey: shift+ctrl+v 已用作「复制上一条结果」的快捷键",
+      "edit_hotkey: ctrl+shift+v 已用作「复制上一条结果」的快捷键",
+    ]);
+    await backend.invoke("hotkey_capture", { active: true });
+    expect(backend.peek().hotkey.copy_last_registered).toBeUndefined();
+    await backend.invoke("hotkey_capture", { active: false });
+    expect(backend.peek().hotkey.copy_last_registered).toBe("Ctrl+Shift+V");
+    await backend.invoke("settings_set_copy_last_hotkey", { hotkey: null });
+    expect(backend.peek().settings).not.toHaveProperty("copy_last_hotkey");
+    expect(backend.peek().hotkey.copy_last_registered).toBeUndefined();
+    const seeded = new MockBackend({ settings: { copy_last_hotkey: "Ctrl+Shift+V" } });
+    expect(seeded.peek().hotkey.copy_last_registered).toBe("Ctrl+Shift+V");
+    seeded.destroy();
+    backend.destroy();
+  });
 });
 
 describe("MockBackend LAN pairing, always-on pairing and the phone's commands", () => {
@@ -3763,6 +3912,26 @@ describe("MockBackend history queries (docs/dictation.md section 4.4)", () => {
     expect((await phone.vocabularyBacktest({ draft })).matched).toBe(1);
     phone.destroy();
     backend.destroy();
+  });
+
+  it("docs/dictation.md §28: the result card's 复制, 粘贴 and 打开历史 go to the shell", async () => {
+    const backend = new MockBackend({ history: [] });
+    await backend.overlayCopy("留下的文字");
+    expect(backend.overlayCopies).toEqual(["留下的文字"]);
+    expect(await backend.overlayPaste("留下的文字")).toEqual({ kind: "pasted" });
+    backend.setPasteOutcome({ kind: "copied", reason: "timeout" });
+    expect(await backend.overlayPaste("留下的文字")).toEqual({ kind: "copied", reason: "timeout" });
+    expect(await backend.overlayPaste(" ")).toEqual({ kind: "failed", reason: "invalid" });
+    expect(backend.overlayPastes).toEqual(["留下的文字", "留下的文字"]);
+    await backend.invoke("dictation_start");
+    expect(await backend.overlayPaste("留下的文字")).toEqual({ kind: "failed", reason: "busy" });
+    await backend.openHistory();
+    expect(backend.historyOpens).toBe(1);
+    backend.destroy();
+    const phone = new MockBackend({ role: "phone" });
+    await expect(phone.overlayCopy("x")).rejects.toThrow(/overlay_copy/);
+    expect(await phone.overlayPaste("x")).toEqual({ kind: "failed", reason: "unsupported" });
+    phone.destroy();
   });
 
   it("the phone copies instead of pasting and shares through its own sheet (§20.7)", async () => {

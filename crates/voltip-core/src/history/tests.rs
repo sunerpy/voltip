@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use super::store::{HistoryFile, IMPORTED_DIGEST_KEY, IMPORTING_FILE_NAME};
 use super::*;
 use crate::CoreError;
-use crate::dictation::{ClipboardCode, InjectNote, OutputMode, Segment, TakeKind, Via};
+use crate::dictation::{ClipboardCode, InjectNote, InsertCheck, OutputMode, Segment, TakeKind, Via};
 use crate::presets::PresetRef;
 use crate::scenes::{AppRef, BuiltinScene, MAX_RECENT_APPS, SceneRef};
 use crate::vocabulary::{VocabularyHit, VocabularyHits};
@@ -23,7 +23,7 @@ pub(super) fn entry(text: &str) -> HistoryEntry {
         refine_ms: Some(300),
         refine_failure: None,
         refine_error: None,
-        outcome: Outcome::Inserted { via: Via::Paste },
+        outcome: Outcome::Inserted { via: Via::Paste, check: None },
         starred: false,
         mode: OutputMode::WholeTake,
         segments: None,
@@ -180,7 +180,7 @@ fn outcome_and_entry_serialize_tagged_and_omit_absent_options() {
     assert!(!json.contains("refine_model") && !json.contains("refine_ms"), "{json}");
     let back: HistoryEntry = serde_json::from_str(&json).unwrap();
     assert_eq!(back, e);
-    assert_eq!(serde_json::to_string(&Outcome::Inserted { via: Via::Paste }).unwrap(), r#"{"kind":"inserted","via":"paste"}"#);
+    assert_eq!(serde_json::to_string(&Outcome::Inserted { via: Via::Paste, check: None }).unwrap(), r#"{"kind":"inserted","via":"paste"}"#);
     assert_eq!(serde_json::to_string(&Outcome::Failed { reason: "x".into() }).unwrap(), r#"{"kind":"failed","reason":"x"}"#);
     // `starred` defaults when an older file lacks it.
     let legacy = json.replace(r#","starred":false"#, "");
@@ -410,6 +410,29 @@ fn only_dictations_count_toward_the_statistics() {
     assert!(counts_for_stats(&phone(OriginKind::Take)), "the phone as a microphone is a dictation");
     assert!(!counts_for_stats(&phone(OriginKind::Typed)));
     assert!(!counts_for_stats(&phone(OriginKind::Clipboard)));
+}
+
+/// Regression (docs/dictation.md §28): a paste the insert check found not written is not
+/// inserted, so the history's 未插入 filter lists it; written and unconfirmed pastes stay out.
+#[test]
+fn regression_a_paste_that_was_not_written_is_found_by_the_not_inserted_filter() {
+    let dir = tempfile::tempdir().unwrap();
+    let reader = HistoryReader::new(dir.path());
+    let mut store = HistoryStore::open(dir.path());
+    let base = 1_758_700_000_000;
+    let pasted = |check| Outcome::Inserted { via: Via::Paste, check: Some(check) };
+    let rows = [
+        HistoryEntry { at_ms: base, outcome: pasted(InsertCheck::Written), ..entry("写进去了") },
+        HistoryEntry { at_ms: base + 1, outcome: pasted(InsertCheck::Unconfirmed), ..entry("未确认") },
+        HistoryEntry { at_ms: base + 2, outcome: pasted(InsertCheck::NotWritten), ..entry("没有写进去") },
+        HistoryEntry { at_ms: base + 3, outcome: Outcome::Clipboard { reason: "x".into(), code: None }, ..entry("只复制") },
+    ];
+    for row in &rows {
+        store.push(row.clone(), MAX_ENTRIES).unwrap();
+    }
+    let failed = reader.query(&page(HistoryQuery { failed: true, ..Default::default() })).unwrap();
+    let texts: Vec<_> = failed.entries.iter().map(|e| e.raw_text.as_str()).collect();
+    assert_eq!(texts, ["只复制", "没有写进去"]);
 }
 
 /// docs/dictation.md §4.4: filters and search as the history page applied them, now in the

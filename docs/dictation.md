@@ -88,7 +88,7 @@ Idle ──DictationStart──▶ Listening{started_at, ready, live} ──Dict
 - 空录音（< 300 ms 或 RMS 全静音）→ `Failed{ code: NoSpeech, message: "没有听到声音", text: None }`，不上传。
 - `Failed.code` 是机器可读的阶段码（`no_speech` / `audio` / `asr` / `refine` / `inject` / `unknown`），由 `DictationError` 的变体决定，前端据此本地化；`message` 保留中文原因给日志与兜底显示。
 - 润色失败**不**阻断：记录 `refine_error`，用 ASR 原文注入，`Done.refined = false`。
-- `Done` / `Failed` / `Cancelled` 停留 2.5 s 后核心自动回 `Idle`（`Failed` 带 `text` 时停留 6 s，因窗口切换只复制了文字的 `Done` 也是 6 s，§14.3）。再次 `DictationStart` 立即打断停留。
+- `Done` / `Failed` / `Cancelled` 停留 2.5 s 后核心自动回 `Idle`（`Failed` 带 `text` 时停留 6 s，因窗口切换只复制了文字的 `Done` 也是 6 s，§14.3）。再次 `DictationStart` 立即打断停留。桌面上四种结果卡片（确定没写进去的 `Done`、窗口已切换的 `Done`、有文字的 `Failed`、录音已保留的无文字 `Failed`）默认不计时，停到 `DictationDismiss` 或下一次听写；设置「识别结果卡片常驻」关闭时按上面的时长（§28.4）。
 - `Processing` 中的 `DictationCancel` 与送出文字由这次的 `InsertGate` 决定（§14.3）：取消先到，什么都不送出，`Cancelled`；送出已经开始，取消不起作用，这次照常以同样的 `Done` 和历史结束。
 - 每次到达 `Done` 或带文本的 `Failed` 都追加一条 `HistoryEntry`。
 
@@ -924,13 +924,13 @@ XGrabKey 覆盖面 `SessionKind::x11_grab()`：X11 全局有效；XWayland 仅�
 
 **`clipboard_after`**（`EngineSettings`，设置 · 听写「插入后剪贴板」）：`restore`（恢复原内容，默认）| `keep`（保留识别结果：不放回，文字作为普通复制留在剪贴板）。
 
-**目标窗口**（`switched_window`，设置 · 听写「处理期间切换了窗口」：`copy_only`（只复制，默认）| `paste_here`（粘贴到当前窗口））。开始听写时前台探针（§18.2）报出的应用就是这次文字的目标。插入方式为 `clipboard_only` 的听写本来只复制，不检查窗口：结局照常是 `Done{via: clipboard}`，没有 `clipboard_code`，历史 `inserted / clipboard`。每次粘贴前（文字已在剪贴板、`paste_delay` 之后、发键之前）在单独线程上再问一次探针，至多 `PROBE_DEADLINE`，用 `paste::same_target`（§4.1 的同一规则：同一应用，两边都报出窗口时还要同一窗口）比较。不同、探针没有答复或报不出应用，都按换了窗口处理：这段不粘贴，原剪贴板放回，文字作为普通复制写上剪贴板；结局 `Done{via: clipboard, clipboard_code: target_changed}`，历史 `clipboard{reason: "开始听写时的窗口已不在前台，文字只复制到剪贴板", code: target_changed}`，胶囊「窗口已切换，文字已复制」停留 6 s（`DWELL_WITH_TEXT`）。`paste_here` 不检查，粘贴到此刻在前台的窗口；开始时探针没有报出应用（纯 Wayland、桌面本身、超时）也无从检查。语音编辑（§19）总是检查、不看这项设置：改写结果只该替换原来的选区。
+**目标窗口**（`switched_window`，设置 · 听写「处理期间切换了窗口」：`copy_only`（只复制，默认）| `paste_here`（粘贴到当前窗口））。开始听写时前台探针（§18.2）报出的应用就是这次文字的目标。插入方式为 `clipboard_only` 的听写本来只复制，不检查窗口：结局照常是 `Done{via: clipboard}`，没有 `clipboard_code`，历史 `inserted / clipboard`。每次粘贴前（文字已在剪贴板、`paste_delay` 之后、发键之前）在单独线程上再问一次探针，至多 `PROBE_DEADLINE`，用 `paste::same_target`（§4.1 的同一规则：同一应用，两边都报出窗口时还要同一窗口）比较。不同、探针没有答复或报不出应用，都按换了窗口处理：这段不粘贴，原剪贴板放回，文字作为普通复制写上剪贴板；结局 `Done{via: clipboard, clipboard_code: target_changed}`，历史 `clipboard{reason: "开始听写时的窗口已不在前台，文字只复制到剪贴板", code: target_changed}`，胶囊「窗口已切换，文字已复制」停留 6 s（`DWELL_WITH_TEXT`；桌面上默认是常驻的结果卡片，带「粘贴」「复制」，§28.4）。`paste_here` 不检查，粘贴到此刻在前台的窗口；开始时探针没有报出应用（纯 Wayland、桌面本身、超时）也无从检查。语音编辑（§19）总是检查、不看这项设置：改写结果只该替换原来的选区。
 
 **取消与送出的交接**（`InsertGate`）。每次 take 一个门，原子比较交换：送出开始 `Pending → Delivering`，取消 `Pending → Cancelled`，先到的一方决定结果。取消先到：什么都没送出，剪贴板放回，`Cancelled`，不写历史。送出先开始：取消得到 `TooLate`，这次照常结束，`Done` 和历史与没按取消时相同，只记一条 info 日志。`live_inject` 每句一个门（§12）。
 
 | 情形 | 剪贴板 | 结果 | 历史 |
 |---|---|---|---|
-| 粘贴成功 | 最后一次粘贴后 `paste_delay_after` 放回整个原剪贴板（仅当仍是我们写的；`keep` 不放回） | `Via::Paste` | `inserted / paste` |
+| 粘贴成功 | 最后一次粘贴后 `paste_delay_after` 放回整个原剪贴板（仅当仍是我们写的；`keep` 不放回） | `Via::Paste`；插入确认（§28）把结论写进 `Done.check` | `inserted / paste`（带 `check`） |
 | 链上没有可用工具 | 文字作为普通复制留给用户手动粘贴 | `Via::Clipboard`，note 为「no paste tool on Wayland · KDE (…); install …」 | `clipboard { reason, code }` |
 | 开始时的窗口已不在前台（`copy_only`、语音编辑） | 放回原剪贴板，再把文字作为普通复制写上 | `Via::Clipboard`，`clipboard_code: target_changed` | `clipboard { reason, code: target_changed }` |
 | 工具运行失败（回落后仍失败）或超时 | 立即放回原剪贴板 | `InjectError::Keystroke` | `failed`（胶囊保留文本可复制） |
@@ -2392,3 +2392,114 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 - 设备号随机、可重置（重装或伪造请求头可以拿到新的额度）：这是没有账号时的公平使用额度，不是安全边界，按 IP 的限流仍在（docs/threat-model.md）。旧版本按 IP 计数时，实时预览会重复计数，同一出口 IP 的旧版本用户共用一份额度。
 - 「其他服务商 · 本月」只显示本机记录的用量，不读服务商回报的剩余额度。
 - 与设计稿的差异：悬浮胶囊没有「换模型」按钮；识别用完时电脑的开始按钮仍可用（录音保留，换模型后重新识别）；用量页沿用标题栏的副标题，说明行放在页面里；侧栏「无法获取」的卡片没有「重试」（用量页有）；默认 720 px 高的窗口里侧栏卡片显示为一行；设计稿示例的润色上限 200 次按决定改为 100 次；手机设置里的「用量」一行没有「新」标记。
+
+## 28. 插入确认与结果卡片（2026-10-30）
+
+**目标**：粘贴之后在本机再读一次焦点输入框，**确定**文字没写进去时告诉用户；读不到、换了输入框、终端与远程桌面一律「无法确认」，按已插入处理，不重试、不重复粘贴，三个平台一起做。没写进去、窗口已切换和识别失败的结果停在悬浮胶囊上成为结果卡片，一两步找回：粘贴、复制、重新识别、打开历史、关闭；设置「识别结果卡片常驻」可关。托盘、可选的全局快捷键和 `--copy-last` 复制上一条结果。
+
+### 28.1 决定
+
+- 2026-10-28：确定没写进去时「弹出常驻卡片，不自动重试」，取代原路线图的「换逐字输入重试一次」（Windows、macOS 不新增逐字输入）；卡片「一直停留到关闭或下次听写」；四种情形都常驻：没写进去、窗口已切换、有文字的失败（粘贴、复制、关闭），没文字但录音已保留的失败（重新识别、打开历史、关闭）；无语音、没有录音的失败与剪贴板兜底保持原时长。「复制上一条结果」默认不分配快捷键，按下后放进剪贴板并在悬浮窗提示，托盘同样提供。
+- 2026-10-29：设置里加开关「识别结果卡片常驻」，默认开（上面的行为）；关掉后四种卡片按原来的时长消失。
+
+### 28.2 判定（`voltip_platform::insert_check::rules`，核心重导出为 `dictation::insert_check`）
+
+判定是纯函数，三个平台的读取器只负责读，所以一张测试表覆盖三个平台。规则放在纯 Rust 的 `voltip-platform` 里，平台读取器（§28.3）不必依赖核心。
+
+- **读数** `FocusText`：控件的长度、光标、选区、选中的文字（非空且不超过 `MAX_SELECTED_CHARS` = 8192 时才读）和光标前的文字（读取器读 `READ_BEFORE_CARET` = 128 个自己的单位，规范化、去掉末尾空白后留 `BEFORE_CARET_CHARS` = 64 个字符）。位置用读取器自己的单位（Windows、macOS 为 UTF-16，AT-SPI 为字符），只互相比较。规范化：`\r\n`、`\r`、U+2028、U+2029 一律为 `\n`，U+00A0、U+2007、U+202F 为空格。`Debug` 只打印长度，不打印文字。
+- **期望** `Expected`：这次要写入的文字规范化、去掉首尾空白，及其末尾 `EXPECTED_TAIL_CHARS` = 64 个字符。
+- **读取时机**：剪贴板动之前读一次（`FocusReader::watch`），粘贴键发出后立刻读，然后每 `POLL_EVERY` = 50 ms 读一次，最多 `CONFIRM_WITHIN`（§28.7）；每次读至多 `FOCUS_READ_DEADLINE` = 300 ms。读到本次文字或焦点换了就提前结束。
+- **结论**（`decide`；第一个决定性的读数说了算）：
+
+| 粘贴后的读数 | 结论 | 原因（只进日志） |
+|---|---|---|
+| 同一控件、与粘贴前不同、光标前以本次文字的末尾结尾 | `written` | — |
+| 每次都是同一控件、都读全了、整个窗口内与粘贴前完全相同，且不是「用相同文字替换相同选区」 | `not_written` | — |
+| 换了控件 | `unconfirmed` | `ControlChanged` |
+| 变了，但光标前不是本次文字（自动补全、应用改写了标点、同时有别的输入） | `unconfirmed` | `ChangedOtherwise` |
+| 有一次读超时 | `unconfirmed` | `Timeout` |
+| 读不到、一次都没读到、粘贴前没读全（例如只有整段值、没有光标） | `unconfirmed` | `Unreadable` |
+| 本次文字为空，或与粘贴前选中的文字相同 | `unconfirmed` | `NoChangeExpected` |
+| 终端、远程桌面与虚拟机、密码框 | `unconfirmed` | `Skipped` |
+| 说不出粘贴去往哪个应用（纯 Wayland、前台探针没有回答）：不读 | `unconfirmed` | `UnknownApp` |
+
+- **不检查**：插入方式为 `clipboard_only`、剪贴板兜底（`via = clipboard`）、窗口已切换后的复制、`live_inject`（逐句插入，用户看着文字出现；原路线图的「只确认最后一段」不做）、只复制的重新识别与文字太长（§22 的复制路径）、改写结果与选区相同的语音编辑，以及设置「检查文字是否写入」关闭时。
+- **接线**：核心 `Injector::focus_reader()`（默认 `None`：手机、本机语音服务、假实现都不检查）；`Delivery::insert` 在第一次写剪贴板之前 `watch`，`Inserted::Delivered` 且 `via = paste` 时 `settle`。跳过表按粘贴去往的应用判断：粘贴等听写开始时的窗口回到前台时（`Target::still_there`）是那个应用，「粘贴到当前窗口」（`switched_window = paste_here`）时是粘贴前那一刻前台探针报告的应用。探针说不出应用时（纯 Wayland、探针没有回答）不读，结论 `unconfirmed`（`UnknownApp`）：分不出终端、远程桌面与普通窗口，读到一个不变的终端就会误报「没有写进去」。所以 `FocusReader::watch` 与 `voltip_focus::Reader::watch` 只接受一个确定的应用。结论写进 `DictationPhase::Done.check` 与历史 `Outcome::Inserted.check`（都是可选字段，`#[serde(default)]`，旧版本读新记录不受影响）。
+- **日志**：`insert check: <written|not_written|unconfirmed> after <ms> ms app=<应用标识>`，无法确认时加 `why=<原因>`；从不记文字。
+- **历史**：`not_written` 显示为「没有写进去」（提醒色），并计入「未插入」筛选（`outcome` 列存 `not_written`）；`unconfirmed` 按已插入显示，技术信息里加「未确认是否写入」。
+
+### 28.3 平台读取（`crates/voltip-focus`）
+
+与 `voltip-hooks` 一样单独成 crate：只依赖 `voltip-platform` 和各平台的绑定，CI 不构建整个应用也能在真实桌面上跑它的测试（§28.9），本机也能为 macOS、Windows 做交叉检查。桌面壳的 `platform/focus.rs` 把它包成核心的 `FocusReader`。
+
+- **共同**：`Reader` 在自己的工作线程上打开平台接口（COM、辅助功能总线），请求经通道，每次回答至多等 `FOCUS_READ_DEADLINE`；连续 `REPLACE_AFTER` = 3 次超时就丢下这条线程另起一条（卡住的系统调用留在旧线程上结束）。打不开平台接口时这次读不到，下一次粘贴再试。粘贴前读到的控件留在工作线程上，粘贴结束即丢弃。跳过表（`voltip_platform::insert_check`）里的应用直接 `Skipped`：三个平台的终端（语音编辑的终端表，§19.2，加上 macOS 的 Terminal、iTerm2、Warp、kitty、Alacritty、WezTerm、Ghostty、Hyper、Tabby），以及远程桌面与虚拟机客户端（Windows 的 mstsc、msrdc、AnyDesk、TeamViewer、Parsec、RustDesk、VNC、VMware、VirtualBox、Hyper-V 控制台、Citrix；macOS 的 Windows App、屏幕共享、AnyDesk、TeamViewer、Parsec、RustDesk、VNC Viewer、VMware Fusion、VirtualBox、Parallels、UTM、Citrix Viewer；Linux 的 Remmina、FreeRDP、GNOME 连接、AnyDesk、TeamViewer、Parsec、RustDesk、VNC、virt-viewer、virt-manager、GNOME Boxes、VMware、VirtualBox、Citrix）。这些窗口里的「输入框」是另一台电脑或程序输出，本机读不到粘贴的结果。
+- **Windows**（`windows.rs`，`windows =0.61.3`，tao 已经编译的版本与特性）：工作线程上 `CoInitializeEx(MTA)`、`CUIAutomation8`，`IUIAutomation2::SetConnectionTimeout(200)`、`SetTransactionTimeout(300)`；`GetFocusedElement` 取控件，`CompareElements` 判断是否同一个，`CurrentIsPassword` 为真时 `Skipped`；文字：有 `TextPattern2` 时 `GetCaretRange` 取光标，否则 `TextPattern` 的第一个选区的末端代表光标，`DocumentRange` 取全文（超过 1 Mi 个 UTF-16 单位不读），`GetSelection` 取选区与选中的文字；两者都没有时用 `ValuePattern.CurrentValue` 的整段值（没有光标：只能证明写入，不能证明没写进去）。第一次查询会让基于 Chromium 的应用一直开着原生辅助功能树，内容很多的页面可能变慢；「检查文字是否写入」可以关。
+- **macOS**（`macos.rs`，手写 `ApplicationServices` 声明，CF 类型用 `core-foundation =0.10.1`）：系统级元素的 `AXFocusedUIElement`，`CFEqual` 判断是否同一个，子角色 `AXSecureTextField` 时 `Skipped`；`AXNumberOfCharacters`、`AXSelectedTextRange`（选区，末端代表光标）、`AXSelectedText`、`AXStringForRange`（光标前的文字）；读不到时用 `AXValue` 的整段值；`AXUIElementSetMessagingTimeout(0.3)`。用的是粘贴本来就需要的辅助功能权限，不新增权限。进程要连上窗口服务器（应用都是），辅助功能接口才回答：没有 `NSApplication` 的命令行测量工具在第一次粘贴之前什么都读不到。
+- **Linux**（`linux.rs`，`zbus =5.19.0` 的阻塞接口，每次调用 300 ms）：会话总线的 `org.a11y.Bus.GetAddress` 连 AT-SPI 总线；`org.a11y.Status.IsEnabled` 为假时读不到——Voltip 不去打开它，打开会让所有应用开启辅助功能。注册表根下各应用里 `STATE_ACTIVE` 的顶层窗口，在它下面用 `Collection.GetMatches(STATE_FOCUSED)` 找焦点，没有 Collection 接口（GTK 4）时限深遍历（≤ 3000 个节点、≤ 150 ms）；上次找到的控件仍在焦点上时先用它。身份是（总线名，对象路径）；`ROLE_PASSWORD_TEXT` 与 `ROLE_TERMINAL` 时 `Skipped`（终端控件嵌在 IDE 等应用里、应用名不在跳过表中时也认得出）；文字来自 `Text` 接口的 `CharacterCount`、`CaretOffset`、`GetNSelections` / `GetSelection(0)`、`GetText`。X11 与 Wayland 同一套。Chromium 与 Electron 默认不开 AT-SPI，多半读不到，按无法确认处理。
+
+### 28.4 结果卡片
+
+- **两层条件**，都为真才常驻：壳的能力 `CoreConfig.result_cards`（桌面为真；手机与本机语音服务没有卡片界面，为假）和用户设置 `EngineSettings.result_cards_stay`（默认真）。都为真时下面四种终态不挂 `DwellOver`，停到 `dictation_dismiss` 或下一次听写：`Done{check: not_written}`、`Done{clipboard_code: target_changed}`、`Failed{text: Some}`、`Failed{text: None}` 且录音已保留（`status.recording`）。设置关闭时按原来的时长消失：前三种 `DWELL_WITH_TEXT`（6 s），第四种 `DWELL`（2.5 s），按钮不变。设置改动立即生效：正在常驻的卡片从关闭的那一刻按原时长计时；打开只影响之后的卡片。无语音、没有录音的失败、剪贴板兜底和其他终态时长不变。
+- `CoreCommand::DictationDismiss { session }`（`dictation_dismiss`，带卡片所属听写的 `DictationStatus.session`）：该次听写的终态回 `Idle`（与 `DwellOver` 同一处理，`recording` 清空），其他阶段不动；`session` 不是当前这次时什么都不做，例如上一张卡片的「粘贴」在下一次听写的卡片出现之后才返回。新的一次听写可以从终态直接开始，卡片随之被替换。
+- **卡片内容**（一行：一句话、按钮、关闭 ×；说明过长时省略，完整原因在历史详情）：
+
+| 情形 | 一句话 | 按钮 |
+|---|---|---|
+| 确定没写进去（`check = not_written`；剪贴板已放回原内容） | 没有写进去 | 粘贴、复制 |
+| 窗口已切换（`clipboard_code = target_changed`；文字在剪贴板上） | 窗口已切换，文字已复制 | 粘贴、复制 |
+| 有文字的失败 | 失败原因 | 粘贴、复制 |
+| 没文字的失败，录音已保留 | 失败原因 · 录音已保留 | 重新识别、打开历史 |
+
+- **按钮**：
+  - 「粘贴」→ `overlay_paste(text)`：悬浮胶囊不可聚焦，点它不抢前台，所以先问一次前台探针（§18.2）：是别的应用就 `PasteTarget::App`（那个窗口）粘贴，不移动任何窗口；是 Voltip 自己（macOS 上点卡片可能激活 Voltip）才走历史记录「粘贴到上一个窗口」的让位流程（`paste_text`）；纯 Wayland 或没有探针时只复制。`Pasted` 后关闭这张卡片（`dictation_dismiss` 带它的 `session`），`Copied` / `Failed` 时卡片保留，并显示与历史记录相同的说明。
+  - 「复制」→ `overlay_copy(text)`：经核心的注入器写原生剪贴板（不可聚焦的 WebView 不能指望 `navigator.clipboard`），卡片里显示「已复制」或「复制失败」，不靠 toast（悬浮窗口没有 toast 区）。
+  - 「重新识别」→ `audio_retake(recording)`（§26，当前模型，结果照旧只复制）；「打开历史」→ `open_history`（显示主窗口，主窗口收到 `voltip://tray {action: "history"}` 后打开历史记录页）；× → `dictation_dismiss`。悬浮窗不可聚焦，不抢 Esc。
+- 无法确认（`unconfirmed`）按已插入处理，不出卡片。
+
+### 28.5 复制上一条结果
+
+- runtime 在内存里记最近一次有文字的结果（`Done.text`，或 `Failed.text`；含语音编辑、重新识别和手机当麦克风的听写，不含手机发来的文字），不看历史设置，退出即丢（`voltip_core::last_result`）。`Bridge::copy_last(within)` 经核心的 `CopyLastResult` 在阻塞线程里写剪贴板，回答 `copied | nothing | failed`。
+- **入口**：托盘菜单「复制上一条结果」（Windows、macOS；在「打开 Voltip」之后，还没有结果时置灰，不打开主窗口）；可选的全局快捷键 `Settings.copy_last_hotkey`（默认没有；与听写、语音编辑的快捷键三方互斥，`Hotkey::same_chord`；只响应按下；`HotkeyStatus.copy_last_registered` / `copy_last_error`；设置 · 快捷键里一行录制器）；命令行 `voltip --copy-last`（纯 Wayland 绑定系统快捷键；没有运行中的 Voltip 时直接退出，新进程没有结果）。
+- 复制成功、此刻没有听写进行、悬浮窗没有关闭时，悬浮窗闪一下「已复制上一条结果」（固定状态 `copied`，`DWELL` 后变回空白）。没有结果或写不了剪贴板时什么都不显示，日志写明原因。
+
+### 28.6 设置
+
+- `EngineSettings.insert_check`，默认真：设置 · 听写「检查文字是否写入」（说明「只在本机比较输入框前后的变化，不保存、不上传」）。
+- `EngineSettings.result_cards_stay`，默认真：设置 · 听写「识别结果卡片常驻」。
+- `Settings.copy_last_hotkey`，默认 `null`：设置 · 快捷键「复制上一条结果」，命令 `settings_set_copy_last_hotkey`。
+- 两个开关缺省时读成真；Rust 写出时省略默认值。`schema.ts`、i18n 中英文、IPC 夹具与 mock 后端同步。
+
+### 28.7 测量（`CONFIRM_WITHIN` 与跳过表）
+
+- **工具**：`crates/voltip-focus/examples/insert_confirm_probe.rs`。目标应用已在前台、光标在输入框里；循环 50 次：读一次（`watch`）→ 像听写一样开一个粘贴会话粘贴（剪贴板、粘贴键、之后放回剪贴板）→ 从粘贴键发出起每 10 ms 读一次，直到读数与粘贴前不同（上限 3 s）→ 3 s 时再读一次，看本次文字是否在光标前 → 撤销（Ctrl+Z / ⌘Z；GTK 3 的输入框没有撤销，改为下一次粘贴前全选）。输出 CSV（应用、次数、读取耗时、变化耗时、首个变化是文字变了还是换了控件、首个变化是否已是本次文字、3 s 后是否有文字）。开始前先读到输入框能回答为止（至多 20 s），因为 Chromium 第一次被查询时才建立辅助功能树。CI 按需运行：`gh workflow run ci.yml --ref <分支> -f insert_probe=true`（`hooks-windows` 的记事本与 Edge，`macos` Apple 芯片腿的 TextEdit 与 Safari），Linux 用 `scripts/focus-check-linux.sh --probe 50 <csv>`。用户自己的 Windows 主机不用于测量（会在别人的桌面上粘贴）。
+- **规则**：`CONFIRM_WITHIN` = 全矩阵变化耗时的最大值 × 1.5，向上取整到 50 ms，夹在 300–1500 ms；某个应用有一次「3 s 内没看到变化、但文字其实写进去了」，就把它加进跳过表。
+- **结果**（2026-10-30，每个应用 50 次，变化耗时从粘贴键发出算起；托管机器的数据来自 `insert_probe=true` 的 CI 运行）：
+
+| 平台与应用 | 读到 | 变化耗时最大值 | 3 s 内没看到变化 |
+|---|---|---|---|
+| Linux（本机 Xvfb，GTK 3 输入框） | 50 / 50 | 4 ms（多数 2 ms） | 0 |
+| macOS 15（托管 Apple 芯片）TextEdit | 50 / 50 | 5 ms（多数 0–1 ms） | 0 |
+| macOS 15 Safari textarea | 50 / 50 | 19 ms（第一次，换了控件；其余 ≤ 2 ms） | 0 |
+| macOS 15 Safari contenteditable | 50 / 50 | 2 ms | 0 |
+| Windows Server 2025（托管）记事本 | 50 / 50 | 11 ms（多数 8 ms） | 0 |
+| Windows Server 2025 Edge textarea | 50 / 50 | 45 ms（多数 22–25 ms） | 0 |
+| Windows Server 2025 Edge contenteditable | 50 / 50 | 40 ms（多数 22–25 ms） | 0 |
+
+  Safari textarea 第一次粘贴之后读到的是另一个控件，按规则是无法确认（`ControlChanged`），不是漏看；两次运行都只出现在第一次粘贴。Edge contenteditable 有一次第一个变化还不是完整的本次文字，后面的读数才是：判定读到本次文字之前一直读下去，所以仍是 `written`。最大值 45 ms × 1.5 = 67.5 ms，取整为 100 ms，低于下限，`CONFIRM_WITHIN` 定为 300 ms；没有哪个应用「3 s 内没看到变化」，跳过表不加应用。
+
+### 28.8 隐私
+
+读数只在一次粘贴的几百毫秒里留在内存中比较，比较完即丢弃：不保存、不发送、不写日志。比较用的只有焦点控件的长度、光标、选区、选中的文字（≤ 8192 个单位）和光标前 64 个字符，但读进内存的可能更多：Windows 的 UI Automation 没有按位置取光标前文字的办法，读取器取整个控件的文字（`DocumentRange`，不超过 `MAX_DOCUMENT` = 1 Mi 个 UTF-16 单位，更长的不读）再从中算出这几项；只有整段值的控件（Windows 的 `ValuePattern`、macOS 的 `AXValue`）也读整段值。这些文字同样只在内存里、只用于这次比较。密码框、终端和远程桌面不读，说不出粘贴去往哪个应用时也不读。站点的隐私页写明。
+
+### 28.9 门禁
+
+- Rust：`voltip-platform` 的 `insert_check::rules`（规则表 `the_verdicts_follow_the_rules_of_the_insert_check`、`regression_the_same_text_over_the_same_selection_is_unconfirmed`、`unchanged_text_that_already_ended_with_the_take_is_not_written`、`a_value_without_a_caret_can_be_written_but_never_not_written`、`line_endings_and_no_break_spaces_still_match`、`polling_stops_at_the_text_or_another_control_and_otherwise_at_the_window`）与跳过表；`voltip-focus` 的工作线程（`a_paste_is_written_not_written_or_unconfirmed_from_the_platform_readings`、`terminals_remote_screens_and_password_fields_are_never_read`、`a_reader_that_stops_answering_times_out_and_its_thread_is_replaced_after_three_deadlines`、`a_reading_that_misses_its_deadline_after_the_paste_is_a_timeout_and_never_not_written`）；核心 `dictation::engine`（`regression_a_paste_the_field_never_received_reports_not_written`、`a_paste_whose_text_shows_at_the_caret_is_written`、`regression_same_text_over_the_same_selection_is_unconfirmed`、`a_change_that_is_not_the_text_another_control_or_no_reading_is_unconfirmed`、`the_check_switched_off_never_asks_the_reader`、`live_inject_is_never_checked`、`a_retake_is_never_checked`、`a_clipboard_fallback_or_a_clipboard_only_take_is_never_checked`、`a_voice_edit_is_checked_unless_the_rewrite_equals_the_selection`、`the_reader_is_told_the_takes_application`，卡片 `result_cards_stay_until_dismissed_or_the_next_take`、`regression_result_cards_follow_the_stay_setting`、`without_result_cards_every_card_keeps_its_dwell`、`the_other_terminal_states_keep_their_dwell`）；历史 `regression_a_paste_that_was_not_written_is_found_by_the_not_inserted_filter`；runtime 的复制上一条结果与快捷键三方互斥；桌面 `tests/ipc.rs`（`the_result_card_copies_pastes_into_the_window_in_front_and_opens_the_history`、`a_result_card_stays_until_it_is_dismissed_and_the_last_result_is_copied`、`the_copy_last_chord_is_saved_through_its_own_command`）、`paste.rs`、`overlay.rs`、托盘与 `tests/cli.rs`；IPC 契约夹具；两个手机壳把五条新命令列为仅电脑。
+- 平台真测试（`#[ignore]`，文件头写运行方法）：`crates/voltip-focus/tests/focus_linux.rs`（`smoke-desktop`：`scripts/focus-check-linux.sh` 在 Xvfb 与私有 D-Bus 会话里起辅助功能总线，GTK 3 窗口：可编辑输入框 `written`、只读输入框 `not_written`、焦点换到另一个输入框 `unconfirmed`、辅助功能关闭时读不到）；`focus_windows.rs`（`hooks-windows`：记事本 `written`，测试自己的 `ES_READONLY` EDIT `not_written`，点到另一个 EDIT `unconfirmed`）；`focus_macos.rs`（`harness = false`，主线程跑 AppKit；`macos` 的 Apple 芯片腿，像 event tap 一样给测试二进制授辅助功能与发送事件权限：自建的不可编辑 `NSTextView` `not_written`，TextEdit `written`）。
+- TS：`Overlay.test.tsx` 的卡片情形与按钮、`Pill.test.tsx` 的卡片布局、`Settings.test.tsx` 的两个开关与录制器、`history-queries.test.ts` 的「未插入」筛选、mock 后端与 schema。
+
+### 28.10 未做与偏离
+
+- 计划把读取器放在桌面 crate 里；实际放进单独的 `voltip-focus`，判定规则放进 `voltip-platform`：桌面 crate 的测试要构建整个应用，在托管的 Windows 与 macOS 上原生编译太慢，`voltip-hooks` 单独成 crate 也是这个原因（§28.3）。
+- `focus_macos` 只在 Apple 芯片腿上跑（与 event tap 相同），Intel 腿的时长离发版候选的 45 分钟门槛不远。
+- 粘贴之前还不判断焦点控件能否编辑（docs/roadmap.md 第 2 条）；不可编辑时照常粘贴，再由插入确认报「没有写进去」。
+- Linux 上基于 Chromium 的应用和没有开启辅助功能的会话读不到，Windows 与 macOS 上只提供整段值的控件只能证明写入：这些情形都是「无法确认」，不出卡片。

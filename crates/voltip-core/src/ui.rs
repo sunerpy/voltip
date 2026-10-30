@@ -410,6 +410,12 @@ pub struct HotkeyStatus {
     /// Why the voice-edit chord is not registered (conflict, pure Wayland, same as the dictation chord).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub edit_error: Option<String>,
+    /// The 复制上一条结果 chord actually registered (docs/dictation.md §28), if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copy_last_registered: Option<String>,
+    /// Why the 复制上一条结果 chord is not registered (conflict, pure Wayland, another chord's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copy_last_error: Option<String>,
     /// What the hotkey can do in the session the shell runs in (all `false` until it reports).
     #[serde(default)]
     pub capabilities: HotkeyCapabilities,
@@ -870,7 +876,7 @@ mod tests {
             refine_ms: Some(4),
             refine_failure: None,
             refine_error: None,
-            outcome: crate::Outcome::Inserted { via: crate::dictation::Via::Paste },
+            outcome: crate::Outcome::Inserted { via: crate::dictation::Via::Paste, check: None },
             starred: false,
             mode: crate::OutputMode::WholeTake,
             segments: None,

@@ -233,7 +233,7 @@ pub fn bounded(entry: &HistoryEntry) -> HistoryEntry {
         asr_model: short(&entry.asr_model),
         refine_model: entry.refine_model.as_deref().map(short),
         outcome: match &entry.outcome {
-            Outcome::Inserted { via } => Outcome::Inserted { via: *via },
+            Outcome::Inserted { via, check } => Outcome::Inserted { via: *via, check: *check },
             Outcome::Clipboard { reason, code } => Outcome::Clipboard { reason: short(reason), code: *code },
             Outcome::Failed { reason } => Outcome::Failed { reason: short(reason) },
         },

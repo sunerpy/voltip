@@ -21,7 +21,7 @@ use voltip_rn::update::{InstallSource, NOTHING_TO_INSTALL, PACKAGE, UpdateConfig
 const STEP_TIMEOUT: Duration = Duration::from_secs(15);
 const POLL: Duration = Duration::from_millis(20);
 /// Commands of the shared contract that only the desktop registers (docs/dictation.md §23.6, §25,
-/// §26).
+/// §26, §28).
 const DESKTOP_ONLY: &[&str] = &[
     "settings_set_serve",
     "serve_copy_token",
@@ -35,6 +35,13 @@ const DESKTOP_ONLY: &[&str] = &[
     "audio_cache_clear",
     "audio_cache_delete",
     "audio_retake",
+    // The result cards and 复制上一条结果 (docs/dictation.md §28) live in the desktop's pill, tray
+    // and global hotkeys; a phone has none of them.
+    "dictation_dismiss",
+    "settings_set_copy_last_hotkey",
+    "overlay_copy",
+    "overlay_paste",
+    "open_history",
 ];
 
 fn repo_root() -> PathBuf {

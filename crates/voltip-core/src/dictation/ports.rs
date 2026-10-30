@@ -620,6 +620,26 @@ pub struct Injection {
     pub note: Option<InjectNote>,
 }
 
+pub use voltip_platform::insert_check::rules::{CONFIRM_WITHIN, FOCUS_READ_DEADLINE, InsertCheck, Settled, UnconfirmedWhy};
+
+/// Reads the focused control of the application in front, once before a paste and again after it
+/// (docs/dictation.md §28): the desktop shell's UI Automation / Accessibility / AT-SPI reader. What
+/// it reads stays in memory and is compared there: never stored, sent or logged.
+pub trait FocusReader: Send + Sync {
+    /// Read the focused control right before the paste of `expected` into `app`, the application
+    /// the paste goes to (without one the engine reads nothing, docs/dictation.md §28.2). An error
+    /// says why there is nothing to compare with afterwards. Blocking, bounded by
+    /// [`FOCUS_READ_DEADLINE`].
+    fn watch(&self, app: &ForegroundApp, expected: &super::insert_check::Expected) -> Result<Box<dyn FocusWatch>, UnconfirmedWhy>;
+}
+
+/// One paste's reading of the focused control, settled once the paste went out.
+pub trait FocusWatch: Send {
+    /// Read the control every [`super::insert_check::POLL_EVERY`] for at most `within`, and
+    /// decide ([`super::insert_check::decide`]). Blocking.
+    fn settle(self: Box<Self>, within: Duration) -> Settled;
+}
+
 /// When a voice edit's copy chord can reach the foreground application (docs/dictation.md §19).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum SelectionTiming {
@@ -771,6 +791,12 @@ pub trait Injector: Send + Sync + 'static {
     fn is_terminal_app(&self, app_id: &str) -> bool {
         let _ = app_id;
         false
+    }
+
+    /// The reader that checks whether a paste reached the focused field (docs/dictation.md §28).
+    /// The default — the phone, the local speech service, most fakes — has none: no check runs.
+    fn focus_reader(&self) -> Option<Arc<dyn FocusReader>> {
+        None
     }
 }
 

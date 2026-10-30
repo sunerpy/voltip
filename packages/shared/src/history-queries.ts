@@ -114,7 +114,10 @@ export function historyPageOf(
     (e) =>
       (since === undefined || e.at_ms >= since) &&
       (args.starred !== true || e.starred) &&
-      (args.failed !== true || e.outcome.kind !== "inserted") &&
+      // docs/dictation.md §28: a paste the insert check found not written was not inserted.
+      (args.failed !== true ||
+        e.outcome.kind !== "inserted" ||
+        e.outcome.check === "not_written") &&
       matchesHistoryQuery(e, args.query ?? ""),
   );
   const offset = args.offset ?? 0;

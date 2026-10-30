@@ -35,6 +35,7 @@ import {
   modelDisplayName,
   modelFamilyName,
   modelTierLabel,
+  outcomeDetailText,
   outcomeLabel,
   outputModeDescription,
   outputModeLabel,
@@ -384,6 +385,25 @@ describe("labels", () => {
       text: "失败 · ASR 401",
       tone: "danger",
     });
+    // docs/dictation.md §28: a paste the field never received says so; one the check could not
+    // confirm reads as inserted, and only the entry's detail says it was not confirmed.
+    expect(outcomeLabel({ kind: "inserted", via: "paste", check: "not_written" })).toEqual({
+      text: "没有写进去",
+      tone: "warn",
+    });
+    expect(outcomeLabel({ kind: "inserted", via: "paste", check: "unconfirmed" })).toEqual({
+      text: "已插入 · 粘贴",
+      tone: "ok",
+    });
+    expect(outcomeDetailText({ kind: "inserted", via: "paste", check: "unconfirmed" })).toBe(
+      "已插入 · 粘贴 · 未确认是否写入",
+    );
+    expect(outcomeDetailText({ kind: "inserted", via: "paste", check: "written" }, "en")).toBe(
+      "Inserted · Paste",
+    );
+    expect(outcomeDetailText({ kind: "inserted", via: "paste", check: "not_written" }, "en")).toBe(
+      "Not written",
+    );
     expect(secretStateLabel({ set: true, source: "builtin" })).toEqual({
       text: "已内置",
       tone: "ok",

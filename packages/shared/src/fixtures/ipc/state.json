@@ -40,6 +40,8 @@
       "inject": "paste",
       "clipboard_after": "keep",
       "switched_window": "paste_here",
+      "insert_check": false,
+      "result_cards_stay": false,
       "asr_fallback": {
         "enabled": true,
         "models": [
@@ -73,6 +75,7 @@
       "window_title": true
     },
     "edit_hotkey": "Ctrl+Alt+E",
+    "copy_last_hotkey": "Ctrl+Shift+V",
     "solo_key": "right_ctrl",
     "pairing_always_on": true,
     "phone_talk": "tap",
@@ -183,6 +186,7 @@
     "capturing": false,
     "backend": "global-shortcut · Windows · RegisterHotKey",
     "edit_registered": "Ctrl+Alt+E",
+    "copy_last_registered": "Ctrl+Shift+V",
     "capabilities": {
       "global": true,
       "everywhere": true,
@@ -213,7 +217,8 @@
       "duration_ms": 3200,
       "asr_ms": 640,
       "refine_ms": 2400,
-      "mode": "whole_take"
+      "mode": "whole_take",
+      "check": "written"
     },
     "session": 7,
     "context": {
@@ -245,7 +250,8 @@
       "refine_ms": 2400,
       "outcome": {
         "kind": "inserted",
-        "via": "paste"
+        "via": "paste",
+        "check": "unconfirmed"
       },
       "starred": true,
       "mode": "whole_take",
@@ -309,7 +315,8 @@
       "refine_ms": 900,
       "outcome": {
         "kind": "inserted",
-        "via": "paste"
+        "via": "paste",
+        "check": "not_written"
       },
       "starred": false,
       "mode": "whole_take",

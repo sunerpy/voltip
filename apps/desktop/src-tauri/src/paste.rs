@@ -3,6 +3,11 @@
 //! core, which checks that window once more right before it pastes. The decisions are pure
 //! functions ([`first_step`], [`target_after`], [`bring_back`]) so they are tested without a window
 //! system; [`wait_for_target`] takes any probe.
+//!
+//! The result card's 粘贴 and 复制 (docs/dictation.md §28, [`overlay_paste`], [`overlay_copy`]) go
+//! through the same core paste: the pill never takes the focus, so the window in front is normally
+//! the person's own and the text goes straight there ([`card_paste`]); only when Voltip itself is in
+//! front (macOS activates it when the pill is clicked) does the card take the history's way.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -68,6 +73,29 @@ pub fn target_after(found: Option<ForegroundApp>) -> PasteTarget {
 /// Voltip comes back unless the text went into the other window.
 pub fn bring_back(outcome: PasteOutcome) -> bool {
     outcome != PasteOutcome::Pasted
+}
+
+/// What the result card's 粘贴 does once the window in front is known (docs/dictation.md §28).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CardPaste {
+    /// Paste into the window (or only copy), without moving any window.
+    Deliver(PasteTarget),
+    /// Voltip is in front: [`paste_text`]'s way out of the way.
+    StepAside,
+}
+
+/// The card's paste for the probe's answer about the window in front (`None` without a probe):
+/// another application's window gets the text; Voltip in front steps aside; no answer only copies.
+pub fn card_paste(front: Option<Result<Option<ForegroundApp>, String>>) -> CardPaste {
+    match front {
+        Some(Ok(Some(app))) => CardPaste::Deliver(PasteTarget::App(app)),
+        Some(Ok(None)) => CardPaste::StepAside,
+        Some(Err(e)) => {
+            tracing::debug!(error = %e, "foreground probe failed before the card's paste");
+            CardPaste::Deliver(PasteTarget::CopyOnly(CopyReason::NoProbe))
+        }
+        None => CardPaste::Deliver(PasteTarget::CopyOnly(CopyReason::NoProbe)),
+    }
 }
 
 /// Ask `probe` every `every` until it names a window, for at most `within`. The probes answer
@@ -147,6 +175,38 @@ fn come_back<R: Runtime>(app: &AppHandle<R>) {
     crate::show_main_window(app);
 }
 
+/// The `overlay_paste` command from start to end (docs/dictation.md §28): refused like a paste
+/// from the history; then the window in front, asked once, decides ([`card_paste`]).
+pub async fn overlay_paste<R: Runtime>(app: &AppHandle<R>, text: String) -> PasteOutcome {
+    let Some(bridge) = app.try_state::<Bridge>().map(|b| b.inner().clone()) else {
+        return PasteOutcome::Failed { reason: PasteFailure::Timeout };
+    };
+    let running = take_running(&bridge.state().dictation.phase);
+    match first_step(&text, running, crate::hotkey::linux_session().map(|s| s.kind)) {
+        FirstStep::Refuse(reason) => return PasteOutcome::Failed { reason },
+        FirstStep::CopyOnly(reason) => return bridge.paste(text, PasteTarget::CopyOnly(reason), ANSWER_WITHIN).await,
+        FirstStep::FindTarget => {}
+    }
+    let front = match app.try_state::<PasteProbe>().and_then(|p| p.0.clone()) {
+        Some(probe) => Some(tokio::task::spawn_blocking(move || probe.foreground()).await.unwrap_or_else(|e| Err(e.to_string()))),
+        None => None,
+    };
+    match card_paste(front) {
+        CardPaste::Deliver(target) => bridge.paste(text, target, ANSWER_WITHIN).await,
+        CardPaste::StepAside => paste_text(app, text).await,
+    }
+}
+
+/// The `overlay_copy` command (docs/dictation.md §28): the text onto the clipboard through the
+/// core's injector — the native clipboard, which the pill's unfocusable webview cannot rely on.
+pub async fn overlay_copy<R: Runtime>(app: &AppHandle<R>, text: String) -> Result<(), PasteFailure> {
+    let Some(bridge) = app.try_state::<Bridge>().map(|b| b.inner().clone()) else { return Err(PasteFailure::Timeout) };
+    match bridge.paste(text, PasteTarget::CopyOnly(CopyReason::ClipboardOnly), ANSWER_WITHIN).await {
+        PasteOutcome::Copied { .. } | PasteOutcome::Pasted => Ok(()),
+        PasteOutcome::Failed { reason } => Err(reason),
+    }
+}
+
 /// The `paste_text` command from start to end.
 pub async fn paste_text<R: Runtime>(app: &AppHandle<R>, text: String) -> PasteOutcome {
     let Some(bridge) = app.try_state::<Bridge>().map(|b| b.inner().clone()) else {
@@ -200,6 +260,17 @@ mod tests {
         assert!(!take_running(&DictationPhase::Idle));
         assert!(!take_running(&DictationPhase::CANCELLED), "a finished take still on screen");
         assert!(take_running(&DictationPhase::Listening { started_at: 1, ready: true, live: None, locked: false }));
+    }
+
+    /// docs/dictation.md §28: the result card's 粘贴 pastes into the window in front without moving
+    /// any window (the pill never takes the focus); Voltip in front takes the history's way; a
+    /// probe that fails, or none, only copies.
+    #[test]
+    fn the_cards_paste_goes_into_the_window_in_front_or_steps_aside_only_when_voltip_is_in_front() {
+        assert_eq!(card_paste(Some(Ok(Some(app("notepad"))))), CardPaste::Deliver(PasteTarget::App(app("notepad"))));
+        assert_eq!(card_paste(Some(Ok(None))), CardPaste::StepAside, "Voltip is in front");
+        assert_eq!(card_paste(Some(Err("no display".into()))), CardPaste::Deliver(PasteTarget::CopyOnly(CopyReason::NoProbe)));
+        assert_eq!(card_paste(None), CardPaste::Deliver(PasteTarget::CopyOnly(CopyReason::NoProbe)), "no probe (the headless wiring)");
     }
 
     #[test]

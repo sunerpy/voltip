@@ -73,6 +73,15 @@ export function clipTail(text: string, max = LIVE_CAPTION_MAX_CHARS): string {
   return clipLiveCaption({ committed: text, current: "" }, max).committed;
 }
 
+/** A result card's button (docs/dictation.md §28). */
+export interface PillAction {
+  /** What the button does, as its label (`粘贴`). */
+  label: string;
+  onClick: () => void;
+  /** The card's main action, drawn as the primary button. */
+  primary?: boolean;
+}
+
 export interface PillProps {
   state: PillState;
   /** Overrides the default label for the state. */
@@ -116,6 +125,13 @@ export interface PillProps {
    *  (docs/dictation.md §3.6), absent when the polish ran or none was asked for. `error`: the
    *  take's recording is kept and can be recognised again (§26). */
   note?: string;
+  /** `inserted` / `error` (docs/dictation.md §28): the result card's buttons, in order, after its
+   *  sentence; a card leaves out the inserted pill's waveform, target and readout. */
+  actions?: readonly PillAction[];
+  /** §28: what the card's last button did (`已复制`), said in place of `note`. */
+  feedback?: string;
+  /** §28: the card's 关闭 (×), after its buttons. */
+  onDismiss?: () => void;
   onCopy?: () => void;
   onStop?: () => void;
   className?: string;
@@ -230,6 +246,65 @@ function NoteTag({ text }: { text: string | undefined }) {
   );
 }
 
+/** What a result card's last button did (docs/dictation.md §28), in the pill's muted colour. */
+function FeedbackTag({ text }: { text: string }) {
+  return (
+    <span className="shrink-0 text-[11px] text-pill-muted" data-testid="pill-feedback">
+      {text}
+    </span>
+  );
+}
+
+/** A result card's sentence, its buttons and 关闭 (docs/dictation.md §28): the sentence gives way
+ *  to the buttons and reads in full in its tooltip (the history has the whole reason). */
+function CardRow({
+  text,
+  note,
+  feedback,
+  actions,
+  onDismiss,
+}: {
+  text: string;
+  note: string | undefined;
+  feedback: string | undefined;
+  actions: readonly PillAction[];
+  onDismiss: (() => void) | undefined;
+}) {
+  const t = useT();
+  return (
+    <>
+      <span className="min-w-0 truncate" title={text} data-testid="pill-card-text">
+        {text}
+      </span>
+      {feedback !== undefined && feedback.length > 0 ? (
+        <FeedbackTag text={feedback} />
+      ) : (
+        <NoteTag text={note} />
+      )}
+      {actions.map((action) => (
+        <Button
+          key={action.label}
+          size="sm"
+          variant={action.primary === true ? "primary" : "outline"}
+          onClick={action.onClick}
+          className="h-6 shrink-0">
+          {action.label}
+        </Button>
+      ))}
+      {onDismiss && (
+        <button
+          type="button"
+          aria-label={t("insertCheck.card.close")}
+          title={t("insertCheck.card.close")}
+          onClick={onDismiss}
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-pill-muted hover:bg-inset hover:text-pill-fg">
+          <Icon name="x" size={12} />
+        </button>
+      )}
+    </>
+  );
+}
+
 /** The take's kind (`编辑`), leading the capsule in the accent colour. */
 function KindTag({ label }: { label: string }) {
   return (
@@ -264,11 +339,18 @@ export function Pill({
   keys,
   via,
   note,
+  actions,
+  feedback,
+  onDismiss,
   onCopy,
   onStop,
   className,
 }: PillProps) {
   const t = useT();
+  // docs/dictation.md §28: a finished take that is a result card.
+  const card =
+    (state === "inserted" || state === "error") &&
+    (actions !== undefined || onDismiss !== undefined);
   const text = label ?? t(`ui.pill.label.${state}`);
   const local = mode ?? t("ui.pill.local");
   const danger = state === "error" || state === "cancel-armed" || state === "blocked";
@@ -426,7 +508,21 @@ export function Pill({
           <EscCancel />
         </>
       )}
-      {state === "inserted" && (
+      {state === "inserted" && card && (
+        <>
+          <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-accent text-accent-fg">
+            <Icon name="check" size={10} strokeWidth={3} />
+          </span>
+          <CardRow
+            text={text}
+            note={note}
+            feedback={feedback}
+            actions={actions ?? []}
+            onDismiss={onDismiss}
+          />
+        </>
+      )}
+      {state === "inserted" && !card && (
         <>
           <span className="flex h-4 w-4 items-center justify-center rounded-full bg-accent text-accent-fg">
             <Icon name="check" size={10} strokeWidth={3} />
@@ -438,7 +534,19 @@ export function Pill({
           {readout && <span className="mono text-[11px] text-pill-muted">{readout}</span>}
         </>
       )}
-      {state === "error" && (
+      {state === "error" && card && (
+        <>
+          <Icon name="alert" size={14} className="shrink-0 text-danger" />
+          <CardRow
+            text={text}
+            note={note}
+            feedback={feedback}
+            actions={actions ?? []}
+            onDismiss={onDismiss}
+          />
+        </>
+      )}
+      {state === "error" && !card && (
         <>
           <Icon name="alert" size={14} className="shrink-0 text-danger" />
           {/* A failure carries what the service said (docs/dictation.md §3.12): long ones are cut

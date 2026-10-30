@@ -27,6 +27,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 pub mod foreground;
+pub mod insert_check;
 pub mod macos;
 pub mod permissions;
 pub mod solo_key;

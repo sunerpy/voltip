@@ -1,4 +1,9 @@
-import { defaultEngineSettings, joinLiveText, livePreviewText } from "@voltip/shared";
+import {
+  defaultEngineSettings,
+  joinLiveText,
+  livePreviewText,
+  type PasteOutcome,
+} from "@voltip/shared";
 import {
   MOCK_ASR_MS,
   MOCK_COPY_MS,
@@ -15,7 +20,7 @@ import {
   MOCK_STREAMING_MODEL_ID,
   MockBackend,
 } from "@voltip/shared/mock";
-import { act, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderApp } from "../test/render";
 import { clipTail } from "@voltip/ui";
@@ -81,7 +86,7 @@ describe("Overlay page", () => {
     expect(screen.queryByTestId("page-overlay")).toBeNull();
   });
 
-  it("renders the spec sheet's eight pill states, the live caption, toasts, fallback card and causes", async () => {
+  it("renders the spec sheet's eight pill states, the live caption, a result card, toasts, fallback card and causes", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     renderApp({ path: "/overlay" });
     expect(await screen.findByRole("heading", { name: "悬浮窗", level: 1 })).toBeInTheDocument();
@@ -96,7 +101,14 @@ describe("Overlay page", () => {
       "error",
       "cancel-armed",
       "blocked",
+      // docs/dictation.md §28: the result card of a paste the field never received.
+      "error",
     ]);
+    const card = within(screen.getByTestId("overlay-card"));
+    expect(card.getByText("没有写进去")).toBeInTheDocument();
+    expect(
+      card.getAllByRole("button").map((b) => b.getAttribute("aria-label") ?? b.textContent),
+    ).toEqual(["粘贴", "复制", "关闭"]);
     expect(screen.getByText("预览")).toBeInTheDocument();
     expect(screen.getByText("文字没有送进目标窗口")).toBeInTheDocument();
     expect(screen.getByText("uipi_denied")).toBeInTheDocument();
@@ -117,7 +129,8 @@ describe("Overlay page", () => {
     const page = await screen.findByTestId("page-overlay");
     expect(themeOf(page)).toBe("glass");
     const pills = screen.getAllByRole("status").filter((el) => el.hasAttribute("data-state"));
-    expect(pills).toHaveLength(8);
+    // The eight states and the result card (docs/dictation.md §28).
+    expect(pills).toHaveLength(9);
     for (const pill of pills) expect(themeOf(pill)).toBe("glass_dark");
     expect(themeOf(screen.getByText("预览"))).toBe("glass_dark");
     expect(themeOf(screen.getByText("已取消 · 录音已丢弃"))).toBe("glass_dark");
@@ -342,7 +355,11 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
   it("docs/dictation.md section 14.3: a take whose window changed says the text was copied and stays as long as a failure", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
-      const backend = new MockBackend({ now: () => Date.now() });
+      // §28: with 识别结果卡片常驻 off the card leaves after a failure's time.
+      const backend = new MockBackend({
+        now: () => Date.now(),
+        settings: { engines: { ...defaultEngineSettings(), result_cards_stay: false } },
+      });
       renderApp({ path: "/overlay?state=live", backend });
       await screen.findByTestId("overlay-window");
       const take = async () => {
@@ -493,10 +510,8 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
     }
   });
 
-  it("regression: a failed run shows the reason and 复制文本 copies the kept text; cancel shows the danger pill", async () => {
+  it("regression: a failed run shows the reason and its card's 复制 copies the kept text; cancel shows the danger pill", async () => {
     const user = userEvent.setup();
-    const writeText = vi.fn(() => Promise.resolve());
-    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     const backend = new MockBackend({ now: () => Date.now() });
     renderApp({ path: "/overlay?state=live", backend });
     await screen.findByTestId("overlay-window");
@@ -507,16 +522,16 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
     const pill = await screen.findByRole("status");
     expect(pill).toHaveAttribute("data-state", "error");
     expect(pill).toHaveTextContent("未插入 · 粘贴超时");
-    // The pill window has no toast viewport (chrome-less); the clipboard write is the evidence.
-    await user.click(screen.getByRole("button", { name: "复制文本" }));
-    expect(writeText).toHaveBeenCalledWith("kept text");
+    // docs/dictation.md §28: the shell writes the clipboard (`overlay_copy`).
+    await user.click(screen.getByRole("button", { name: "复制" }));
+    expect(backend.overlayCopies).toEqual(["kept text"]);
     // No text kept (silent take): there is nothing to copy, so the button is not offered at all.
     act(() => {
       backend.simulateDictationFailed("没有听到声音");
     });
     expect(screen.getByRole("status")).toHaveTextContent("未插入 · 没有听到声音");
-    expect(screen.queryByRole("button", { name: "复制文本" })).toBeNull();
-    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: "复制" })).toBeNull();
+    expect(backend.overlayCopies).toHaveLength(1);
     await act(async () => {
       await backend.invoke("dictation_start");
       await backend.invoke("dictation_cancel");
@@ -546,7 +561,11 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
         backend.simulateDictationFailed("asr: 503 Service Unavailable", undefined, "asr");
       });
       expect(screen.getByRole("status")).toHaveAttribute("data-state", "error");
-      expect(screen.getByRole("status")).toHaveTextContent("录音已保留，可重新识别");
+      // §28: the card's sentence says it, and 重新识别 is right there.
+      expect(screen.getByTestId("pill-card-text")).toHaveTextContent(
+        "识别服务出错：503 Service Unavailable · 录音已保留",
+      );
+      expect(screen.getByRole("button", { name: "重新识别" })).toBeInTheDocument();
       // A take that kept its text has 复制文本 instead, and says nothing about the recording.
       await stop();
       act(() => {
@@ -918,5 +937,230 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("Overlay result cards (docs/dictation.md §28)", () => {
+  /** A take to its end: start, the device ready, stop, and the run. */
+  async function finishTake(backend: MockBackend) {
+    await act(async () => {
+      await backend.invoke("dictation_start");
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(MOCK_MIC_READY_MS + MOCK_METER_INTERVAL_MS * 2);
+    });
+    await act(async () => {
+      await backend.invoke("dictation_stop");
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(MOCK_ASR_MS + MOCK_REFINE_MS);
+    });
+    return screen.getByRole("status");
+  }
+
+  /** A take whose recognition failed after its recording was kept. */
+  async function failKept(backend: MockBackend) {
+    await act(async () => {
+      await backend.invoke("dictation_start");
+      await vi.advanceTimersByTimeAsync(1000);
+      await backend.invoke("dictation_stop");
+      await vi.advanceTimersByTimeAsync(backend.peek().settings.extra_recording_ms);
+    });
+    act(() => {
+      backend.simulateDictationFailed("asr: 503 Service Unavailable", undefined, "asr");
+    });
+    return screen.getByRole("status");
+  }
+
+  const buttons = () =>
+    screen.queryAllByRole("button").map((b) => b.getAttribute("aria-label") ?? b.textContent);
+
+  it("each of the four cards says what happened and offers its buttons; anything else is unchanged", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const backend = new MockBackend({ now: () => Date.now(), insertCheck: "not_written" });
+      renderApp({ path: "/overlay?state=live", backend });
+      await screen.findByTestId("overlay-window");
+      // 没有写进去: the clipboard holds the person's own content again.
+      let card = await finishTake(backend);
+      expect(card).toHaveAttribute("data-state", "error");
+      expect(card).toHaveTextContent("没有写进去");
+      expect(buttons()).toEqual(["粘贴", "复制", "关闭"]);
+      // 窗口已切换: the text is on the clipboard.
+      backend.setInsertCheck(undefined);
+      backend.simulateWindowSwitch(true);
+      card = await finishTake(backend);
+      expect(card).toHaveAttribute("data-state", "inserted");
+      expect(card).toHaveTextContent("窗口已切换，文字已复制");
+      expect(buttons()).toEqual(["粘贴", "复制", "关闭"]);
+      backend.simulateWindowSwitch(false);
+      // A failure that kept its text.
+      await act(async () => {
+        await backend.invoke("dictation_start");
+        backend.simulateDictationFailed("粘贴超时", "kept text");
+      });
+      expect(screen.getByRole("status")).toHaveTextContent("未插入 · 粘贴超时");
+      expect(buttons()).toEqual(["粘贴", "复制", "关闭"]);
+      // A failure without text whose recording is kept.
+      card = await failKept(backend);
+      expect(card).toHaveAttribute("data-state", "error");
+      expect(screen.getByTestId("pill-card-text")).toHaveTextContent(
+        /^识别服务出错：503 Service Unavailable · 录音已保留$/,
+      );
+      expect(card).not.toHaveTextContent("未插入");
+      expect(buttons()).toEqual(["重新识别", "打开历史", "关闭"]);
+      // Anything else is the pill it was: a paste, no speech, a failure without a recording.
+      card = await finishTake(backend);
+      expect(card).toHaveTextContent(`已插入 ${Array.from(MOCK_DICTATION_TEXT).length} 字`);
+      expect(buttons()).toEqual([]);
+      act(() => {
+        backend.simulateDictationFailed("没有听到声音", undefined, "no_speech");
+      });
+      expect(buttons()).toEqual([]);
+      await act(async () => {
+        await backend.invoke("dictation_start");
+        backend.simulateDictationFailed("识别失败");
+      });
+      expect(screen.getByRole("status")).toHaveTextContent("未插入");
+      expect(buttons()).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("粘贴 pastes and closes the card; when it could only copy, the card stays and says why", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const backend = new MockBackend({ now: () => Date.now(), insertCheck: "not_written" });
+      renderApp({ path: "/overlay?state=live", backend });
+      await screen.findByTestId("overlay-window");
+      await finishTake(backend);
+      await user.click(screen.getByRole("button", { name: "粘贴" }));
+      expect(backend.overlayPastes).toEqual([MOCK_DICTATION_TEXT]);
+      await waitFor(() => {
+        expect(screen.getByTestId("overlay-window")).toHaveAttribute("data-state", "blank");
+      });
+      expect(backend.peek().dictation.phase).toEqual({ phase: "idle" });
+      // The paste fell back to the clipboard: the card says so and stays.
+      await finishTake(backend);
+      backend.setPasteOutcome({ kind: "copied", reason: "timeout" });
+      await user.click(screen.getByRole("button", { name: "粘贴" }));
+      expect(await screen.findByTestId("pill-feedback")).toHaveTextContent(
+        "未找到上一个窗口 · 已复制到剪贴板",
+      );
+      expect(screen.getByRole("status")).toHaveTextContent("没有写进去");
+      backend.setPasteOutcome({ kind: "failed", reason: "inject" });
+      await user.click(screen.getByRole("button", { name: "粘贴" }));
+      await waitFor(() => {
+        expect(screen.getByTestId("pill-feedback")).toHaveTextContent("无法粘贴，也无法复制");
+      });
+      expect(backend.peek().dictation.phase.phase).toBe("done");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("regression: a 粘贴 that answers after the next take's card is up leaves that card", async () => {
+    // docs/dictation.md §28.4: 粘贴 closes the card of its own take only.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const backend = new MockBackend({ now: () => Date.now(), insertCheck: "not_written" });
+      const invoke = vi.spyOn(backend, "invoke");
+      let answer: (outcome: PasteOutcome) => void = () => undefined;
+      vi.spyOn(backend, "overlayPaste").mockImplementationOnce(
+        () =>
+          new Promise<PasteOutcome>((resolve) => {
+            answer = resolve;
+          }),
+      );
+      renderApp({ path: "/overlay?state=live", backend });
+      await screen.findByTestId("overlay-window");
+      await finishTake(backend);
+      const first = backend.peek().dictation.session;
+      await user.click(screen.getByRole("button", { name: "粘贴" }));
+      // The next take ends in a card of its own before that paste answers.
+      await act(async () => {
+        await backend.invoke("dictation_start");
+        backend.simulateDictationFailed("粘贴超时", "kept text");
+      });
+      expect(backend.peek().dictation.session).toBe(first + 1);
+      await act(async () => {
+        answer({ kind: "pasted" });
+        await Promise.resolve();
+      });
+      expect(invoke).toHaveBeenCalledWith("dictation_dismiss", { session: first });
+      expect(backend.peek().dictation.phase).toMatchObject({ phase: "failed", text: "kept text" });
+      expect(screen.getByRole("status")).toHaveTextContent("未插入 · 粘贴超时");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("regression: the overlay copy does not rely on navigator.clipboard", async () => {
+    // The pill's webview cannot take focus, so `navigator.clipboard` may refuse it, and it has no
+    // toast viewport: the card copies through the shell and says so itself.
+    const user = userEvent.setup();
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const backend = new MockBackend({ now: () => Date.now() });
+    renderApp({ path: "/overlay?state=live", backend });
+    await screen.findByTestId("overlay-window");
+    await act(async () => {
+      await backend.invoke("dictation_start");
+      backend.simulateDictationFailed("粘贴超时", "kept text");
+    });
+    await user.click(screen.getByRole("button", { name: "复制" }));
+    expect(backend.overlayCopies).toEqual(["kept text"]);
+    expect(writeText).not.toHaveBeenCalled();
+    expect(await screen.findByTestId("pill-feedback")).toHaveTextContent("已复制");
+    expect(backend.peek().dictation.phase.phase).toBe("failed");
+    vi.spyOn(backend, "overlayCopy").mockRejectedValueOnce(new Error("clipboard busy"));
+    await user.click(screen.getByRole("button", { name: "复制" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("pill-feedback")).toHaveTextContent("复制失败");
+    });
+  });
+
+  it("重新识别 recognises the kept recording again, 打开历史 opens the history, and 关闭 closes the card", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const backend = new MockBackend({ now: () => Date.now() });
+      const invoke = vi.spyOn(backend, "invoke");
+      renderApp({ path: "/overlay?state=live", backend });
+      await screen.findByTestId("overlay-window");
+      await failKept(backend);
+      const recording = backend.peek().dictation.recording;
+      expect(recording).toBeDefined();
+      await user.click(screen.getByRole("button", { name: "重新识别" }));
+      expect(invoke).toHaveBeenCalledWith("audio_retake", { id: recording });
+      await waitFor(() => {
+        expect(screen.getByRole("status")).toHaveAttribute("data-state", "processing");
+      });
+      await failKept(backend);
+      await user.click(screen.getByRole("button", { name: "打开历史" }));
+      expect(backend.historyOpens).toBe(1);
+      expect(screen.getByRole("status")).toHaveAttribute("data-state", "error");
+      await user.click(screen.getByRole("button", { name: "关闭" }));
+      expect(invoke).toHaveBeenCalledWith("dictation_dismiss", {
+        session: backend.peek().dictation.session,
+      });
+      await waitFor(() => {
+        expect(screen.getByTestId("overlay-window")).toHaveAttribute("data-state", "blank");
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the shell's copied state flashes 已复制上一条结果, in a release build too", async () => {
+    renderApp({ path: "/overlay?state=copied" });
+    const pill = await screen.findByRole("status");
+    expect(pill).toHaveAttribute("data-state", "inserted");
+    expect(pill).toHaveTextContent("已复制上一条结果");
+    expect(screen.queryAllByRole("button")).toEqual([]);
+    expect(isOverlayWindowState("copied", false)).toBe(true);
   });
 });

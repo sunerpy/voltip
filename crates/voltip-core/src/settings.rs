@@ -228,6 +228,10 @@ pub struct Settings {
     /// serialised, so a switched-off hotkey stays off (`null`) instead of the default coming back.
     #[serde(default = "default_edit_hotkey")]
     pub edit_hotkey: Option<String>,
+    /// The 复制上一条结果 hotkey (docs/dictation.md §28) in display form; `None` (the default, and
+    /// files written before it) assigns none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copy_last_hotkey: Option<String>,
     /// The lone-key trigger (docs/dictation.md §13.1): a right-hand modifier, Fn or a mouse button
     /// that drives a take on its own, next to [`Settings::hotkey`]; `None` (the default, and files
     /// written before it) = off.
@@ -470,6 +474,7 @@ impl Default for Settings {
             extra_recording_ms: 0,
             context_sharing: ContextSharing::default(),
             edit_hotkey: default_edit_hotkey(),
+            copy_last_hotkey: None,
             solo_key: None,
             pairing_always_on: false,
             pinned_scene: None,

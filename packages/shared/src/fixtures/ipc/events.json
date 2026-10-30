@@ -434,6 +434,8 @@
       "inject": "paste",
       "clipboard_after": "keep",
       "switched_window": "paste_here",
+      "insert_check": false,
+      "result_cards_stay": false,
       "asr_fallback": {
         "enabled": true,
         "models": [
@@ -467,6 +469,7 @@
       "window_title": true
     },
     "edit_hotkey": "Ctrl+Alt+E",
+    "copy_last_hotkey": "Ctrl+Shift+V",
     "solo_key": "right_ctrl",
     "pairing_always_on": true,
     "phone_talk": "tap",
@@ -711,6 +714,7 @@
     "capturing": false,
     "backend": "global-shortcut · Windows · RegisterHotKey",
     "edit_registered": "Ctrl+Alt+E",
+    "copy_last_registered": "Ctrl+Shift+V",
     "capabilities": {
       "global": true,
       "everywhere": true,
@@ -737,6 +741,7 @@
     "capturing": false,
     "backend": "global-shortcut · Linux · XWayland",
     "edit_error": "Ctrl+Alt+E 注册失败：already registered",
+    "copy_last_error": "Ctrl+Shift+V 注册失败：already registered",
     "capabilities": {
       "global": true,
       "everywhere": false,
@@ -949,7 +954,8 @@
       "duration_ms": 3200,
       "asr_ms": 640,
       "refine_ms": 2400,
-      "mode": "whole_take"
+      "mode": "whole_take",
+      "check": "written"
     },
     "session": 7,
     "kind": "dictation"
@@ -971,6 +977,23 @@
       "clipboard_code": "target_changed"
     },
     "session": 8,
+    "kind": "dictation"
+  },
+  {
+    "type": "dictation",
+    "phase": {
+      "phase": "done",
+      "text": "把 fetchUser 改成 async 然后加上错误处理",
+      "raw_text": "把 fetchUser 改成 async 然后加上错误处理",
+      "chars": 29,
+      "via": "paste",
+      "refined": false,
+      "duration_ms": 3200,
+      "asr_ms": 640,
+      "mode": "whole_take",
+      "check": "not_written"
+    },
+    "session": 9,
     "kind": "dictation"
   },
   {
@@ -1133,7 +1156,8 @@
         "refine_ms": 2400,
         "outcome": {
           "kind": "inserted",
-          "via": "paste"
+          "via": "paste",
+          "check": "unconfirmed"
         },
         "starred": true,
         "mode": "whole_take",
@@ -1197,7 +1221,8 @@
         "refine_ms": 900,
         "outcome": {
           "kind": "inserted",
-          "via": "paste"
+          "via": "paste",
+          "check": "not_written"
         },
         "starred": false,
         "mode": "whole_take",
@@ -1249,7 +1274,8 @@
         "asr_ms": 380,
         "outcome": {
           "kind": "inserted",
-          "via": "paste"
+          "via": "paste",
+          "check": "unconfirmed"
         },
         "starred": true,
         "mode": "live_inject",
@@ -1387,7 +1413,8 @@
         "refine_ms": 2400,
         "outcome": {
           "kind": "inserted",
-          "via": "paste"
+          "via": "paste",
+          "check": "unconfirmed"
         },
         "starred": true,
         "mode": "whole_take",
@@ -4717,6 +4744,8 @@
       "inject": "paste",
       "clipboard_after": "keep",
       "switched_window": "paste_here",
+      "insert_check": false,
+      "result_cards_stay": false,
       "asr_fallback": {
         "enabled": true,
         "models": [
@@ -4750,6 +4779,7 @@
       "window_title": true
     },
     "edit_hotkey": null,
+    "copy_last_hotkey": "Ctrl+Shift+V",
     "solo_key": "right_ctrl",
     "pairing_always_on": true,
     "phone_talk": "tap",

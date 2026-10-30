@@ -13,6 +13,10 @@
 //! `RegisterHotKey`, Carbon), and a `hold` take is cancelled with the chord still down, so Esc is
 //! also registered under each chord's modifiers (`Control+Alt+Escape` for `Ctrl+Alt+Space`).
 //!
+//! 复制上一条结果 (`Settings.copy_last_hotkey`, docs/dictation.md §28) is a third, optional chord
+//! that answers its press only: it puts the newest result on the clipboard ([`crate::copy_last`]);
+//! on pure Wayland the compositor runs `--copy-last` instead.
+//!
 //! The lone-key trigger (`Settings.solo_key`, docs/dictation.md §13.1) is watched by
 //! [`crate::solo_key`] next to the chords, with the same lifecycle: installed by [`apply`],
 //! suspended while the recorder is open, reported as `solo_registered` / `solo_error` /
@@ -44,8 +48,8 @@ pub fn edge_command(pressed: bool, source: EdgeSource, purpose: TakeKind) -> UiC
     UiCommand::HotkeyEdge { pressed, at_ms: now_ms(), source, purpose, chorded: false }
 }
 
-/// What the shell registers: the dictation hotkey, the voice-edit hotkey (`None` = off) and the
-/// lone-key trigger (`None` = off).
+/// What the shell registers: the dictation hotkey, the voice-edit hotkey (`None` = off), the
+/// lone-key trigger (`None` = off) and the 复制上一条结果 chord (`None` = none).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Chords {
     /// `Settings.hotkey`.
@@ -54,11 +58,18 @@ pub struct Chords {
     pub edit_hotkey: Option<String>,
     /// `Settings.solo_key`.
     pub solo_key: Option<SoloKey>,
+    /// `Settings.copy_last_hotkey`.
+    pub copy_last_hotkey: Option<String>,
 }
 
 impl From<&Settings> for Chords {
     fn from(settings: &Settings) -> Self {
-        Self { hotkey: settings.hotkey.clone(), edit_hotkey: settings.edit_hotkey.clone(), solo_key: settings.solo_key }
+        Self {
+            hotkey: settings.hotkey.clone(),
+            edit_hotkey: settings.edit_hotkey.clone(),
+            solo_key: settings.solo_key,
+            copy_last_hotkey: settings.copy_last_hotkey.clone(),
+        }
     }
 }
 
@@ -138,6 +149,11 @@ pub fn toggle_command() -> String {
 /// The same for the voice-edit key (docs/dictation.md §19): `voltip-desktop --edit-toggle`.
 pub fn edit_toggle_command() -> String {
     remote_command("--edit-toggle")
+}
+
+/// The same for 复制上一条结果 (docs/dictation.md §28): `voltip-desktop --copy-last`.
+pub fn copy_last_command() -> String {
+    remote_command("--copy-last")
 }
 
 fn remote_command(flag: &str) -> String {
@@ -348,6 +364,17 @@ pub fn apply<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge, registry: &Arc<Hot
             }
         }
     }
+    if let Some(copy) = &chords.copy_last_hotkey {
+        // The core refuses to save one of the other two chords; a hand-edited file may hold it.
+        if Hotkey::same_chord(copy, &chords.hotkey) || chords.edit_hotkey.as_ref().is_some_and(|edit| Hotkey::same_chord(copy, edit)) {
+            status.copy_last_error = Some(format!("{copy} 与另一个快捷键相同，未生效"));
+        } else {
+            match register_copy_last(app, copy, session) {
+                Ok(label) => status.copy_last_registered = Some(label),
+                Err(e) => status.copy_last_error = Some(e),
+            }
+        }
+    }
     sync_solo(bridge, registry, chords.solo_key, session, &mut status);
     *registry.status.lock() = status.clone();
     bridge.publish(UiEvent::Hotkey(status));
@@ -537,6 +564,37 @@ fn register<R: Runtime>(
     }
 }
 
+/// Register the 复制上一条结果 chord (docs/dictation.md §28): its press copies the newest result;
+/// the display label, or why not.
+fn register_copy_last<R: Runtime>(app: &AppHandle<R>, text: &str, session: Option<SessionKind>) -> Result<String, String> {
+    let hotkey = Hotkey::parse(text).map_err(|e| format!("{text}: {e}"))?;
+    let label = hotkey.display();
+    let remote = copy_last_command();
+    if let Some(blocked) = session_block(session, &label, &remote) {
+        tracing::warn!(hotkey = %label, backend = %backend_name(), error = %blocked, "no global hotkey on this session; the compositor must run {remote}");
+        return Err(blocked);
+    }
+    let shortcut = hotkey.to_tauri_shortcut();
+    let result = app.global_shortcut().on_shortcut(shortcut.as_str(), move |app, _shortcut, event| {
+        if event.state() == ShortcutState::Pressed {
+            crate::copy_last::run(app, "hotkey");
+        }
+    });
+    match result {
+        Ok(()) => {
+            tracing::info!(hotkey = %label, shortcut = %shortcut, "copy-last hotkey registered");
+            if let Some(caveat) = session_caveat(session, &remote) {
+                tracing::warn!(hotkey = %label, "{caveat}");
+            }
+            Ok(label)
+        }
+        Err(e) => {
+            tracing::warn!(hotkey = %label, error = %e, "copy-last hotkey registration failed");
+            Err(format!("{label} 未能生效：{e}"))
+        }
+    }
+}
+
 /// Watch the bridge for settings changes and keep the OS registration in sync.
 pub fn follow_settings<R: Runtime>(app: AppHandle<R>, bridge: Bridge, registry: Arc<HotkeyRegistry>) {
     if let Some(session) = linux_session() {
@@ -620,19 +678,19 @@ mod tests {
         assert!(!cancel_key_wanted(&DictationPhase::Cancelled { injected_chars: 0 }));
 
         // Bare, and under each chord's modifiers: a `hold` take is cancelled with the chord down.
-        let chords = Chords { hotkey: "Ctrl+Alt+Space".into(), edit_hotkey: Some("Ctrl+Alt+E".into()), solo_key: None };
+        let chords = Chords { hotkey: "Ctrl+Alt+Space".into(), edit_hotkey: Some("Ctrl+Alt+E".into()), solo_key: None, copy_last_hotkey: None };
         assert_eq!(cancel_shortcuts(&chords), ["Escape", "Control+Alt+Escape"]);
-        let chords = Chords { hotkey: "Alt+Shift+Z".into(), edit_hotkey: Some("Meta+E".into()), solo_key: None };
+        let chords = Chords { hotkey: "Alt+Shift+Z".into(), edit_hotkey: Some("Meta+E".into()), solo_key: None, copy_last_hotkey: None };
         assert_eq!(cancel_shortcuts(&chords), ["Escape", "Alt+Shift+Escape", "Super+Escape"]);
-        let chords = Chords { hotkey: "not a chord".into(), edit_hotkey: None, solo_key: None };
+        let chords = Chords { hotkey: "not a chord".into(), edit_hotkey: None, solo_key: None, copy_last_hotkey: None };
         assert_eq!(cancel_shortcuts(&chords), ["Escape"]);
         // Task Manager and Force Quit stay the system's.
-        let chords = Chords { hotkey: "Shift+Ctrl+D".into(), edit_hotkey: Some("Alt+Meta+E".into()), solo_key: None };
+        let chords = Chords { hotkey: "Shift+Ctrl+D".into(), edit_hotkey: Some("Alt+Meta+E".into()), solo_key: None, copy_last_hotkey: None };
         assert_eq!(cancel_shortcuts(&chords), ["Escape"]);
         // docs/dictation.md §13.1: a lone modifier held in `hold` adds its own; a mouse button none.
-        let chords = Chords { hotkey: "Ctrl+Alt+Space".into(), edit_hotkey: None, solo_key: Some(SoloKey::RightShift) };
+        let chords = Chords { hotkey: "Ctrl+Alt+Space".into(), edit_hotkey: None, solo_key: Some(SoloKey::RightShift), copy_last_hotkey: None };
         assert_eq!(cancel_shortcuts(&chords), ["Escape", "Control+Alt+Escape", "Shift+Escape"]);
-        let chords = Chords { hotkey: "Ctrl+Alt+Space".into(), edit_hotkey: None, solo_key: Some(SoloKey::MouseBack) };
+        let chords = Chords { hotkey: "Ctrl+Alt+Space".into(), edit_hotkey: None, solo_key: Some(SoloKey::MouseBack), copy_last_hotkey: None };
         assert_eq!(cancel_shortcuts(&chords), ["Escape", "Control+Alt+Escape"]);
         assert_eq!(SoloKey::ALL.into_iter().filter_map(solo_modifier).count(), 4, "the four right-hand modifiers");
 
@@ -735,7 +793,10 @@ mod tests {
         assert_eq!(selection_timing_for(Some(SessionKind::Wayland)), SelectionTiming::AtPress, "the compositor shortcut runs --edit-toggle");
         assert_eq!(selection_timing_for(None), SelectionTiming::AtPress, "Windows / macOS");
         let settings = Settings { hotkey: "Ctrl+Alt+Space".into(), edit_hotkey: None, solo_key: Some(SoloKey::RightCtrl), ..Settings::default() };
-        assert_eq!(Chords::from(&settings), Chords { hotkey: "Ctrl+Alt+Space".into(), edit_hotkey: None, solo_key: Some(SoloKey::RightCtrl) });
+        assert_eq!(
+            Chords::from(&settings),
+            Chords { hotkey: "Ctrl+Alt+Space".into(), edit_hotkey: None, solo_key: Some(SoloKey::RightCtrl), copy_last_hotkey: None }
+        );
         assert!(matches!(
             chorded_command(),
             UiCommand::HotkeyEdge { pressed: false, chorded: true, purpose: TakeKind::Dictation, source: EdgeSource::Hotkey, .. }

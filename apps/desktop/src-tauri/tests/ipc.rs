@@ -1279,6 +1279,7 @@ fn overlay_pill_and_hotkey_edges_follow_the_dictation_contract() {
         segments: None,
         live_error: None,
         clipboard_code: None,
+        check: None,
     };
     assert_eq!(pill_for(&done), Some("inserted"));
     let before = voltip_core::now_ms();
@@ -1589,6 +1590,9 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
             "permissions_request",
             "inject_preflight",
             "paste_text",
+            "overlay_copy",
+            "overlay_paste",
+            "open_history",
             "provider_console_open",
             "project_link_open",
             "guide_open",
@@ -1678,6 +1682,96 @@ fn paste_text_pastes_into_the_window_in_front_and_refuses_while_a_take_runs() {
     });
 }
 
+/// docs/dictation.md §28, through the command layer: the result card's 复制 (`overlay_copy`) writes
+/// the core's clipboard, never `navigator.clipboard`; 粘贴 (`overlay_paste`) pastes into the window
+/// in front — the pill never takes the focus — and takes the history's way out of the way only
+/// when Voltip itself is in front; 打开历史 (`open_history`) asks the main window for its history
+/// page; none of them writes the history.
+#[test]
+fn the_result_card_copies_pastes_into_the_window_in_front_and_opens_the_history() {
+    let probe = Arc::new(fakes::FakeProbe::app("notepad.exe", "Notepad", None));
+    let injector = Arc::new(fakes::FakeInjector::paste());
+    let ports = DictationPorts { probe: Some(probe.clone()), injector: injector.clone(), ..fakes::ports() };
+    let pure_wayland = voltip_desktop_lib::hotkey::linux_session().is_some_and(|s| s.kind == voltip_inject::SessionKind::Wayland);
+    with_running_app_on(ports, move |app, webview, _| {
+        wait_state(webview, |s| s.identity.is_some());
+        assert_eq!(invoke(webview, "overlay_copy", json!({ "text": "留下的文字" })), Ok(Value::Null));
+        assert_eq!(injector.clipboard_copies(), vec!["留下的文字".to_owned()]);
+        assert!(invoke(webview, "overlay_copy", json!({ "text": " \n" })).is_err(), "nothing to copy");
+        assert!(invoke(webview, "overlay_copy", json!({})).is_err(), "text is required");
+        let answer = invoke(webview, "overlay_paste", json!({ "text": "你好" }));
+        if pure_wayland {
+            assert_eq!(answer, Ok(json!({ "kind": "copied", "reason": "no_probe" })));
+        } else {
+            assert_eq!(answer, Ok(json!({ "kind": "pasted" })));
+            assert_eq!(injector.injected(), vec!["你好".to_owned()]);
+            // Voltip in front (macOS activates it when the pill is clicked): the history's way, which
+            // waits for another window and copies when none comes up.
+            probe.set_nothing();
+            assert_eq!(invoke(webview, "overlay_paste", json!({ "text": "你好" })), Ok(json!({ "kind": "copied", "reason": "timeout" })));
+            assert_eq!(injector.injected().len(), 1, "nothing more was pasted");
+        }
+        assert_eq!(invoke(webview, "overlay_paste", json!({ "text": " " })), Ok(json!({ "kind": "failed", "reason": "invalid" })));
+        let (tx, requests) = mpsc::channel::<String>();
+        app.listen_any("voltip://tray", move |ev| {
+            let _ = tx.send(ev.payload().to_owned());
+        });
+        assert_eq!(invoke(webview, "open_history", json!({})), Ok(Value::Null));
+        let request: Value = serde_json::from_str(&requests.recv_timeout(STEP_TIMEOUT).expect("the main window is asked")).unwrap();
+        assert_eq!(request, json!({ "action": "history" }));
+        assert!(core_state(webview).history_recent.is_empty(), "the card's buttons write no history");
+    });
+}
+
+/// docs/dictation.md §28 (D8), through the command layer: the desktop shows result cards, so a
+/// failure that kept its text stays past its dwell until 关闭 (`dictation_dismiss` for its take); a
+/// dismiss with nothing on screen, or for another take, changes nothing. `voltip --copy-last` (and
+/// the tray's entry and the hotkey) put the newest result on the clipboard.
+#[test]
+fn a_result_card_stays_until_it_is_dismissed_and_the_last_result_is_copied() {
+    let injector = Arc::new(fakes::FakeInjector::err("denied"));
+    let ports = DictationPorts { injector: injector.clone(), ..fakes::ports() };
+    with_running_app_on(ports, move |app, webview, _| {
+        wait_state(webview, |s| s.identity.is_some());
+        assert_eq!(invoke(webview, "dictation_dismiss", json!({ "session": 0 })), Ok(Value::Null), "nothing to dismiss is no error");
+        assert!(invoke(webview, "dictation_dismiss", json!({})).is_err(), "the take is named");
+        assert_eq!(invoke(webview, "dictation_start", json!({})), Ok(Value::Null));
+        wait_state(webview, |s| matches!(s.dictation.phase, DictationPhase::Listening { ready: true, .. }));
+        assert_eq!(invoke(webview, "dictation_stop", json!({})), Ok(Value::Null));
+        let st = wait_state(webview, |s| s.dictation.phase.is_terminal());
+        assert!(matches!(&st.dictation.phase, DictationPhase::Failed { text: Some(text), .. } if text == fakes::FAKE_TRANSCRIPT), "{:?}", st.dictation.phase);
+        // A dismiss for another take (a 粘贴 that answered late) leaves this card.
+        let session = st.dictation.session;
+        assert_eq!(invoke(webview, "dictation_dismiss", json!({ "session": session + 1 })), Ok(Value::Null));
+        // Past the dwell it would have had: still there (a check that nothing happens, not a wait).
+        std::thread::sleep(voltip_core::dictation::DWELL_WITH_TEXT + Duration::from_millis(500));
+        assert!(matches!(core_state(webview).dictation.phase, DictationPhase::Failed { .. }), "the card stays");
+        let argv = |a: &[&str]| std::iter::once("voltip").chain(a.iter().copied()).map(str::to_owned).collect::<Vec<_>>();
+        voltip_desktop_lib::on_second_instance(app, &argv(&["--copy-last"]));
+        wait_for(|| injector.clipboard_copies().contains(&fakes::FAKE_TRANSCRIPT.to_owned()).then_some(()));
+        assert_eq!(invoke(webview, "dictation_dismiss", json!({ "session": session })), Ok(Value::Null));
+        wait_state(webview, |s| s.dictation.phase == DictationPhase::Idle);
+    });
+}
+
+/// docs/dictation.md §28 (D12): the 复制上一条结果 chord is saved through its own command, refuses
+/// the dictation chord, and `null` assigns none.
+#[test]
+fn the_copy_last_chord_is_saved_through_its_own_command() {
+    with_running_app(|_, webview, rx| {
+        wait_state(webview, |s| s.identity.is_some());
+        assert_eq!(core_state(webview).settings.copy_last_hotkey, None, "none by default");
+        assert_eq!(invoke(webview, "settings_set_copy_last_hotkey", json!({ "hotkey": "Ctrl+Shift+V" })), Ok(Value::Null));
+        wait_state(webview, |s| s.settings.copy_last_hotkey.as_deref() == Some("Ctrl+Shift+V"));
+        assert_eq!(invoke(webview, "settings_set_copy_last_hotkey", json!({ "hotkey": "Ctrl+Alt+Space" })), Ok(Value::Null));
+        wait_event(rx, "error (copy_last_hotkey)", |e| e["type"] == "error" && e["message"].as_str().is_some_and(|m| m.contains("已用作听写快捷键")));
+        assert_eq!(core_state(webview).settings.copy_last_hotkey.as_deref(), Some("Ctrl+Shift+V"));
+        assert_eq!(invoke(webview, "settings_set_copy_last_hotkey", json!({ "hotkey": null })), Ok(Value::Null));
+        wait_state(webview, |s| s.settings.copy_last_hotkey.is_none());
+        assert!(invoke(webview, "settings_set_copy_last_hotkey", json!({ "hotkey": 5 })).is_err());
+    });
+}
+
 /// Regression (2026-10-29 goal review), through the command layer: with 仅复制到剪贴板 a window
 /// switch while the take was processing was reported as 窗口已切换. A take that only copies says
 /// nothing about the window (docs/dictation.md §14.3): `Done` via the clipboard without a code, and
@@ -1700,7 +1794,11 @@ fn regression_a_clipboard_only_take_says_nothing_about_a_window_switch() {
         let st = wait_state(webview, |s| s.dictation.phase.is_terminal());
         assert!(matches!(&st.dictation.phase, DictationPhase::Done { via: Via::Clipboard, clipboard_code: None, .. }), "{:?}", st.dictation.phase);
         let st = wait_state(webview, |s| s.history_recent.len() == 1);
-        assert!(matches!(st.history_recent[0].outcome, voltip_core::history::Outcome::Inserted { via: Via::Clipboard }), "{:?}", st.history_recent[0].outcome);
+        assert!(
+            matches!(st.history_recent[0].outcome, voltip_core::history::Outcome::Inserted { via: Via::Clipboard, check: None }),
+            "{:?}",
+            st.history_recent[0].outcome
+        );
     });
 }
 

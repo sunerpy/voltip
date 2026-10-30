@@ -291,6 +291,15 @@ pub struct EngineSettings {
     /// What a take does when the window in front changed while it was processed (§14.3).
     #[serde(skip_serializing_if = "SwitchedWindow::is_default")]
     pub switched_window: SwitchedWindow,
+    /// Check after each paste whether the text reached the focused field (docs/dictation.md §28):
+    /// 检查文字是否写入. On by default and then not written; files written before it read as on.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub insert_check: bool,
+    /// Keep the result cards on screen until they are closed or the next take starts
+    /// (docs/dictation.md §28): 识别结果卡片常驻. On by default; off, they go after their usual
+    /// dwell. On by default and then not written; files written before it read as on.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub result_cards_stay: bool,
     /// The recognition models to try after the selected one runs out of quota (docs/dictation.md §3.5).
     #[serde(skip_serializing_if = "FallbackSettings::is_default")]
     pub asr_fallback: FallbackSettings,
@@ -319,10 +328,22 @@ impl Default for EngineSettings {
             inject: InjectMode::Paste,
             clipboard_after: ClipboardAfter::Restore,
             switched_window: SwitchedWindow::CopyOnly,
+            insert_check: true,
+            result_cards_stay: true,
             asr_fallback: FallbackSettings::default(),
             llm_fallback: FallbackSettings::default(),
         }
     }
+}
+
+/// `true`: the serde default of the switches that are on unless the user turned them off.
+fn default_true() -> bool {
+    true
+}
+
+/// A switch at its default (on): not written to the settings file.
+fn is_true(on: &bool) -> bool {
+    *on
 }
 
 impl EngineSettings {
@@ -644,6 +665,10 @@ pub struct ResolvedEngines {
     pub clipboard_after: ClipboardAfter,
     /// `EngineSettings.switched_window` (§14.3).
     pub switched_window: SwitchedWindow,
+    /// `EngineSettings.insert_check` (docs/dictation.md §28).
+    pub insert_check: bool,
+    /// `EngineSettings.result_cards_stay` (docs/dictation.md §28).
+    pub result_cards_stay: bool,
     /// The recognition fallback models (docs/dictation.md §3.5).
     pub asr_fallback: FallbackPlan,
     /// The clean-up fallback models.
@@ -857,6 +882,8 @@ impl ResolvedEngines {
             inject: settings.inject,
             clipboard_after: settings.clipboard_after,
             switched_window: settings.switched_window,
+            insert_check: settings.insert_check,
+            result_cards_stay: settings.result_cards_stay,
             asr_fallback,
             refine_fallback,
             metering: None,
@@ -1367,6 +1394,24 @@ mod tests {
 
     fn with_provider(provider: ProviderId, choice: ProviderSettings) -> BTreeMap<ProviderId, ProviderSettings> {
         BTreeMap::from([(provider, choice)])
+    }
+
+    /// docs/dictation.md §28 (D13): 检查文字是否写入 and 识别结果卡片常驻 are on by default, read as on
+    /// from files written before them, and only written once switched off.
+    #[test]
+    fn the_insert_check_and_the_result_cards_are_on_unless_switched_off() {
+        let s = EngineSettings::default();
+        assert!(s.insert_check && s.result_cards_stay);
+        let old: EngineSettings = serde_json::from_str(r#"{"refine_enabled":false,"inject":"paste"}"#).unwrap();
+        assert!(old.insert_check && old.result_cards_stay, "a file from before reads as on");
+        let off = EngineSettings { insert_check: false, result_cards_stay: false, ..EngineSettings::default() };
+        let json = serde_json::to_string(&off).unwrap();
+        assert!(json.contains(r#""insert_check":false"#) && json.contains(r#""result_cards_stay":false"#), "{json}");
+        assert_eq!(serde_json::from_str::<EngineSettings>(&json).unwrap(), off);
+        let one: EngineSettings = serde_json::from_str(r#"{"result_cards_stay":false}"#).unwrap();
+        assert!(one.insert_check && !one.result_cards_stay);
+        let resolved = ResolvedEngines::resolve(&one, &UserSecrets::default(), &BuiltIn::EMPTY);
+        assert!(resolved.insert_check && !resolved.result_cards_stay, "resolved as configured");
     }
 
     #[test]

@@ -16,7 +16,7 @@ import {
   fixTarget,
   formatTakeLength,
   isBuiltinPreset,
-  outcomeLabel,
+  outcomeDetailText,
   prefillFor,
   presetRefLabel,
   recordingOfEntry,
@@ -675,7 +675,7 @@ export function HistoryDetail({
         )}
         <Readout
           label={t("history.detail.outcome")}
-          value={outcomeLabel(entry.outcome, locale).text}
+          value={outcomeDetailText(entry.outcome, locale)}
           size="sm"
         />
         <Readout

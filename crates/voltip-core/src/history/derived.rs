@@ -54,9 +54,12 @@ pub(super) const fn kind_name(kind: TakeKind) -> &'static str {
     }
 }
 
-/// How the entry ended, as its `outcome` column stores it (the wire's `outcome.kind`).
+/// How the entry ended, as its `outcome` column stores it: the wire's `outcome.kind`, except that a
+/// paste the insert check found not written (docs/dictation.md §28) is `not_written`, so the
+/// 未插入 filter (`outcome <> 'inserted'`) lists it.
 pub(super) const fn outcome_name(outcome: &Outcome) -> &'static str {
     match outcome {
+        Outcome::Inserted { check: Some(crate::dictation::InsertCheck::NotWritten), .. } => "not_written",
         Outcome::Inserted { .. } => "inserted",
         Outcome::Clipboard { .. } => "clipboard",
         Outcome::Failed { .. } => "failed",

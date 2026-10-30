@@ -12,6 +12,7 @@
     "kind": "dictation",
     "mode": "whole_take",
     "outcome": {
+      "check": "unconfirmed",
       "kind": "inserted",
       "via": "paste"
     },
@@ -70,6 +71,7 @@
         "kind": "standalone"
       },
       "outcome": {
+        "check": "unconfirmed",
         "kind": "inserted",
         "via": "paste"
       },
@@ -278,6 +280,7 @@
         "kind": "dictation",
         "mode": "whole_take",
         "outcome": {
+          "check": "unconfirmed",
           "kind": "inserted",
           "via": "paste"
         },

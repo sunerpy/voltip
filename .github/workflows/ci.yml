@@ -37,6 +37,13 @@ on:
   pull_request:
   # A full run on any branch, the macOS jobs included (they skip pull requests).
   workflow_dispatch:
+    inputs:
+      # The insert check's measurement (docs/dictation.md §28 测量): how soon the readers see a
+      # paste in Notepad, Edge, TextEdit and Safari. Off by default; `-f insert_probe=true`.
+      insert_probe:
+        description: Measure the insert check on the Windows and Apple silicon desktops
+        type: boolean
+        default: false
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
@@ -649,8 +656,9 @@ jobs:
   # The real Tauri desktop app started under Xvfb with the debug-only in-memory secret store;
   # the WebView screenshots are the evidence that the shell builds, starts the core and renders.
   # The lone-key trigger's real low-level hooks (docs/dictation.md §13.1) on a Windows desktop:
-  # WH_KEYBOARD_LL / WH_MOUSE_LL installed, fed with SendInput, edges asserted. Only the small
-  # voltip-hooks crate is built, natively.
+  # WH_KEYBOARD_LL / WH_MOUSE_LL installed, fed with SendInput, edges asserted; the clipboard across
+  # a paste, and the insert check's reader (§28). Only the small voltip-hooks, voltip-inject and
+  # voltip-focus crates are built, natively.
   hooks-windows:
     name: windows · lone-key hooks on a real desktop
     needs: [changes]
@@ -699,6 +707,125 @@ jobs:
         timeout-minutes: 5
         run: cargo test -p voltip-inject --test real_clipboard -- --ignored --test-threads=1 --nocapture
 
+      # The insert check's UI Automation reader on this desktop (docs/dictation.md §28): a paste
+      # into Notepad is written, the test's own read-only EDIT stays not written, the focus moving
+      # to its other EDIT is unconfirmed. Only the small voltip-focus crate is built.
+      - name: Build the insert check's reader test
+        run: cargo test -p voltip-focus --test focus_windows --no-run
+
+      - name: Real insert check (cargo test -p voltip-focus --test focus_windows -- --ignored)
+        timeout-minutes: 5
+        run: cargo test -p voltip-focus --test focus_windows -- --ignored --test-threads=1 --nocapture
+
+      # On demand (`insert_probe`): 50 pastes each into Notepad and into an Edge textarea and
+      # contenteditable, the readings timed (crates/voltip-focus/examples/insert_confirm_probe.rs).
+      # Windows PowerShell for UI Automation, which brings each window to the front.
+      - name: Build the insert check's measurement
+        if: github.event_name == 'workflow_dispatch' && inputs.insert_probe
+        run: cargo build -p voltip-focus --example insert_confirm_probe
+
+      # Native programs write to standard error here (the probe sums up there): no global Stop.
+      - name: Measure the insert check (Notepad, Edge)
+        if: github.event_name == 'workflow_dispatch' && inputs.insert_probe
+        timeout-minutes: 45
+        shell: powershell
+        run: |
+          $probe = (Resolve-Path 'target\debug\examples\insert_confirm_probe.exe' -ErrorAction Stop).Path
+          New-Item -ItemType Directory -Force insert-probe | Out-Null
+          Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes -ErrorAction Stop
+          Add-Type -ErrorAction Stop -TypeDefinition @'
+          using System;
+          using System.Runtime.InteropServices;
+          using System.Text;
+          public static class ProbeWindows {
+            delegate bool EnumProc(IntPtr hwnd, IntPtr lparam);
+            [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc proc, IntPtr lparam);
+            [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowTextW(IntPtr hwnd, StringBuilder text, int max);
+            [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassNameW(IntPtr hwnd, StringBuilder name, int max);
+            [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hwnd);
+            [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+            [DllImport("user32.dll")] static extern bool GetClientRect(IntPtr hwnd, out RECT rect);
+            [DllImport("user32.dll")] static extern bool ClientToScreen(IntPtr hwnd, ref POINT point);
+            [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
+            [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+            [DllImport("user32.dll")] static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
+            public struct RECT { public int Left, Top, Right, Bottom; }
+            public struct POINT { public int X, Y; }
+            // Raise `hwnd` above the other windows and click the middle of its client area.
+            public static void Click(IntPtr hwnd) {
+              SetWindowPos(hwnd, new IntPtr(-1), 0, 0, 0, 0, 0x0001 | 0x0002);
+              RECT rect; GetClientRect(hwnd, out rect);
+              var point = new POINT { X = (rect.Right - rect.Left) / 2, Y = (rect.Bottom - rect.Top) / 2 };
+              ClientToScreen(hwnd, ref point);
+              SetCursorPos(point.X, point.Y);
+              mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);
+              mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);
+            }
+            // The first visible top-level window of class `cls` (any when empty) whose title holds `part`.
+            public static IntPtr Find(string cls, string part) {
+              IntPtr found = IntPtr.Zero;
+              EnumWindows((hwnd, _) => {
+                if (!IsWindowVisible(hwnd)) return true;
+                var name = new StringBuilder(256); GetClassNameW(hwnd, name, name.Capacity);
+                var title = new StringBuilder(512); GetWindowTextW(hwnd, title, title.Capacity);
+                if ((cls.Length > 0 && name.ToString() != cls) || !title.ToString().Contains(part)) return true;
+                found = hwnd;
+                return false;
+              }, IntPtr.Zero);
+              return found;
+            }
+          }
+          '@
+          function Front([string] $cls, [string] $part, [string] $what) {
+            $deadline = (Get-Date).AddSeconds(60)
+            $window = [IntPtr]::Zero
+            while ($window -eq [IntPtr]::Zero) {
+              if ((Get-Date) -gt $deadline) { throw "no window for $what" }
+              Start-Sleep -Milliseconds 250
+              $window = [ProbeWindows]::Find($cls, $part)
+            }
+            # UI Automation may refuse ("cannot receive focus"); then a click in the middle of the
+            # window (Notepad's text, the page's one field) brings it forward and focuses the field.
+            try { [System.Windows.Automation.AutomationElement]::FromHandle($window).SetFocus() } catch { Write-Host "focus ${what}: $($_.Exception.Message)" }
+            $clicked = $false
+            $deadline = (Get-Date).AddSeconds(5)
+            while ([ProbeWindows]::GetForegroundWindow() -ne $window) {
+              if ((Get-Date) -gt $deadline) {
+                if ($clicked) { throw "$what did not come to the front" }
+                [ProbeWindows]::Click($window)
+                $clicked = $true
+                $deadline = (Get-Date).AddSeconds(20)
+              }
+              Start-Sleep -Milliseconds 100
+            }
+          }
+          function Probe([string] $app, [string] $id) {
+            & $probe --app $app --app-id $id --runs 50 --out "insert-probe\$app.csv"
+            if ($LASTEXITCODE -ne 0) { throw "the probe failed in $app" }
+          }
+          Start-Process notepad.exe -ErrorAction Stop | Out-Null
+          Front 'Notepad' '' 'Notepad'
+          Probe 'notepad' 'notepad'
+          Stop-Process -Name notepad -Force -ErrorAction SilentlyContinue
+          $url = 'file:///' + ((Resolve-Path 'crates\voltip-focus\examples\insert_confirm_probe.html' -ErrorAction Stop).Path -replace '\\', '/')
+          foreach ($field in 'textarea', 'editable') {
+            $profileDir = Join-Path $env:RUNNER_TEMP "edge-probe-$field"
+            Start-Process msedge -ErrorAction Stop -ArgumentList '--no-first-run', '--no-default-browser-check', "--user-data-dir=$profileDir", "--app=$url#$field" | Out-Null
+            Front '' "voltip-probe $field" "Edge ($field)"
+            Probe "edge-$field" 'msedge'
+            Stop-Process -Name msedge -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+          }
+
+      - name: Upload the insert check's measurement
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.insert_probe
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: insert-probe-windows
+          path: insert-probe/*.csv
+          if-no-files-found: warn
+          retention-days: 7
+
   smoke-desktop:
     name: smoke · desktop under Xvfb
     needs: [changes]
@@ -725,8 +852,9 @@ jobs:
             libx11-dev libxtst-dev libxcb1-dev patchelf pkg-config cmake \
             xvfb xdotool scrot x11-utils python3-pil \
             xclip pulseaudio pulseaudio-utils libasound2-plugins \
-            weston sway wtype wl-clipboard grim dbus
-          command -v Xvfb xdotool scrot xclip pulseaudio pactl paplay weston sway wtype wl-copy grim dbus-daemon
+            weston sway wtype wl-clipboard grim dbus \
+            at-spi2-core libglib2.0-bin python3-gi gir1.2-gtk-3.0
+          command -v Xvfb xdotool scrot xclip pulseaudio pactl paplay weston sway wtype wl-copy grim dbus-daemon gdbus
           /usr/bin/python3 -c 'import PIL; print("PIL", PIL.__version__)'
 
       - name: Rust toolchain (rust-toolchain.toml)
@@ -773,6 +901,14 @@ jobs:
       # and HTML xclip copied come back, and the dictation is marked for clipboard managers.
       - name: Real clipboard under Xvfb (cargo test -p voltip-inject --test real_display -- --ignored)
         run: xvfb-run -a cargo test -p voltip-inject --test real_display real_an_image -- --ignored --test-threads=1 --nocapture
+
+      # The insert check's AT-SPI reader against a GTK 3 window on a real X server, in a private
+      # D-Bus session with the accessibility bus switched on (docs/dictation.md §28): a typed text
+      # is written, a read-only entry stays not written, another entry taking the focus is
+      # unconfirmed, and with accessibility off nothing is read.
+      - name: Real insert check under Xvfb (scripts/focus-check-linux.sh)
+        timeout-minutes: 10
+        run: scripts/focus-check-linux.sh
 
       - name: make smoke-desktop (build, start under Xvfb, hotkey → overlay → outcome, screenshots)
         run: make smoke-desktop
@@ -1120,6 +1256,67 @@ jobs:
           done
           sudo sqlite3 "$db" "SELECT service, client, auth_value FROM access WHERE client = '$bin';"
           "$bin" --ignored --test-threads=1 --nocapture
+
+      # The insert check's Accessibility reader (docs/dictation.md §28): a paste into the test's own
+      # text view, which can be selected but not edited, stays not written; a paste into a TextEdit
+      # document is written. The test has its own main (AppKit runs on the main thread); its
+      # binary is granted Accessibility and event posting as the event tap's is.
+      - name: Real insert check (Accessibility granted to the test binary)
+        if: matrix.arch == 'aarch64'
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          bin=$(cargo test -p voltip-focus --test focus_macos --no-run --message-format=json \
+            | jq -r 'select(.reason == "compiler-artifact" and .target.name == "focus_macos" and .executable != null) | .executable' | tail -1)
+          [ -x "$bin" ] || { echo "::error::no test binary for focus_macos"; exit 1; }
+          echo "test binary: $bin"
+          db="/Library/Application Support/com.apple.TCC/TCC.db"
+          for service in kTCCServiceAccessibility kTCCServicePostEvent; do
+            sudo sqlite3 "$db" "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, indirect_object_identifier, flags, last_modified) VALUES ('$service', '$bin', 1, 2, 4, 1, 'UNUSED', 0, $(date +%s));"
+          done
+          "$bin" --ignored
+
+      # On demand (`insert_probe`): 50 pastes each into TextEdit and into a Safari textarea and
+      # contenteditable, the readings timed (crates/voltip-focus/examples/insert_confirm_probe.rs).
+      - name: Measure the insert check (TextEdit, Safari)
+        if: matrix.arch == 'aarch64' && github.event_name == 'workflow_dispatch' && inputs.insert_probe
+        timeout-minutes: 45
+        run: |
+          set -euo pipefail
+          cargo build -p voltip-focus --example insert_confirm_probe
+          probe="$PWD/target/debug/examples/insert_confirm_probe"
+          db="/Library/Application Support/com.apple.TCC/TCC.db"
+          for service in kTCCServiceAccessibility kTCCServicePostEvent; do
+            sudo sqlite3 "$db" "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, indirect_object_identifier, flags, last_modified) VALUES ('$service', '$probe', 1, 2, 4, 1, 'UNUSED', 0, $(date +%s));"
+          done
+          mkdir -p insert-probe
+          front() { lsappinfo info -only bundleid "$(lsappinfo front)" | sed -n 's/.*"CFBundleIdentifier"="\(.*\)".*/\1/p'; }
+          wait_front() {
+            for _ in $(seq 1 300); do [ "$(front)" = "$1" ] && return 0; sleep 0.2; done
+            echo "::error::$1 did not come to the front (in front: $(front))"; return 1
+          }
+          document="$RUNNER_TEMP/voltip-probe.txt"
+          : >"$document"
+          open -a TextEdit "$document"
+          wait_front com.apple.TextEdit
+          "$probe" --app textedit --app-id com.apple.textedit --runs 50 --out insert-probe/textedit.csv
+          pkill -x TextEdit || true
+          page="$PWD/crates/voltip-focus/examples/insert_confirm_probe.html"
+          for field in textarea editable; do
+            open -a Safari "file://$page#$field"
+            wait_front com.apple.Safari
+            "$probe" --app "safari-$field" --app-id com.apple.safari --runs 50 --out "insert-probe/safari-$field.csv"
+          done
+          pkill -x Safari || true
+
+      - name: Upload the insert check's measurement
+        if: always() && matrix.arch == 'aarch64' && github.event_name == 'workflow_dispatch' && inputs.insert_probe
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: insert-probe-macos
+          path: insert-probe/*.csv
+          if-no-files-found: warn
+          retention-days: 7
 
       # A restored target/ may hold the dmg of an earlier version.
       - name: Build Voltip.app and the dmg (signed ad hoc)

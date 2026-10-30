@@ -9,6 +9,7 @@ pub mod archive;
 pub mod engine;
 pub mod fakes;
 pub mod fallback;
+pub mod insert_check;
 pub mod long;
 pub mod ports;
 pub mod redecode;
@@ -23,11 +24,12 @@ pub use crate::scenes::TakeContext;
 pub use engine::{DictationEngine, DictationPorts, EngineFactory, Retake, RetakeAudio, TakeClients, engine_clients};
 pub use fallback::{FallbackRefiner, FallbackTranscriber, Link, QUOTA_RETRY_AFTER, QuotaKey, QuotaLedger, first_with_quota, open_order};
 pub use ports::{
-    AudioSource, Capture, CaptureOptions, ClipboardCode, DWELL, DWELL_WITH_TEXT, DictationError, ForegroundApp, ForegroundProbe, GateCancel, InjectNote,
-    Injection, Injector, InsertGate, InsertSession, Inserted, LIVE_CHUNK_SAMPLES, LIVE_SAMPLE_RATE_HZ, LevelFrame, LivePcm, MAX_EDIT_SELECTION_CHARS,
-    MAX_RECORDING, MAX_RECORDING_STREAMING, MIN_RECORDING, PARTIAL_THROTTLE, PCM_SAMPLE_RATE_HZ, PROBE_DEADLINE, PcmStream, Recording, RefineContext,
-    RefineHints, Refined, Refiner, Segment, Segmenter, SegmenterFactory, SelectionTiming, ServiceProbe, StreamEvent, StreamFinal, StreamingSession,
-    StreamingTranscriber, Transcriber, Transcript, Via, max_recording,
+    AudioSource, CONFIRM_WITHIN, Capture, CaptureOptions, ClipboardCode, DWELL, DWELL_WITH_TEXT, DictationError, FOCUS_READ_DEADLINE, FocusReader, FocusWatch,
+    ForegroundApp, ForegroundProbe, GateCancel, InjectNote, Injection, Injector, InsertCheck, InsertGate, InsertSession, Inserted, LIVE_CHUNK_SAMPLES,
+    LIVE_SAMPLE_RATE_HZ, LevelFrame, LivePcm, MAX_EDIT_SELECTION_CHARS, MAX_RECORDING, MAX_RECORDING_STREAMING, MIN_RECORDING, PARTIAL_THROTTLE,
+    PCM_SAMPLE_RATE_HZ, PROBE_DEADLINE, PcmStream, Recording, RefineContext, RefineHints, Refined, Refiner, Segment, Segmenter, SegmenterFactory,
+    SelectionTiming, ServiceProbe, Settled, StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber, Transcriber, Transcript, UnconfirmedWhy, Via,
+    max_recording,
 };
 
 /// What a take is for (docs/dictation.md §19): dictating text, or rewriting the text selected in
@@ -312,6 +314,11 @@ pub enum DictationPhase {
         /// clipboard-only take, and from a core that did not send it.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         clipboard_code: Option<ClipboardCode>,
+        /// What the insert check found after the paste (docs/dictation.md §28): `not_written` is the
+        /// 没有写进去 card. Absent when no check ran (switched off, nothing pasted, a shell without
+        /// a reader) and from a core that did not send it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        check: Option<InsertCheck>,
     },
     /// The pipeline stopped short.
     Failed {
@@ -484,6 +491,7 @@ mod tests {
             segments: None,
             live_error: None,
             clipboard_code: None,
+            check: None,
         };
         assert!(done.is_terminal());
         let json = serde_json::to_string(&done).unwrap();
@@ -512,6 +520,7 @@ mod tests {
             segments: Some(vec![Segment { text: "你好。".into(), start_ms: 0, end_ms: 900 }]),
             live_error: Some("flush: asr: x".into()),
             clipboard_code: None,
+            check: None,
         };
         let json = serde_json::to_string(&streamed).unwrap();
         assert!(json.contains(r#""mode":"streaming_final","segments":[{"text":"你好。","start_ms":0,"end_ms":900}],"live_error":"flush: asr: x""#), "{json}");

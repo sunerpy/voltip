@@ -34,10 +34,12 @@ function fakeTray() {
 }
 
 describe("tray requests", () => {
-  it("reads only the two actions the webview finishes", () => {
+  it("reads only the three actions the webview finishes", () => {
     expect(TRAY_EVENT).toBe("voltip://tray");
     expect(trayRequestOf({ action: "settings" })).toBe("settings");
     expect(trayRequestOf({ action: "update" })).toBe("update");
+    // docs/dictation.md §28: the result card's 打开历史.
+    expect(trayRequestOf({ action: "history" })).toBe("history");
     for (const payload of [null, undefined, "settings", {}, { action: "quit" }, { action: 1 }])
       expect(trayRequestOf(payload)).toBeUndefined();
   });
@@ -83,5 +85,15 @@ describe("tray requests", () => {
     await tray.send({ action: "update" });
     expect(await screen.findByRole("dialog", { name: "软件更新" })).toBeInTheDocument();
     expect(invoke).toHaveBeenCalledWith("update_check");
+  });
+
+  it("docs/dictation.md section 28: the result card's 打开历史 brings the main window up on the history page", async () => {
+    const tray = fakeTray();
+    renderApp({ traySource: tray.source });
+    await waitFor(() => {
+      expect(tray.subscribed()).toBe(true);
+    });
+    await tray.send({ action: "history" });
+    expect(await screen.findByTestId("page-history")).toBeInTheDocument();
   });
 });

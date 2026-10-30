@@ -21,7 +21,13 @@ import { Home } from "./pages/Home";
 import { NotFound } from "./pages/NotFound";
 import { Onboarding } from "./pages/Onboarding";
 import { AiModels, SpeechModels } from "./pages/Models";
-import { LIVE_STATE, BLANK_STATE, Overlay, isOverlayWindowState } from "./pages/Overlay";
+import {
+  LIVE_STATE,
+  BLANK_STATE,
+  COPIED_STATE,
+  Overlay,
+  isOverlayWindowState,
+} from "./pages/Overlay";
 import { Rules } from "./pages/Rules";
 import { SettingsDialog } from "./pages/settings/SettingsDialog";
 import { Usage } from "./pages/Usage";
@@ -238,7 +244,9 @@ function Frame({ traySource }: { traySource?: TrayRequestSource }) {
     };
   }, [overlayWindow]);
   if (overlayWindow) {
-    return route.state === LIVE_STATE || route.state === BLANK_STATE ? (
+    return route.state === LIVE_STATE ||
+      route.state === BLANK_STATE ||
+      route.state === COPIED_STATE ? (
       <Overlay state={route.state} />
     ) : (
       <OverlayPreview state={route.state} />

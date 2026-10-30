@@ -390,6 +390,70 @@ describe("Pill width", () => {
   });
 });
 
+describe("Pill result card (docs/dictation.md §28)", () => {
+  it("draws the card's buttons in order after its sentence, then 关闭; the sentence gives way", async () => {
+    const user = userEvent.setup();
+    const paste = vi.fn();
+    const copy = vi.fn();
+    const dismiss = vi.fn();
+    for (const state of ["inserted", "error"] as const) {
+      const { container, unmount } = render(
+        <Pill
+          state={state}
+          label="没有写进去"
+          levels={[0.2, 0.8]}
+          readout="剪贴板"
+          via="VS Code"
+          actions={[
+            { label: "粘贴", onClick: paste, primary: true },
+            { label: "复制", onClick: copy },
+          ]}
+          onDismiss={dismiss}
+        />,
+      );
+      const buttons = screen
+        .getAllByRole("button")
+        .map((b) => b.getAttribute("aria-label") ?? b.textContent);
+      expect(buttons).toEqual(["粘贴", "复制", "关闭"]);
+      await user.click(screen.getByRole("button", { name: "粘贴" }));
+      await user.click(screen.getByRole("button", { name: "复制" }));
+      await user.click(screen.getByRole("button", { name: "关闭" }));
+      // A card has no room for the inserted pill's flourishes; its sentence truncates instead.
+      expect(container.querySelector('[role="img"][data-state]')).toBeNull();
+      expect(screen.queryByText("→ VS Code")).toBeNull();
+      expect(screen.queryByText("剪贴板")).toBeNull();
+      expect(screen.getByTestId("pill-card-text").className).toContain("truncate");
+      expect(screen.getByTestId("pill-card-text")).toHaveAttribute("title", "没有写进去");
+      unmount();
+    }
+    expect([paste.mock.calls.length, copy.mock.calls.length, dismiss.mock.calls.length]).toEqual([
+      2, 2, 2,
+    ]);
+  });
+
+  it("says what the last button did in place of the note, and a pill without a card is unchanged", () => {
+    const { rerender } = render(
+      <Pill
+        state="error"
+        label="识别失败"
+        note="录音已保留"
+        feedback="已复制"
+        actions={[{ label: "复制", onClick: () => undefined }]}
+        onDismiss={() => undefined}
+      />,
+    );
+    expect(screen.getByTestId("pill-feedback")).toHaveTextContent("已复制");
+    expect(screen.queryByTestId("pill-note")).toBeNull();
+    rerender(<Pill state="error" label="识别失败" note="录音已保留" />);
+    expect(screen.queryByTestId("pill-feedback")).toBeNull();
+    expect(screen.getByTestId("pill-note")).toHaveTextContent("录音已保留");
+    expect(screen.queryByRole("button", { name: "关闭" })).toBeNull();
+    rerender(<Pill state="inserted" label="已插入 9 字" readout="粘贴" levels={[0.2]} />);
+    expect(screen.getByText("粘贴")).toBeInTheDocument();
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+});
+
 describe("the inserted pill's note (docs/dictation.md §3.6)", () => {
   it("regression: a failure with the service's words is cut in the pill and whole in its tooltip (docs/dictation.md section 3.12)", () => {
     const text =

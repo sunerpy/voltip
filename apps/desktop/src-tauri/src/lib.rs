@@ -19,6 +19,7 @@ use std::sync::Arc;
 pub mod audio;
 pub mod backup;
 pub mod cli;
+pub mod copy_last;
 pub mod dictation;
 pub mod exit;
 pub mod export;
@@ -53,7 +54,7 @@ pub const DEV_DATA_DIR_ENV: &str = "VOLTIP_DEV_DATA_DIR";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 135] = [
+pub const COMMANDS: [&str; 140] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -78,6 +79,7 @@ pub const COMMANDS: [&str; 135] = [
     "settings_set_theme",
     "settings_set_hotkey",
     "settings_set_edit_hotkey",
+    "settings_set_copy_last_hotkey",
     "settings_set_solo_key",
     "settings_set_microphone",
     "settings_set_recording",
@@ -92,6 +94,7 @@ pub const COMMANDS: [&str; 135] = [
     "dictation_start",
     "dictation_stop",
     "dictation_cancel",
+    "dictation_dismiss",
     "hotkey_edge",
     "settings_set_activation",
     "settings_set_engines",
@@ -188,6 +191,9 @@ pub const COMMANDS: [&str; 135] = [
     "permissions_request",
     "inject_preflight",
     "paste_text",
+    "overlay_copy",
+    "overlay_paste",
+    "open_history",
     "phone_share_text",
 ];
 
@@ -383,6 +389,14 @@ fn settings_set_edit_hotkey(bridge: tauri::State<'_, Bridge>, hotkey: Option<Str
     Ok(bridge.dispatch(UiCommand::SettingsSetEditHotkey { hotkey })?)
 }
 
+/// 复制上一条结果's chord (docs/dictation.md §28): a chord, or `null` for none (`--copy-last` and
+/// the tray's entry keep working). The core validates it like the dictation hotkey, refuses the
+/// other two chords, persists and re-emits `settings`; the hotkey module re-registers.
+#[tauri::command]
+fn settings_set_copy_last_hotkey(bridge: tauri::State<'_, Bridge>, hotkey: Option<String>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetCopyLastHotkey { hotkey })?)
+}
+
 /// The lone-key trigger (docs/dictation.md §13.1): a key, or `null` to switch it off. The core
 /// persists it; `hotkey::follow_settings` (un)installs the input hook when `settings` arrives.
 #[tauri::command]
@@ -450,6 +464,13 @@ fn dictation_stop(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
 #[tauri::command]
 fn dictation_cancel(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
     Ok(bridge.dispatch(UiCommand::DictationCancel)?)
+}
+
+/// The result card's 关闭, or its 粘贴 that went in (docs/dictation.md §28): the card of the take
+/// `session` goes at once; a take under way, or a card of another take, is not touched.
+#[tauri::command]
+fn dictation_dismiss(bridge: tauri::State<'_, Bridge>, session: u64) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::DictationDismiss { session })?)
 }
 
 /// A key transition for the core's activation machine (docs/dictation.md §13). The OS hotkey
@@ -1299,6 +1320,27 @@ async fn paste_text<R: Runtime>(app: tauri::AppHandle<R>, text: String) -> volti
     paste::paste_text(&app, text).await
 }
 
+/// The result card's 复制 (docs/dictation.md §28, `paste::overlay_copy`): the text onto the native
+/// clipboard through the core; refused for an empty or too long text, or when it cannot be written.
+#[tauri::command]
+async fn overlay_copy<R: Runtime>(app: tauri::AppHandle<R>, text: String) -> Result<(), String> {
+    paste::overlay_copy(&app, text).await.map_err(|reason| format!("overlay_copy: {reason:?}"))
+}
+
+/// The result card's 粘贴 (docs/dictation.md §28, `paste::overlay_paste`): into the window in front,
+/// or — Voltip in front — the history's way; answered like `paste_text`.
+#[tauri::command]
+async fn overlay_paste<R: Runtime>(app: tauri::AppHandle<R>, text: String) -> voltip_core::paste::PasteOutcome {
+    paste::overlay_paste(&app, text).await
+}
+
+/// The result card's 打开历史 (docs/dictation.md §28): the main window comes up on its history page.
+#[tauri::command]
+fn open_history<R: Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
+    show_main_window(&app);
+    app.emit_to(MAIN_WINDOW, MAIN_REQUEST_EVENT, serde_json::json!({ "action": "history" })).map_err(|e| e.to_string())
+}
+
 /// What the shell wires besides the core.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ShellOptions {
@@ -1326,6 +1368,11 @@ impl ShellOptions {
 /// Label of the main window in `tauri.conf.json`.
 pub const MAIN_WINDOW: &str = "main";
 
+/// Event to the main window for something its webview finishes once the window is up: the tray's
+/// 设置… and 检查更新… (`platform::tray`), and the result card's 打开历史 (`{ "action": "history" }`,
+/// docs/dictation.md §28).
+pub const MAIN_REQUEST_EVENT: &str = "voltip://tray";
+
 /// Bring the main window to the front: a second launch without arguments, a tray click, and the
 /// macOS Dock / `open -a` reopen all end here. Nothing to do when the window does not exist.
 pub fn show_main_window<R: Runtime>(app: &tauri::AppHandle<R>) {
@@ -1343,6 +1390,10 @@ pub fn on_second_instance<R: Runtime>(app: &tauri::AppHandle<R>, args: &[String]
     if cli::quit_from_args(args) {
         tracing::info!("quit requested by a second invocation");
         app.exit(0);
+        return;
+    }
+    if cli::copy_last_from_args(args) {
+        copy_last::run(app, "cli");
         return;
     }
     match cli::remote_from_args(args) {
@@ -1371,6 +1422,9 @@ pub fn attach_bridge<R: Runtime>(
     ports: dictation::ShellPorts,
 ) -> Result<(), BridgeError> {
     let dictation::ShellPorts { dictation: ports, hub } = ports;
+    // docs/dictation.md §28: the desktop's pill shows the result cards.
+    let mut config = config;
+    config.result_cards = true;
     // The paste button asks the same probe the core does (`paste::PasteProbe`).
     let paste_probe = paste::PasteProbe(ports.probe.clone());
     // The updater exists only in the production wiring and only when the build carries a source; a
@@ -1502,6 +1556,7 @@ pub fn build_app<R: Runtime>(
             settings_set_theme,
             settings_set_hotkey,
             settings_set_edit_hotkey,
+            settings_set_copy_last_hotkey,
             settings_set_solo_key,
             settings_set_microphone,
             settings_set_recording,
@@ -1516,6 +1571,7 @@ pub fn build_app<R: Runtime>(
             dictation_start,
             dictation_stop,
             dictation_cancel,
+            dictation_dismiss,
             hotkey_edge,
             settings_set_activation,
             settings_set_engines,
@@ -1612,6 +1668,9 @@ pub fn build_app<R: Runtime>(
             permissions_request,
             inject_preflight,
             paste_text,
+            overlay_copy,
+            overlay_paste,
+            open_history,
             phone_share_text
         ],
     )
@@ -1638,7 +1697,8 @@ pub fn run() {
         Err(e) => e.exit(),
     };
     let action = args.action();
-    let quit = action == cli::Action::Quit;
+    // `--quit` and `--copy-last` only reach a running instance; they never start one.
+    let forward_only = matches!(action, cli::Action::Quit | cli::Action::CopyLast);
     let start_hidden = match &action {
         cli::Action::Gui { start_hidden, remote } => {
             if let Some(remote) = remote {
@@ -1646,9 +1706,9 @@ pub fn run() {
             }
             *start_hidden
         }
-        // Built like the GUI below so the single-instance plugin can hand `--quit` to a running
-        // instance (and end this process); getting past `build` means there is none.
-        cli::Action::Quit => true,
+        // Built like the GUI below so the single-instance plugin can hand `--quit` / `--copy-last`
+        // to a running instance (and end this process); getting past `build` means there is none.
+        cli::Action::Quit | cli::Action::CopyLast => true,
         headless => {
             tracing::debug!(?headless, "headless action");
             // Unlocked handles: each write takes the lock briefly. Holding `stdout().lock()` across
@@ -1685,8 +1745,8 @@ pub fn run() {
             std::process::exit(1);
         }
     };
-    if quit {
-        tracing::info!("--quit: no running instance");
+    if forward_only {
+        tracing::info!(?action, "no running instance");
         exit::exit_process(0);
     }
     // macOS: the activation policy goes in between `build` and `run` (docs/dictation.md §15.2).

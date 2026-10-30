@@ -171,7 +171,7 @@ async fn a_failed_take_is_recognised_again_onto_the_clipboard() {
     assert_eq!(injector.clipboard_copies(), vec!["第2段。".to_owned()]);
     assert_eq!(transcriber.durations_ms(), vec![1500, 1500], "the same recording, sent again");
     let history = history_until(&mut node, |h| !h.is_empty()).await;
-    assert_eq!(history[0].outcome, Outcome::Inserted { via: Via::Clipboard });
+    assert_eq!(history[0].outcome, Outcome::Inserted { via: Via::Clipboard, check: None });
     let cache = cache_until(&mut node, |v| v.recordings.first().is_some_and(|r| r.status.entry().is_some())).await;
     assert_eq!(cache.recordings[0].status, KeptStatus::Recognized { entry: history[0].id });
 

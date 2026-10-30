@@ -334,3 +334,41 @@ async fn regression_the_edit_key_in_a_terminal_sends_no_copy_chord_and_opens_no_
     assert_eq!(entries.len(), 1, "only the editor take is recorded");
     assert_eq!(entries[0].app.as_ref().map(|a| a.id.as_str()), Some("code"));
 }
+
+/// docs/dictation.md §28 (D12): the 复制上一条结果 hotkey is unassigned by default, validated and
+/// canonicalised like the others, never the dictation or the voice-edit chord (and they are never
+/// it), cleared with `None`, and persisted.
+#[tokio::test]
+async fn the_copy_last_hotkey_is_one_of_three_distinct_chords() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut node = start_in(dir.path(), FakeInjector::paste(), true);
+    let settings = ready(&mut node).await;
+    assert_eq!(settings.copy_last_hotkey, None, "unassigned by default");
+
+    node.handle.send(CoreCommand::SetCopyLastHotkey(Some("shift + control + v".into()))).await.unwrap();
+    let s = wait(&mut node, |e| if let CoreEvent::Settings(s) = e { Some(s.clone()) } else { None }).await;
+    assert_eq!(s.copy_last_hotkey.as_deref(), Some("Ctrl+Shift+V"), "canonical form");
+
+    for (cmd, needle) in [
+        (CoreCommand::SetCopyLastHotkey(Some("Space+Alt+Ctrl".into())), "已用作听写快捷键"),
+        (CoreCommand::SetCopyLastHotkey(Some("Ctrl+Alt+E".into())), "已用作「编辑选中文本」的快捷键"),
+        (CoreCommand::SetCopyLastHotkey(Some("V".into())), "至少需要一个修饰键"),
+        (CoreCommand::SetHotkey("Ctrl+Shift+V".into()), "已用作「复制上一条结果」的快捷键"),
+        (CoreCommand::SetEditHotkey(Some("Ctrl+Shift+V".into())), "已用作「复制上一条结果」的快捷键"),
+    ] {
+        node.handle.send(cmd).await.unwrap();
+        let message = wait(&mut node, |e| if let CoreEvent::Error(m) = e { Some(m.clone()) } else { None }).await;
+        assert!(message.contains(needle), "{message}");
+    }
+    let saved = SettingsStore::new(dir.path()).load().unwrap();
+    assert_eq!(
+        (saved.hotkey.as_str(), saved.edit_hotkey.as_deref(), saved.copy_last_hotkey.as_deref()),
+        ("Ctrl+Alt+Space", Some("Ctrl+Alt+E"), Some("Ctrl+Shift+V"))
+    );
+
+    node.handle.send(CoreCommand::SetCopyLastHotkey(None)).await.unwrap();
+    let s = wait(&mut node, |e| if let CoreEvent::Settings(s) = e { Some(s.clone()) } else { None }).await;
+    assert_eq!(s.copy_last_hotkey, None);
+    let text = std::fs::read_to_string(dir.path().join(SETTINGS_FILE_NAME)).unwrap();
+    assert!(!text.contains("copy_last_hotkey"), "unassigned is not written: {text}");
+}

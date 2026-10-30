@@ -10,10 +10,11 @@ use async_trait::async_trait;
 use parking_lot::Mutex;
 
 use super::engine::DictationPorts;
+use super::insert_check::{Expected, FocusText, Sample, decide};
 use super::ports::{
-    AudioSource, Capture, CaptureOptions, DictationError, ForegroundApp, ForegroundProbe, InjectNote, Injection, Injector, InsertSession, Inserted,
-    LIVE_CHUNK_SAMPLES, LevelFrame, LivePcm, PCM_SAMPLE_RATE_HZ, PROBE_DEADLINE, PcmStream, Recording, RefineHints, Refined, Refiner, Segment, SelectionTiming,
-    StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber, Transcriber, Transcript, Via,
+    AudioSource, Capture, CaptureOptions, DictationError, FocusReader, FocusWatch, ForegroundApp, ForegroundProbe, InjectNote, Injection, Injector,
+    InsertSession, Inserted, LIVE_CHUNK_SAMPLES, LevelFrame, LivePcm, PCM_SAMPLE_RATE_HZ, PROBE_DEADLINE, PcmStream, Recording, RefineHints, Refined, Refiner,
+    Segment, SelectionTiming, Settled, StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber, Transcriber, Transcript, UnconfirmedWhy, Via,
 };
 use super::wav;
 use crate::hotkey::Modifier;
@@ -938,6 +939,8 @@ pub struct FakeInjector {
     delivery_gate: Option<Arc<Gate>>,
     /// Every insert session step.
     events: Mutex<Vec<InsertEvent>>,
+    /// The insert check's reader (docs/dictation.md §28), when the test plugs one in.
+    focus: Option<Arc<FakeFocusReader>>,
 }
 
 impl FakeInjector {
@@ -976,7 +979,13 @@ impl FakeInjector {
             terminals: Arc::new(|_: &str| false),
             delivery_gate: None,
             events: Mutex::new(Vec::new()),
+            focus: None,
         }
+    }
+
+    /// The insert check reads the focused control through `reader` (docs/dictation.md §28).
+    pub fn with_focus_reader(self, reader: Arc<FakeFocusReader>) -> Self {
+        Self { focus: Some(reader), ..self }
     }
 
     /// The foreground application has `text` selected: every copy answers it.
@@ -1180,6 +1189,104 @@ impl Injector for FakeInjector {
 
     fn is_terminal_app(&self, app_id: &str) -> bool {
         (self.terminals)(app_id)
+    }
+
+    fn focus_reader(&self) -> Option<Arc<dyn FocusReader>> {
+        self.focus.clone().map(|reader| reader as Arc<dyn FocusReader>)
+    }
+}
+
+/// A reading of a field with `text` before its caret and nothing selected (docs/dictation.md §28).
+pub fn caret_reading(text: &str) -> FocusText {
+    let n = text.chars().count();
+    FocusText::read(Some(n), Some(n), Some((n, n)), None, Some(text))
+}
+
+/// A reading of a field with `text`, then `selected` selected right before the caret.
+pub fn selection_reading(text: &str, selected: &str) -> FocusText {
+    let (n, s) = (text.chars().count(), selected.chars().count());
+    FocusText::read(Some(n + s), Some(n + s), Some((n, n + s)), Some(selected), Some(&format!("{text}{selected}")))
+}
+
+/// What a [`FakeFocusReader`] was asked: for every `watch`, the take's application (its id) and
+/// the expected tail; for every `settle`, its window.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FocusCalls {
+    /// `watch` calls: the application id, the expected tail.
+    pub watched: Vec<(String, String)>,
+    /// `settle` calls: the window.
+    pub settled: Vec<Duration>,
+}
+
+/// What a [`FakeFocusReader`] reads.
+#[derive(Clone, Debug)]
+enum FocusScript {
+    /// The control before the paste, then the readings after it.
+    Reads { before: FocusText, after: Vec<Sample> },
+    /// Nothing to read: `watch` fails with this.
+    Refuses(UnconfirmedWhy),
+}
+
+/// Focus reader stand-in (docs/dictation.md §28): a scripted reading of the focused control —
+/// what it holds before the paste and every reading after it — decided by the core's own rules
+/// ([`decide`]), or a reader that cannot read. Records every call ([`FocusCalls`]).
+pub struct FakeFocusReader {
+    script: FocusScript,
+    calls: Arc<Mutex<FocusCalls>>,
+}
+
+impl FakeFocusReader {
+    /// The control reads `before`, then `after` once the paste went out.
+    pub fn reading(before: FocusText, after: Vec<Sample>) -> Self {
+        Self { script: FocusScript::Reads { before, after }, calls: Arc::default() }
+    }
+
+    /// A field with `text` before its caret that stays exactly so: the paste never arrived.
+    pub fn unchanged(text: &str) -> Self {
+        let before = caret_reading(text);
+        Self::reading(before.clone(), vec![Sample::Text(before.clone()), Sample::Text(before)])
+    }
+
+    /// A field with `before` before its caret that reads `after` once the paste went out.
+    pub fn showing(before: &str, after: &str) -> Self {
+        Self::reading(caret_reading(before), vec![Sample::Text(caret_reading(after))])
+    }
+
+    /// A reader that cannot read the focused control: every `watch` fails with `why`.
+    pub fn refusing(why: UnconfirmedWhy) -> Self {
+        Self { script: FocusScript::Refuses(why), calls: Arc::default() }
+    }
+
+    /// Every call so far.
+    pub fn calls(&self) -> FocusCalls {
+        self.calls.lock().clone()
+    }
+}
+
+impl FocusReader for FakeFocusReader {
+    fn watch(&self, app: &ForegroundApp, expected: &Expected) -> Result<Box<dyn FocusWatch>, UnconfirmedWhy> {
+        self.calls.lock().watched.push((app.app_id.clone(), expected.tail().to_owned()));
+        match &self.script {
+            FocusScript::Refuses(why) => Err(*why),
+            FocusScript::Reads { before, after } => {
+                Ok(Box::new(FakeFocusWatch { before: before.clone(), after: after.clone(), expected: expected.clone(), calls: self.calls.clone() }))
+            }
+        }
+    }
+}
+
+/// One paste's scripted reading.
+struct FakeFocusWatch {
+    before: FocusText,
+    after: Vec<Sample>,
+    expected: Expected,
+    calls: Arc<Mutex<FocusCalls>>,
+}
+
+impl FocusWatch for FakeFocusWatch {
+    fn settle(self: Box<Self>, within: Duration) -> Settled {
+        self.calls.lock().settled.push(within);
+        decide(&self.before, &self.after, &self.expected)
     }
 }
 
@@ -1434,7 +1541,7 @@ pub fn history_entry(text: &str) -> crate::HistoryEntry {
         refine_ms: None,
         refine_failure: None,
         refine_error: None,
-        outcome: crate::Outcome::Inserted { via: Via::Paste },
+        outcome: crate::Outcome::Inserted { via: Via::Paste, check: None },
         starred: false,
         mode: crate::OutputMode::WholeTake,
         segments: None,

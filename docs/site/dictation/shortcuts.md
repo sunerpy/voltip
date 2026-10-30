@@ -1,5 +1,5 @@
 ---
-description: The dictation shortcut, the three recording modes, starting with a single key or a mouse button, the overlay, cancelling with Esc, and what and how long a dictation records.
+description: The dictation shortcut, the three recording modes, starting with a single key or a mouse button, the overlay, cancelling with Esc, the shortcut that copies the last result, and what and how long a dictation records.
 ---
 
 # Shortcuts and recording modes
@@ -36,7 +36,7 @@ While you dictate, a small overlay at the bottom of the screen shows what is hap
 
 - **Recording**: the input level, the elapsed time, what is being recorded (Microphone, Computer audio or Mixed) and, with the live transcription model installed, the words recognised so far. A padlock appears when a recording is locked. After the first two minutes of a long recording, it also shows how many segments have been recognised.
 - **Processing**: the step in progress — recognition, AI polish or insertion — with the time it has taken. For a long recording, recognition shows how many of its segments are done.
-- **Done**: how many characters were inserted, or why the text stayed on the clipboard.
+- **Done**: how many characters were inserted, or why the text stayed on the clipboard. When the text was not written, the window changed or recognition failed, the overlay keeps a [result card](/dictation/output#result-cards) with buttons to paste or copy the text.
 
 The overlay never takes the keyboard focus, so the text still goes to the app you were using.
 
@@ -45,6 +45,10 @@ The overlay never takes the keyboard focus, so the text still goes to the app yo
 Press <kbd>Esc</kbd> while recording or processing to cancel; the overlay shows the key in red for as long as it works. Nothing is inserted and nothing is saved in the history, except that with **Type as you speak** the sentences already typed stay where they are. Once the paste has begun, Esc no longer cancels: the dictation finishes, and the text is inserted and saved in the history as usual. Voltip listens for Esc only during a dictation, so it does not interfere with other apps the rest of the time.
 
 On a pure Wayland session, bind a system shortcut to `voltip-desktop --cancel` instead.
+
+## Copy the last result
+
+Under **Settings → Shortcuts**, **Copy last result** takes a shortcut of its own, none by default. Pressing it puts the latest result on the clipboard without opening Voltip, and the overlay says **Copied the last result**. It must differ from the dictation and voice edit shortcuts. The tray menu on Windows and macOS has the same command, see [Copy or paste a result again](/dictation/output#copy-or-paste-a-result-again).
 
 ## Recording source
 
@@ -79,5 +83,6 @@ A pure Wayland session does not let apps register global shortcuts or watch sing
 | `voltip-desktop --toggle` | Starts dictation, or stops it and inserts the text |
 | `voltip-desktop --edit-toggle` | Starts or finishes a [voice edit](/dictation/voice-edit) |
 | `voltip-desktop --cancel` | Cancels the current dictation |
+| `voltip-desktop --copy-last` | Puts the latest result on the clipboard |
 
 When Voltip runs as an AppImage, use the AppImage's path instead of `voltip-desktop`; Settings → Shortcuts shows the exact command. In a session that runs X11 apps through XWayland, the shortcut works only while an X11 window has the focus, so a system shortcut is the reliable choice there as well.

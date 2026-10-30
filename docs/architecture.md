@@ -23,11 +23,12 @@ crates/voltip-reply      服务拒绝请求时说了什么（docs/dictation.md �
 crates/voltip-net        网络代理（docs/dictation.md §24）：跟随系统 / 不使用 / 手动的代理计划，reqwest 客户端每个请求都按它走，WebSocket 连接经它打开 TCP 流（HTTP CONNECT、SOCKS5）
 crates/voltip-cloud      云端识别与润色（voltip-asr、voltip-refine 的客户端；阿里云百炼的实时模型经 WebSocket 推流）作为核心的 Transcriber / Refiner / StreamingTranscriber 端口，桌面与手机共用
 crates/voltip-serve      本机语音服务的 HTTP 层（axum）：OpenAI 兼容的 /v1/audio/transcriptions、令牌、准入、边收边解码的 WAV 上传；处理在 voltip-core 的 serve 模块（docs/dictation.md §23）
+crates/voltip-focus      插入确认的焦点控件读取（docs/dictation.md §28）：Windows UI Automation、macOS 辅助功能接口、Linux AT-SPI，各在自己的工作线程上、有读取期限；判定规则在 voltip-platform 的 insert_check::rules（核心重导出）。与 voltip-hooks 一样单独成 crate，CI 不构建整个应用也能在真实桌面上跑它的测试
 apps/desktop/src-tauri   桌面 shell：全局热键（tauri-plugin-global-shortcut）、悬浮胶囊窗口（预热、事件驱动）、无边框主窗口、音频电平 Channel；设置里打开本机服务时经 voltip-serve 监听 127.0.0.1
 apps/server              无头服务端 voltip-server（Linux x64 tar.gz）：命令行、只读地读 App 的数据目录与系统钥匙串，没有 GUI 和音频依赖
 ```
 
-依赖方向只允许向下：`apps → core → {pairing, transport, identity} → {crypto, protocol}`；`voltip-net` 在最底层，`transport`、`asr`、`refine`、`asr-local`、`cloud` 和 `core` 都依赖它，它不依赖任何 Voltip crate；`voltip-reply` 同样在最底层，只有 `asr` 和 `refine` 依赖它；`relay` 只依赖 `protocol`，不依赖 `crypto`（它拿不到、也不需要会话密钥）。`voltip-serve` 是 `voltip-core` 之上的适配层（实现核心的 `ServeHost` 端口，调用 `SpeechService`），只有桌面壳和 `apps/server` 依赖它。
+依赖方向只允许向下：`apps → core → {pairing, transport, identity} → {crypto, protocol}`；`voltip-net` 在最底层，`transport`、`asr`、`refine`、`asr-local`、`cloud` 和 `core` 都依赖它，它不依赖任何 Voltip crate；`voltip-reply` 同样在最底层，只有 `asr` 和 `refine` 依赖它；`relay` 只依赖 `protocol`，不依赖 `crypto`（它拿不到、也不需要会话密钥）。`voltip-serve` 是 `voltip-core` 之上的适配层（实现核心的 `ServeHost` 端口，调用 `SpeechService`），只有桌面壳和 `apps/server` 依赖它。`voltip-focus` 只依赖 `voltip-platform`，桌面壳把它包成核心的 `FocusReader` 端口。
 
 ## 1.1 原生优先（硬约束）
 

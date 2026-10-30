@@ -365,6 +365,9 @@ impl TrayLocale {
 pub enum TrayAction {
     /// Bring the main window to the front.
     Open,
+    /// 复制上一条结果 (docs/dictation.md §28): the newest result onto the clipboard, without the
+    /// main window; greyed out until there is one.
+    CopyLast,
     /// The main window with the settings dialog.
     Settings,
     /// The main window with the update dialog; only in a build that has an update source.
@@ -375,12 +378,13 @@ pub enum TrayAction {
 
 impl TrayAction {
     /// Every entry, in menu order.
-    pub const ALL: [Self; 4] = [Self::Open, Self::Settings, Self::CheckUpdate, Self::Quit];
+    pub const ALL: [Self; 5] = [Self::Open, Self::CopyLast, Self::Settings, Self::CheckUpdate, Self::Quit];
 
     /// The menu item id.
     pub const fn id(self) -> &'static str {
         match self {
             Self::Open => "tray-open",
+            Self::CopyLast => "tray-copy-last",
             Self::Settings => "tray-settings",
             Self::CheckUpdate => "tray-check-update",
             Self::Quit => "tray-quit",
@@ -399,6 +403,8 @@ impl TrayAction {
         match (self, locale) {
             (Self::Open, TrayLocale::ZhCn) => "打开 Voltip",
             (Self::Open, TrayLocale::En) => "Open Voltip",
+            (Self::CopyLast, TrayLocale::ZhCn) => "复制上一条结果",
+            (Self::CopyLast, TrayLocale::En) => "Copy Last Result",
             (Self::Settings, TrayLocale::ZhCn) => "设置…",
             (Self::Settings, TrayLocale::En) => "Settings…",
             (Self::CheckUpdate, TrayLocale::ZhCn) => "检查更新…",
@@ -414,15 +420,20 @@ impl TrayAction {
         match self {
             Self::Settings => Some("settings"),
             Self::CheckUpdate => Some("update"),
-            Self::Open | Self::Quit => None,
+            Self::Open | Self::CopyLast | Self::Quit => None,
         }
+    }
+
+    /// Whether the entry brings the main window up: every one but 复制上一条结果 and 退出.
+    pub const fn opens_window(self) -> bool {
+        !matches!(self, Self::CopyLast | Self::Quit)
     }
 
     /// Whether the entry belongs in the menu of a build that can (`updater`) or cannot update.
     pub const fn shown(self, updater: bool) -> bool {
         match self {
             Self::CheckUpdate => updater,
-            Self::Open | Self::Settings | Self::Quit => true,
+            Self::Open | Self::CopyLast | Self::Settings | Self::Quit => true,
         }
     }
 }
@@ -1027,7 +1038,7 @@ mod tests {
     /// Regression (user report 2026-09-28): the tray had no menu, so there was no way to quit.
     #[test]
     fn the_menu_opens_the_window_settings_updates_and_quits() {
-        assert_eq!(TrayAction::ALL.map(TrayAction::id), ["tray-open", "tray-settings", "tray-check-update", "tray-quit"]);
+        assert_eq!(TrayAction::ALL.map(TrayAction::id), ["tray-open", "tray-copy-last", "tray-settings", "tray-check-update", "tray-quit"]);
         for action in TrayAction::ALL {
             assert_eq!(TrayAction::from_id(action.id()), Some(action));
             assert!(action.label(TrayLocale::ZhCn).chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)), "{action:?}");
@@ -1044,6 +1055,21 @@ mod tests {
         assert_eq!(TrayAction::CheckUpdate.webview_action(), Some("update"));
         assert_eq!(TrayAction::Open.webview_action(), None);
         assert_eq!(TrayAction::Quit.webview_action(), None);
+    }
+
+    /// docs/dictation.md §28 (D12): 复制上一条结果 sits under 打开 Voltip, in every build, and
+    /// copies without bringing up the main window.
+    #[test]
+    fn the_menu_copies_the_last_result_without_the_window() {
+        assert_eq!(TrayAction::ALL[1], TrayAction::CopyLast);
+        assert_eq!(TrayAction::CopyLast.id(), "tray-copy-last");
+        assert_eq!(TrayAction::CopyLast.label(TrayLocale::ZhCn), "复制上一条结果");
+        assert_eq!(TrayAction::CopyLast.label(TrayLocale::En), "Copy Last Result");
+        assert!(TrayAction::CopyLast.shown(false) && TrayAction::CopyLast.shown(true));
+        assert_eq!(TrayAction::CopyLast.webview_action(), None);
+        assert!(!TrayAction::CopyLast.opens_window());
+        assert!(!TrayAction::Quit.opens_window());
+        assert!([TrayAction::Open, TrayAction::Settings, TrayAction::CheckUpdate].into_iter().all(TrayAction::opens_window));
     }
 
     #[test]

@@ -7601,6 +7601,7 @@ dependencies = [
  "voltip-audio",
  "voltip-cloud",
  "voltip-core",
+ "voltip-focus",
  "voltip-hooks",
  "voltip-identity",
  "voltip-inject",
@@ -7615,6 +7616,25 @@ dependencies = [
  "windows-sys 0.61.2",
  "wiremock",
  "x11rb 0.14.0",
+]
+
+[[package]]
+name = "voltip-focus"
+version = "0.0.0"
+dependencies = [
+ "core-foundation 0.10.1",
+ "core-foundation-sys",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "parking_lot",
+ "serde",
+ "tracing",
+ "voltip-inject",
+ "voltip-platform",
+ "windows 0.61.3",
+ "windows-sys 0.61.2",
+ "zbus",
 ]
 
 [[package]]

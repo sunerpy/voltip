@@ -14,8 +14,8 @@ use voltip_asr_local::{
 use voltip_core::dictation::fakes::speech_recording;
 use voltip_core::{ChineseScript, DEFAULT_LOCAL_MODEL_ID, EdgeSource, EngineSettings, ProviderId, Settings, SettingsStore, TakeKind};
 use voltip_desktop_lib::cli::{
-    Action, Cli, ExitCode, Remote, TranscribeOutput, compute_for, default_model, download_model, list_compute, list_devices, list_models, quit_from_args,
-    remote_from_args, run_headless, transcribe_file,
+    Action, Cli, ExitCode, Remote, TranscribeOutput, compute_for, copy_last_from_args, default_model, download_model, list_compute, list_devices, list_models,
+    quit_from_args, remote_from_args, run_headless, transcribe_file,
 };
 use voltip_tauri_bridge::UiCommand;
 use wiremock::matchers::{method, path};
@@ -157,6 +157,35 @@ fn quit_flag_reaches_the_running_instance_and_conflicts_with_the_other_actions()
     assert_eq!(remote_from_args(&argv(&["--quit"])), None, "not a core command");
     let help = parse(&["--help"]).unwrap_err().to_string();
     assert!(help.contains("--quit"), "{help}");
+}
+
+/// docs/dictation.md §28: `--copy-last` puts the running instance's newest result on the clipboard
+/// (the Wayland stand-in for the 复制上一条结果 hotkey); like `--quit` it never starts a GUI of its
+/// own, since a new instance has no result yet.
+#[test]
+fn copy_last_flag_reaches_the_running_instance_and_conflicts_with_the_other_actions() {
+    assert_eq!(parse(&["--copy-last"]).unwrap().action(), Action::CopyLast);
+    for bad in [
+        &["--copy-last", "--toggle"][..],
+        &["--copy-last", "--edit-toggle"],
+        &["--copy-last", "--cancel"],
+        &["--copy-last", "--quit"],
+        &["--copy-last", "--start-hidden"],
+        &["--copy-last", "--list-models"],
+        &["--copy-last", "--transcribe-file", "a.wav"],
+    ] {
+        assert!(parse(bad).is_err(), "{bad:?}");
+    }
+    let argv = |a: &[&str]| std::iter::once("voltip").chain(a.iter().copied()).map(str::to_owned).collect::<Vec<_>>();
+    assert!(copy_last_from_args(&argv(&["--copy-last"])));
+    assert!(!copy_last_from_args(&argv(&[])));
+    assert!(!copy_last_from_args(&argv(&["--toggle"])));
+    assert!(!copy_last_from_args(&argv(&["--copy-last", "--toggle"])), "a usage error copies nothing");
+    assert_eq!(remote_from_args(&argv(&["--copy-last"])), None, "not a core command");
+    assert!(!quit_from_args(&argv(&["--copy-last"])));
+    assert_eq!(run_headless(&Action::CopyLast, Path::new("/nonexistent"), &mut Vec::new(), &mut Vec::new()), ExitCode::Ok);
+    let help = parse(&["--help"]).unwrap_err().to_string();
+    assert!(help.contains("--copy-last"), "{help}");
 }
 
 /// Echoes the model id and the sample count; fails on silence like a real engine would on garbage.

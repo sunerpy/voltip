@@ -134,6 +134,12 @@ pub enum UiCommand {
         /// Chord text or `null`.
         hotkey: Option<String>,
     },
+    /// 复制上一条结果 hotkey (docs/dictation.md §28): a chord, or `null` for none (the default);
+    /// validated and persisted like the dictation hotkey, never the dictation or the voice-edit chord.
+    SettingsSetCopyLastHotkey {
+        /// Chord text or `null`.
+        hotkey: Option<String>,
+    },
     /// Lone-key trigger (docs/dictation.md §13.1): `right_ctrl` … `mouse_forward`, or `null` to
     /// switch it off; persisted, the desktop shell watches the key when the `settings` event arrives.
     SettingsSetSoloKey {
@@ -214,6 +220,12 @@ pub enum UiCommand {
     DictationStop,
     /// Discard the recording / pending result.
     DictationCancel,
+    /// The result card's 关闭, or its 粘贴 that went in (docs/dictation.md §28): that take's card
+    /// goes away now; a card of another take stays.
+    DictationDismiss {
+        /// `DictationStatus.session` of the take whose card it is.
+        session: u64,
+    },
     /// A key transition for the activation machine (docs/dictation.md §13): the desktop shell sends
     /// one per hotkey press / release, the CLI one per `voltip --toggle`.
     HotkeyEdge {
@@ -578,6 +590,7 @@ impl UiCommand {
             Self::SettingsSetTheme { theme, follow_system } => CoreCommand::SetTheme { theme, follow_system },
             Self::SettingsSetHotkey { hotkey } => CoreCommand::SetHotkey(hotkey),
             Self::SettingsSetEditHotkey { hotkey } => CoreCommand::SetEditHotkey(hotkey),
+            Self::SettingsSetCopyLastHotkey { hotkey } => CoreCommand::SetCopyLastHotkey(hotkey),
             Self::SettingsSetSoloKey { key } => CoreCommand::SetSoloKey(key),
             Self::SettingsSetMicrophone { device } => CoreCommand::SetMicrophone(device),
             Self::SettingsSetRecording { recording } => CoreCommand::SetRecording(recording),
@@ -596,6 +609,7 @@ impl UiCommand {
             Self::DictationStart => CoreCommand::DictationStart,
             Self::DictationStop => CoreCommand::DictationStop,
             Self::DictationCancel => CoreCommand::DictationCancel,
+            Self::DictationDismiss { session } => CoreCommand::DictationDismiss { session },
             Self::HotkeyEdge { pressed, at_ms, source, purpose, chorded } => CoreCommand::HotkeyEdge { pressed, at_ms, source, purpose, chorded },
             Self::SettingsSetActivation { activation, hold_threshold_ms, extra_recording_ms } => {
                 CoreCommand::SetActivation { activation, hold_threshold_ms, extra_recording_ms }
@@ -925,6 +939,26 @@ impl Bridge {
             Err(_) => {
                 tracing::warn!(request_id, "no paste answer in time");
                 no_answer
+            }
+        }
+    }
+
+    /// 复制上一条结果 (docs/dictation.md §28; the tray's entry, the hotkey, `--copy-last`): the newest
+    /// result onto the clipboard. A core that does not answer within `within`, or has stopped,
+    /// counts as `failed`.
+    pub async fn copy_last(&self, within: Duration) -> voltip_core::last_result::CopyLastOutcome {
+        use voltip_core::last_result::{CopyLastOutcome, CopyLastReply};
+        let (reply, answer) = CopyLastReply::channel();
+        if let Err(e) = self.handle.send(CoreCommand::CopyLastResult(reply)).await {
+            tracing::warn!(error = %e, "the core took no copy of the last result");
+            return CopyLastOutcome::Failed;
+        }
+        match tokio::time::timeout(within, answer).await {
+            Ok(Ok(outcome)) => outcome,
+            Ok(Err(_)) => CopyLastOutcome::Failed,
+            Err(_) => {
+                tracing::warn!("no answer to the copy of the last result in time");
+                CopyLastOutcome::Failed
             }
         }
     }
@@ -1408,6 +1442,9 @@ mod tests {
             (r#"{"command":"dictation_start"}"#, "DictationStart"),
             (r#"{"command":"dictation_stop"}"#, "DictationStop"),
             (r#"{"command":"dictation_cancel"}"#, "DictationCancel"),
+            (r#"{"command":"dictation_dismiss","session":3}"#, "DictationDismiss"),
+            (r#"{"command":"settings_set_copy_last_hotkey","hotkey":"Ctrl+Shift+V"}"#, "SetCopyLastHotkey(Some(\"Ctrl+Shift+V\"))"),
+            (r#"{"command":"settings_set_copy_last_hotkey","hotkey":null}"#, "SetCopyLastHotkey(None)"),
             (r#"{"command":"history_clear"}"#, "HistoryClear"),
             (r#"{"command":"engines_quota_reset","kind":"llm"}"#, "ResetQuota(Llm)"),
             (r#"{"command":"pairing_start"}"#, "StartPairing"),
@@ -1837,6 +1874,45 @@ mod tests {
         assert_eq!(outcome, PasteOutcome::Copied { reason: CopyReason::Timeout });
         assert_eq!(injector.clipboard_copies(), vec!["一".to_owned(), "二".to_owned()]);
         assert!(injector.injected().is_empty(), "a copy-only paste never pastes");
+        bridge.shutdown();
+    }
+
+    /// `copy_last` (docs/dictation.md §28): `nothing` before the first result; a core that holds
+    /// the copy past `within` is `failed`.
+    #[tokio::test]
+    async fn the_last_result_is_copied_through_the_bridge_and_a_late_answer_is_failed() {
+        use voltip_core::dictation::fakes::{FAKE_TRANSCRIPT, FakeAudio, FakeInjector, FakeTranscriber, ports_with};
+        use voltip_core::last_result::CopyLastOutcome;
+        let dir = tempfile::tempdir().unwrap();
+        voltip_core::SettingsStore::new(dir.path())
+            .save(&voltip_core::Settings { relay_enabled: false, engines: voltip_core::dictation::fakes::fake_engines(), ..Default::default() })
+            .unwrap();
+        let injector = Arc::new(FakeInjector::paste().gated());
+        let ports = ports_with(Arc::new(FakeAudio::speech()), Arc::new(FakeTranscriber::ok(FAKE_TRANSCRIPT)), None, injector.clone());
+        let bridge = Bridge::start_with(CoreConfig::new(dir.path().to_path_buf()), Arc::new(MemorySecretStore::new()), ports).unwrap();
+        assert_eq!(bridge.copy_last(Duration::from_secs(5)).await, CopyLastOutcome::Nothing);
+        let mut rx = bridge.events();
+        bridge.dispatch(UiCommand::DictationStart).unwrap();
+        bridge.dispatch(UiCommand::DictationStop).unwrap();
+        injector.release(1);
+        loop {
+            if let UiEvent::Dictation(status) = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await.unwrap().unwrap()
+                && status.phase.is_terminal()
+            {
+                break;
+            }
+        }
+        // The copy is held: no answer in time. Let through, the next one is copied.
+        assert_eq!(bridge.copy_last(Duration::from_millis(200)).await, CopyLastOutcome::Failed);
+        injector.release(2);
+        assert_eq!(bridge.copy_last(Duration::from_secs(5)).await, CopyLastOutcome::Copied);
+        // The held copy goes through on its own thread and may land after the answer to the next
+        // one (9 of 200 runs under load, 2026-10-30): wait for it.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while injector.clipboard_copies().len() < 2 && std::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(injector.clipboard_copies(), vec![FAKE_TRANSCRIPT.to_owned(), FAKE_TRANSCRIPT.to_owned()]);
         bridge.shutdown();
     }
 }

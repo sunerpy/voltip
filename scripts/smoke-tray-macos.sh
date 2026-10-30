@@ -93,18 +93,19 @@ case $installed in *updater=true*) updater=1 ;; *) updater=0 ;; esac
 if [ "${VOLTIP_NO_UPDATER:-0}" = 1 ]; then want_updater=0; else want_updater=1; fi
 [ "$updater" = "$want_updater" ] || fail "updater=$updater, expected $want_updater"
 if [ "$zh" = 1 ]; then
-  labels=("打开 Voltip" "AI 润色" "设置…" "检查更新…" "退出 Voltip")
+  labels=("打开 Voltip" "复制上一条结果" "AI 润色" "设置…" "检查更新…" "退出 Voltip")
   title="设置"
   toggle="启用 AI 润色"
   presets=("校对" "提示词优化" "意图整理" "口语聊天" "中英互译" "要点纪要" "只加标点" "书面语")
 else
-  labels=("Open Voltip" "AI Polish" "Settings…" "Check for Updates…" "Quit Voltip")
+  labels=("Open Voltip" "Copy Last Result" "AI Polish" "Settings…" "Check for Updates…" "Quit Voltip")
   title="Settings"
   toggle="Enable AI Polish"
   presets=("Proofread" "Prompt optimizer" "Clarify intent" "Casual chat" "Chinese ⇄ English" "Key points" "Punctuation only" "Formal")
 fi
-open_label=${labels[0]} polish_label=${labels[1]} settings_label=${labels[2]} update_label=${labels[3]} quit_label=${labels[4]}
-expected=("$open_label" "$polish_label" "$settings_label")
+# Copy Last Result (docs/dictation.md §28) is listed, greyed until there is a result.
+open_label=${labels[0]} copy_last_label=${labels[1]} polish_label=${labels[2]} settings_label=${labels[3]} update_label=${labels[4]} quit_label=${labels[5]}
+expected=("$open_label" "$copy_last_label" "$polish_label" "$settings_label")
 [ "$updater" = 1 ] && expected+=("$update_label")
 expected+=("$quit_label")
 wait_for 60 'the main window' window_shown
