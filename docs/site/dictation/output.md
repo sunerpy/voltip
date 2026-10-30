@@ -64,7 +64,7 @@ The details of the original error are available under **Technical details** in t
 
 ## Checking that the text arrived
 
-After a paste, Voltip reads the input field that has the focus again, on this computer, and compares it with what it read just before the paste. When it is certain that the text did not arrive, because the same field still shows exactly what it showed before, the overlay says **Not written** and keeps the result on screen as a [result card](#result-cards), so that you can paste it into the right field. Voltip never pastes a second time by itself, so the text cannot end up there twice.
+After a paste, Voltip reads the input field that has the focus again, on this computer, and compares it with what it read right before the paste. When it is certain that the text did not arrive, because the same field still shows exactly what it showed before, the overlay says **Not written** and keeps the result on screen as a [result card](#result-cards), so that you can paste it into the right field. Voltip never pastes a second time by itself, so the text cannot end up there twice.
 
 When Voltip cannot tell, it treats the text as inserted and shows nothing more. That is the case when the field cannot be read, another field has taken the focus, the field changed in another way (an app completed a word, for example), or the app is a terminal, a remote desktop or a virtual machine. When Voltip cannot tell which app the text went to (on a pure Wayland session on Linux, for example), it does not read the field at all. Password fields are never read. The history entry's **Technical details** then say **Not confirmed as written**.
 
