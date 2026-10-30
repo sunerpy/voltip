@@ -127,6 +127,10 @@ pub enum ImportError {
     /// The built-in service was chosen, or is what the choice resolves to.
     #[error("导入只能使用本机模型或自己密钥的服务，不能使用内置服务")]
     BuiltinNotAllowed,
+    /// A service on another machine without the user's own key (a custom endpoint or Ollama takes
+    /// none).
+    #[error("导入只能使用本机模型或自己密钥的服务，这个服务没有填写你自己的密钥")]
+    NoOwnKey,
     /// This app imports nothing (the phone).
     #[error("这台设备不能导入音视频文件")]
     Unavailable,

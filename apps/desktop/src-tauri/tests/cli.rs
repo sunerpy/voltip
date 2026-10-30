@@ -429,8 +429,10 @@ fn transcribe_file_reads_every_format_the_import_reads() {
     assert!(err.contains("AC-3"), "{err}");
 }
 
-/// docs/dictation.md §31: a WAV is read whole, as before the import came: its output is what the
-/// recogniser makes of the file, byte for byte, at its own rate and channels.
+/// docs/dictation.md §31.7: a WAV goes through the import's decoder like every other file, and
+/// without `--srt` it is still recognised whole, in one request: a 16 kHz mono WAV gives what it
+/// gave before the import came, byte for byte; another rate reaches the recogniser decoded to
+/// 16 kHz, still as one piece.
 #[test]
 fn regression_a_wav_is_still_read_whole() {
     let dir = tempfile::tempdir().unwrap();
@@ -438,15 +440,13 @@ fn regression_a_wav_is_still_read_whole() {
     install(&models, "sense-voice-small");
     let t = LocalTranscriber::with_loader(&models, CATALOGUE, Arc::new(FakeLoader)).select("sense-voice-small");
     let runtime = tokio::runtime::Runtime::new().unwrap();
-    for (name, wav) in [("16k.wav", speech_recording(1500).wav), ("tone.wav", std::fs::read(media_fixture("tone.wav")).unwrap())] {
-        let path = dir.path().join(name);
-        std::fs::write(&path, wav).unwrap();
-        let whole = runtime.block_on(transcribe_path(&t, &path, Some("zh"), ChineseScript::Simplified)).unwrap();
-        let (code, out, _) = run(&t, &path, false);
-        assert_eq!((code, out), (ExitCode::Ok, format!("{}\n", whole.text)), "{name}");
-    }
-    let (_, out, _) = run(&t, &dir.path().join("tone.wav"), false);
-    assert_eq!(out, "sense-voice-small@12000:24000\n", "at the file's own 12 kHz, not decoded to 16 kHz");
+    let path = dir.path().join("16k.wav");
+    std::fs::write(&path, speech_recording(1500).wav).unwrap();
+    let before = runtime.block_on(transcribe_path(&t, &path, Some("zh"), ChineseScript::Simplified)).unwrap();
+    let (code, out, _) = run(&t, &path, false);
+    assert_eq!((code, out), (ExitCode::Ok, format!("{}\n", before.text)), "a 16 kHz mono WAV gives what it gave");
+    let (_, out, _) = run(&t, &media_fixture("tone.wav"), false);
+    assert_eq!(out, "sense-voice-small@16000:32000\n", "the 12 kHz tone decoded to 16 kHz, in one piece");
 }
 
 /// docs/dictation.md §31: `--srt` writes the subtitles of the segments, a cue per line within each

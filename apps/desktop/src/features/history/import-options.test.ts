@@ -1,4 +1,4 @@
-import { createTranslator } from "@voltip/shared";
+import { createTranslator, defaultEngineSettings } from "@voltip/shared";
 import { MockBackend } from "@voltip/shared/mock";
 import { importOptions, polishOf, recognitionOf } from "./import-options";
 
@@ -48,6 +48,39 @@ describe("import options (docs/dictation.md §31)", () => {
     expect(none.speechDefault).toBeUndefined();
     expect(none.polish).toEqual([]);
     expect(none.polishDefault).toBeUndefined();
+  });
+
+  it("regression: offers a service only with the user's own key, also where the provider takes none", () => {
+    // docs/dictation.md §31.4: a custom endpoint and Ollama run without a key; an import uses
+    // neither until the user has entered one (Ollama never asks for one).
+    const settings = {
+      engines: {
+        ...defaultEngineSettings(),
+        providers: {
+          custom: {
+            asr_url: "https://asr.example.test/v1",
+            asr_model: "my-asr",
+            llm_url: "https://llm.example.test/v1",
+            llm_model: "my-llm",
+          },
+          ollama: { llm_model: "qwen3:8b" },
+        },
+      },
+    };
+    const keyless = new MockBackend({ settings }).peek();
+    const none = importOptions(keyless.engines, keyless.models, t, "zh-CN");
+    expect(none.speech.map((o) => o.value)).not.toContain("remote:custom:my-asr");
+    expect(none.polish.map((o) => o.value)).toEqual([]);
+    const own = new MockBackend({
+      settings,
+      providerKeys: [
+        { provider: "custom", kind: "asr" },
+        { provider: "custom", kind: "llm" },
+      ],
+    }).peek();
+    const options = importOptions(own.engines, own.models, t, "zh-CN");
+    expect(options.speech.map((o) => o.value)).toContain("remote:custom:my-asr");
+    expect(options.polish.map((o) => o.value)).toEqual(["remote:custom:my-llm"]);
   });
 
   it("turns a row back into what import_add sends", () => {

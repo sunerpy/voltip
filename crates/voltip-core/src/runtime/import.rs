@@ -370,6 +370,13 @@ impl Runtime {
         {
             return Err(ImportError::BuiltinNotAllowed);
         }
+        // §31.4: a service is the user's own by their key, also where the provider takes none.
+        let keyless = |provider: ProviderId, kind: ServiceKind| self.user_secrets.get(provider, kind).is_none();
+        if matches!(&request.asr, RecognitionChoice::Remote { provider, .. } if keyless(*provider, ServiceKind::Asr))
+            || request.refine.as_ref().is_some_and(|r| keyless(r.provider, ServiceKind::Llm))
+        {
+            return Err(ImportError::NoOwnKey);
+        }
         let mut engines = self.settings.engines.clone();
         match &request.asr {
             RecognitionChoice::Remote { provider, model } => {
@@ -605,6 +612,46 @@ mod tests {
         handle.send(crate::CoreCommand::Shutdown).await.unwrap();
     }
 
+    /// docs/dictation.md §31.4: a service an import uses on another machine needs the user's own
+    /// key, also where the provider takes none (a custom endpoint, Ollama): the import's choices
+    /// are the installed local models and the services with the user's key.
+    #[tokio::test]
+    async fn regression_an_import_takes_a_service_only_with_the_users_own_key() {
+        let fakes = fakes();
+        let mut settings = engines(ProviderId::Groq);
+        settings.providers.insert(
+            ProviderId::Custom,
+            ProviderSettings {
+                asr_url: Some("https://asr.example.test/v1".into()),
+                asr_model: Some("whisper-large-v3".into()),
+                llm_url: Some("https://llm.example.test/v1".into()),
+                llm_model: Some("llama-3.3-70b".into()),
+                ..Default::default()
+            },
+        );
+        settings.providers.insert(ProviderId::Ollama, ProviderSettings { llm_model: Some("llama-3.3-70b".into()), ..Default::default() });
+        let dir = tempfile::tempdir().unwrap();
+        let rt = runtime(dir.path(), settings.clone(), BUILT_IN, &fakes);
+        let custom = request(remote(ProviderId::Custom, "whisper-large-v3"), None);
+        assert_eq!(refused(rt.import_clients(&custom)), ImportError::NoOwnKey);
+        let groq = remote(ProviderId::Groq, "whisper-large-v3");
+        for polish in [ProviderId::Custom, ProviderId::Ollama] {
+            let polished = request(groq.clone(), Some(PolishModel { provider: polish, model: "llama-3.3-70b".into() }));
+            assert_eq!(refused(rt.import_clients(&polished)), ImportError::NoOwnKey, "{polish:?}");
+        }
+
+        // With the user's keys the custom endpoint is theirs to use.
+        let dir = tempfile::tempdir().unwrap();
+        SettingsStore::new(dir.path()).save(&Settings { relay_enabled: false, engines: settings, ..Settings::default() }).unwrap();
+        let keys = voltip_identity::MemorySecretStore::new();
+        for (entry, key) in [("provider-key.groq", "gsk-test"), ("provider-key.custom-asr", "asr-own"), ("provider-key.custom-llm", "llm-own")] {
+            keys.set(entry, key.as_bytes()).unwrap();
+        }
+        let rt = AppCore::build(config(dir.path(), BUILT_IN), Arc::new(keys), core_ports(&fakes)).unwrap().0;
+        let own = request(remote(ProviderId::Custom, "whisper-large-v3"), Some(PolishModel { provider: ProviderId::Custom, model: "llama-3.3-70b".into() }));
+        assert_eq!(rt.import_clients(&own).unwrap().refine, Some(true));
+    }
+
     /// The local model chosen for an import must be installed; another provider than the one the
     /// settings recognise with needs its key.
     #[tokio::test]
@@ -615,7 +662,7 @@ mod tests {
         let local = request(RecognitionChoice::Local { id: "paraformer-zh".into() }, None);
         assert!(matches!(refused(rt.import_clients(&local)), ImportError::Engines(why) if why.contains("本地模型")), "no models on this core");
         let keyless = request(remote(ProviderId::Openai, "whisper-1"), None);
-        assert!(matches!(refused(rt.import_clients(&keyless)), ImportError::Engines(_)));
+        assert_eq!(refused(rt.import_clients(&keyless)), ImportError::NoOwnKey);
         assert!(rt.import_clients(&request(remote(ProviderId::Groq, "whisper-large-v3"), None)).is_ok());
     }
 }

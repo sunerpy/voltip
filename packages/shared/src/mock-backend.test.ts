@@ -8,6 +8,7 @@ import {
   MOCK_AUDIO_OUTPUTS,
   MOCK_EXPORT_DIR,
   MOCK_IMPORT_BUILTIN,
+  MOCK_IMPORT_NO_KEY,
   MOCK_IMPORT_DIR,
   MOCK_IMPORT_EXTENSIONS,
   MOCK_IMPORT_FILE,
@@ -4323,7 +4324,7 @@ describe("MockBackend file import (docs/dictation.md §31)", () => {
     });
     expect(events).toEqual([
       { type: "error", message: MOCK_IMPORT_BUILTIN },
-      { type: "error", message: MOCK_RETAKE_NOT_READY },
+      { type: "error", message: MOCK_IMPORT_NO_KEY },
       { type: "error", message: MOCK_RETAKE_NOT_READY },
     ]);
     const backend = keyed();
@@ -4347,6 +4348,42 @@ describe("MockBackend file import (docs/dictation.md §31)", () => {
     await phone.invoke("import_add", { paths: ["/a.mp3"], asr: groq });
     expect(said).toEqual([{ type: "error", message: MOCK_IMPORT_UNAVAILABLE }]);
     expect(await phone.importPick("t", "m", "a")).toEqual([]);
+  });
+
+  it("regression: refuses a service without the user's own key, also where the provider takes none", async () => {
+    // docs/dictation.md §31.4, as the core: a custom endpoint or Ollama runs without a key, an
+    // import does not until the user has entered one.
+    const settings = {
+      engines: {
+        ...defaultEngineSettings(),
+        providers: {
+          custom: { asr_url: "https://asr.example.test/v1", asr_model: "my-asr" },
+          ollama: { llm_model: "qwen3:8b" },
+        },
+      },
+    };
+    const backend = new MockBackend({
+      now: () => clock,
+      history: [],
+      settings,
+      providerKeys: [{ provider: "groq", kind: "asr" }],
+    });
+    const events = collect(backend);
+    const custom = { kind: "remote", provider: "custom", model: "my-asr" } as const;
+    await backend.invoke("import_add", { paths: ["/a.mp3"], asr: custom });
+    await backend.invoke("import_add", {
+      paths: ["/a.mp3"],
+      asr: groq,
+      refine: { provider: "ollama", model: "qwen3:8b" },
+    });
+    expect(events).toEqual([
+      { type: "error", message: MOCK_IMPORT_NO_KEY },
+      { type: "error", message: MOCK_IMPORT_NO_KEY },
+    ]);
+    expect(jobs(backend)).toEqual([]);
+    await backend.invoke("provider_key_set", { provider: "custom", kind: "asr", value: "asr-own" });
+    await backend.invoke("import_add", { paths: ["/a.mp3"], asr: custom });
+    expect(jobs(backend).map((j) => j.name)).toEqual(["a.mp3"]);
   });
 
   it("runs on an installed local model, named as the catalogue names it", async () => {
@@ -4466,9 +4503,10 @@ describe("MockBackend file import (docs/dictation.md §31)", () => {
     tick(WHOLE * STEP);
     const [a, b] = jobs(backend);
     expect(a?.state.kind).toBe("done");
+    // As the core: the key is gone, so the service is no longer the user's own (§31.4).
     expect(b?.state).toEqual({
       kind: "failed",
-      failure: { code: "recognition", detail: MOCK_RETAKE_NOT_READY },
+      failure: { code: "recognition", detail: MOCK_IMPORT_NO_KEY },
       resumable: false,
     });
   });

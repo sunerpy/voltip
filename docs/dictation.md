@@ -827,7 +827,7 @@ CLI（桌面 `apps/desktop/src-tauri/src/cli.rs`，`clap` 4.6.6；手机端无 C
 | `--quit` | 让运行实例退出（与托盘的「退出 Voltip」相同），与其他参数互斥；应用照常构建，好让插件把参数转给运行实例，构建完仍在说明没有运行实例，直接退出，不起 GUI | 0 |
 | `--list-devices` | `voltip_audio::list_input_devices()`，每行 `id<TAB>name[<TAB>(default)]` | 0 / 1（枚举失败） |
 | `--list-models` | `ModelStore::scan()`，每行 `id<TAB>state<TAB>name`（`installed` / `not_installed` / …） | 0 |
-| `--transcribe-file <wav16k> [--model <id>] [--json]` | headless：不起窗口 / 托盘 / 热键 / 麦克风；`LocalTranscriber::new(<data_dir>/models).select(model)` 识别文件（其他采样率会重采样）；`--model` 缺省取 `settings.json` 本地模式所选模型，否则目录默认；语言取 `engines.language`。stdout 输出文本，或 `{ "text", "model", "latency_ms" }` 一行 JSON | 0；模型未下载 / 识别失败 1、文件读不到 2，非零时 stdout 为空，原因在 stderr |
+| `--transcribe-file <文件> [--model <id>] [--json] [--srt <OUT>]` | headless：不起窗口 / 托盘 / 热键 / 麦克风；文件经导入的解码器（§31.7）转成 16 kHz 单声道，`LocalTranscriber::new(<data_dir>/models).select(model)` 识别（不带 `--srt` 的 WAV 整段识别，其余按 3–15 s 分段）；`--model` 缺省取 `settings.json` 本地模式所选模型，否则目录默认；语言取 `engines.language`。stdout 输出文本，或 `{ "text", "model", "latency_ms" }` 一行 JSON | 0；模型未下载 / 识别失败 1、文件读不到 2，非零时 stdout 为空，原因在 stderr |
 
 Windows 发行版是 GUI 子系统（`windows_subsystem = "windows"`）：headless 参数在 PowerShell 里直接打印不到控制台，重定向（`voltip.exe --transcribe-file a.wav --json > out.json`）或 Linux / macOS 终端正常；退出码不受影响。
 
@@ -2552,9 +2552,9 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 ### 31.4 只用本机模型或自己密钥的服务
 
 - `ImportRequest.asr` 是 `RecognitionChoice`（已安装的本机模型，或服务商与模型），`refine` 是 `PolishModel { provider, model }`（不润色时为空）。只对这次导入生效，设置不变。
-- 核心检查（`import_engines`）：所选识别或润色是 `builtin` → `导入只能使用本机模型或自己密钥的服务，不能使用内置服务`。之后把所选模型套到设置的一份副本上，**清空两个候补计划**（`asr_fallback`、`llm_fallback`，§3.5），所以额度用完也不会顺延到内置服务；解析后识别（或要润色时的润色）仍是内置服务时同样拒绝；模型不能运行（本机模型没下载、服务商没有密钥）时报设置检查的原话。
+- 核心检查（`import_engines`）：所选识别或润色是 `builtin` → `导入只能使用本机模型或自己密钥的服务，不能使用内置服务`。所选识别或润色不是本机模型、而用户没有为它（这个服务商的这项服务）填写自己的密钥 → `导入只能使用本机模型或自己密钥的服务，这个服务没有填写你自己的密钥`（`ImportError::NoOwnKey`）：不需要密钥的自定义服务（`KeyPolicy::Optional`）要填了密钥才能用于导入，不收密钥的 Ollama 不用于导入（用户决定 D6「只用密钥服务」，计划「填了密钥的云端服务商」）；排队的任务轮到时再查一次，期间删掉了密钥的任务以这句话失败。之后把所选模型套到设置的一份副本上，**清空两个候补计划**（`asr_fallback`、`llm_fallback`，§3.5），所以额度用完也不会顺延到内置服务；解析后识别（或要润色时的润色）仍是内置服务时同样拒绝；模型不能运行（本机模型没下载、服务商没有密钥）时报设置检查的原话。
 - 客户端经 `clients_for(resolved, Some(polish))` 构造，带计量包装，不组候补链。不润色时 `TakeClients.refine == Some(false)`，保存的内置润色不会被调用。
-- 界面（§31.6）的列表里本来就没有内置服务。
+- 界面（§31.6）的列表里本来就没有内置服务，也没有用户没填自己密钥的服务（服务状态里 `key.set && key.source == "user"`）。
 
 ### 31.5 字幕（`history::export`）
 
@@ -2565,22 +2565,22 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 ### 31.6 界面（`apps/desktop`）
 
 - 历史页顶部卡片的「导入音频或视频」（手机上没有）：打开系统的多选对话框。也可以把文件拖到历史页：只有历史页处理 `tauri://drag-drop`，其他页面不理会；按 `extensions` 过滤，跳过的文件写明名字（多个时写个数）：选项对话框开着或随这次拖放打开时写在对话框的文件列表下（提示条在对话框下层，会被遮住），没有可导入的文件时用提示条。历史记录关闭时，按钮和拖放都只提示「导入需要先开启「保存听写历史」」，提示里的「去设置」打开「设置 › 隐私与历史」。提示条是固定宽度、超长截断的一行（320×44），这些提示都写得能放下。
-- 选项对话框：文件列表（前 4 个名字，其余「还有 N 个文件」）；语音模型（按服务商分组的有密钥的云端模型和已安装的本机模型，没有内置服务；默认当前识别服务，是内置时默认列表第一项）；识别语言（默认设置里的语言）；AI 润色开关（默认关；打开后选润色模型，同样没有内置服务）；说明「只使用本机模型或你自己填写密钥的服务，不使用内置服务；原文件只会被读取」。没有可用的语音模型时说明原因并给出「管理语音模型」，开始按钮置灰；打开润色却没有可用模型时同样处理（「管理 AI 模型」）。对话框开着时再拖进的文件加进列表。
+- 选项对话框：文件列表（前 4 个名字，其余「还有 N 个文件」）；语音模型（按服务商分组的、用户填了自己密钥的服务的模型和已安装的本机模型，没有内置服务，也没有没填密钥的自定义服务和 Ollama；默认当前识别服务，是内置时默认列表第一项）；识别语言（默认设置里的语言）；AI 润色开关（默认关；打开后选润色模型，同样没有内置服务）；说明「只使用本机模型或你自己填写密钥的服务，不使用内置服务；原文件只会被读取」。没有可用的语音模型时说明原因并给出「管理语音模型」，开始按钮置灰；打开润色却没有可用模型时同样处理（「管理 AI 模型」）。对话框开着时再拖进的文件加进列表。
 - 队列条（历史页顶部，有任务时出现）：每个文件一行：名字、大小、时长、状态与进度条；排队和运行中的有「取消」，失败的有「重试」（可续时提示从未完成的段继续）和「移除」，失败原因里客户端的英文措辞按界面语言显示（同听写，§3.12：`识别失败：请求超时`），完成的有「查看记录」和「移除」；标题旁写等待的个数和「关闭 Voltip 会清空导入列表，原文件不受影响」。
 - 列表里导入的记录带「导入」标记和文件名，元信息写模型、文件时长和「从文件导入」；详情的标题处同样有「导入」，信息区有「文件」一栏，耗时的标题是「耗时 · 导入这个文件」（不是听写的「从松开快捷键到插入」）。导出区在记录有润色段时多一个「字幕文字：润色后 / 识别原文」（默认润色后）。
 
 ### 31.7 CLI（`apps/desktop/src-tauri/src/cli.rs`）
 
 - `--transcribe-file <FILE>` 接受解码器能读的任何文件，视频取音轨；其余参数（`--model`、`--json`、`--device`、`--gpu`、`--threads`）、退出码和标准输出约定不变。仍只用本机模型，不读密钥、不写历史，在 Tauri 启动前退出。
-- 不带 `--srt` 的 WAV 照旧整段识别，输出与以前逐字节相同（测试钉住）。其他文件（以及带 `--srt` 的 WAV）经同一个 `voltip_media` 解码到系统临时目录（结束时删除），按导入的 3–15 s 切段逐段识别（每段最多 2 次），文字按长录音的方式拼接。模型没装好时在解码之前就失败。
+- 每个输入文件（WAV 也一样）都经同一个 `voltip_media` 解码到系统临时目录（16 kHz 单声道，结束时删除）。不带 `--srt` 的 WAV 解码后照旧整段识别（一次请求）：16 kHz 单声道 16 位的 WAV 解出的样本与文件里的相同，输出与以前逐字节相同（测试钉住）；其他采样率的 WAV 由解码器转成 16 kHz 后整段识别。其他文件（以及带 `--srt` 的 WAV）按导入的 3–15 s 切段逐段识别（每段最多 2 次），文字按长录音的方式拼接。模型没装好时在解码之前就失败。
 - `--srt <OUT>`（需要 `--transcribe-file`）：另外把字幕写到这个文件（识别原文，SRT 规则同 §22.5）。读不了输入文件退出码 2（`BadInput`），解码、识别或写字幕失败退出码 1。
 
 ### 31.8 门禁
 
 - `voltip-media`（`tests/decode.rs`，夹具在 `tests/fixtures/`，生成命令见同目录 README，每个不超过 64 KB）：WAV、MP3、ADTS、M4A、FLAC、Ogg Vorbis、Opus、MP4、MOV、MKV、WebM 都解成 16 kHz 单声道，时长误差不超过一帧、静音位置与 440 Hz（过零计数）正确；立体声混音；不支持的编码与没有音轨的错误；截断文件；估计时长不判损坏（`regression_a_length_the_reader_estimates_is_no_proof_of_damage`）；取消后 `.part` 被删；Opus pre-skip；每个能读的文件扩展名都在 `EXTENSIONS` 里。
-- 核心：`import::run` 单测（`a_file_becomes_one_entry_whose_segments_keep_their_times`、`the_polish_runs_segment_by_segment_and_a_failed_one_keeps_its_text`、`without_a_polish_the_refiner_is_never_asked`、`a_segment_that_fails_twice_stops_the_job_and_a_retry_goes_on_from_it`、`the_job_waits_for_a_dictation_before_its_next_segment`、解码失败、无语音、取消、`the_dictionary_and_the_rules_work_on_every_segment`）；`runtime::import` 单测 `regression_builtin_is_refused_for_imports`、`regression_an_import_without_polish_ignores_the_saved_builtin_llm`、`an_import_needs_its_model_installed_and_its_key`；`tests/import.rs`（真实核心任务 + 假解码器、假识别器、假润色器）：导入成一条记录且原文件字节不变、`regression_an_import_never_reaches_a_saved_builtin_fallback`、分段润色、失败不挡下一个且重试从未完成的段继续、解码失败、取消不留东西、听写进行时等待（用量来源 `import` 与 `this_device` 各自记录）、手机 / 历史关闭 / 内置服务被拒绝、本机模型导入、启动与退出时清理解码文件；`history::export` 的 `regression_srt_with_refined_text_keeps_the_segment_timings`；`history::tests` 的 `regression_imported_files_stay_out_of_the_recent_texts`、`an_imported_entry_is_found_by_its_file_name` 与统计排除；切段 `bounds_from_an_import_replace_the_long_takes`（VAD）与 `a_bounded_cutter_keeps_its_segments_within_the_bounds`（能量）。
-- 桌面：`tests/ipc.rs` 的 `an_import_goes_from_the_webview_into_the_history` 与命令清单；`tests/cli.rs` 的 `regression_a_wav_is_still_read_whole`（WAV 输出不变）、`transcribe_file_reads_every_format_the_import_reads`（MP3、M4A 等夹具）、`transcribe_file_writes_the_subtitles_of_its_segments`（`--srt`）。
-- TS：schema 与契约回放（`imports` 状态与事件、四条命令）；`MockBackend` 的导入队列；`imports.test.ts`；`Imports.test.tsx`（按钮与对话框不含内置服务、本机模型与语言、没有可用模型、拖放只在历史页且按扩展名过滤、跳过的文件写在对话框里、历史关闭的提示与「去设置」、队列各状态、听写时暂停、导入记录的标记与两种字幕导出、`regression: its timing is the file's import, not a shortcut take`）；`imports.test.ts` 的 `regression: a recognition failure reads in the interface's language, not the client's`。
+- 核心：`import::run` 单测（`a_file_becomes_one_entry_whose_segments_keep_their_times`、`the_polish_runs_segment_by_segment_and_a_failed_one_keeps_its_text`、`without_a_polish_the_refiner_is_never_asked`、`a_segment_that_fails_twice_stops_the_job_and_a_retry_goes_on_from_it`、`the_job_waits_for_a_dictation_before_its_next_segment`、解码失败、无语音、取消、`the_dictionary_and_the_rules_work_on_every_segment`）；`runtime::import` 单测 `regression_builtin_is_refused_for_imports`、`regression_an_import_takes_a_service_only_with_the_users_own_key`（没填密钥的自定义服务与 Ollama 被拒绝，填了密钥的自定义服务可用）、`regression_an_import_without_polish_ignores_the_saved_builtin_llm`、`an_import_needs_its_model_installed_and_its_key`；`tests/import.rs`（真实核心任务 + 假解码器、假识别器、假润色器）：导入成一条记录且原文件字节不变、`regression_an_import_never_reaches_a_saved_builtin_fallback`、分段润色、失败不挡下一个且重试从未完成的段继续、解码失败、取消不留东西、听写进行时等待（用量来源 `import` 与 `this_device` 各自记录）、手机 / 历史关闭 / 内置服务被拒绝、本机模型导入、启动与退出时清理解码文件；`history::export` 的 `regression_srt_with_refined_text_keeps_the_segment_timings`；`history::tests` 的 `regression_imported_files_stay_out_of_the_recent_texts`、`an_imported_entry_is_found_by_its_file_name` 与统计排除；切段 `bounds_from_an_import_replace_the_long_takes`（VAD）与 `a_bounded_cutter_keeps_its_segments_within_the_bounds`（能量）。
+- 桌面：`tests/ipc.rs` 的 `an_import_goes_from_the_webview_into_the_history` 与命令清单；`tests/cli.rs` 的 `regression_a_wav_is_still_read_whole`（WAV 也经解码器，16 kHz 单声道 WAV 的输出不变，12 kHz 的解成 16 kHz 后仍整段识别）、`transcribe_file_reads_every_format_the_import_reads`（MP3、M4A 等夹具）、`transcribe_file_writes_the_subtitles_of_its_segments`（`--srt`）。
+- TS：schema 与契约回放（`imports` 状态与事件、四条命令）；`MockBackend` 的导入队列；`imports.test.ts`；`Imports.test.tsx`（按钮与对话框不含内置服务、本机模型与语言、没有可用模型、拖放只在历史页且按扩展名过滤、跳过的文件写在对话框里、历史关闭的提示与「去设置」、队列各状态、听写时暂停、导入记录的标记与两种字幕导出、`regression: its timing is the file's import, not a shortcut take`）；`imports.test.ts` 的 `regression: a recognition failure reads in the interface's language, not the client's`；`import-options.test.ts` 的 `regression: offers a service only with the user's own key, also where the provider takes none`；`MockBackend` 的 `regression: refuses a service without the user's own key, also where the provider takes none`。
 - 真模型（`#[ignore]`，Linux 本机与 Windows 构建机 `gate real`）：`voltip-asr-local` `tests/real.rs` 的 `real_imports_of_one_clip_agree_across_containers`：一段 60 s 中文语音，ffmpeg 当场转成 MP3、M4A、MKV(Opus)，本机模型转写，三种格式的文字一致、字幕时间单调递增。依赖时间与线程的测试在满载下各跑 200 次。
 
 ### 31.9 未做与限制

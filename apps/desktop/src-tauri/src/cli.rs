@@ -357,10 +357,10 @@ impl Drop for TempPcm {
     }
 }
 
-/// Any file the import reads (docs/dictation.md §31): decoded by the same decoder, cut into the
-/// same 3–15 s segments, each recognised in at most two tries; the text joined as a long take's,
-/// and the subtitles of the segments when asked.
-async fn transcribe_media(transcriber: &LocalTranscriber, args: &TranscribeArgs<'_>) -> Result<(TranscribeOutput, Option<String>), Failure> {
+/// `args.path` decoded by the import's decoder (docs/dictation.md §31) into a temporary 16 kHz
+/// mono file, and its length in samples. The model is checked first, so a missing one fails before
+/// any decoding.
+async fn decode(transcriber: &LocalTranscriber, args: &TranscribeArgs<'_>) -> Result<(TempPcm, u64), Failure> {
     model_ready(transcriber)?;
     let pcm = TempPcm(std::env::temp_dir().join(format!("voltip-transcribe-{}.pcm", uuid::Uuid::new_v4())));
     let (source, out) = (args.path.to_path_buf(), pcm.0.clone());
@@ -371,7 +371,30 @@ async fn transcribe_media(transcriber: &LocalTranscriber, args: &TranscribeArgs<
             voltip_core::import::MediaError::Unreadable(reason) => Failure::Input(format!("{}: {reason}", args.path.display())),
             e => Failure::Other(format!("{}: {e}", args.path.display())),
         })?;
-    let cuts = voltip_core::import::run::cut_points(&pcm.0, decoded.samples, args.segmenter).map_err(Failure::Other)?;
+    Ok((pcm, decoded.samples))
+}
+
+/// A WAV without `--srt` (docs/dictation.md §31.7): decoded like every file, then recognised whole
+/// in one request as before the import came, so a 16 kHz mono WAV gives the same text.
+async fn transcribe_whole(transcriber: &LocalTranscriber, args: &TranscribeArgs<'_>) -> Result<TranscribeOutput, Failure> {
+    let (pcm, samples) = decode(transcriber, args).await?;
+    let wav = long::read_segment(&pcm.0, 0, samples).map_err(|e| Failure::Other(e.to_string()))?;
+    let started = Instant::now();
+    let transcript = transcriber.transcribe(&wav, args.language, &[]).await?;
+    Ok(TranscribeOutput {
+        text: voltip_core::script::normalized(args.script, &transcript.text),
+        model: transcriber.selected().to_owned(),
+        latency_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        backend: transcriber.loaded_backend().unwrap_or_default(),
+    })
+}
+
+/// Any file the import reads (docs/dictation.md §31): decoded by the same decoder, cut into the
+/// same 3–15 s segments, each recognised in at most two tries; the text joined as a long take's,
+/// and the subtitles of the segments when asked.
+async fn transcribe_media(transcriber: &LocalTranscriber, args: &TranscribeArgs<'_>) -> Result<(TranscribeOutput, Option<String>), Failure> {
+    let (pcm, samples) = decode(transcriber, args).await?;
+    let cuts = voltip_core::import::run::cut_points(&pcm.0, samples, args.segmenter).map_err(Failure::Other)?;
     let started = Instant::now();
     let mut segments = Vec::new();
     let mut start = 0;
@@ -400,10 +423,11 @@ async fn transcribe_media(transcriber: &LocalTranscriber, args: &TranscribeArgs<
 
 /// The whole `--transcribe-file` action over an injected transcriber: writes the text (or the
 /// JSON) plus a newline to `out` on success, after the subtitles when `--srt` asks for them, and
-/// nothing otherwise; the reason goes to `err`. A WAV without `--srt` is read whole, as before;
-/// everything else goes through the import's decoder and segments ([`transcribe_media`]). `main`
-/// maps the returned code to the process exit status. Tests call this with a fake recogniser; the
-/// binary passes `LocalTranscriber::new(models_root).select(model)`.
+/// nothing otherwise; the reason goes to `err`. Every file goes through the import's decoder; a WAV
+/// without `--srt` is then recognised whole, as before ([`transcribe_whole`]), everything else in
+/// the import's segments ([`transcribe_media`]). `main` maps the returned code to the process exit
+/// status. Tests call this with a fake recogniser; the binary passes
+/// `LocalTranscriber::new(models_root).select(model)`.
 pub fn transcribe_file(transcriber: &LocalTranscriber, args: &TranscribeArgs<'_>, out: &mut dyn Write, err: &mut dyn Write) -> ExitCode {
     let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
         Ok(rt) => rt,
@@ -413,7 +437,7 @@ pub fn transcribe_file(transcriber: &LocalTranscriber, args: &TranscribeArgs<'_>
         }
     };
     let result = if args.srt.is_none() && is_wav(args.path) {
-        runtime.block_on(transcribe_path(transcriber, args.path, args.language, args.script)).map(|output| (output, None)).map_err(Failure::from)
+        runtime.block_on(transcribe_whole(transcriber, args)).map(|output| (output, None))
     } else {
         runtime.block_on(transcribe_media(transcriber, args))
     };
