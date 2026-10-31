@@ -44,6 +44,7 @@
       "result_cards_stay": false,
       "asr_fallback": {
         "enabled": true,
+        "on_outage": true,
         "models": [
           {
             "provider": "custom",
@@ -52,6 +53,14 @@
           {
             "provider": "builtin",
             "model": ""
+          },
+          {
+            "provider": "local",
+            "model": "qwen3-asr-0.6b"
+          },
+          {
+            "provider": "local",
+            "model": "paraformer-zh"
           }
         ]
       },
@@ -249,7 +258,9 @@
       "refined": true,
       "asr_model": "Qwen/Qwen3-ASR-1.7B",
       "asr_note": "gpu_failed_ran_on_cpu",
+      "asr_provider": "builtin",
       "refine_model": "qwen/qwen3.8-27b",
+      "refine_provider": "groq",
       "duration_ms": 3200,
       "asr_ms": 640,
       "refine_ms": 2400,
@@ -295,6 +306,8 @@
       "text": "测试一下",
       "refined": false,
       "asr_model": "Qwen/Qwen3-ASR-1.7B",
+      "asr_provider": "builtin",
+      "asr_fallback": "outage",
       "duration_ms": 900,
       "asr_ms": 410,
       "refine_failure": "rate_limited",
@@ -1018,15 +1031,27 @@
       "enabled": true,
       "in_use": true,
       "selected_retry_at_ms": 1758787000000,
+      "selected_retry_reason": "quota",
       "models": [
         {
           "provider": "custom",
-          "model": "qwen3-asr-flash"
+          "model": "qwen3-asr-flash",
+          "retry_at_ms": 1758700660000,
+          "retry_reason": "outage"
         },
         {
           "provider": "builtin",
           "model": "Qwen/Qwen3-ASR-1.7B",
           "skip": "same_as_selected"
+        },
+        {
+          "provider": "local",
+          "model": "qwen3-asr-0.6b"
+        },
+        {
+          "provider": "local",
+          "model": "paraformer-zh",
+          "issue": "model_not_installed"
         }
       ]
     },

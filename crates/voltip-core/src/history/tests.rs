@@ -18,7 +18,11 @@ pub(super) fn entry(text: &str) -> HistoryEntry {
         refined: true,
         asr_model: "Qwen/Qwen3-ASR-1.7B".into(),
         asr_note: None,
+        asr_provider: None,
+        asr_fallback: None,
         refine_model: Some("qwen/qwen3.8-27b".into()),
+        refine_provider: None,
+        refine_fallback: None,
         duration_ms: 1500,
         asr_ms: 420,
         refine_ms: Some(300),
@@ -906,6 +910,11 @@ fn regression_a_huge_entry_goes_out_bounded_and_the_sync_moves_on() {
         live_error: Some("e".repeat(20_000_000)),
         text: "字".repeat(SHORTENED_TEXT_CHARS + 10),
         vocabulary: Some(VocabularyHits::default()),
+        // docs/dictation.md §3.14: who wrote the text and why a fallback model did.
+        asr_provider: Some(crate::providers::ProviderId::Groq),
+        asr_fallback: Some(crate::dictation::SwitchReason::Outage),
+        refine_provider: Some(crate::providers::ProviderId::Aliyun),
+        refine_fallback: Some(crate::dictation::SwitchReason::Quota),
         ..entry("很长")
     };
     let after = HistoryEntry { at_ms: 1_758_700_000_001, ..entry("下一条") };
@@ -921,6 +930,11 @@ fn regression_a_huge_entry_goes_out_bounded_and_the_sync_moves_on() {
     assert_eq!(sent.text.chars().count(), SHORTENED_TEXT_CHARS);
     assert!(sent.vocabulary.is_none() && sent.edit.is_none());
     assert_eq!((sent.raw_text.as_str(), sent.at_ms, sent.duration_ms), (huge.raw_text.as_str(), huge.at_ms, huge.duration_ms));
+    // regression (goal gate, PR-7): the projection kept the providers and fallback reasons.
+    assert_eq!(
+        (sent.asr_provider, sent.asr_fallback, sent.refine_provider, sent.refine_fallback),
+        (huge.asr_provider, huge.asr_fallback, huge.refine_provider, huge.refine_fallback)
+    );
     assert!(crate::sync::cbor_len(sent) < 1_400_000, "{} bytes", crate::sync::cbor_len(sent));
     // The projection is small enough to share the batch: the sync moves past it.
     assert_eq!(batch.upserts.iter().map(|e| e.id).collect::<Vec<_>>(), [huge.id, after.id]);

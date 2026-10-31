@@ -10,6 +10,8 @@ import {
   fallbackSettingsOf,
   fallbackStatusOf,
   formatDateTime,
+  localFallbackModels,
+  modelDisplayName,
   modelOptions,
   moveFallback,
   providersFor,
@@ -25,6 +27,7 @@ import { type LampTone } from "../../components/Lamp";
 import { LampText } from "../../components/LampText";
 import { Select } from "../../components/Select";
 import { SettingsSection } from "../../components/SettingsLayout";
+import { StatusRow } from "../../components/StatusRow";
 import { Toggle } from "../../components/Toggle";
 import { useI18n } from "../../i18n/I18nProvider";
 import { useFeatureShell } from "../shell";
@@ -37,10 +40,22 @@ const TONE: Readonly<Record<FallbackRowView["state"], LampTone>> = {
   active: "ok",
   ready: "neutral",
   exhausted: "warn",
+  cooling: "warn",
   issue: "warn",
   same: "off",
   duplicate: "off",
+  not_for_local: "off",
 };
+
+/** A retry time as the rows show it. */
+function retryTime(locale: Parameters<typeof formatDateTime>[0], at: number | undefined): string {
+  return formatDateTime(locale, at ?? 0, {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 
 /** A model id, or a dash for none. */
 function shown(model: string): string {
@@ -51,15 +66,21 @@ export interface FallbackSectionProps {
   kind: ServiceKind;
   /** Extra classes for the switch (the phone's touch size). */
   toggleClassName?: string;
+  /** 服务出错时也改用候补 and the models of this computer in the recognition chain
+   *  (docs/dictation.md §3.14): the desktop's pages; the phone offers neither. */
+  outage?: boolean;
 }
 
 /** 额度用完后改用其他模型 (docs/dictation.md §3.5) for one service: the switch, the chain — the
  *  selected model first, then the fallback models in order with what became of each (in use,
  *  available, out of quota until a time, a provider problem, skipped) — moving and removing them,
  *  adding one (a provider offering the service, one of its models), 重新检查 once a model ran out,
- *  and Model Studio's note on its 免费额度用完即停. Every change goes through
- *  `settings_set_engines`; the desktop's two engines pages and the phone's use it. */
-export function FallbackSection({ kind, toggleClassName }: FallbackSectionProps) {
+ *  and Model Studio's note on its 免费额度用完即停. With `outage` (the desktop, §3.14) also the switch
+ *  that moves on when a service fails, failed models skipped for now, and the models of this
+ *  computer for the recognition: added from the library, the only ones a selected model of this
+ *  computer moves on to. Every change goes through `settings_set_engines`; the desktop's two
+ *  engines pages and the phone's use it. */
+export function FallbackSection({ kind, toggleClassName, outage = false }: FallbackSectionProps) {
   const { backend } = useBackend();
   const { notify } = useFeatureShell();
   const { t, locale } = useI18n();
@@ -81,40 +102,58 @@ export function FallbackSection({ kind, toggleClassName }: FallbackSectionProps)
     });
   };
   const name = (provider: ProviderId) => t(`engines.provider.${provider}`);
+  // A model of this computer by its name in the library (§3.14); an id the library lost as it is.
+  const localName = (id: string): string => {
+    const model = state.models.find((m) => m.id === id);
+    return model === undefined ? id : modelDisplayName(id, model.name, locale);
+  };
+  const modelOf = (provider: ProviderId, model: string): string =>
+    provider === "local" && model.length > 0 ? localName(model) : shown(model);
   const label = (row: FallbackRowView): string => {
     switch (row.state) {
       case "exhausted":
-        return t("engines.fallback.state.exhausted", {
-          time: formatDateTime(locale, row.retryAtMs ?? 0, {
-            month: "numeric",
-            day: "numeric",
-            hour: "2-digit",
-            minute: "2-digit",
-          }),
-        });
+        return t("engines.fallback.state.exhausted", { time: retryTime(locale, row.retryAtMs) });
+      case "cooling":
+        return t("fallbackOutage.state.cooling", { time: retryTime(locale, row.retryAtMs) });
+      case "not_for_local":
+        return t("fallbackOutage.state.notForLocal");
       case "issue":
         return t(`engines.issue.${row.issue ?? "unavailable"}`);
       default:
         return t(`engines.fallback.state.${row.state}`);
     }
   };
+  const onOutage = outage && config.on_outage === true;
+  const onDevice = kind === "asr" && state.engines.asr_provider === "local";
   const notInUse =
-    config.enabled && !status.in_use
-      ? kind === "asr" && state.engines.asr_provider === "local"
-        ? "local"
-        : "notReady"
-      : undefined;
-  const exhausted = rows.some((r) => r.state === "exhausted");
+    !config.enabled || status.in_use
+      ? undefined
+      : !onDevice
+        ? onOutage
+          ? t("fallbackOutage.notInUse.notReady")
+          : t("engines.fallback.notInUse.notReady")
+        : !outage
+          ? t("engines.fallback.notInUse.local")
+          : onOutage
+            ? t("fallbackOutage.notInUse.localNone")
+            : t("fallbackOutage.notInUse.localOff");
+  const skipped = rows.some((r) => r.state === "exhausted" || r.state === "cooling");
+  const failed = rows.some((r) => r.state === "cooling");
   const studio = rows.some((r) => r.provider === "aliyun");
 
   return (
     <SettingsSection
       title={t("engines.fallback.title")}
-      description={t(`engines.fallback.description.${kind}`)}
+      description={
+        onOutage
+          ? t(`fallbackOutage.description.${kind}`)
+          : t(`engines.fallback.description.${kind}`)
+      }
       data-testid={`fallback-${kind}`}
       data={{
         "data-enabled": String(config.enabled),
         "data-in-use": String(status.in_use),
+        "data-on-outage": String(onOutage),
       }}
       aside={
         <Toggle
@@ -127,11 +166,27 @@ export function FallbackSection({ kind, toggleClassName }: FallbackSectionProps)
           }}
         />
       }>
+      {outage && (
+        // docs/dictation.md §3.14: off by default; it only matters while the list is on.
+        <StatusRow
+          label={t("fallbackOutage.toggle")}
+          help={t("fallbackOutage.help")}
+          data-testid={`fallback-${kind}-outage`}>
+          <Toggle
+            checked={config.on_outage === true}
+            disabled={!config.enabled}
+            ariaLabel={t("fallbackOutage.toggle")}
+            onChange={(on_outage) => {
+              save({ ...config, on_outage });
+            }}
+          />
+        </StatusRow>
+      )}
       {notInUse !== undefined && (
         <p
           className="text-[12px] leading-5 text-fg-muted"
           data-testid={`fallback-${kind}-not-in-use`}>
-          {t(`engines.fallback.notInUse.${notInUse}`)}
+          {notInUse}
         </p>
       )}
       <ol
@@ -142,7 +197,11 @@ export function FallbackSection({ kind, toggleClassName }: FallbackSectionProps)
           <Row
             n={1}
             provider={name(selected.provider)}
-            model={shown(selected.model)}
+            model={
+              selected.provider === "local" && typeof state.engines.local_model === "string"
+                ? localName(state.engines.local_model)
+                : shown(selected.model)
+            }
             badge={t("engines.fallback.selected")}
             tone={TONE[selected.state]}
             status={label(selected)}
@@ -151,7 +210,7 @@ export function FallbackSection({ kind, toggleClassName }: FallbackSectionProps)
         )}
         {config.models.map((entry, i) => {
           const row = resolved(i);
-          const model = shown(row?.model ?? entry.model);
+          const model = modelOf(entry.provider, row?.model ?? entry.model);
           return (
             <Row
               key={`${entry.provider}:${entry.model}:${String(i)}`}
@@ -215,20 +274,23 @@ export function FallbackSection({ kind, toggleClassName }: FallbackSectionProps)
       <AddFallback
         kind={kind}
         list={config.models}
+        local={outage && kind === "asr"}
         onAdd={(entry) => {
           save({ ...config, models: [...config.models, entry] });
         }}
       />
-      {(exhausted || studio) && (
+      {(skipped || studio) && (
         <div className="flex flex-col items-start gap-2">
-          {exhausted && (
+          {skipped && (
             <Button
               size="sm"
               variant="outline"
               data-testid={`fallback-${kind}-recheck`}
               onClick={() => {
                 void backend.invoke("engines_quota_reset", { kind });
-                notify(t("engines.fallback.recheckDone"));
+                notify(
+                  failed ? t("fallbackOutage.recheckDone") : t("engines.fallback.recheckDone"),
+                );
               }}>
               {t("engines.fallback.recheck")}
             </Button>
@@ -297,28 +359,39 @@ function Row({
   );
 }
 
-/** The add row: a provider offering the service (not the on-device one), one of its models — the
- *  card's presets or any id — and 添加 beside them on the same line (user request 2026-10-26),
- *  refused with the reason when the list cannot take it. A narrow pane wraps it. */
+/** The add row: a provider offering the service, one of its models — the card's presets or any id
+ *  — and 添加 beside them on the same line (user request 2026-10-26), refused with the reason when
+ *  the list cannot take it. The models of this computer are offered with `local` once the library
+ *  has one downloaded (docs/dictation.md §3.14), by name. A narrow pane wraps it. */
 function AddFallback({
   kind,
   list,
+  local,
   onAdd,
 }: {
   kind: ServiceKind;
   list: readonly FallbackModel[];
+  local: boolean;
   onAdd: (entry: FallbackModel) => void;
 }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const state = useUiState();
-  const candidates = providersFor(state.engines, kind).filter((p) => p.id !== "local");
+  const downloaded = local ? localFallbackModels(state.models) : [];
+  const candidates = providersFor(state.engines, kind).filter(
+    (p) => p.id !== "local" || downloaded.length > 0,
+  );
   const [providerId, setProviderId] = useState<ProviderId | undefined>(undefined);
   const provider = candidates.find((p) => p.id === providerId) ?? candidates[0];
   const service = provider?.[kind];
   const options =
     service === undefined
       ? []
-      : modelOptions(service, [], t, { value: OTHER_MODEL, label: t("engines.field.modelOther") });
+      : provider?.id === "local"
+        ? downloaded.map((m) => ({ value: m.id, label: modelDisplayName(m.id, m.name, locale) }))
+        : modelOptions(service, [], t, {
+            value: OTHER_MODEL,
+            label: t("engines.field.modelOther"),
+          });
   const choices = options.filter((o) => o.value !== OTHER_MODEL).map((o) => o.value);
   const [picked, setPicked] = useState<string | undefined>(undefined);
   const [typed, setTyped] = useState("");

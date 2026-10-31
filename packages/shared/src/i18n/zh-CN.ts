@@ -2338,6 +2338,40 @@ export const zhCN = {
       copyLastClearLabel: "清除 · 复制上一条结果",
     },
   },
+  /** docs/dictation.md §3.14: 服务出错时也改用候补, the models of this computer in a recognition
+   *  chain, and whose model wrote a history entry's text. */
+  fallbackOutage: {
+    toggle: "服务出错时也改用候补",
+    help: "开启后，请求超时、网络错误、服务器出错或繁忙、请求过于频繁时，也按顺序改用下面的模型；本地识别在显卡、内存或模型出错时也会改用。密钥无效、请求有误等错误不会切换。一次请求有 3 个模型出错后不再尝试，出错的模型约 1 分钟内跳过。",
+    /** The section's description while the switch is on. */
+    description: {
+      asr: "所选模型的额度用完或服务出错时，按顺序改用下面的模型识别。密钥无效、请求有误等错误不会切换模型。",
+      llm: "所选模型的额度用完或服务出错时，按顺序改用下面的模型润色和编辑。密钥无效、请求有误等错误不会切换模型。",
+    },
+    state: {
+      cooling: "出错，暂时跳过 · {time} 再试",
+      notForLocal: "选用本地识别时，出错不会改用云端服务",
+    },
+    notInUse: {
+      localOff:
+        "当前选择的是本机模型。开启「服务出错时也改用候补」后，本地识别出错时改用列表中的本机模型，录音不会上传到云端。",
+      localNone:
+        "当前选择的是本机模型：出错时只改用列表中的本机模型，录音不会上传到云端。请添加已下载的本机模型。",
+      notReady: "当前选择不可用。候补模型只在额度用完或服务出错时启用，不替代未配置好的服务商。",
+    },
+    recheckDone: "已清除额度与出错记录，之后的请求从所选模型开始",
+    /** Appended to where the data goes while the switch is on. */
+    privacyTargets: "；额度用完或服务出错时改发给{targets}",
+    history: {
+      asrProvider: "识别服务商",
+      refineProvider: "润色服务商",
+      /** Why a fallback model wrote the text, after the provider. */
+      reason: {
+        quota: "候补模型 · 所选模型额度已用完",
+        outage: "候补模型 · 所选模型出错",
+      },
+    },
+  },
   settings: {
     title: "设置",
     groupsLabel: "设置分组",

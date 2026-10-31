@@ -123,7 +123,8 @@ function ProviderList({ kind, initialOpen }: { kind: ServiceKind; initialOpen?: 
         )}
         <ServicePrivacy kind={kind} />
       </SettingsSection>
-      <FallbackSection kind={kind} />
+      {/* docs/dictation.md §3.14: the desktop moves on for failures too, if asked. */}
+      <FallbackSection kind={kind} outage />
     </>
   );
 }

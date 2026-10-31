@@ -779,4 +779,37 @@ describe("History detail · technical details", () => {
       expect(screen.queryByTestId("history-asr-note")).toBeNull();
     });
   });
+
+  it("section 3.14: whose models wrote the text, and why a fallback model did", async () => {
+    const outage = take(1, RAW, TEXT, {
+      asr_provider: "groq",
+      asr_fallback: "outage",
+      refined: true,
+      refine_model: "qwen-plus",
+      refine_provider: "aliyun",
+      refine_fallback: "quota",
+    });
+    const selected = take(2, "第二条", "第二条。", { asr_provider: "aliyun", refined: false });
+    const older = take(3, "第三条", "第三条。");
+    const { user } = setup({ history: [outage, selected, older] });
+    expect(await screen.findByTestId("history-asr-provider")).toHaveTextContent(
+      "Groq · 候补模型 · 所选模型出错",
+    );
+    expect(screen.getByTestId("history-refine-provider")).toHaveTextContent(
+      "阿里云百炼 · 候补模型 · 所选模型额度已用完",
+    );
+    const rows = within(screen.getByRole("list", { name: "听写记录" })).getAllByRole("button", {
+      pressed: false,
+    });
+    await user.click(rows[0] ?? document.body);
+    await waitFor(() => {
+      expect(screen.getByTestId("history-asr-provider")).toHaveTextContent(/^阿里云百炼$/);
+    });
+    expect(screen.queryByTestId("history-refine-provider")).toBeNull();
+    // An entry written before Voltip recorded it names no provider.
+    await user.click(rows[1] ?? document.body);
+    await waitFor(() => {
+      expect(screen.queryByTestId("history-asr-provider")).toBeNull();
+    });
+  });
 });

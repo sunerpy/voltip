@@ -1,5 +1,5 @@
-// Fallback models on the pages (docs/dictation.md §3.5): the settings with their defaults, the list
-// edits the pages make, and what each row shows, from the status the core resolved.
+// Fallback models on the pages (docs/dictation.md §3.5, §3.14): the settings with their defaults,
+// the list edits the pages make, and what each row shows, from the status the core resolved.
 import type {
   EngineIssue,
   EngineSettings,
@@ -7,9 +7,12 @@ import type {
   FallbackModel,
   FallbackSettings,
   FallbackStatus,
+  ModelState,
   ProviderId,
   ServiceKind,
+  SwitchReason,
 } from "./schema";
+import { DEFAULT_LOCALE, type Locale, translate } from "./i18n";
 import { MAX_FALLBACK_MODELS } from "./schema";
 
 const OFF: FallbackSettings = { enabled: false, models: [] };
@@ -75,12 +78,21 @@ export type FallbackRowState =
   | "ready"
   /** Ran out of quota; tried again at `retryAtMs`. */
   | "exhausted"
+  /** Failed (§3.14); skipped until `retryAtMs`, then asked again. */
+  | "cooling"
   /** Cannot run: `issue` says why. */
   | "issue"
   /** The selected model listed again: never asked twice. */
   | "same"
   /** Listed twice. */
-  | "duplicate";
+  | "duplicate"
+  /** A service while recognition runs on this device: a failure never sends the audio away (§3.14). */
+  | "not_for_local";
+
+/** The row state of a model skipped until a time, by why. */
+function skippedFor(reason: SwitchReason | undefined): FallbackRowState {
+  return reason === "outage" ? "cooling" : "exhausted";
+}
 
 /** One row of the chain as the pages show it. */
 export interface FallbackRowView {
@@ -110,7 +122,7 @@ export function fallbackRows(
       index: "selected",
       provider,
       model,
-      state: retry === undefined ? "ready" : "exhausted",
+      state: retry === undefined ? "ready" : skippedFor(status.selected_retry_reason),
       ...(retry === undefined ? {} : { retryAtMs: retry }),
     });
   }
@@ -122,9 +134,11 @@ export function fallbackRows(
           ? "same"
           : m.skip === "duplicate"
             ? "duplicate"
-            : m.retry_at_ms !== undefined
-              ? "exhausted"
-              : "ready";
+            : m.skip === "not_for_local"
+              ? "not_for_local"
+              : m.retry_at_ms !== undefined
+                ? skippedFor(m.retry_reason)
+                : "ready";
     rows.push({
       index,
       provider: m.provider,
@@ -137,4 +151,49 @@ export function fallbackRows(
   const active = status.in_use ? rows.find((r) => r.state === "ready") : undefined;
   if (active !== undefined) active.state = "active";
   return { rows, active };
+}
+
+/** The models of this device a recognition chain may list (§3.14): the library's installed models
+ *  that recognise whole takes (`offline`; not the streaming one, which only previews). */
+export function localFallbackModels(models: readonly ModelState[]): ModelState[] {
+  return models.filter((m) => m.capabilities.includes("offline") && m.state.kind === "installed");
+}
+
+/** Whether `kind`'s chain moves on for failures too (服务出错时也改用候补, §3.14). */
+export function fallbackOnOutage(settings: EngineSettings, kind: ServiceKind): boolean {
+  return fallbackSettingsOf(settings, kind).on_outage === true;
+}
+
+/** The providers `kind`'s chain may send the data to besides the selected one (§3.5, §3.14): those
+ *  of the fallback models that can run while it runs. A model of this computer sends nothing. */
+export function fallbackTargets(engines: EngineStatus, kind: ServiceKind): ProviderId[] {
+  if (!fallbackStatusOf(engines, kind).in_use) return [];
+  const selected = kind === "asr" ? engines.asr_provider : engines.llm_provider;
+  const sending: ReadonlySet<FallbackRowState> = new Set([
+    "ready",
+    "active",
+    "exhausted",
+    "cooling",
+  ]);
+  return [
+    ...new Set(
+      fallbackRows(engines, kind)
+        .rows.filter((r) => r.index !== "selected" && sending.has(r.state))
+        .map((r) => r.provider)
+        .filter((p) => p !== selected && p !== "local"),
+    ),
+  ];
+}
+
+/** Whose model wrote a history entry's text, and why a fallback model did (§3.14): 「阿里云百炼」,
+ *  「阿里云百炼 · 候补模型 · 所选模型出错」. */
+export function servedByText(
+  provider: ProviderId,
+  fallback: SwitchReason | undefined,
+  locale: Locale = DEFAULT_LOCALE,
+): string {
+  const name = translate(locale, `engines.provider.${provider}`);
+  return fallback === undefined
+    ? name
+    : `${name} · ${translate(locale, `fallbackOutage.history.reason.${fallback}`)}`;
 }

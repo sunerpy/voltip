@@ -96,6 +96,16 @@ Voltip loads the selected model in the background when it starts and after each 
 
 On x86 computers, Qwen3-ASR needs a processor with AVX2: Intel processors from 2013 (Haswell) on, and AMD processors from 2015 on. On an older processor, Voltip explains why the model cannot be loaded; use SenseVoice, Paraformer or a cloud service instead. Apple silicon Macs run the models natively.
 
+## When a local model fails
+
+The fallback list on the Speech models page can include downloaded local models (see [Also switch when a service fails](/recognition/cloud#also-switch-when-a-service-fails)). While the selected model is a local model:
+
+- With **When a model's quota runs out** and **Also switch when a service fails** on, a recording whose graphics card, memory or model fails, and fails again on the processor, is recognised by the next local model in the list.
+- The online providers in the list are not used: a failure of local recognition never uploads the recording. With only online providers in the list, the dictation reports the failure as before.
+- Local models have no quota, so with only **When a model's quota runs out** on, nothing switches.
+
+While the selected model is an online provider, a local model in the list can also take over when the quota runs out or the service fails.
+
 ## Chinese script
 
 Some models write Traditional characters for Chinese speech. Under **Chinese script** on the Recognition tab, choose **Simplified** (default), **Traditional** or **As recognised**. The conversion happens right after recognition, before the dictionary corrections.

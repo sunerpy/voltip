@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::dictation::SwitchReason;
 use crate::dictation::fallback::{QuotaKey, QuotaLedger, open_order};
 use crate::models::{DEFAULT_LOCAL_MODEL_ID, ModelState};
 use crate::presets::PresetId;
@@ -221,12 +222,19 @@ pub struct FallbackModel {
 }
 
 /// `EngineSettings.asr_fallback` / `llm_fallback` (docs/dictation.md §3.5): the models to move on
-/// to, in order, when the selected one's quota is used up.
+/// to, in order, when the selected one's quota is used up — and, with `on_outage`, when it fails
+/// (§3.14).
 #[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct FallbackSettings {
     /// Move on to the next model when a model's quota is used up (off by default).
     pub enabled: bool,
+    /// 服务出错时也改用候补 (docs/dictation.md §3.14): also move on when a model fails — a timeout,
+    /// a network or server error, a busy or rate-limited service, on this device a failure of the
+    /// compute device, its memory or the model. Off by default and then not written; the phone
+    /// offers no switch for it.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub on_outage: bool,
     /// The models after the selected one, in order; at most [`MAX_FALLBACK_MODELS`].
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub models: Vec<FallbackModel>,
@@ -686,8 +694,10 @@ pub struct ResolvedEngines {
 pub struct FallbackPlan {
     /// `FallbackSettings.enabled`.
     pub enabled: bool,
-    /// The switch is on and the selected service is ready and remote (recognition not on this
-    /// device, a clean-up provider chosen): the chain runs.
+    /// `FallbackSettings.on_outage` (docs/dictation.md §3.14).
+    pub on_outage: bool,
+    /// The chain runs: the switch is on and the selected service is ready — remote, or on this
+    /// device with `on_outage` on and a model of this device in the list (§3.14).
     pub in_use: bool,
     /// The selected model's ledger key while the chain runs.
     pub selected: Option<QuotaKey>,
@@ -704,24 +714,35 @@ impl FallbackPlan {
         })
     }
 
-    /// The pages' view: each row's problem or skip, and when a model that ran out is tried again.
+    /// The pages' view: each row's problem or skip, and when and why a model that ran out or
+    /// failed is asked again.
     fn status(&self, ledger: &QuotaLedger) -> FallbackStatus {
         let retry = |key: &QuotaKey| if self.in_use { ledger.retry_at(key) } else { None };
+        let selected = self.selected.as_ref().and_then(retry);
         FallbackStatus {
             enabled: self.enabled,
             in_use: self.in_use,
-            selected_retry_at_ms: self.selected.as_ref().and_then(retry),
+            selected_retry_at_ms: selected.map(|m| m.until_ms),
+            selected_retry_reason: selected.map(|m| m.reason),
             models: self
                 .rows
                 .iter()
                 .map(|row| {
-                    let (issue, skip, retry_at_ms) = match &row.state {
+                    let (issue, skip, mark) = match &row.state {
                         FallbackRowState::Ready(target) => (None, None, retry(&target.key)),
                         FallbackRowState::Issue(issue) => (Some(*issue), None, None),
                         FallbackRowState::SameAsSelected => (None, Some(FallbackSkip::SameAsSelected), None),
                         FallbackRowState::Duplicate => (None, Some(FallbackSkip::Duplicate), None),
+                        FallbackRowState::NotForLocal => (None, Some(FallbackSkip::NotForLocal), None),
                     };
-                    FallbackModelStatus { provider: row.provider, model: row.model.clone(), issue, skip, retry_at_ms }
+                    FallbackModelStatus {
+                        provider: row.provider,
+                        model: row.model.clone(),
+                        issue,
+                        skip,
+                        retry_at_ms: mark.map(|m| m.until_ms),
+                        retry_reason: mark.map(|m| m.reason),
+                    }
                 })
                 .collect(),
         }
@@ -750,17 +771,58 @@ pub enum FallbackRowState {
     SameAsSelected,
     /// The same as an entry above it (a hand-edited settings file).
     Duplicate,
+    /// A service, while recognition is on this device: its audio never leaves for a failure
+    /// (docs/dictation.md §3.14).
+    NotForLocal,
 }
 
-/// A fallback model ready to run: its provider, endpoint, model and key, and its ledger key.
+/// A fallback model ready to run: its provider, where it runs, and its ledger key.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct FallbackTarget {
     /// Whose model.
     pub provider: ProviderId,
-    /// Where the requests go, with the provider's own key.
-    pub remote: RemoteService,
+    /// Its endpoint, model and key, or the model on this device.
+    pub service: FallbackService,
     /// The ledger's name for it.
     pub key: QuotaKey,
+}
+
+/// Where a fallback model runs.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum FallbackService {
+    /// A service: the endpoint and the model, with the provider's own key.
+    Remote(RemoteService),
+    /// An installed model of this device's library (recognition only, docs/dictation.md §3.14).
+    Local(LocalModelRef),
+}
+
+impl FallbackTarget {
+    /// The service it calls, when it is not on this device.
+    pub fn remote(&self) -> Option<&RemoteService> {
+        match &self.service {
+            FallbackService::Remote(remote) => Some(remote),
+            FallbackService::Local(_) => None,
+        }
+    }
+
+    /// It runs on this device.
+    pub fn is_local(&self) -> bool {
+        matches!(self.service, FallbackService::Local(_))
+    }
+
+    /// The model the history names (a local model by its display name).
+    pub fn model_name(&self) -> &str {
+        match &self.service {
+            FallbackService::Remote(remote) => &remote.model,
+            FallbackService::Local(local) => &local.name,
+        }
+    }
+
+    /// It recognises while the take is spoken: a realtime service ([`AsrProtocol::streams`]); never
+    /// a model of this device.
+    pub fn streams(&self) -> bool {
+        self.remote().is_some_and(|r| AsrProtocol::of(&r.url, &r.model).streams())
+    }
 }
 
 /// The ledger key of `provider`'s `remote` for `kind`.
@@ -768,43 +830,92 @@ fn quota_key(kind: ServiceKind, provider: ProviderId, remote: &RemoteService) ->
     QuotaKey { kind, provider, model: remote.model.clone(), url: remote.url.clone() }
 }
 
-/// Resolve `kind`'s fallback entries (docs/dictation.md §3.5); `selected` is the provider and
-/// service in use when it is remote and ready.
+/// The ledger key of `id`, a model of this device (docs/dictation.md §3.14): it has no endpoint.
+fn local_key(id: &str) -> QuotaKey {
+    QuotaKey { kind: ServiceKind::Asr, provider: ProviderId::Local, model: id.to_owned(), url: String::new() }
+}
+
+/// The selected model a service's chain starts from: its ledger key, and whether it is a model of
+/// this device.
+struct Primary {
+    key: QuotaKey,
+    local: bool,
+}
+
+/// A local fallback entry `id` as the library `models` sees it (docs/dictation.md §3.14): an
+/// installed whole-take model of the library, or why it cannot run.
+fn local_target(kind: ServiceKind, id: &str, models: &[ModelState]) -> Result<LocalModelRef, EngineIssue> {
+    let entry = models.iter().find(|m| m.id == id && m.capabilities.iter().any(|c| c == crate::models::CAPABILITY_OFFLINE));
+    match entry {
+        Some(m) if kind == ServiceKind::Asr && m.state.is_installed() => Ok(LocalModelRef { id: m.id.clone(), name: m.name.clone(), installed: true }),
+        Some(_) if kind == ServiceKind::Asr => Err(EngineIssue::ModelNotInstalled),
+        _ => Err(EngineIssue::Unavailable),
+    }
+}
+
+/// Resolve `kind`'s fallback entries (docs/dictation.md §3.5, §3.14) against the model library's
+/// view `models`; `primary` is the selected model when it is ready. With recognition on this device
+/// (`on_device`: selected, installed or not, where a library is), every service in the list is left
+/// out (a failure never sends the audio away) and the chain runs only with `on_outage` on and a
+/// model of this device ready.
 fn fallback_plan(
     kind: ServiceKind,
     settings: &EngineSettings,
     secrets: &UserSecrets,
     built_in: &BuiltIn,
-    selected: Option<(ProviderId, &RemoteService)>,
+    models: &[ModelState],
+    primary: Option<Primary>,
+    on_device: bool,
 ) -> FallbackPlan {
     let config = settings.fallback(kind);
-    let selected = selected.map(|(provider, remote)| quota_key(kind, provider, remote));
+    let selected = primary.as_ref().map(|p| &p.key);
     let mut seen: Vec<QuotaKey> = Vec::new();
-    let rows = config
+    let mut place = |key: QuotaKey, provider: ProviderId, service: FallbackService| {
+        if selected == Some(&key) {
+            FallbackRowState::SameAsSelected
+        } else if seen.contains(&key) {
+            FallbackRowState::Duplicate
+        } else {
+            seen.push(key.clone());
+            FallbackRowState::Ready(FallbackTarget { provider, service, key })
+        }
+    };
+    let rows: Vec<FallbackRow> = config
         .models
         .iter()
         .map(|entry| {
             let asked = trimmed(Some(&entry.model));
-            match service_target_for(entry.provider, kind, asked, settings, secrets, built_in) {
+            if entry.provider == ProviderId::Local {
+                let id = asked.unwrap_or_default();
+                let state = match local_target(kind, id, models) {
+                    Ok(local) => place(local_key(id), entry.provider, FallbackService::Local(local)),
+                    Err(issue) => FallbackRowState::Issue(issue),
+                };
+                return FallbackRow { provider: entry.provider, model: id.to_owned(), state };
+            }
+            let row = match service_target_for(entry.provider, kind, asked, settings, secrets, built_in) {
                 Err((issue, model)) => {
                     FallbackRow { provider: entry.provider, model: asked.map_or(model, str::to_owned), state: FallbackRowState::Issue(issue) }
                 }
                 Ok(remote) => {
                     let key = quota_key(kind, entry.provider, &remote);
-                    let state = if selected.as_ref() == Some(&key) {
-                        FallbackRowState::SameAsSelected
-                    } else if seen.contains(&key) {
-                        FallbackRowState::Duplicate
-                    } else {
-                        seen.push(key.clone());
-                        FallbackRowState::Ready(FallbackTarget { provider: entry.provider, remote: remote.clone(), key })
-                    };
-                    FallbackRow { provider: entry.provider, model: remote.model, state }
+                    let model = remote.model.clone();
+                    FallbackRow { provider: entry.provider, model, state: place(key, entry.provider, FallbackService::Remote(remote)) }
                 }
-            }
+            };
+            // docs/dictation.md §3.14: recognition on this device never moves on to a service.
+            if on_device { FallbackRow { state: FallbackRowState::NotForLocal, ..row } } else { row }
         })
         .collect();
-    FallbackPlan { enabled: config.enabled, in_use: config.enabled && selected.is_some(), selected: selected.filter(|_| config.enabled), rows }
+    let in_use = config.enabled
+        && match &primary {
+            None => false,
+            Some(Primary { local: false, .. }) => true,
+            Some(Primary { local: true, .. }) => {
+                config.on_outage && rows.iter().any(|row| matches!(&row.state, FallbackRowState::Ready(target) if target.is_local()))
+            }
+        };
+    FallbackPlan { enabled: config.enabled, on_outage: config.on_outage, in_use, selected: primary.map(|p| p.key).filter(|_| in_use), rows }
 }
 
 impl ResolvedEngines {
@@ -854,8 +965,17 @@ impl ResolvedEngines {
         let providers = provider_statuses(settings, secrets, built_in, &local, asr_provider, llm_provider);
         let cloud_preview = asr_provider == ProviderId::Builtin && asr_remote.is_some() && built_in.asr_live_preview;
         let asr_streams = asr_remote.as_ref().is_some_and(|r| AsrProtocol::of(&r.url, &r.model).streams());
-        let asr_fallback = fallback_plan(ServiceKind::Asr, settings, secrets, built_in, asr_remote.as_ref().map(|r| (asr_provider, r)));
-        let refine_fallback = fallback_plan(ServiceKind::Llm, settings, secrets, built_in, llm_provider.zip(refine.as_ref()));
+        let asr_primary = match (&local_model, &asr_remote) {
+            (Some(local), _) => local.installed.then(|| Primary { key: local_key(&local.id), local: true }),
+            (None, Some(remote)) => Some(Primary { key: quota_key(ServiceKind::Asr, asr_provider, remote), local: false }),
+            (None, None) => None,
+        };
+        let refine_primary =
+            llm_provider.zip(refine.as_ref()).map(|(provider, remote)| Primary { key: quota_key(ServiceKind::Llm, provider, remote), local: false });
+        // A phone has no library: its rows read as before (nothing of the device recognises there).
+        let on_device = asr_provider == ProviderId::Local && !models.is_empty();
+        let asr_fallback = fallback_plan(ServiceKind::Asr, settings, secrets, built_in, models, asr_primary, on_device);
+        let refine_fallback = fallback_plan(ServiceKind::Llm, settings, secrets, built_in, models, refine_primary, false);
         Self {
             asr_provider,
             local_model,
@@ -896,22 +1016,34 @@ impl ResolvedEngines {
     /// engine hands the shell's client factory to build a fallback model's client.
     pub fn with_candidate(&self, kind: ServiceKind, target: &FallbackTarget) -> Self {
         let mut view = Self { asr_fallback: FallbackPlan::default(), refine_fallback: FallbackPlan::default(), ..self.clone() };
-        match kind {
-            ServiceKind::Asr => {
+        match (kind, &target.service) {
+            (ServiceKind::Asr, FallbackService::Remote(remote)) => {
                 view.asr_provider = target.provider;
                 view.local_model = None;
-                view.asr_remote = Some(target.remote.clone());
+                view.asr_remote = Some(remote.clone());
                 view.asr_issue = None;
-                view.asr_model = target.remote.model.clone();
-                view.asr_streams = AsrProtocol::of(&target.remote.url, &target.remote.model).streams();
+                view.asr_model = remote.model.clone();
+                view.asr_streams = target.streams();
                 view.cloud_preview = false;
             }
-            ServiceKind::Llm => {
-                view.llm_provider = Some(target.provider);
-                view.refine = Some(target.remote.clone());
-                view.refine_issue = None;
-                view.refine_model = target.remote.model.clone();
+            // docs/dictation.md §3.14: a model of this device, as if it were the selected one.
+            (ServiceKind::Asr, FallbackService::Local(local)) => {
+                view.asr_provider = ProviderId::Local;
+                view.local_model = Some(local.clone());
+                view.asr_remote = None;
+                view.asr_issue = None;
+                view.asr_model = local.name.clone();
+                view.asr_streams = false;
+                view.cloud_preview = false;
             }
+            (ServiceKind::Llm, FallbackService::Remote(remote)) => {
+                view.llm_provider = Some(target.provider);
+                view.refine = Some(remote.clone());
+                view.refine_issue = None;
+                view.refine_model = remote.model.clone();
+            }
+            // Never resolved: the clean-up has no models on this device.
+            (ServiceKind::Llm, FallbackService::Local(_)) => {}
         }
         view
     }
@@ -988,7 +1120,7 @@ impl ResolvedEngines {
         // §3.5, §11.9: a realtime model's stream comes from the first model with quota left. While
         // a model that takes whole recordings only stands in for it, no take previews or streams
         // (the engine's `live_enabled`); the live source stays the realtime model.
-        let stand_in_streams = self.asr_stand_in(ledger).is_none_or(|t| AsrProtocol::of(&t.remote.url, &t.remote.model).streams());
+        let stand_in_streams = self.asr_stand_in(ledger).is_none_or(FallbackTarget::streams);
         let live_preview_ready = self.live_preview_ready() && (self.live_source() != Some(LiveSource::Stream) || stand_in_streams);
         EngineStatus {
             asr_provider: self.asr_provider,
@@ -1301,9 +1433,12 @@ pub struct FallbackStatus {
     pub enabled: bool,
     /// The chain runs: the switch is on and the selected service is ready and remote.
     pub in_use: bool,
-    /// The selected model ran out of quota: it is tried again then (ms since the epoch).
+    /// The selected model ran out of quota or failed: it is asked again then (ms since the epoch).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selected_retry_at_ms: Option<u64>,
+    /// Why it is skipped until then (docs/dictation.md §3.14).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected_retry_reason: Option<SwitchReason>,
     /// One row per settings entry, in order.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub models: Vec<FallbackModelStatus>,
@@ -1322,9 +1457,12 @@ pub struct FallbackModelStatus {
     /// Why it is not in the chain although it could run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skip: Option<FallbackSkip>,
-    /// It ran out of quota: it is tried again then (ms since the epoch).
+    /// It ran out of quota or failed: it is asked again then (ms since the epoch).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry_at_ms: Option<u64>,
+    /// Why it is skipped until then (docs/dictation.md §3.14).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_reason: Option<SwitchReason>,
 }
 
 /// Why a fallback model that could run is left out of the chain.
@@ -1335,6 +1473,9 @@ pub enum FallbackSkip {
     SameAsSelected,
     /// An entry above it is the same model.
     Duplicate,
+    /// A service while recognition is on this device (docs/dictation.md §3.14): the audio does not
+    /// leave the device for a failure.
+    NotForLocal,
 }
 
 impl Default for EngineStatus {
@@ -1520,12 +1661,15 @@ mod tests {
         assert_eq!(card.presets, ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"]);
         assert_eq!(resolved(&choose("llama-3.3-70b-versatile")).refine.unwrap().model, "qwen/qwen3.8-27b", "a model the build does not list");
         // Fallback: another built-in model is a candidate; the empty model is the card's own.
-        let fallback = |models: Vec<FallbackModel>| EngineSettings { llm_fallback: FallbackSettings { enabled: true, models }, ..EngineSettings::default() };
+        let fallback = |models: Vec<FallbackModel>| EngineSettings {
+            llm_fallback: FallbackSettings { enabled: true, on_outage: false, models },
+            ..EngineSettings::default()
+        };
         let plan =
             resolved(&fallback(vec![fallback_entry(ProviderId::Builtin, "openai/gpt-oss-20b"), fallback_entry(ProviderId::Builtin, "")])).refine_fallback;
         assert!(plan.in_use);
         assert!(
-            matches!(&plan.rows[0].state, FallbackRowState::Ready(target) if target.remote.model == "openai/gpt-oss-20b" && target.remote.key.as_deref() == Some("built-refine-key"))
+            matches!(&plan.rows[0].state, FallbackRowState::Ready(target) if target.remote().unwrap().model == "openai/gpt-oss-20b" && target.remote().unwrap().key.as_deref() == Some("built-refine-key"))
         );
         assert_eq!(plan.rows[0].model, "openai/gpt-oss-20b");
         assert_eq!(plan.rows[1].state, FallbackRowState::SameAsSelected);
@@ -1940,6 +2084,7 @@ mod tests {
                     FallbackRowState::Issue(_) => "issue",
                     FallbackRowState::SameAsSelected => "same",
                     FallbackRowState::Duplicate => "duplicate",
+                    FallbackRowState::NotForLocal => "not_for_local",
                 };
                 (r.provider, r.model.as_str(), state)
             })
@@ -1961,6 +2106,7 @@ mod tests {
             ),
             asr_fallback: FallbackSettings {
                 enabled: true,
+                on_outage: false,
                 models: vec![
                     fallback_entry(ProviderId::Aliyun, "qwen-audio-3.1-asr-flash-message"),
                     fallback_entry(ProviderId::Aliyun, " qwen-audio-3.1-asr-flash-streaming "),
@@ -2000,7 +2146,8 @@ mod tests {
             ]
         );
         let targets: Vec<&FallbackTarget> = plan.targets().collect();
-        let seen: Vec<(&str, &str, Option<&str>)> = targets.iter().map(|t| (t.remote.model.as_str(), t.remote.url.as_str(), t.remote.key.as_deref())).collect();
+        let seen: Vec<(&str, &str, Option<&str>)> =
+            targets.iter().map(|t| (t.remote().unwrap().model.as_str(), t.remote().unwrap().url.as_str(), t.remote().unwrap().key.as_deref())).collect();
         assert_eq!(
             seen,
             vec![
@@ -2009,11 +2156,8 @@ mod tests {
                 ("Qwen/Qwen3-ASR-1.7B", "https://asr.builtin.test", Some("built-asr-token")),
             ]
         );
-        assert!(
-            targets
-                .iter()
-                .all(|t| t.key == QuotaKey { kind: ServiceKind::Asr, provider: t.provider, model: t.remote.model.clone(), url: t.remote.url.clone() })
-        );
+        assert!(targets.iter().all(|t| t.key
+            == QuotaKey { kind: ServiceKind::Asr, provider: t.provider, model: t.remote().unwrap().model.clone(), url: t.remote().unwrap().url.clone() }));
         // No fallback models for the clean-up: an empty plan, not in use.
         assert!(!resolved.refine_fallback.enabled && !resolved.refine_fallback.in_use && resolved.refine_fallback.rows.is_empty());
         // `Debug` names no key and no host.
@@ -2037,7 +2181,7 @@ mod tests {
         let not_ready = ResolvedEngines::resolve(&settings, &UserSecrets::default(), &BUILT);
         assert!(!not_ready.asr_fallback.in_use, "a selected service without its key does not fall back: only a used-up quota does");
         let no_llm = EngineSettings {
-            llm_fallback: FallbackSettings { enabled: true, models: vec![fallback_entry(ProviderId::Groq, "llama-3.3-70b-versatile")] },
+            llm_fallback: FallbackSettings { enabled: true, on_outage: false, models: vec![fallback_entry(ProviderId::Groq, "llama-3.3-70b-versatile")] },
             ..EngineSettings::default()
         };
         let resolved = ResolvedEngines::resolve(&no_llm, &secrets, &BuiltIn::EMPTY);
@@ -2046,9 +2190,9 @@ mod tests {
         // The status, row by row, and from the ledger the models that ran out.
         let resolved = ResolvedEngines::resolve(&settings, &secrets, &BUILT);
         let ledger = QuotaLedger::with_clock(|| 1_000);
-        ledger.mark(resolved.asr_fallback.selected.as_ref().unwrap());
+        ledger.mark(resolved.asr_fallback.selected.as_ref().unwrap(), SwitchReason::Quota);
         let groq = resolved.asr_fallback.targets().nth(1).unwrap().key.clone();
-        ledger.mark(&groq);
+        ledger.mark(&groq, SwitchReason::Quota);
         let status = resolved.status_with(&ledger).asr_fallback;
         let day = u64::try_from(crate::dictation::QUOTA_RETRY_AFTER.as_millis()).unwrap();
         assert!(status.enabled && status.in_use);
@@ -2079,6 +2223,160 @@ mod tests {
         assert_eq!(serde_json::to_value(FallbackStatus::default()).unwrap(), serde_json::json!({ "enabled": false, "in_use": false }));
     }
 
+    /// [`library`] with both whole-take models installed.
+    fn library_installed() -> Vec<ModelState> {
+        use crate::models::ModelInstallState;
+        library(true).into_iter().map(|m| ModelState { state: ModelInstallState::Installed { path: "/m".into(), installed_at: 1 }, ..m }).collect()
+    }
+
+    /// docs/dictation.md §3.14: a model of this device joins the recognition chain once it is
+    /// installed: it runs as if it were selected, by its display name, without an endpoint; a model
+    /// not downloaded yet says so, a streaming model or an id the library does not know cannot run,
+    /// and the clean-up has no models on this device.
+    #[test]
+    fn a_model_of_this_device_joins_the_recognition_chain() {
+        let (mut settings, secrets) = studio_with_fallbacks();
+        settings.asr_fallback.models = vec![
+            fallback_entry(ProviderId::Local, "qwen3-asr-0.6b"),
+            fallback_entry(ProviderId::Local, "paraformer-zh"),
+            fallback_entry(ProviderId::Local, "zipformer-stream-zh-en"),
+            fallback_entry(ProviderId::Local, "ghost"),
+        ];
+        settings.llm_fallback = FallbackSettings { enabled: true, on_outage: false, models: vec![fallback_entry(ProviderId::Local, "qwen3-asr-0.6b")] };
+        let resolved = ResolvedEngines::resolve_with_models(&settings, &secrets, &BUILT, &library(true));
+        let plan = &resolved.asr_fallback;
+        assert_eq!(
+            row_states(plan),
+            vec![
+                (ProviderId::Local, "qwen3-asr-0.6b", "ready"),
+                (ProviderId::Local, "paraformer-zh", "issue"),
+                (ProviderId::Local, "zipformer-stream-zh-en", "unavailable"),
+                (ProviderId::Local, "ghost", "unavailable"),
+            ]
+        );
+        assert_eq!(plan.rows[1].state, FallbackRowState::Issue(EngineIssue::ModelNotInstalled), "not downloaded yet");
+        let target = plan.targets().next().unwrap().clone();
+        assert_eq!(target.service, FallbackService::Local(LocalModelRef { id: "qwen3-asr-0.6b".into(), name: "均衡".into(), installed: true }));
+        assert_eq!(target.key, QuotaKey { kind: ServiceKind::Asr, provider: ProviderId::Local, model: "qwen3-asr-0.6b".into(), url: String::new() });
+        assert!(target.is_local() && !target.streams() && target.remote().is_none());
+        let view = resolved.with_candidate(ServiceKind::Asr, &target);
+        assert!(view.is_local() && view.asr_remote.is_none() && view.asr_issue.is_none());
+        assert_eq!((view.asr_model.as_str(), view.local_model.as_ref().map(|m| m.id.as_str())), ("均衡", Some("qwen3-asr-0.6b")));
+        assert!(!view.asr_streams && !view.cloud_preview && view.live_source() != Some(LiveSource::Stream));
+        assert_eq!(row_states(&resolved.refine_fallback), vec![(ProviderId::Local, "qwen3-asr-0.6b", "unavailable")]);
+    }
+
+    /// docs/dictation.md §3.14: with recognition on this device, a failure never sends the audio
+    /// away — every service in the list is left out, and only models of this device remain. The
+    /// chain runs with 服务出错时也改用候补 on and such a model ready: a model of this device has no
+    /// quota to run out of. A service selected keeps its local fallback models.
+    #[test]
+    fn a_local_primary_moves_on_to_models_of_this_device_only() {
+        let mut secrets = UserSecrets::default();
+        secrets.set(ProviderId::Aliyun, ServiceKind::Asr, Some("sk-aliyun".into()));
+        secrets.set(ProviderId::Groq, ServiceKind::Asr, Some("gsk-groq".into()));
+        let settings = EngineSettings {
+            asr_provider: ProviderId::Local,
+            asr_fallback: FallbackSettings {
+                enabled: true,
+                on_outage: true,
+                models: vec![
+                    fallback_entry(ProviderId::Aliyun, "qwen3-asr-flash"),
+                    fallback_entry(ProviderId::Groq, "whisper-large-v3"),
+                    fallback_entry(ProviderId::Openai, "whisper-1"),
+                    fallback_entry(ProviderId::Local, "paraformer-zh"),
+                ],
+            },
+            ..EngineSettings::default()
+        };
+        let resolved = ResolvedEngines::resolve_with_models(&settings, &secrets, &BUILT, &library_installed());
+        let plan = &resolved.asr_fallback;
+        assert_eq!(
+            row_states(plan),
+            vec![
+                (ProviderId::Aliyun, "qwen3-asr-flash", "not_for_local"),
+                (ProviderId::Groq, "whisper-large-v3", "not_for_local"),
+                (ProviderId::Openai, "whisper-1", "not_for_local"),
+                (ProviderId::Local, "paraformer-zh", "ready"),
+            ]
+        );
+        assert!(plan.in_use && plan.on_outage);
+        assert_eq!(plan.selected, Some(QuotaKey { kind: ServiceKind::Asr, provider: ProviderId::Local, model: "qwen3-asr-0.6b".into(), url: String::new() }));
+        assert!(plan.targets().all(FallbackTarget::is_local), "{:?}", plan.targets().collect::<Vec<_>>());
+        assert_eq!(plan.targets().count(), 1);
+        let status = resolved.status().asr_fallback;
+        assert_eq!(
+            status.models.iter().map(|m| m.skip).collect::<Vec<_>>(),
+            [Some(FallbackSkip::NotForLocal); 3].into_iter().chain([None]).collect::<Vec<_>>()
+        );
+        assert_eq!(serde_json::to_value(&status.models[0]).unwrap()["skip"], "not_for_local");
+
+        let quota_only = EngineSettings { asr_fallback: FallbackSettings { on_outage: false, ..settings.asr_fallback.clone() }, ..settings.clone() };
+        let resolved = ResolvedEngines::resolve_with_models(&quota_only, &secrets, &BUILT, &library_installed());
+        assert!(!resolved.asr_fallback.in_use, "a model of this device never runs out of quota");
+        assert_eq!(resolved.asr_fallback.targets().count(), 0);
+        let cloud_only = EngineSettings {
+            asr_fallback: FallbackSettings { models: settings.asr_fallback.models[..3].to_vec(), ..settings.asr_fallback.clone() },
+            ..settings.clone()
+        };
+        let resolved = ResolvedEngines::resolve_with_models(&cloud_only, &secrets, &BUILT, &library_installed());
+        assert!(!resolved.asr_fallback.in_use && resolved.asr_fallback.targets().count() == 0, "nothing on this device to move on to");
+        // The selected model of this device not installed yet: nothing runs, and the services stay
+        // out of the list all the same.
+        let missing: Vec<ModelState> = library_installed()
+            .into_iter()
+            .map(|m| if m.id == "qwen3-asr-0.6b" { ModelState { state: crate::models::ModelInstallState::NotInstalled, ..m } } else { m })
+            .collect();
+        let resolved = ResolvedEngines::resolve_with_models(&settings, &secrets, &BUILT, &missing);
+        assert_eq!(row_states(&resolved.asr_fallback).iter().filter(|(_, _, state)| *state == "not_for_local").count(), 3);
+        assert!(!resolved.asr_fallback.in_use && resolved.asr_fallback.targets().count() == 0);
+        // No library (a phone): the rows say what they always said; nothing runs.
+        let resolved = ResolvedEngines::resolve(&settings, &secrets, &BUILT);
+        assert_eq!(
+            row_states(&resolved.asr_fallback).into_iter().map(|(_, _, state)| state).collect::<Vec<_>>(),
+            ["ready", "ready", "key_missing", "unavailable"]
+        );
+        assert!(!resolved.asr_fallback.in_use && resolved.asr_fallback.targets().count() == 0);
+
+        let studio = EngineSettings { asr_provider: ProviderId::Aliyun, ..settings.clone() };
+        let resolved = ResolvedEngines::resolve_with_models(&studio, &secrets, &BUILT, &library_installed());
+        assert_eq!(
+            row_states(&resolved.asr_fallback),
+            vec![
+                (ProviderId::Aliyun, "qwen3-asr-flash", "ready"),
+                (ProviderId::Groq, "whisper-large-v3", "ready"),
+                (ProviderId::Openai, "whisper-1", "key_missing"),
+                (ProviderId::Local, "paraformer-zh", "ready"),
+            ]
+        );
+        assert!(resolved.asr_fallback.in_use);
+    }
+
+    /// docs/dictation.md §3.14: the pages see why a model is skipped and until when — a used-up
+    /// quota or a failure — and the switch is written only when on.
+    #[test]
+    fn the_status_says_why_a_model_is_skipped() {
+        let (settings, secrets) = studio_with_fallbacks();
+        let resolved = ResolvedEngines::resolve(&settings, &secrets, &BUILT);
+        let ledger = QuotaLedger::with_clock(|| 1_000);
+        ledger.mark(resolved.asr_fallback.selected.as_ref().unwrap(), SwitchReason::Outage);
+        let groq = resolved.asr_fallback.targets().nth(1).unwrap().key.clone();
+        ledger.mark(&groq, SwitchReason::Quota);
+        let status = resolved.status_with(&ledger).asr_fallback;
+        assert_eq!((status.selected_retry_at_ms, status.selected_retry_reason), (Some(61_000), Some(SwitchReason::Outage)));
+        assert_eq!(status.models[3].retry_reason, Some(SwitchReason::Quota));
+        assert_eq!(status.models[0].retry_reason, None);
+        let json = serde_json::to_value(&status).unwrap();
+        assert_eq!((json["selected_retry_reason"].as_str(), json["models"][3]["retry_reason"].as_str()), (Some("outage"), Some("quota")));
+        assert!(json["models"][0].get("retry_reason").is_none());
+        let on = FallbackSettings { enabled: true, on_outage: true, models: Vec::new() };
+        assert_eq!(serde_json::to_value(&on).unwrap(), serde_json::json!({ "enabled": true, "on_outage": true }));
+        assert_eq!(serde_json::to_value(FallbackSettings { on_outage: false, ..on }).unwrap(), serde_json::json!({ "enabled": true }));
+        let read: FallbackSettings = serde_json::from_str(r#"{"enabled":true}"#).unwrap();
+        assert!(!read.on_outage, "files written before it read as off");
+        assert!(!FallbackSettings { on_outage: true, ..FallbackSettings::default() }.is_default());
+    }
+
     /// docs/dictation.md §3.5, §11.9: the live preview and the output mode the pages show follow
     /// the ledger as the engine's chain does. Once the realtime selected model ran out, the next
     /// model with quota left decides: a realtime one streams too; one taking whole recordings only
@@ -2101,13 +2399,13 @@ mod tests {
         let keys: Vec<QuotaKey> =
             std::iter::once(resolved.asr_fallback.selected.clone().unwrap()).chain(resolved.asr_fallback.targets().map(|t| t.key.clone())).collect();
         assert_eq!(keys.len(), 4);
-        ledger.mark(&keys[0]);
+        ledger.mark(&keys[0], SwitchReason::Quota);
         assert_eq!(shown(&resolved, &ledger), streaming, "-message is a realtime model too");
-        ledger.mark(&keys[1]);
+        ledger.mark(&keys[1], SwitchReason::Quota);
         assert_eq!(shown(&resolved, &ledger), whole, "Groq takes whole recordings");
-        ledger.mark(&keys[2]);
+        ledger.mark(&keys[2], SwitchReason::Quota);
         assert_eq!(shown(&resolved, &ledger), whole, "and so does the built-in service");
-        ledger.mark(&keys[3]);
+        ledger.mark(&keys[3], SwitchReason::Quota);
         assert_eq!(shown(&resolved, &ledger), streaming, "every model out: the selected one is asked again");
         ledger.unmark(&keys[2]);
         let inject = ResolvedEngines::resolve(&EngineSettings { output_mode: OutputMode::LiveInject, ..settings.clone() }, &secrets, &BUILT);
@@ -2124,24 +2422,24 @@ mod tests {
         secrets.set(ProviderId::Groq, ServiceKind::Llm, Some("gsk-groq".into()));
         let settings = EngineSettings {
             llm_provider: ProviderId::Builtin,
-            llm_fallback: FallbackSettings { enabled: true, models: vec![fallback_entry(ProviderId::Groq, "llama-3.3-70b-versatile")] },
+            llm_fallback: FallbackSettings { enabled: true, on_outage: false, models: vec![fallback_entry(ProviderId::Groq, "llama-3.3-70b-versatile")] },
             ..settings
         };
         let resolved = ResolvedEngines::resolve(&settings, &secrets, &BUILT);
         let groq = resolved.asr_fallback.targets().nth(1).unwrap().clone();
         let view = resolved.with_candidate(ServiceKind::Asr, &groq);
         assert_eq!((view.asr_provider, view.asr_model.as_str(), view.asr_issue), (ProviderId::Groq, "whisper-large-v3", None));
-        assert_eq!(view.asr_remote.as_ref(), Some(&groq.remote));
+        assert_eq!(view.asr_remote.as_ref(), groq.remote());
         assert!(!view.asr_streams && view.local_model.is_none() && !view.cloud_preview);
         assert_eq!((view.llm_provider, view.refine.as_ref()), (resolved.llm_provider, resolved.refine.as_ref()), "the clean-up stays");
         assert!(view.asr_fallback.rows.is_empty() && view.refine_fallback.rows.is_empty(), "a view has no fallback models of its own");
         let streaming = resolved.asr_fallback.targets().next().unwrap().clone();
         assert!(resolved.with_candidate(ServiceKind::Asr, &streaming).asr_streams, "a realtime fallback model streams in its view");
         let llm = resolved.refine_fallback.targets().next().unwrap().clone();
-        assert_eq!(llm.remote.key.as_deref(), Some("gsk-groq"));
+        assert_eq!(llm.remote().unwrap().key.as_deref(), Some("gsk-groq"));
         let view = resolved.with_candidate(ServiceKind::Llm, &llm);
         assert_eq!((view.llm_provider, view.refine_model.as_str(), view.refine_issue), (Some(ProviderId::Groq), "llama-3.3-70b-versatile", None));
-        assert_eq!(view.refine.as_ref(), Some(&llm.remote));
+        assert_eq!(view.refine.as_ref(), llm.remote());
         assert_eq!((view.asr_provider, view.asr_remote.as_ref()), (resolved.asr_provider, resolved.asr_remote.as_ref()), "the recognition stays");
     }
 

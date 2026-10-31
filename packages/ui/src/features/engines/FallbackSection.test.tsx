@@ -9,13 +9,13 @@ import { FallbackSection } from "./FallbackSection";
 
 const t = zhT.t;
 
-function renderSection(backend: MockBackend, kind: ServiceKind = "asr") {
+function renderSection(backend: MockBackend, kind: ServiceKind = "asr", outage = false) {
   const notify = vi.fn<(message: string, tone?: "neutral" | "danger") => void>();
   const view = render(
     <BackendProvider backend={backend}>
       <I18nProvider locale="zh-CN">
         <FeatureShellProvider shell={{ notify, confirm: () => undefined }}>
-          <FallbackSection kind={kind} />
+          <FallbackSection kind={kind} outage={outage} />
         </FeatureShellProvider>
       </I18nProvider>
     </BackendProvider>,
@@ -347,6 +347,183 @@ describe("FallbackSection (docs/dictation.md §3.5)", () => {
     expect(await screen.findByTestId("fallback-asr-not-in-use")).toHaveTextContent(
       t("engines.fallback.notInUse.local"),
     );
+    unmount();
+  });
+});
+
+describe("FallbackSection: 服务出错时也改用候补 (docs/dictation.md §3.14)", () => {
+  const installed = { kind: "installed" as const, path: "/models/paraformer-zh", installed_at: 1 };
+
+  it("is off by default, waits for the list's switch, and is saved like the list", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend({ providerKeys: [{ provider: "groq", kind: "asr" }] });
+    const { unmount } = renderSection(backend, "asr", true);
+    const outage = await screen.findByRole("switch", { name: t("fallbackOutage.toggle") });
+    expect(outage).toHaveAttribute("aria-checked", "false");
+    expect(outage).toBeDisabled();
+    expect(screen.getByTestId("fallback-asr-outage")).toHaveTextContent(t("fallbackOutage.help"));
+    expect(screen.getByTestId("fallback-asr")).toHaveTextContent(
+      t("engines.fallback.description.asr"),
+    );
+    await user.click(screen.getByRole("switch", { name: t("engines.fallback.toggle") }));
+    await waitFor(() => {
+      expect(screen.getByRole("switch", { name: t("fallbackOutage.toggle") })).toBeEnabled();
+    });
+    await user.click(screen.getByRole("switch", { name: t("fallbackOutage.toggle") }));
+    await waitFor(async () => {
+      expect(await settingsFallback(backend, "asr")).toMatchObject({
+        enabled: true,
+        on_outage: true,
+      });
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("fallback-asr").dataset.onOutage).toBe("true");
+    });
+    expect(screen.getByTestId("fallback-asr")).toHaveTextContent(
+      t("fallbackOutage.description.asr"),
+    );
+    unmount();
+    // The phone's section offers no such switch.
+    const phone = renderSection(backend, "asr");
+    await screen.findByTestId("fallback-asr");
+    expect(screen.queryByRole("switch", { name: t("fallbackOutage.toggle") })).toBeNull();
+    phone.unmount();
+  });
+
+  it("offers the downloaded models of this computer for the recognition, by name", async () => {
+    const user = userEvent.setup();
+    const none = new MockBackend({ providerKeys: [{ provider: "groq", kind: "asr" }] });
+    const first = renderSection(none, "asr", true);
+    const providerSelect = async () =>
+      within(await screen.findByTestId("fallback-asr-add")).getByRole("combobox", {
+        name: t("engines.fallback.provider"),
+      });
+    expect(
+      within(await providerSelect())
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).not.toContain(t("engines.provider.local"));
+    first.unmount();
+
+    const backend = new MockBackend({
+      providerKeys: [{ provider: "groq", kind: "asr" }],
+      models: { "paraformer-zh": installed },
+    });
+    const { unmount } = renderSection(backend, "asr", true);
+    await user.selectOptions(await providerSelect(), "local");
+    const models = within(screen.getByTestId("fallback-asr-add")).getAllByRole("combobox").at(-1);
+    if (models === undefined) throw new Error("no model list");
+    expect(
+      within(models)
+        .getAllByRole("option")
+        .map((o) => o.getAttribute("value")),
+    ).toEqual(["paraformer-zh"]);
+    await user.click(screen.getByTestId("fallback-asr-add-button"));
+    await waitFor(async () => {
+      expect((await settingsFallback(backend, "asr"))?.models).toEqual([
+        { provider: "local", model: "paraformer-zh" },
+      ]);
+    });
+    await waitFor(() => {
+      expect(rows()[1]?.[1]).toBe("ready");
+    });
+    expect(rows()[1]?.[0]).toContain(t("engines.provider.local"));
+    unmount();
+    // The clean-up has no models of this computer.
+    const llm = renderSection(backend, "llm", true);
+    const llmProviders = within(await screen.findByTestId("fallback-llm-add")).getByRole(
+      "combobox",
+      {
+        name: t("engines.fallback.provider"),
+      },
+    );
+    expect(
+      within(llmProviders)
+        .getAllByRole("option")
+        .map((o) => o.getAttribute("value")),
+    ).not.toContain("local");
+    llm.unmount();
+  });
+
+  it("says a selected model of this computer moves on to models of this computer only", async () => {
+    const backend = new MockBackend({
+      providerKeys: [{ provider: "groq", kind: "asr" }],
+      models: {
+        "qwen3-asr-0.6b": { ...installed, path: "/models/qwen3-asr-0.6b" },
+        "paraformer-zh": installed,
+      },
+    });
+    const state = await backend.getState();
+    const save = (on_outage: boolean, models: { provider: "groq" | "local"; model: string }[]) =>
+      backend.invoke("settings_set_engines", {
+        engines: {
+          ...state.settings.engines,
+          asr_provider: "local",
+          local_model: "qwen3-asr-0.6b",
+          asr_fallback: { enabled: true, on_outage, models },
+        },
+      });
+    await save(false, [{ provider: "groq", model: "whisper-large-v3" }]);
+    const { unmount } = renderSection(backend, "asr", true);
+    expect(await screen.findByTestId("fallback-asr-not-in-use")).toHaveTextContent(
+      t("fallbackOutage.notInUse.localOff"),
+    );
+    await waitFor(() => {
+      expect(rows().map((r) => r[1])).toEqual(["ready", "not_for_local"]);
+    });
+    expect(rows()[1]?.[0]).toContain(t("fallbackOutage.state.notForLocal"));
+    await act(async () => {
+      await save(true, [{ provider: "groq", model: "whisper-large-v3" }]);
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("fallback-asr-not-in-use")).toHaveTextContent(
+        t("fallbackOutage.notInUse.localNone"),
+      );
+    });
+    await act(async () => {
+      await save(true, [
+        { provider: "groq", model: "whisper-large-v3" },
+        { provider: "local", model: "paraformer-zh" },
+      ]);
+    });
+    await waitFor(() => {
+      expect(rows().map((r) => r[1])).toEqual(["active", "not_for_local", "ready"]);
+    });
+    expect(screen.queryByTestId("fallback-asr-not-in-use")).toBeNull();
+    unmount();
+  });
+
+  it("shows a failed model skipped for now; 重新检查 clears both records", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend({ providerKeys: [{ provider: "groq", kind: "asr" }] });
+    const state = await backend.getState();
+    await backend.invoke("settings_set_engines", {
+      engines: {
+        ...state.settings.engines,
+        asr_fallback: {
+          enabled: true,
+          on_outage: true,
+          models: [{ provider: "groq", model: "whisper-large-v3" }],
+        },
+      },
+    });
+    const { notify, unmount } = renderSection(backend, "asr", true);
+    await waitFor(() => {
+      expect(rows().map((r) => r[1])).toEqual(["active", "ready"]);
+    });
+    act(() => {
+      backend.simulateServiceFailed("asr", new Date(2026, 9, 5, 14, 6).getTime());
+    });
+    await waitFor(() => {
+      expect(rows().map((r) => r[1])).toEqual(["cooling", "active"]);
+    });
+    expect(rows()[0]?.[0]).toContain("出错，暂时跳过");
+    expect(rows()[0]?.[0]).toContain("14:06");
+    await user.click(screen.getByTestId("fallback-asr-recheck"));
+    expect(notify).toHaveBeenCalledWith(t("fallbackOutage.recheckDone"));
+    await waitFor(() => {
+      expect(rows().map((r) => r[1])).toEqual(["active", "ready"]);
+    });
     unmount();
   });
 });

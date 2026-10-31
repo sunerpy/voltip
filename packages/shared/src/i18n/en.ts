@@ -2347,6 +2347,42 @@ export const en: Messages = {
       copyLastClearLabel: "Clear · Copy last result",
     },
   },
+  /** docs/dictation.md §3.14: 服务出错时也改用候补, the models of this computer in a recognition
+   *  chain, and whose model wrote a history entry's text. */
+  fallbackOutage: {
+    toggle: "Also switch when a service fails",
+    help: "When on, a request that times out, a network error, a server error or a busy server, and too many requests also move to the models below, in order; recognition on this computer moves on when its graphics card, memory or model fails. An invalid key or a malformed request never switches. A request stops after 3 models fail, and a model that failed is skipped for about a minute.",
+    /** The section's description while the switch is on. */
+    description: {
+      asr: "When the selected model's quota is used up or its service fails, the models below recognise speech instead, in order. An invalid key or a malformed request does not switch models.",
+      llm: "When the selected model's quota is used up or its service fails, the models below polish and edit text instead, in order. An invalid key or a malformed request does not switch models.",
+    },
+    state: {
+      cooling: "Failed, skipped for now · tried again {time}",
+      notForLocal: "Recognition on this computer never switches to an online service when it fails",
+    },
+    notInUse: {
+      localOff:
+        "The selected model runs on this computer. With “Also switch when a service fails” on, a failure moves on to the models of this computer in the list; no recording is uploaded.",
+      localNone:
+        "The selected model runs on this computer: a failure only moves on to models of this computer in the list, and no recording is uploaded. Add a downloaded model of this computer.",
+      notReady:
+        "The selected service is not available. Fallback models only take over when a quota runs out or a service fails, not for a service that is not set up.",
+    },
+    recheckDone:
+      "Quota and failure records cleared; the next request starts with the selected model",
+    /** Appended to where the data goes while the switch is on. */
+    privacyTargets: "; to {targets} when the quota runs out or the service fails",
+    history: {
+      asrProvider: "Recognition provider",
+      refineProvider: "Polish provider",
+      /** Why a fallback model wrote the text, after the provider. */
+      reason: {
+        quota: "Fallback model · the selected model's quota was used up",
+        outage: "Fallback model · the selected model failed",
+      },
+    },
+  },
   settings: {
     title: "Settings",
     groupsLabel: "Settings groups",

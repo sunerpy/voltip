@@ -275,8 +275,17 @@
             {
               "model": "",
               "provider": "builtin"
+            },
+            {
+              "model": "qwen3-asr-0.6b",
+              "provider": "local"
+            },
+            {
+              "model": "paraformer-zh",
+              "provider": "local"
             }
-          ]
+          ],
+          "on_outage": true
         },
         "asr_provider": "local",
         "chinese_script": "traditional",

@@ -68,22 +68,52 @@ pub enum DictationError {
         retry_at_ms: Option<u64>,
     },
     /// The service turned the request down for now: too many requests (HTTP 429, docs/dictation.md
-    /// §3.6). Not a used-up quota: a fallback model list does not move on for it.
-    #[error("请求过于频繁：{detail}")]
+    /// §3.6). Not a used-up quota: a fallback model list moves on for it only with 服务出错时也改用候补
+    /// on (§3.14). A recognition's reads as before, `asr: ` and the client's words.
+    #[error("{}{detail}", refusal_prefix(*.service, "请求过于频繁："))]
     RateLimited {
         /// The service that refused.
         service: crate::providers::ServiceKind,
         /// The adapter's explanation.
         detail: String,
+        /// How long the service asked to wait (its `Retry-After`), milliseconds.
+        retry_after_ms: Option<u64>,
     },
     /// The service has more requests than it can serve right now (HTTP 503, docs/dictation.md §3.6):
     /// Gemini's "This model is currently experiencing high demand". Like a rate limit it passes,
-    /// and it is not a used-up quota: a fallback model list does not move on for it.
-    #[error("服务繁忙：{detail}")]
+    /// and it is not a used-up quota: a fallback model list moves on for it only with
+    /// 服务出错时也改用候补 on (§3.14). A recognition's reads as before, `asr: ` and the client's words.
+    #[error("{}{detail}", refusal_prefix(*.service, "服务繁忙："))]
     Overloaded {
         /// The service that refused.
         service: crate::providers::ServiceKind,
         /// The adapter's explanation.
+        detail: String,
+        /// How long the service asked to wait, milliseconds, when it said.
+        retry_after_ms: Option<u64>,
+    },
+    /// The service could not be reached or failed on its side (docs/dictation.md §3.14): the request
+    /// timed out, the network failed, the service answered with a server error. A fallback model
+    /// list moves on for it only with 服务出错时也改用候补 on. Reads as the service's failure always
+    /// did: `asr: ` or `refine: ` and the client's words.
+    #[error("{}{detail}", refusal_prefix(*.service, "refine: "))]
+    Unreachable {
+        /// The service that failed.
+        service: crate::providers::ServiceKind,
+        /// How.
+        cause: Outage,
+        /// The adapter's explanation.
+        detail: String,
+    },
+    /// An on-device recognition failed (docs/dictation.md §29): the engine's kind of failure, after
+    /// the CPU tried again where the GPU had failed. A fallback model list moves on for a failure
+    /// of the device, its memory or the model, only with 服务出错时也改用候补 on (§3.14). Reads as a
+    /// local recognition's failure always did.
+    #[error("asr: {detail}")]
+    LocalFailed {
+        /// What went wrong.
+        failure: LocalFailure,
+        /// The explanation (「本地识别失败：…」).
         detail: String,
     },
     /// The text could not be handed to the foreground application.
@@ -114,9 +144,30 @@ pub enum DictationError {
     Idle,
 }
 
+/// What a recognition's refusal reads as (`asr: `, as every recognition failure did before the
+/// kinds of §3.14), and a clean-up's: `llm`.
+fn refusal_prefix(service: crate::providers::ServiceKind, llm: &'static str) -> &'static str {
+    match service {
+        crate::providers::ServiceKind::Asr => "asr: ",
+        crate::providers::ServiceKind::Llm => llm,
+    }
+}
+
+/// How a service failed when it could not serve a request (docs/dictation.md §3.14).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Outage {
+    /// The request did not complete in time.
+    Timeout,
+    /// DNS, TCP, TLS or a connection dropped mid-request.
+    Network,
+    /// The service answered with this server error (HTTP 5xx; a 503 is
+    /// [`DictationError::Overloaded`]).
+    Server(u16),
+}
+
 impl DictationError {
-    /// The model's quota is used up ([`DictationError::QuotaExhausted`]): the one failure a
-    /// fallback model list moves on for (docs/dictation.md §3.5).
+    /// The model's quota is used up ([`DictationError::QuotaExhausted`]): a fallback model list
+    /// always moves on for it (docs/dictation.md §3.5).
     pub fn is_quota_exhausted(&self) -> bool {
         matches!(self, Self::QuotaExhausted { .. })
     }
@@ -125,6 +176,26 @@ impl DictationError {
     pub fn quota_retry_at(&self) -> Option<u64> {
         match self {
             Self::QuotaExhausted { retry_at_ms, .. } => *retry_at_ms,
+            _ => None,
+        }
+    }
+
+    /// A failure that passes (docs/dictation.md §3.14): the service timed out, could not be reached,
+    /// failed on its side, was busy or limited the requests; on this device the compute device, its
+    /// memory or the model failed. With 服务出错时也改用候补 on, a fallback model list moves on for it.
+    /// Never a refused key, a refused request, silence or a cancel.
+    pub fn is_outage(&self) -> bool {
+        match self {
+            Self::Unreachable { .. } | Self::RateLimited { .. } | Self::Overloaded { .. } => true,
+            Self::LocalFailed { failure, .. } => matches!(failure, LocalFailure::Device | LocalFailure::Memory | LocalFailure::Model),
+            _ => false,
+        }
+    }
+
+    /// How long the service asked to wait before the next request (a 429's `Retry-After`).
+    pub fn retry_after_ms(&self) -> Option<u64> {
+        match self {
+            Self::RateLimited { retry_after_ms, .. } | Self::Overloaded { retry_after_ms, .. } => *retry_after_ms,
             _ => None,
         }
     }
@@ -192,6 +263,42 @@ pub enum AsrNote {
     GpuFailedRanOnCpu,
     /// The GPU failed twice within ten minutes: recognition runs on the CPU until Voltip restarts.
     GpuOffUntilRestart,
+}
+
+/// Why a fallback model did a request instead of the selected one (docs/dictation.md §3.5,
+/// §3.14): the history keeps it (`HistoryEntry.asr_fallback`), the pages say why a model is
+/// skipped for now. The wire names are part of the contract.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SwitchReason {
+    /// The model's quota is used up.
+    Quota,
+    /// The model failed (§3.14): it could not be reached, timed out, answered with a server error,
+    /// was busy or limited the requests; on this device, the compute device, its memory or the
+    /// model failed.
+    Outage,
+}
+
+/// Who wrote a text (docs/dictation.md §3.5, §3.14): the model its client named, whose model it is
+/// and why a fallback model wrote it. The three come from one answer, so the history never names
+/// one model with another's provider. A client outside a fallback chain names no provider: the
+/// take's selected one is meant.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Receipt {
+    /// The model, when the client says.
+    pub model: Option<String>,
+    /// Whose model, when a chain says.
+    pub provider: Option<crate::providers::ProviderId>,
+    /// Why a fallback model wrote it; `None` when the selected model did.
+    pub fallback: Option<SwitchReason>,
+}
+
+impl Receipt {
+    /// What a streaming session says about the text it gave so far.
+    pub fn of_session(session: &dyn StreamingSession) -> Self {
+        let (provider, fallback) = session.served();
+        Self { model: session.model(), provider, fallback }
+    }
 }
 
 /// Captured audio, ready for upload.
@@ -386,6 +493,19 @@ pub struct Transcript {
     /// How an on-device recogniser got the text when it was not the usual way (docs/dictation.md
     /// §29: the GPU failed and the CPU did it); the history keeps it as `asr_note`.
     pub backend_note: Option<AsrNote>,
+    /// Whose model recognised it, as a fallback chain reports it (docs/dictation.md §3.14); `None`
+    /// from a client alone, which the take's selected provider stands for.
+    pub provider: Option<crate::providers::ProviderId>,
+    /// Why a fallback model recognised it instead of the selected one; `None` when the selected
+    /// model did (or no chain ran).
+    pub fallback: Option<SwitchReason>,
+}
+
+impl Transcript {
+    /// Who recognised it.
+    pub fn receipt(&self) -> Receipt {
+        Receipt { model: self.model.clone(), provider: self.provider, fallback: self.fallback }
+    }
 }
 
 /// Speech-to-text.
@@ -473,6 +593,18 @@ pub struct StreamFinal {
     /// itself send the last requests. `None` when the session cannot say (the local streaming
     /// model, the fakes).
     pub model: Option<String>,
+    /// Whose model it was, as a fallback chain reports it (docs/dictation.md §3.14); `None` when
+    /// the session is a client's alone.
+    pub provider: Option<crate::providers::ProviderId>,
+    /// Why a fallback model's stream gave it instead of the selected one's.
+    pub fallback: Option<SwitchReason>,
+}
+
+impl StreamFinal {
+    /// Who gave the flushed text.
+    pub fn receipt(&self) -> Receipt {
+        Receipt { model: self.model.clone(), provider: self.provider, fallback: self.fallback }
+    }
 }
 
 /// A streaming recogniser (docs/dictation.md §11): the source of the pill's live text while the
@@ -505,6 +637,12 @@ pub trait StreamingSession: Send {
     fn model(&self) -> Option<String> {
         None
     }
+
+    /// Whose model the text so far came from and why a fallback model's (docs/dictation.md
+    /// §3.14), as a chain's session says; `(None, None)` (the default) for a client's own.
+    fn served(&self) -> (Option<crate::providers::ProviderId>, Option<SwitchReason>) {
+        (None, None)
+    }
 }
 
 /// Refinement result.
@@ -516,6 +654,11 @@ pub struct Refined {
     pub latency_ms: u64,
     /// Model that produced it.
     pub model: String,
+    /// Whose model it was, as a fallback chain reports it (docs/dictation.md §3.14); `None` from a
+    /// client alone, which the take's selected provider stands for.
+    pub provider: Option<crate::providers::ProviderId>,
+    /// Why a fallback model wrote it instead of the selected one.
+    pub fallback: Option<SwitchReason>,
 }
 
 /// The take's context for the LLM (docs/dictation.md §18.5), already filtered by the privacy
@@ -952,7 +1095,7 @@ mod tests {
         assert!(json.contains(r#""rms_dbfs":-20.0"#) && json.contains(r#""seq":7"#), "{json}");
         let segment = Segment { text: "你好。".into(), refined: None, start_ms: 120, end_ms: 1480 };
         assert_eq!(serde_json::to_string(&segment).unwrap(), r#"{"text":"你好。","start_ms":120,"end_ms":1480}"#);
-        assert_eq!(StreamFinal::default(), StreamFinal { committed: Vec::new(), tail: String::new(), model: None });
+        assert_eq!(StreamFinal::default(), StreamFinal { committed: Vec::new(), tail: String::new(), model: None, provider: None, fallback: None });
         assert_eq!(PARTIAL_THROTTLE, Duration::from_millis(80));
         assert_eq!(LIVE_CHUNK_SAMPLES as u32 * 10, LIVE_SAMPLE_RATE_HZ, "one chunk is 100 ms");
     }

@@ -5,8 +5,9 @@
 
 use super::RefineFailure;
 use super::long;
-use super::ports::{AsrNote, DictationError, RefineHints, Refiner, Transcriber};
+use super::ports::{AsrNote, DictationError, RefineHints, Refiner, SwitchReason, Transcriber};
 use crate::engines::ChineseScript;
+use crate::providers::ProviderId;
 use crate::script::normalized;
 use crate::vocabulary::{Step, Vocabulary};
 
@@ -29,6 +30,10 @@ pub struct Recognised {
     pub model: Option<String>,
     /// How an on-device recogniser got it, when that is worth telling (docs/dictation.md §29).
     pub note: Option<AsrNote>,
+    /// Whose model it was, when a fallback chain says (docs/dictation.md §3.14).
+    pub provider: Option<ProviderId>,
+    /// Why a fallback model recognised it.
+    pub fallback: Option<SwitchReason>,
 }
 
 /// Recognise `wav` with the take's `language` hint and the vocabulary's `glossary`, and bring the
@@ -43,7 +48,14 @@ pub async fn recognize(
     call: &crate::usage::AsrCall,
 ) -> Result<Recognised, DictationError> {
     let t = transcriber.transcribe_as(wav, language, glossary, call).await?;
-    Ok(Recognised { text: normalized(script, t.text.trim()), asr_ms: t.latency_ms, model: t.model, note: t.backend_note })
+    Ok(Recognised {
+        text: normalized(script, t.text.trim()),
+        asr_ms: t.latency_ms,
+        model: t.model,
+        note: t.backend_note,
+        provider: t.provider,
+        fallback: t.fallback,
+    })
 }
 
 /// Log a vocabulary step that fell back to its input (docs/dictation.md §16.3); the take goes on.
@@ -110,6 +122,10 @@ pub struct CleanUp {
     pub refine_failure: Option<RefineFailure>,
     /// The model that answered with the text in `text`.
     pub refine_model: Option<String>,
+    /// Whose model it was, when a fallback chain says (docs/dictation.md §3.14).
+    pub refine_provider: Option<ProviderId>,
+    /// Why a fallback model wrote it.
+    pub refine_fallback: Option<SwitchReason>,
 }
 
 impl CleanUp {
@@ -143,6 +159,8 @@ pub async fn run_refine(refiner: &dyn Refiner, text: &str, hints: &RefineHints) 
                     refine_error: None,
                     refine_failure: None,
                     refine_model: Some(out.model),
+                    refine_provider: out.provider,
+                    refine_fallback: out.fallback,
                 }
             }
         }

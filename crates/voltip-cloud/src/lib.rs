@@ -64,7 +64,7 @@ impl Transcriber for HttpTranscriber {
             None => Vec::new(),
         };
         let t = self.client.transcribe_with_headers(wav, language, prompt.as_deref(), &headers).await.map_err(asr_error)?;
-        Ok(Transcript { text: t.text, latency_ms: t.latency_ms, model: Some(t.model), backend_note: None })
+        Ok(Transcript { text: t.text, latency_ms: t.latency_ms, model: Some(t.model), backend_note: None, provider: None, fallback: None })
     }
 }
 
@@ -152,7 +152,7 @@ impl Refiner for HttpRefiner {
     /// the take's context as the scene blocks (§18.5); the take's language and style shape the rest.
     async fn refine(&self, text: &str, hints: &RefineHints) -> Result<Refined, DictationError> {
         let r = self.client.refine_with(text, &prompt_hints(hints)).await.map_err(refine_error)?;
-        Ok(Refined { text: r.text, latency_ms: r.latency_ms, model: r.model })
+        Ok(Refined { text: r.text, latency_ms: r.latency_ms, model: r.model, provider: None, fallback: None })
     }
 
     /// The voice edit's rewrite (docs/dictation.md §19) through the same client and the same hints
@@ -160,30 +160,44 @@ impl Refiner for HttpRefiner {
     /// error, so nothing is pasted.
     async fn edit(&self, selection: &str, instruction: &str, hints: &RefineHints) -> Result<Refined, DictationError> {
         let r = self.client.edit(selection, instruction, &prompt_hints(hints)).await.map_err(refine_error)?;
-        Ok(Refined { text: r.text, latency_ms: r.latency_ms, model: r.model })
+        Ok(Refined { text: r.text, latency_ms: r.latency_ms, model: r.model, provider: None, fallback: None })
     }
 }
 
-/// The core's error for a failed recognition: a used-up quota keeps its kind, so a fallback model
-/// list moves on to its next model (docs/dictation.md §3.5); anything else is `Asr` with the reason.
+/// The core's error for a failed recognition (docs/dictation.md §3.5, §3.14): a used-up quota, a
+/// rate limit, a busy service (503), another server error, the network and a timeout keep their
+/// kind, so a fallback model list can move on for them; anything else is `Asr` with the reason.
+/// Every kind reads as the client's words, as before.
 pub fn asr_error(error: voltip_asr::AsrError) -> DictationError {
-    if let voltip_asr::AsrError::QuotaExhausted { retry_at_ms, .. } = &error {
-        return DictationError::QuotaExhausted { service: ServiceKind::Asr, retry_at_ms: *retry_at_ms, detail: error.to_string() };
+    use voltip_asr::AsrError as A;
+    use voltip_core::dictation::Outage;
+    let detail = error.to_string();
+    match error {
+        A::QuotaExhausted { retry_at_ms, .. } => DictationError::QuotaExhausted { service: ServiceKind::Asr, retry_at_ms, detail },
+        A::RateLimited { retry_after_ms, .. } => DictationError::RateLimited { service: ServiceKind::Asr, detail, retry_after_ms },
+        A::Server { status: 503, .. } => DictationError::Overloaded { service: ServiceKind::Asr, detail, retry_after_ms: None },
+        A::Server { status, .. } if status >= 500 => DictationError::Unreachable { service: ServiceKind::Asr, cause: Outage::Server(status), detail },
+        A::Network(_) => DictationError::Unreachable { service: ServiceKind::Asr, cause: Outage::Network, detail },
+        A::Timeout => DictationError::Unreachable { service: ServiceKind::Asr, cause: Outage::Timeout, detail },
+        _ => DictationError::Asr(detail),
     }
-    DictationError::Asr(error.to_string())
 }
 
 /// The core's error for a failed clean-up or edit: a used-up quota (docs/dictation.md §3.5), a
-/// rate limit and an overloaded service (§3.6) keep their kind; anything else is `Refine` with the
-/// reason.
+/// rate limit and an overloaded service (§3.6), another server error, the network and a timeout
+/// (§3.14) keep their kind; anything else is `Refine` with the reason.
 pub fn refine_error(error: voltip_refine::RefineError) -> DictationError {
+    use voltip_core::dictation::Outage;
+    use voltip_refine::RefineError as R;
+    let detail = error.to_string();
     match error {
-        voltip_refine::RefineError::QuotaExhausted { retry_at_ms, .. } => {
-            DictationError::QuotaExhausted { service: ServiceKind::Llm, retry_at_ms, detail: error.to_string() }
-        }
-        voltip_refine::RefineError::RateLimited { .. } => DictationError::RateLimited { service: ServiceKind::Llm, detail: error.to_string() },
-        voltip_refine::RefineError::Overloaded { .. } => DictationError::Overloaded { service: ServiceKind::Llm, detail: error.to_string() },
-        _ => DictationError::Refine(error.to_string()),
+        R::QuotaExhausted { retry_at_ms, .. } => DictationError::QuotaExhausted { service: ServiceKind::Llm, retry_at_ms, detail },
+        R::RateLimited { retry_after_ms, .. } => DictationError::RateLimited { service: ServiceKind::Llm, detail, retry_after_ms },
+        R::Overloaded { .. } => DictationError::Overloaded { service: ServiceKind::Llm, detail, retry_after_ms: None },
+        R::Server { status, .. } if status >= 500 => DictationError::Unreachable { service: ServiceKind::Llm, cause: Outage::Server(status), detail },
+        R::Network(_) => DictationError::Unreachable { service: ServiceKind::Llm, cause: Outage::Network, detail },
+        R::Timeout => DictationError::Unreachable { service: ServiceKind::Llm, cause: Outage::Timeout, detail },
+        _ => DictationError::Refine(detail),
     }
 }
 
@@ -603,21 +617,35 @@ mod tests {
         );
         let llm = refine_error(RefineError::QuotaExhausted { code: "insufficient_quota".into(), message: "m".into(), retry_at_ms: Some(9) });
         assert!(matches!(&llm, DictationError::QuotaExhausted { service: ServiceKind::Llm, retry_at_ms: Some(9), .. }), "{llm:?}");
-        assert_eq!(refine_error(RefineError::Timeout), DictationError::Refine("refine request timed out".into()));
+        // docs/dictation.md §3.14 (changed from `Refine`): a timeout keeps its kind; it reads as before.
+        let timed_out = refine_error(RefineError::Timeout);
+        assert!(matches!(&timed_out, DictationError::Unreachable { service: ServiceKind::Llm, .. }), "{timed_out:?}");
+        assert_eq!(timed_out.to_string(), "refine: refine request timed out");
         // docs/dictation.md §3.6: a clean-up's 429 keeps its kind (the interface says the service is
-        // busy), and it is not a used-up quota: no fallback model is tried for it.
+        // busy), and it is not a used-up quota: only 服务出错时也改用候补 (§3.14) moves on for it, and
+        // it carries how long the service asked to wait.
         let busy = refine_error(RefineError::RateLimited { retry_after_ms: Some(355_000), message: String::new() });
-        assert_eq!(busy, DictationError::RateLimited { service: ServiceKind::Llm, detail: "refine service rate limited (retry after 355000 ms)".into() });
+        assert_eq!(
+            busy,
+            DictationError::RateLimited {
+                service: ServiceKind::Llm,
+                detail: "refine service rate limited (retry after 355000 ms)".into(),
+                retry_after_ms: Some(355_000)
+            }
+        );
         assert!(!busy.is_quota_exhausted());
         // 2026-10-24: so does a 503 (Gemini's "high demand"), as an overloaded service.
         let overloaded = refine_error(RefineError::Overloaded { message: "high demand".into() });
-        assert_eq!(overloaded, DictationError::Overloaded { service: ServiceKind::Llm, detail: "refine service overloaded (HTTP 503): high demand".into() });
-        assert!(!overloaded.is_quota_exhausted());
         assert_eq!(
-            asr_error(AsrError::RateLimited { retry_after_ms: None, message: String::new() }),
-            DictationError::Asr("ASR rate limited".into()),
-            "recognition's is unchanged"
+            overloaded,
+            DictationError::Overloaded { service: ServiceKind::Llm, detail: "refine service overloaded (HTTP 503): high demand".into(), retry_after_ms: None }
         );
+        assert!(!overloaded.is_quota_exhausted());
+        // docs/dictation.md §3.14 (changed from `Asr`): a recognition's 429 keeps its kind too, so a
+        // fallback model list with 服务出错时也改用候补 on moves on for it; it reads as before.
+        let limited = asr_error(AsrError::RateLimited { retry_after_ms: None, message: String::new() });
+        assert_eq!(limited, DictationError::RateLimited { service: ServiceKind::Asr, detail: "ASR rate limited".into(), retry_after_ms: None });
+        assert_eq!(limited.to_string(), "asr: ASR rate limited");
 
         let used_up = serde_json::json!({ "error": { "code": "insufficient_quota", "message": "You exceeded your current quota" } });
         let server = MockServer::start().await;
@@ -643,6 +671,80 @@ mod tests {
         let remote = RemoteService { url: server.uri(), model: "whisper-1".into(), key: None, ..RemoteService::default() };
         let t = transcriber_for(AsrProtocol::OpenaiTranscriptions, &remote, &net()).transcribe(b"RIFF", None, &[]).await.unwrap();
         assert_eq!((t.text.as_str(), t.model.as_deref()), ("你好", Some("whisper-1")));
+    }
+
+    /// docs/dictation.md §3.14: every failure of the recognition and clean-up clients reaches the
+    /// core with its kind — a timeout, the network, a server error, a busy or rate-limited service
+    /// pass; a refused key, a refused request, an answer the client cannot read do not — and reads
+    /// as it did before the kinds (the interface explains the same words).
+    #[test]
+    fn every_client_failure_reaches_the_core_with_its_kind_and_its_words() {
+        use voltip_asr::AsrError as A;
+        use voltip_core::dictation::Outage;
+        use voltip_refine::RefineError as R;
+        let unreachable = |service, cause, detail: &str| DictationError::Unreachable { service, cause, detail: detail.into() };
+        let asr = [
+            (A::InvalidConfig("bad url".into()), DictationError::Asr("invalid ASR configuration: bad url".into())),
+            (A::Unauthorized { message: "nope".into() }, DictationError::Asr("ASR rejected the credentials: nope".into())),
+            (
+                A::RateLimited { retry_after_ms: Some(5_000), message: String::new() },
+                DictationError::RateLimited { service: ServiceKind::Asr, detail: "ASR rate limited (retry after 5000 ms)".into(), retry_after_ms: Some(5_000) },
+            ),
+            (A::Server { status: 500, body: "boom".into() }, unreachable(ServiceKind::Asr, Outage::Server(500), "ASR server error 500: boom")),
+            (A::Server { status: 502, body: String::new() }, unreachable(ServiceKind::Asr, Outage::Server(502), "ASR server error 502")),
+            (
+                A::Server { status: 503, body: "busy".into() },
+                DictationError::Overloaded { service: ServiceKind::Asr, detail: "ASR server error 503: busy".into(), retry_after_ms: None },
+            ),
+            (A::Server { status: 400, body: "bad audio".into() }, DictationError::Asr("ASR server error 400: bad audio".into())),
+            (A::Server { status: 404, body: String::new() }, DictationError::Asr("ASR server error 404".into())),
+            (A::Network("connection reset".into()), unreachable(ServiceKind::Asr, Outage::Network, "ASR network error: connection reset")),
+            (A::Timeout, unreachable(ServiceKind::Asr, Outage::Timeout, "ASR request timed out")),
+            (A::BadResponse("not json".into()), DictationError::Asr("ASR returned an unexpected response: not json".into())),
+            (A::Service { code: "InvalidParameter".into(), message: "m".into() }, DictationError::Asr("ASR service error InvalidParameter: m".into())),
+            (A::Audio("not 16-bit".into()), DictationError::Asr("ASR audio: not 16-bit".into())),
+        ];
+        for (error, expected) in asr {
+            let words = format!("asr: {error}");
+            let mapped = asr_error(error);
+            assert_eq!(mapped, expected);
+            assert_eq!(mapped.to_string(), words, "a recognition failure reads as before");
+            assert_eq!(
+                mapped.is_outage(),
+                matches!(mapped, DictationError::Unreachable { .. } | DictationError::RateLimited { .. } | DictationError::Overloaded { .. })
+            );
+        }
+        let refine = [
+            (R::InvalidConfig("bad url".into()), DictationError::Refine("invalid refine configuration: bad url".into()), "refine: "),
+            (R::Unauthorized { message: String::new() }, DictationError::Refine("refine service rejected the credentials".into()), "refine: "),
+            (
+                R::RateLimited { retry_after_ms: Some(9_000), message: String::new() },
+                DictationError::RateLimited {
+                    service: ServiceKind::Llm,
+                    detail: "refine service rate limited (retry after 9000 ms)".into(),
+                    retry_after_ms: Some(9_000),
+                },
+                "请求过于频繁：",
+            ),
+            (
+                R::Overloaded { message: String::new() },
+                DictationError::Overloaded { service: ServiceKind::Llm, detail: "refine service overloaded (HTTP 503)".into(), retry_after_ms: None },
+                "服务繁忙：",
+            ),
+            (R::Server { status: 500, body: String::new() }, unreachable(ServiceKind::Llm, Outage::Server(500), "refine server error 500"), "refine: "),
+            (R::Server { status: 422, body: "bad".into() }, DictationError::Refine("refine server error 422: bad".into()), "refine: "),
+            (R::Network("reset".into()), unreachable(ServiceKind::Llm, Outage::Network, "refine network error: reset"), "refine: "),
+            (R::Timeout, unreachable(ServiceKind::Llm, Outage::Timeout, "refine request timed out"), "refine: "),
+            (R::BadResponse("x".into()), DictationError::Refine("refine service returned an unexpected response: x".into()), "refine: "),
+            (R::EmptyAnswer, DictationError::Refine("refine service returned an empty answer".into()), "refine: "),
+            (R::Truncated, DictationError::Refine("refine answer was cut off at the output limit".into()), "refine: "),
+        ];
+        for (error, expected, prefix) in refine {
+            let words = format!("{prefix}{error}");
+            let mapped = refine_error(error);
+            assert_eq!(mapped, expected);
+            assert_eq!(mapped.to_string(), words, "a clean-up failure reads as before");
+        }
     }
 
     /// Regression (2026-10-12, Paseo's dictation over voltip-server): a 36 s take to the built-in

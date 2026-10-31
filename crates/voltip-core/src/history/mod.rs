@@ -110,9 +110,24 @@ pub struct HistoryEntry {
     /// §29: the GPU failed and the CPU did it); shown with the technical details.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asr_note: Option<crate::dictation::AsrNote>,
+    /// Whose model recognised it (docs/dictation.md §3.14): with `asr_model`, the service that did,
+    /// a fallback model's too. Absent in entries written before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asr_provider: Option<crate::providers::ProviderId>,
+    /// Why a fallback model recognised it instead of the selected one (§3.14); absent when the
+    /// selected model did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asr_fallback: Option<crate::dictation::SwitchReason>,
     /// Refine model when refinement ran.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refine_model: Option<String>,
+    /// Whose model cleaned it up, when refinement ran (§3.14); absent in entries written before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refine_provider: Option<crate::providers::ProviderId>,
+    /// Why a fallback model cleaned it up instead of the selected one; absent when the selected
+    /// model did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refine_fallback: Option<crate::dictation::SwitchReason>,
     /// Recording length.
     pub duration_ms: u64,
     /// ASR round trip.

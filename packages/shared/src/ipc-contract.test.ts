@@ -1424,6 +1424,8 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       },
       local: { id: "qwen3-asr-0.6b", name: local?.name ?? "", installed: true },
       liveReady: true,
+      // docs/dictation.md §3.14: the recognition chain's models of this device resolve against it.
+      library: fixture.models,
       // docs/dictation.md §3.3: the list Groq gave for its saved key (contract.rs's sample).
       listed: {
         "groq:llm": {
@@ -1432,19 +1434,35 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
         },
       },
     });
-    // docs/dictation.md §3.5: the core's ledger says when a model that ran out is tried again; the
-    // preview keeps none. Everything else about the fallback models is resolved the same way.
-    const selectedRetry = fixture.engines.asr_fallback?.selected_retry_at_ms;
-    expect(selectedRetry).toBeGreaterThan(0);
-    const { selected_retry_at_ms: _retry, ...asrFallback } = fixture.engines.asr_fallback ?? {
-      enabled: false,
-      in_use: false,
-      models: [],
+    // docs/dictation.md §3.5, §3.14: the core's ledger says when and why a model that ran out or
+    // failed is tried again; the preview keeps none. Everything else about the fallback models is
+    // resolved the same way.
+    const sample = fixture.engines.asr_fallback;
+    expect([sample?.selected_retry_at_ms ?? 0, sample?.selected_retry_reason]).toEqual([
+      expect.any(Number),
+      "quota",
+    ]);
+    expect(sample?.models.map((m) => m.retry_reason)).toEqual([
+      "outage",
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    const {
+      selected_retry_at_ms: _retry,
+      selected_retry_reason: _why,
+      ...asrFallback
+    } = sample ?? { enabled: false, in_use: false, models: [] };
+    const withoutLedger = {
+      ...asrFallback,
+      models: asrFallback.models.map(({ retry_at_ms: _at, retry_reason: _reason, ...m }) => m),
     };
-    expect(resolved).toEqual({ ...fixture.engines, asr_fallback: asrFallback });
+    expect(resolved).toEqual({ ...fixture.engines, asr_fallback: withoutLedger });
     expect(resolved.asr_fallback?.models.map((m) => m.skip ?? m.issue ?? "ready")).toEqual([
       "ready",
       "same_as_selected",
+      "ready",
+      "model_not_installed",
     ]);
     expect(resolved.llm_fallback?.models.map((m) => m.issue)).toEqual(["key_missing"]);
   });

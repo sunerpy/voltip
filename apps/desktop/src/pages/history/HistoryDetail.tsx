@@ -22,6 +22,7 @@ import {
   recordingOfEntry,
   refineModelText,
   sceneLabel,
+  servedByText,
   takePolishPairs,
   textMarks,
   wordAt,
@@ -653,6 +654,18 @@ export function HistoryDetail({
       {!sentAsText(entry) && <TimingBar entry={entry} t={t} />}
       <div className="grid grid-cols-2 gap-x-6 gap-y-2 border-t border-border pt-3">
         <Readout label={t("history.detail.asrModel")} value={entry.asr_model} size="sm" />
+        {entry.asr_provider !== undefined && (
+          // docs/dictation.md §3.14: whose model wrote the text, and why a fallback model did.
+          <Readout
+            label={t("fallbackOutage.history.asrProvider")}
+            value={
+              <span data-testid="history-asr-provider">
+                {servedByText(entry.asr_provider, entry.asr_fallback, locale)}
+              </span>
+            }
+            size="sm"
+          />
+        )}
         {entry.asr_note !== undefined && (
           // docs/dictation.md §29: the local engine's GPU failed and the CPU did the take.
           <Readout
@@ -671,6 +684,17 @@ export function HistoryDetail({
           size="sm"
           muted={!entry.refined}
         />
+        {entry.refined && entry.refine_provider !== undefined && (
+          <Readout
+            label={t("fallbackOutage.history.refineProvider")}
+            value={
+              <span data-testid="history-refine-provider">
+                {servedByText(entry.refine_provider, entry.refine_fallback, locale)}
+              </span>
+            }
+            size="sm"
+          />
+        )}
         {entry.preset !== undefined && (
           // docs/dictation.md §21: the preset the clean-up ran with, by the name it had.
           <Readout

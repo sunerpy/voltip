@@ -365,12 +365,19 @@ enum Reply {
     Ok(String),
     Err(DictationError),
     Slow(String, Duration),
-    /// 「第n段」 (padded with `pad` 字) for call `n` (1-based), failing the calls in `fail`, each
-    /// after `delay` (docs/dictation.md §22: segments in order).
+    /// Fails with the error after the delay (tokio time).
+    SlowErr(DictationError, Duration),
+    /// Never answers (docs/dictation.md §3.14: a service that hangs): the call's future stays
+    /// pending until whoever awaits it gives up and drops it. No thread is held.
+    Never,
+    /// 「第n段」 (padded with `pad` 字) for call `n` (1-based), failing the calls in `fail` (with
+    /// `error`, or a plain `Asr` failure), each after `delay` (docs/dictation.md §22: segments in
+    /// order).
     Numbered {
         pad: usize,
         fail: Vec<usize>,
         delay: Duration,
+        error: Option<DictationError>,
     },
 }
 
@@ -417,6 +424,22 @@ impl FakeTranscriber {
         Self::with_reply(Reply::Slow(text.to_owned(), delay))
     }
 
+    /// Always fails with `error` (docs/dictation.md §3.14: any kind of failure).
+    pub fn failing(error: DictationError) -> Self {
+        Self::with_reply(Reply::Err(error))
+    }
+
+    /// Fails with `error` after `delay` (tokio time).
+    pub fn slow_failing(error: DictationError, delay: Duration) -> Self {
+        Self::with_reply(Reply::SlowErr(error, delay))
+    }
+
+    /// Never answers: a service that hangs (docs/dictation.md §3.14). Await it only under a
+    /// deadline: the call stays pending until it is dropped.
+    pub fn never() -> Self {
+        Self::with_reply(Reply::Never)
+    }
+
     /// Always fails as a model whose quota is used up (docs/dictation.md §3.5).
     pub fn quota() -> Self {
         Self::with_reply(Reply::Err(DictationError::QuotaExhausted {
@@ -453,7 +476,12 @@ impl FakeTranscriber {
     /// Answers call `n` with 「第n段」 plus `pad` times 「字」 and a full stop, failing the calls
     /// numbered in `fail` (1-based), each after `delay` (tokio time).
     pub fn numbered(pad: usize, fail: &[usize], delay: Duration) -> Self {
-        Self::with_reply(Reply::Numbered { pad, fail: fail.to_vec(), delay })
+        Self::with_reply(Reply::Numbered { pad, fail: fail.to_vec(), delay, error: None })
+    }
+
+    /// [`FakeTranscriber::numbered`] whose failing calls fail with `error`.
+    pub fn numbered_failing(pad: usize, fail: &[usize], error: DictationError) -> Self {
+        Self::with_reply(Reply::Numbered { pad, fail: fail.to_vec(), delay: Duration::ZERO, error: Some(error) })
     }
 
     fn with_reply(reply: Reply) -> Self {
@@ -544,25 +572,46 @@ impl Transcriber for FakeTranscriber {
             });
         }
         match &self.reply {
-            Reply::Ok(text) => Ok(Transcript { text: text.clone(), latency_ms: FAKE_LATENCY_MS, model: self.model.clone(), backend_note: self.note }),
+            Reply::Ok(text) => Ok(Transcript {
+                text: text.clone(),
+                latency_ms: FAKE_LATENCY_MS,
+                model: self.model.clone(),
+                backend_note: self.note,
+                provider: None,
+                fallback: None,
+            }),
             Reply::Err(e) => Err(e.clone()),
             Reply::Slow(text, delay) => {
                 tokio::time::sleep(*delay).await;
-                Ok(Transcript { text: text.clone(), latency_ms: FAKE_LATENCY_MS, model: self.model.clone(), backend_note: self.note })
+                Ok(Transcript {
+                    text: text.clone(),
+                    latency_ms: FAKE_LATENCY_MS,
+                    model: self.model.clone(),
+                    backend_note: self.note,
+                    provider: None,
+                    fallback: None,
+                })
             }
-            Reply::Numbered { pad, fail, delay } => {
+            Reply::SlowErr(e, delay) => {
+                tokio::time::sleep(*delay).await;
+                Err(e.clone())
+            }
+            Reply::Never => std::future::pending().await,
+            Reply::Numbered { pad, fail, delay, error } => {
                 let n = self.calls.load(Ordering::SeqCst);
                 if !delay.is_zero() {
                     tokio::time::sleep(*delay).await;
                 }
                 if fail.contains(&n) {
-                    return Err(DictationError::Asr(format!("fake failure of call {n}")));
+                    return Err(error.clone().unwrap_or_else(|| DictationError::Asr(format!("fake failure of call {n}"))));
                 }
                 Ok(Transcript {
                     text: format!("第{n}段{}。", "字".repeat(*pad)),
                     latency_ms: FAKE_LATENCY_MS,
                     model: self.model.clone(),
                     backend_note: self.note,
+                    provider: None,
+                    fallback: None,
                 })
             }
         }
@@ -669,13 +718,21 @@ impl FakeRefiner {
 
     /// Always fails as a service that has too many requests for now (docs/dictation.md §3.6).
     pub fn rate_limited() -> Self {
-        Self::with_reply(Reply::Err(DictationError::RateLimited { service: crate::providers::ServiceKind::Llm, detail: FAKE_RATE_LIMIT_DETAIL.into() }))
+        Self::with_reply(Reply::Err(DictationError::RateLimited {
+            service: crate::providers::ServiceKind::Llm,
+            detail: FAKE_RATE_LIMIT_DETAIL.into(),
+            retry_after_ms: None,
+        }))
     }
 
     /// Always fails as a service with more requests than it can serve (HTTP 503, docs/dictation.md
     /// §3.6).
     pub fn overloaded() -> Self {
-        Self::with_reply(Reply::Err(DictationError::Overloaded { service: crate::providers::ServiceKind::Llm, detail: FAKE_OVERLOADED_DETAIL.into() }))
+        Self::with_reply(Reply::Err(DictationError::Overloaded {
+            service: crate::providers::ServiceKind::Llm,
+            detail: FAKE_OVERLOADED_DETAIL.into(),
+            retry_after_ms: None,
+        }))
     }
 
     /// Its answers report `model` as the model that wrote them.
@@ -691,6 +748,17 @@ impl FakeRefiner {
     /// Always fails with `Refine(message)`.
     pub fn err(message: &str) -> Self {
         Self::with_reply(Reply::Err(DictationError::Refine(message.to_owned())))
+    }
+
+    /// Always fails with `error` (docs/dictation.md §3.14: any kind of failure).
+    pub fn failing(error: DictationError) -> Self {
+        Self::with_reply(Reply::Err(error))
+    }
+
+    /// Never answers: a service that hangs (docs/dictation.md §3.14). Await it only under a
+    /// deadline.
+    pub fn never() -> Self {
+        Self::with_reply(Reply::Never)
     }
 
     /// Returns `text` after `delay`.
@@ -725,15 +793,20 @@ impl FakeRefiner {
 
     async fn answer(&self) -> Result<Refined, DictationError> {
         match &self.reply {
-            Reply::Ok(text) => Ok(Refined { text: text.clone(), latency_ms: FAKE_LATENCY_MS, model: self.model.clone() }),
+            Reply::Ok(text) => Ok(Refined { text: text.clone(), latency_ms: FAKE_LATENCY_MS, model: self.model.clone(), provider: None, fallback: None }),
             Reply::Err(e) => Err(e.clone()),
             Reply::Slow(text, delay) => {
                 tokio::time::sleep(*delay).await;
-                Ok(Refined { text: text.clone(), latency_ms: FAKE_LATENCY_MS, model: self.model.clone() })
+                Ok(Refined { text: text.clone(), latency_ms: FAKE_LATENCY_MS, model: self.model.clone(), provider: None, fallback: None })
             }
+            Reply::SlowErr(e, delay) => {
+                tokio::time::sleep(*delay).await;
+                Err(e.clone())
+            }
+            Reply::Never => std::future::pending().await,
             Reply::Numbered { .. } => {
                 let n = self.calls.load(Ordering::SeqCst);
-                Ok(Refined { text: format!("润色第{n}次。"), latency_ms: FAKE_LATENCY_MS, model: self.model.clone() })
+                Ok(Refined { text: format!("润色第{n}次。"), latency_ms: FAKE_LATENCY_MS, model: self.model.clone(), provider: None, fallback: None })
             }
         }
     }
@@ -1519,7 +1592,7 @@ impl StreamingSession for FakeSession {
         }
         let tail =
             if self.word.is_multiple_of(self.endpoint_every) { String::new() } else { self.words.get(self.word.wrapping_sub(1)).cloned().unwrap_or_default() };
-        Ok(StreamFinal { committed: std::mem::take(&mut self.committed), tail, model: self.model.clone() })
+        Ok(StreamFinal { committed: std::mem::take(&mut self.committed), tail, model: self.model.clone(), provider: None, fallback: None })
     }
 }
 
@@ -1549,7 +1622,11 @@ pub fn history_entry(text: &str) -> crate::HistoryEntry {
         refined: false,
         asr_model: "fake/asr".to_owned(),
         asr_note: None,
+        asr_provider: None,
+        asr_fallback: None,
         refine_model: None,
+        refine_provider: None,
+        refine_fallback: None,
         duration_ms: 1500,
         asr_ms: FAKE_LATENCY_MS,
         refine_ms: None,

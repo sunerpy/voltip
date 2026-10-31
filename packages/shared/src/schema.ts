@@ -220,6 +220,17 @@ export const providerSettingsSchema = z.object({
 });
 export type ProviderSettings = z.infer<typeof providerSettingsSchema>;
 
+// ---------------- fallback by error class (docs/dictation.md §3.14) ----------------
+
+/** Why a fallback model did a request instead of the selected one
+ *  (`voltip_core::dictation::SwitchReason`): `quota` its quota is used up, `outage` it failed (it
+ *  could not be reached, timed out, answered with a server error, was busy or limited the requests;
+ *  on this device the compute device, its memory or the model failed). */
+export const switchReasonSchema = z.enum(["quota", "outage"]);
+export type SwitchReason = z.infer<typeof switchReasonSchema>;
+
+// ---------------- fallback models (docs/dictation.md §3.5) ----------------
+
 /** Most fallback models one service may list (`voltip_core::engines::MAX_FALLBACK_MODELS`). */
 export const MAX_FALLBACK_MODELS = 8;
 
@@ -236,6 +247,9 @@ export type FallbackModel = z.infer<typeof fallbackModelSchema>;
  *  to, in order, when the selected one's quota is used up. Rust omits it while off and empty. */
 export const fallbackSettingsSchema = z.object({
   enabled: z.boolean().default(false),
+  /** 服务出错时也改用候补 (§3.14): also move on when a model fails. Absent while off (Rust omits
+   *  it); the phone offers no switch for it. */
+  on_outage: z.boolean().optional(),
   models: z.array(fallbackModelSchema).max(MAX_FALLBACK_MODELS).default([]),
 });
 export type FallbackSettings = z.infer<typeof fallbackSettingsSchema>;
@@ -1770,7 +1784,15 @@ export const historyEntrySchema = z.object({
   /** The local engine's GPU failed and the CPU recognised the take (§29); absent otherwise and
    *  in entries written before it. */
   asr_note: asrNoteSchema.optional(),
+  /** Whose model wrote the text in `asr_model` (§3.14); absent in entries written before it. */
+  asr_provider: providerIdSchema.optional(),
+  /** Why a fallback model wrote it; absent when the selected model did. */
+  asr_fallback: switchReasonSchema.optional(),
   refine_model: z.string().optional(),
+  /** Whose model `refine_model` is (§3.14); absent in entries written before it. */
+  refine_provider: providerIdSchema.optional(),
+  /** Why a fallback model cleaned it up; absent when the selected model did. */
+  refine_fallback: switchReasonSchema.optional(),
   duration_ms: z.number().nonnegative(),
   asr_ms: z.number().nonnegative(),
   refine_ms: z.number().nonnegative().optional(),
@@ -2146,8 +2168,9 @@ export type ProviderStatus = z.infer<typeof providerStatusSchema>;
 /** Which vendor page `provider_console_open` opens (`voltip_core::ConsolePage`). */
 export type ConsolePage = "key" | "quota";
 
-/** Why a fallback model that could run is left out of the chain (`FallbackSkip`). */
-export const fallbackSkipSchema = z.enum(["same_as_selected", "duplicate"]);
+/** Why a fallback model that could run is left out of the chain (`FallbackSkip`): `not_for_local`
+ *  is a service while recognition runs on this device (§3.14), which never uploads for a failure. */
+export const fallbackSkipSchema = z.enum(["same_as_selected", "duplicate", "not_for_local"]);
 export type FallbackSkip = z.infer<typeof fallbackSkipSchema>;
 
 /** One fallback model as the engines pages show it (`FallbackModelStatus`, docs/dictation.md §3.5). */
@@ -2159,18 +2182,23 @@ export const fallbackModelStatusSchema = z.object({
   issue: engineIssueSchema.optional(),
   /** Why it is left out although it could run. */
   skip: fallbackSkipSchema.optional(),
-  /** It ran out of quota: tried again then (ms since the epoch). */
+  /** It ran out of quota or failed: tried again then (ms since the epoch). */
   retry_at_ms: z.number().int().nonnegative().optional(),
+  /** Why it is skipped until then (§3.14). */
+  retry_reason: switchReasonSchema.optional(),
 });
 export type FallbackModelStatus = z.infer<typeof fallbackModelStatusSchema>;
 
 /** `EngineStatus.asr_fallback` / `llm_fallback` (`FallbackStatus`, docs/dictation.md §3.5). */
 export const fallbackStatusSchema = z.object({
   enabled: z.boolean().default(false),
-  /** The chain runs: the switch is on and the selected service is ready and remote. */
+  /** The chain runs: the switch is on and the selected service is ready and remote — or, with
+   *  recognition on this device, 服务出错时也改用候补 is on and a model of this device follows (§3.14). */
   in_use: z.boolean().default(false),
-  /** The selected model ran out of quota: tried again then (ms since the epoch). */
+  /** The selected model ran out of quota or failed: tried again then (ms since the epoch). */
   selected_retry_at_ms: z.number().int().nonnegative().optional(),
+  /** Why it is skipped until then (§3.14). */
+  selected_retry_reason: switchReasonSchema.optional(),
   models: z.array(fallbackModelStatusSchema).default([]),
 });
 export type FallbackStatus = z.infer<typeof fallbackStatusSchema>;
