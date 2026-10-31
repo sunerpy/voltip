@@ -18,7 +18,7 @@ import {
   checkProviderDraft,
   choosesInterface,
   fallbackRows,
-  fallbackStatusOf,
+  fallbackTargets,
   modelListHelp,
   modelOptions,
   probeText,
@@ -895,20 +895,7 @@ export function ServicePrivacy({ kind }: { kind: ServiceKind }) {
       : target === undefined
         ? t("engines.privacy.textLocal")
         : t("engines.privacy.textSent", { target });
-  const others = fallbackStatusOf(engines, kind).in_use
-    ? [
-        ...new Set(
-          fallbackRows(engines, kind)
-            .rows.filter(
-              (r) =>
-                r.index !== "selected" &&
-                (r.state === "ready" || r.state === "active" || r.state === "exhausted"),
-            )
-            .map((r) => r.provider)
-            .filter((p) => p !== provider),
-        ),
-      ]
-    : [];
+  const others = fallbackTargets(engines, kind);
   const text =
     others.length === 0
       ? sent

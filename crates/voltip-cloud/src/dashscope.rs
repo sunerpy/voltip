@@ -43,7 +43,7 @@ impl Transcriber for DashscopeTranscriber {
     /// the model takes them.
     async fn transcribe(&self, wav: &[u8], language: Option<&str>, glossary: &[String]) -> Result<Transcript, DictationError> {
         let t = self.client.transcribe(wav, language, glossary).await.map_err(crate::asr_error)?;
-        Ok(Transcript { text: t.text, latency_ms: t.latency_ms, model: Some(t.model), backend_note: None })
+        Ok(Transcript { text: t.text, latency_ms: t.latency_ms, model: Some(t.model), backend_note: None, provider: None, fallback: None })
     }
 
     fn streaming(&self, glossary: &[String]) -> Option<Arc<dyn StreamingTranscriber>> {
@@ -118,7 +118,12 @@ impl StreamingSession for DashscopeSession {
         let _ = self.commands.send(Command::Finish);
         match self.done.recv_timeout(self.finish_timeout) {
             Ok(result) => result,
-            Err(_) => Err(DictationError::Asr(format!("realtime model: no last sentence within {} s", self.finish_timeout.as_secs()))),
+            // docs/dictation.md §3.14: the service went silent, a timeout.
+            Err(_) => Err(DictationError::Unreachable {
+                service: voltip_core::ServiceKind::Asr,
+                cause: voltip_core::dictation::Outage::Timeout,
+                detail: format!("realtime model: no last sentence within {} s", self.finish_timeout.as_secs()),
+            }),
         }
     }
 }
@@ -158,7 +163,7 @@ async fn drive(options: &DuplexOptions, mut inbox: mpsc::UnboundedReceiver<Comma
                 DuplexEvent::Finished => {
                     sender.close().await;
                     // A sentence the service never closed is the tail.
-                    return Ok(StreamFinal { committed, tail: current, model: Some(options.model.clone()) });
+                    return Ok(StreamFinal { committed, tail: current, model: Some(options.model.clone()), provider: None, fallback: None });
                 }
             },
         }
@@ -372,7 +377,12 @@ pub(crate) mod tests {
         })
         .await
         .unwrap();
-        assert!(matches!(&fin, Err(DictationError::Asr(m)) if m.contains("no last sentence")), "{fin:?}");
+        // docs/dictation.md §3.14: a timeout, which reads as before.
+        assert!(
+            matches!(&fin, Err(e @ DictationError::Unreachable { cause: voltip_core::dictation::Outage::Timeout, .. })
+                if e.to_string() == "asr: realtime model: no last sentence within 0 s"),
+            "{fin:?}"
+        );
         // The session gave up: its task closes the connection, so the server's read ends.
         tokio::time::timeout(Duration::from_secs(20), server).await.expect("the connection is closed").unwrap();
     }

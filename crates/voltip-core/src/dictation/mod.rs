@@ -22,14 +22,17 @@ use serde::{Deserialize, Serialize};
 pub use crate::engines::OutputMode;
 pub use crate::scenes::TakeContext;
 pub use engine::{DictationEngine, DictationPorts, EngineFactory, Retake, RetakeAudio, TakeClients, engine_clients};
-pub use fallback::{FallbackRefiner, FallbackTranscriber, Link, QUOTA_RETRY_AFTER, QuotaKey, QuotaLedger, first_with_quota, open_order};
+pub use fallback::{
+    ASR_DEADLINE, ChainPolicy, FallbackRefiner, FallbackTranscriber, Link, MAX_OUTAGE_TRIES, MIN_ATTEMPT, Mark, OUTAGE_RETRY_AFTER, QUOTA_RETRY_AFTER,
+    QuotaKey, QuotaLedger, REFINE_DEADLINE, Served, first_available, open_order,
+};
 pub use ports::{
     AsrNote, AudioSource, CONFIRM_WITHIN, Capture, CaptureOptions, ClipboardCode, DWELL, DWELL_WITH_TEXT, DictationError, FOCUS_READ_DEADLINE, FocusReader,
     FocusWatch, ForegroundApp, ForegroundProbe, GateCancel, InjectNote, Injection, Injector, InsertCheck, InsertGate, InsertSession, Inserted,
     LIVE_CHUNK_SAMPLES, LIVE_SAMPLE_RATE_HZ, LevelFrame, LivePcm, LocalFailure, MAX_EDIT_SELECTION_CHARS, MAX_RECORDING, MAX_RECORDING_STREAMING,
-    MIN_RECORDING, PARTIAL_THROTTLE, PCM_SAMPLE_RATE_HZ, PROBE_DEADLINE, PcmStream, Recording, RefineContext, RefineHints, Refined, Refiner, Segment,
-    SegmentBounds, Segmenter, SegmenterFactory, SelectionTiming, ServiceProbe, Settled, StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber,
-    Transcriber, Transcript, UnconfirmedWhy, Via, max_recording,
+    MIN_RECORDING, Outage, PARTIAL_THROTTLE, PCM_SAMPLE_RATE_HZ, PROBE_DEADLINE, PcmStream, Receipt, Recording, RefineContext, RefineHints, Refined, Refiner,
+    Segment, SegmentBounds, Segmenter, SegmenterFactory, SelectionTiming, ServiceProbe, Settled, StreamEvent, StreamFinal, StreamingSession,
+    StreamingTranscriber, SwitchReason, Transcriber, Transcript, UnconfirmedWhy, Via, max_recording,
 };
 
 /// What a take is for (docs/dictation.md §19): dictating text, or rewriting the text selected in
@@ -189,6 +192,8 @@ impl From<&DictationError> for FailureCode {
             DictationError::RateLimited { service: crate::providers::ServiceKind::Llm, .. } => Self::Refine,
             DictationError::Overloaded { service: crate::providers::ServiceKind::Asr, .. } => Self::Asr,
             DictationError::Overloaded { service: crate::providers::ServiceKind::Llm, .. } => Self::Refine,
+            DictationError::Unreachable { service: crate::providers::ServiceKind::Asr, .. } | DictationError::LocalFailed { .. } => Self::Asr,
+            DictationError::Unreachable { service: crate::providers::ServiceKind::Llm, .. } => Self::Refine,
             DictationError::Busy | DictationError::Idle => Self::Unknown,
         }
     }
@@ -618,8 +623,12 @@ mod tests {
     #[test]
     fn refine_failures_sort_the_error_and_serialize_snake_case() {
         use crate::providers::ServiceKind::Llm;
-        assert_eq!(RefineFailure::of(&DictationError::RateLimited { service: Llm, detail: "429".into() }), RefineFailure::RateLimited);
-        assert_eq!(RefineFailure::of(&DictationError::Overloaded { service: Llm, detail: "503".into() }), RefineFailure::RateLimited, "a busy service");
+        assert_eq!(RefineFailure::of(&DictationError::RateLimited { service: Llm, detail: "429".into(), retry_after_ms: None }), RefineFailure::RateLimited);
+        assert_eq!(
+            RefineFailure::of(&DictationError::Overloaded { service: Llm, detail: "503".into(), retry_after_ms: None }),
+            RefineFailure::RateLimited,
+            "a busy service"
+        );
         assert_eq!(RefineFailure::of(&DictationError::QuotaExhausted { service: Llm, detail: "x".into(), retry_at_ms: None }), RefineFailure::Quota);
         assert_eq!(RefineFailure::of(&DictationError::Refine("timed out".into())), RefineFailure::Failed);
         let wire = [
@@ -639,6 +648,44 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(done, DictationPhase::Done { refine_failure: Some(RefineFailure::RateLimited), .. }));
+    }
+
+    /// docs/dictation.md §3.14: the finer kinds read as the failures always did — a recognition's
+    /// `asr: ` and the client's words, a clean-up's `refine: ` or the kind it had (a busy or
+    /// rate-limited clean-up) — so the interface explains them as before; whether they pass is
+    /// their kind's.
+    #[test]
+    fn the_kinds_of_a_failure_read_as_before() {
+        use crate::providers::ServiceKind::{Asr, Llm};
+        let unreachable = |service, cause| DictationError::Unreachable { service, cause, detail: "ASR request timed out".into() };
+        let cases = [
+            (unreachable(Asr, Outage::Timeout), "asr: ASR request timed out", true),
+            (
+                DictationError::Unreachable { service: Llm, cause: Outage::Network, detail: "refine network error: reset".into() },
+                "refine: refine network error: reset",
+                true,
+            ),
+            (DictationError::RateLimited { service: Asr, detail: "ASR rate limited".into(), retry_after_ms: Some(1) }, "asr: ASR rate limited", true),
+            (
+                DictationError::RateLimited { service: Llm, detail: "refine service rate limited".into(), retry_after_ms: None },
+                "请求过于频繁：refine service rate limited",
+                true,
+            ),
+            (DictationError::Overloaded { service: Asr, detail: "ASR server error 503".into(), retry_after_ms: None }, "asr: ASR server error 503", true),
+            (DictationError::Overloaded { service: Llm, detail: "high demand".into(), retry_after_ms: None }, "服务繁忙：high demand", true),
+            (DictationError::LocalFailed { failure: LocalFailure::Memory, detail: "本地识别失败：oom".into() }, "asr: 本地识别失败：oom", true),
+            (DictationError::LocalFailed { failure: LocalFailure::Model, detail: "本地识别失败：bad".into() }, "asr: 本地识别失败：bad", true),
+            (DictationError::LocalFailed { failure: LocalFailure::Device, detail: "本地识别失败：vk".into() }, "asr: 本地识别失败：vk", true),
+            (DictationError::LocalFailed { failure: LocalFailure::Aborted, detail: "本地识别失败：cancelled".into() }, "asr: 本地识别失败：cancelled", false),
+            (DictationError::LocalFailed { failure: LocalFailure::Other, detail: "本地识别失败：x".into() }, "asr: 本地识别失败：x", false),
+            (DictationError::Asr("ASR rejected the credentials".into()), "asr: ASR rejected the credentials", false),
+            (DictationError::QuotaExhausted { service: Asr, detail: "x".into(), retry_at_ms: None }, "额度已用完：x", false),
+        ];
+        for (error, text, passes) in cases {
+            assert_eq!((error.to_string().as_str(), error.is_outage()), (text, passes), "{error:?}");
+        }
+        assert_eq!(DictationError::RateLimited { service: Asr, detail: "x".into(), retry_after_ms: Some(355_000) }.retry_after_ms(), Some(355_000));
+        assert_eq!(unreachable(Asr, Outage::Network).retry_after_ms(), None);
     }
 
     /// Every error the ports can raise maps to a stable, snake_case code the webview localises.
@@ -665,10 +712,26 @@ mod tests {
                 FailureCode::Quota,
                 "quota",
             ),
-            (DictationError::RateLimited { service: crate::providers::ServiceKind::Asr, detail: "x".into() }, FailureCode::Asr, "asr"),
-            (DictationError::RateLimited { service: crate::providers::ServiceKind::Llm, detail: "x".into() }, FailureCode::Refine, "refine"),
-            (DictationError::Overloaded { service: crate::providers::ServiceKind::Asr, detail: "x".into() }, FailureCode::Asr, "asr"),
-            (DictationError::Overloaded { service: crate::providers::ServiceKind::Llm, detail: "x".into() }, FailureCode::Refine, "refine"),
+            (DictationError::RateLimited { service: crate::providers::ServiceKind::Asr, detail: "x".into(), retry_after_ms: None }, FailureCode::Asr, "asr"),
+            (
+                DictationError::RateLimited { service: crate::providers::ServiceKind::Llm, detail: "x".into(), retry_after_ms: None },
+                FailureCode::Refine,
+                "refine",
+            ),
+            (DictationError::Overloaded { service: crate::providers::ServiceKind::Asr, detail: "x".into(), retry_after_ms: None }, FailureCode::Asr, "asr"),
+            (
+                DictationError::Overloaded { service: crate::providers::ServiceKind::Llm, detail: "x".into(), retry_after_ms: None },
+                FailureCode::Refine,
+                "refine",
+            ),
+            // docs/dictation.md §3.14: the kinds of a failure that passes keep their stage's code.
+            (DictationError::Unreachable { service: crate::providers::ServiceKind::Asr, cause: Outage::Timeout, detail: "x".into() }, FailureCode::Asr, "asr"),
+            (
+                DictationError::Unreachable { service: crate::providers::ServiceKind::Llm, cause: Outage::Server(502), detail: "x".into() },
+                FailureCode::Refine,
+                "refine",
+            ),
+            (DictationError::LocalFailed { failure: LocalFailure::Device, detail: "本地识别失败：x".into() }, FailureCode::Asr, "asr"),
             (DictationError::Busy, FailureCode::Unknown, "unknown"),
             (DictationError::Idle, FailureCode::Unknown, "unknown"),
         ];

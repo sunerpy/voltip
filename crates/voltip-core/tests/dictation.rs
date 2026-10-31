@@ -405,9 +405,9 @@ struct Switchable {
 impl Refiner for Switchable {
     async fn refine(&self, text: &str, _hints: &voltip_core::dictation::RefineHints) -> Result<voltip_core::dictation::Refined, voltip_core::DictationError> {
         if self.busy.load(Ordering::SeqCst) {
-            return Err(voltip_core::DictationError::RateLimited { service: ServiceKind::Llm, detail: "429".into() });
+            return Err(voltip_core::DictationError::RateLimited { service: ServiceKind::Llm, detail: "429".into(), retry_after_ms: None });
         }
-        Ok(voltip_core::dictation::Refined { text: format!("{text}。"), latency_ms: 1, model: "builtin/model".into() })
+        Ok(voltip_core::dictation::Refined { text: format!("{text}。"), latency_ms: 1, model: "builtin/model".into(), provider: None, fallback: None })
     }
 
     async fn edit(

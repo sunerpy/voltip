@@ -718,10 +718,15 @@ async fn a_long_entry_is_processed_in_parts_and_the_result_kept_with_it() {
 /// The core with a fallback recognition model on the same custom endpoint (docs/dictation.md §3.5):
 /// `selected` is the configured model's client, `fallback` the fallback model's; no clean-up.
 fn start_fallback(audio: FakeAudio, selected: FakeTranscriber, fallback: FakeTranscriber) -> (Node, Arc<FakeTranscriber>) {
+    start_fallback_with(audio, selected, fallback, false)
+}
+
+/// [`start_fallback`], with 服务出错时也改用候补 as `on_outage` (docs/dictation.md §3.14).
+fn start_fallback_with(audio: FakeAudio, selected: FakeTranscriber, fallback: FakeTranscriber, on_outage: bool) -> (Node, Arc<FakeTranscriber>) {
     let dir = tempfile::tempdir().unwrap();
     let engines = EngineSettings {
         refine_enabled: false,
-        asr_fallback: FallbackSettings { enabled: true, models: vec![FallbackModel { provider: ProviderId::Custom, model: "fallback-asr".into() }] },
+        asr_fallback: FallbackSettings { enabled: true, on_outage, models: vec![FallbackModel { provider: ProviderId::Custom, model: "fallback-asr".into() }] },
         ..fake_engines()
     };
     let recording = RecordingSettings { max_minutes: 10, ..RecordingSettings::default() };
@@ -770,6 +775,37 @@ async fn a_long_takes_segments_go_along_the_fallback_models() {
     assert!(matches!(&done, DictationPhase::Failed { code: FailureCode::Quota, text: None, .. }), "{done:?}");
     assert_eq!(fallback.calls(), 1, "out of quota once: from then on only the selected model is asked again");
     assert!(node.injector.injected().is_empty());
+    wait_no_recordings(node.dir.path()).await;
+    node.handle.send(CoreCommand::Shutdown).await.unwrap();
+}
+
+/// docs/dictation.md §3.14: with 服务出错时也改用候补 on, a segment whose model cannot be reached is
+/// recognised by the next model at once — no span is lost — and the failed model is skipped for
+/// the segments after it while its minute lasts. The history says the fallback model wrote the
+/// last text, and why.
+#[tokio::test]
+async fn a_long_takes_segment_moves_on_when_its_model_fails() {
+    let unreachable = voltip_core::DictationError::Unreachable {
+        service: voltip_core::ServiceKind::Asr,
+        cause: voltip_core::dictation::Outage::Network,
+        detail: "connection refused".into(),
+    };
+    let selected = FakeTranscriber::numbered_failing(0, &[2], unreachable);
+    let (mut node, fallback) = start_fallback_with(FakeAudio::speech().long(150), selected, FakeTranscriber::ok("候补模型的一段。"), true);
+    ready(&mut node).await;
+    node.handle.send(CoreCommand::DictationStart).await.unwrap();
+    statuses_until(&mut node, |s| listening_with(s, SegmentProgress { done: 5, total: 5 })).await;
+    let (done, _) = stop(&mut node).await;
+    match &done {
+        DictationPhase::Done { raw_text, .. } => assert_eq!(raw_text, &format!("第1段。{}", "候补模型的一段。".repeat(4))),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!((node.transcriber.calls(), fallback.calls()), (2, 4), "the failed model is not asked again within its minute");
+    let entry = newest_entry(&mut node).await;
+    assert_eq!(
+        (entry.asr_model.as_str(), entry.asr_provider, entry.asr_fallback),
+        ("fallback-asr", Some(ProviderId::Custom), Some(voltip_core::dictation::SwitchReason::Outage))
+    );
     wait_no_recordings(node.dir.path()).await;
     node.handle.send(CoreCommand::Shutdown).await.unwrap();
 }

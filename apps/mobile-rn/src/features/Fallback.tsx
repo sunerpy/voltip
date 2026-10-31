@@ -1,7 +1,9 @@
 // 额度用完后改用其他模型 (docs/dictation.md §3.5), `@voltip/ui`'s FallbackSection on native views:
 // the switch, the chain — the selected model first, then the fallback models in order with what
 // became of each — moving and removing them, adding one, 重新检查 once a model ran out, and Model
-// Studio's note on its 免费额度用完即停. Every change goes through `settings_set_engines`.
+// Studio's note on its 免费额度用完即停. Every change goes through `settings_set_engines`. The phone
+// offers no switch for failures (§3.14): its lists move on for a used-up quota only, yet a row the
+// core reports as failed or left out for recognition on the device reads as it does on a computer.
 import {
   type FallbackModel,
   type FallbackRowView,
@@ -44,10 +46,22 @@ const TONE: Readonly<Record<FallbackRowView["state"], Tone>> = {
   active: "ok",
   ready: "idle",
   exhausted: "warning",
+  cooling: "warning",
   issue: "warning",
   same: "idle",
   duplicate: "idle",
+  not_for_local: "idle",
 };
+
+/** A retry time as the rows show it. */
+function retryTime(locale: Parameters<typeof formatDateTime>[0], at: number | undefined): string {
+  return formatDateTime(locale, at ?? 0, {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 
 function shown(model: string): string {
   return model.length > 0 ? model : "—";
@@ -256,14 +270,11 @@ export function FallbackSection({ kind }: { kind: ServiceKind }) {
   const label = (row: FallbackRowView): string => {
     switch (row.state) {
       case "exhausted":
-        return t("engines.fallback.state.exhausted", {
-          time: formatDateTime(locale, row.retryAtMs ?? 0, {
-            month: "numeric",
-            day: "numeric",
-            hour: "2-digit",
-            minute: "2-digit",
-          }),
-        });
+        return t("engines.fallback.state.exhausted", { time: retryTime(locale, row.retryAtMs) });
+      case "cooling":
+        return t("fallbackOutage.state.cooling", { time: retryTime(locale, row.retryAtMs) });
+      case "not_for_local":
+        return t("fallbackOutage.state.notForLocal");
       case "issue":
         return t(`engines.issue.${row.issue ?? "unavailable"}`);
       default:
@@ -276,7 +287,8 @@ export function FallbackSection({ kind }: { kind: ServiceKind }) {
         ? "local"
         : "notReady"
       : undefined;
-  const exhausted = rows.some((r) => r.state === "exhausted");
+  const exhausted = rows.some((r) => r.state === "exhausted" || r.state === "cooling");
+  const failed = rows.some((r) => r.state === "cooling");
   const studio = rows.some((r) => r.provider === "aliyun");
 
   return (
@@ -372,7 +384,9 @@ export function FallbackSection({ kind }: { kind: ServiceKind }) {
           testID={`fallback-${kind}-recheck`}
           onPress={() => {
             void backend.invoke("engines_quota_reset", { kind });
-            shell.toast(t("engines.fallback.recheckDone"));
+            shell.toast(
+              failed ? t("fallbackOutage.recheckDone") : t("engines.fallback.recheckDone"),
+            );
           }}>
           {t("engines.fallback.recheck")}
         </Button>

@@ -1170,6 +1170,9 @@ export class MockBackend implements Backend {
   /** docs/dictation.md §3.5: the selected model of a service that ran out of quota, and when it
    *  is tried again (`simulateQuotaExhausted`); `engines_quota_reset` forgets it. */
   private readonly quotaOut = new Map<ServiceKind, number>();
+  /** docs/dictation.md §3.14: the services whose selected model failed rather than ran out
+   *  (`simulateServiceFailed`), by the same marks. */
+  private readonly failedOut = new Set<ServiceKind>();
   /** Every `providerConsoleOpen` of a key page, in order (tests). */
   readonly consolesOpened: ProviderId[] = [];
   /** The site of each of `consolesOpened`, `undefined` for none (tests). */
@@ -2576,6 +2579,7 @@ export class MockBackend implements Backend {
     engines_quota_reset: (args) => {
       const { kind } = required(args);
       this.quotaOut.delete(kind);
+      this.failedOut.delete(kind);
       this.emit({
         type: "engines",
         ...this.resolveEngines(this.state.settings.engines),
@@ -3673,6 +3677,15 @@ export class MockBackend implements Backend {
    *  says it is tried again at `retryAtMs` while its fallback models run. */
   simulateQuotaExhausted(kind: ServiceKind, retryAtMs: number) {
     this.quotaOut.set(kind, retryAtMs);
+    this.failedOut.delete(kind);
+    this.emit({ type: "engines", ...this.resolveEngines(this.state.settings.engines) });
+  }
+
+  /** The selected model of `kind` failed and is skipped until `retryAtMs` (docs/dictation.md
+   *  §3.14: 服务出错时也改用候补). */
+  simulateServiceFailed(kind: ServiceKind, retryAtMs: number) {
+    this.quotaOut.set(kind, retryAtMs);
+    this.failedOut.add(kind);
     this.emit({ type: "engines", ...this.resolveEngines(this.state.settings.engines) });
   }
 
@@ -4408,7 +4421,16 @@ export class MockBackend implements Backend {
         settings.live_preview && this.modelState(MOCK_STREAMING_MODEL_ID)?.kind === "installed",
       quotaOut: Object.fromEntries(this.quotaOut),
       listed: Object.fromEntries(this.listedModels),
+      // docs/dictation.md §3.14: a phone has no library of its own.
+      ...(this.state.models.length === 0 ? {} : { library: this.state.models }),
     });
+    for (const kind of this.failedOut) {
+      const key = kind === "asr" ? "asr_fallback" : "llm_fallback";
+      const chain = status[key];
+      if (chain?.selected_retry_at_ms !== undefined) {
+        status[key] = { ...chain, selected_retry_reason: "outage" };
+      }
+    }
     return { ...status, ...this.engineOverrides };
   }
 

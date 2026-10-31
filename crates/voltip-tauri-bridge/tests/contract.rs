@@ -330,15 +330,23 @@ fn engine_settings() -> EngineSettings {
         insert_check: false,
         result_cards_stay: false,
         // docs/dictation.md §3.5: a ready fallback model for the recognition (and the selected one,
-        // listed again: skipped), one without its key for the clean-up.
+        // listed again: skipped), one without its key for the clean-up. §3.14: the recognition also
+        // moves on for failures, to a model of this device too (one installed, one downloading).
         asr_fallback: FallbackSettings {
             enabled: true,
+            on_outage: true,
             models: vec![
                 FallbackModel { provider: ProviderId::Custom, model: "qwen3-asr-flash".into() },
                 FallbackModel { provider: ProviderId::Builtin, model: String::new() },
+                FallbackModel { provider: ProviderId::Local, model: QWEN_ID.into() },
+                FallbackModel { provider: ProviderId::Local, model: PARAFORMER_ID.into() },
             ],
         },
-        llm_fallback: FallbackSettings { enabled: true, models: vec![FallbackModel { provider: ProviderId::Openai, model: "gpt-6-luna".into() }] },
+        llm_fallback: FallbackSettings {
+            enabled: true,
+            on_outage: false,
+            models: vec![FallbackModel { provider: ProviderId::Openai, model: "gpt-6-luna".into() }],
+        },
     }
 }
 
@@ -565,7 +573,12 @@ fn history_entries() -> Vec<HistoryEntry> {
             asr_model: ASR_MODEL.into(),
             // docs/dictation.md §29: the local engine's GPU failed and the CPU did the take.
             asr_note: Some(voltip_core::dictation::AsrNote::GpuFailedRanOnCpu),
+            // docs/dictation.md §3.14: the selected providers' models wrote it.
+            asr_provider: Some(ProviderId::Builtin),
+            asr_fallback: None,
             refine_model: Some(REFINE_MODEL.into()),
+            refine_provider: Some(ProviderId::Groq),
+            refine_fallback: None,
             duration_ms: 3200,
             asr_ms: 640,
             refine_ms: Some(2400),
@@ -595,7 +608,12 @@ fn history_entries() -> Vec<HistoryEntry> {
             refined: false,
             asr_model: ASR_MODEL.into(),
             asr_note: None,
+            // docs/dictation.md §3.14: the selected service failed and the built-in one stood in.
+            asr_provider: Some(ProviderId::Builtin),
+            asr_fallback: Some(voltip_core::dictation::SwitchReason::Outage),
             refine_model: None,
+            refine_provider: None,
+            refine_fallback: None,
             duration_ms: 900,
             asr_ms: 410,
             refine_ms: None,
@@ -628,7 +646,11 @@ fn history_entries() -> Vec<HistoryEntry> {
             refined: true,
             asr_model: ASR_MODEL.into(),
             asr_note: None,
+            asr_provider: None,
+            asr_fallback: None,
             refine_model: Some(REFINE_MODEL.into()),
+            refine_provider: None,
+            refine_fallback: None,
             duration_ms: 1400,
             asr_ms: 380,
             refine_ms: Some(900),
@@ -660,7 +682,11 @@ fn history_entries() -> Vec<HistoryEntry> {
             refined: false,
             asr_model: String::new(),
             asr_note: None,
+            asr_provider: None,
+            asr_fallback: None,
             refine_model: None,
+            refine_provider: None,
+            refine_fallback: None,
             duration_ms: 0,
             asr_ms: 0,
             refine_ms: None,
@@ -695,7 +721,11 @@ fn imported_history_entry() -> HistoryEntry {
         refined: true,
         asr_model: "whisper-large-v3".into(),
         asr_note: None,
+        asr_provider: None,
+        asr_fallback: None,
         refine_model: Some("llama-3.3-70b-versatile".into()),
+        refine_provider: None,
+        refine_fallback: None,
         duration_ms: 9_500,
         asr_ms: 1_800,
         refine_ms: Some(1_200),
@@ -1109,9 +1139,12 @@ fn models_not_installed() -> Vec<ModelState> {
 fn engine_status() -> EngineStatus {
     let resolved = ResolvedEngines::resolve_with_models(&engine_settings(), &user_keys(), &BUILT, &models_installed_and_downloading());
     // docs/dictation.md §3.5: the built-in recognition ran out of quota at the sample's time, so it
-    // is tried again a day later and the fallback model is in use.
+    // is tried again a day later; §3.14: the first fallback model failed and is skipped for a
+    // minute, so the model of this device is in use.
     let ledger = voltip_core::dictation::QuotaLedger::with_clock(|| AT_MS);
-    ledger.mark(resolved.asr_fallback.selected.as_ref().expect("the sample's fallback models run"));
+    ledger.mark(resolved.asr_fallback.selected.as_ref().expect("the sample's fallback models run"), voltip_core::dictation::SwitchReason::Quota);
+    let custom = resolved.asr_fallback.targets().find(|t| t.provider == ProviderId::Custom).expect("the custom fallback model is ready");
+    ledger.mark(&custom.key, voltip_core::dictation::SwitchReason::Outage);
     let mut status = resolved.status_with(&ledger);
     // docs/dictation.md §3.3: the models Groq listed for its saved key.
     let groq = status.providers.iter_mut().find(|p| p.id == ProviderId::Groq).and_then(|p| p.llm.as_mut()).expect("Groq offers clean-up");

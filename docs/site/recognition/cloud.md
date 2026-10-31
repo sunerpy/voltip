@@ -126,13 +126,29 @@ Recognition and AI polish can each list fallback models: when the selected model
 2. Below it, choose a provider and a model, and choose **Add** on the same row. A provider can be added with several of its models, up to 8 in all; each uses the address and the key set on the provider's card.
 3. Use the move up and move down buttons to change the order, and **Remove** beside a model to take it off the list. The first row is the selected model.
 
-- Voltip moves on only when the provider answers that the quota is used up. Other errors, such as a network failure, a wrong key or too many requests, are reported as before and do not switch models.
+- By default Voltip moves on only when the provider answers that the quota is used up. Other errors, such as a network failure, a wrong key or too many requests, are reported as before and do not switch models; on the computer you can also turn on [Also switch when a service fails](#also-switch-when-a-service-fails).
 - A model whose quota is used up is skipped for 24 hours and then tried again; the list shows when. **Check again** starts over with the selected model at once, and so does restarting Voltip or changing the provider's key.
 - When every model's quota is used up, dictation says the model's quota is used up. Text that was already inserted stays: in **Type as you speak**, the sentences already inserted are kept, and the recognised parts of a long recording are inserted as usual.
-- Fallback models are not used while the selected model is a local model, or while the selected provider cannot be used (for example, its key is missing).
+- Fallback models are not used while the selected provider cannot be used (for example, its key is missing). While the selected model is a local model, only local models in the list take over, and only with **Also switch when a service fails** on; see [When a local model fails](/recognition/local#when-a-local-model-fails).
 - When the selected model is a realtime model, a realtime fallback model also recognises while you speak; a whole-recording fallback model recognises the recording after you release the shortcut, and meanwhile **Live preview** shows as unavailable and the output runs as **All at once**.
-- The history shows the model that actually recognised and polished the text, and the **Now** line (above the providers on the computer, under the provider cards on the phone) notes when a fallback model stands in.
+- The history shows the model that actually recognised and polished the text; on the computer an entry also names the provider, and whether a fallback model did the work because the selected model's quota was used up or because it failed. The **Now** line (above the providers on the computer, under the provider cards on the phone) notes when a fallback model stands in.
 - Model Studio needs **Free Quota Only** turned on for these models in its console: then it refuses requests once a quota is used up and Voltip moves on to the next model; without it, Model Studio starts charging instead. Voltip cannot read the remaining quota and does not change the console's settings; **View quota** below the list opens the console's free quota page.
+
+### Also switch when a service fails
+
+On the computer, the fallback list on the Speech models and AI models pages also has **Also switch when a service fails**. It is off by default and needs **When a model's quota runs out** turned on. With it on, Voltip also moves on to the next model in the list when:
+
+- A request times out, the network fails, or the provider answers with a server error, says it is busy or reports too many requests.
+- During local recognition, the graphics card, the memory or the model fails.
+
+An invalid key or a malformed request does not switch models and is reported as before.
+
+- Each recognition or polish tries at most 3 models. After about 150 seconds for recognition or about 60 seconds for polish, Voltip stops trying and reports a timeout.
+- A model that failed is skipped for about a minute (or as long as the provider asked), and the list shows **Failed, skipped for now** with the time it is tried again. **Check again** starts over with the selected model at once.
+- A realtime model that fails while you speak is not replaced by another model's live recognition, and the text already inserted stays; after you release the shortcut, the rest is recognised by a fallback model. Each part of a long recording switches on its own.
+- The speech recognition list can include downloaded local models. While the selected model is a local model, a failure only moves on to local models in the list, and no recording is uploaded.
+- Importing audio or video does not use fallback models.
+- The phone has no such switch: on the phone, fallback models still take over only when a quota runs out.
 
 ## Switching models
 
@@ -169,5 +185,5 @@ Voltip does not support PAC files, automatic proxy detection (WPAD) or `https://
 
 - **Recognition**: the recording, the model name and your key. If your [dictionary](/recognition/dictionary) has entries, their correct spellings go along as a hint. With a realtime model, the recording is sent while you speak.
 - **AI polish**: the recognised text, never audio, together with the app's name unless you turn that off. See [Privacy](/privacy) for the details.
-- **Fallback models**: with **When a model's quota runs out** turned on, the recording or the text goes to the provider of the next model in the list once the selected model's quota is used up.
+- **Fallback models**: with **When a model's quota runs out** turned on, the recording or the text goes to the provider of the next model in the list once the selected model's quota is used up (and, with **Also switch when a service fails** on the computer, once the service fails). A local model in the list works on this computer and sends nothing.
 - **Model lists**: when a provider's settings or a model list opens, Voltip asks that provider for its models with the saved key; no recording or text goes with it.

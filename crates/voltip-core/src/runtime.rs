@@ -1110,20 +1110,26 @@ fn check_http_url(url: &str) -> Result<(), String> {
 
 /// `EngineSettings.*_fallback` (docs/dictation.md §3.5): at most [`MAX_FALLBACK_MODELS`] models,
 /// each of a provider that offers the service remotely, with a model named (for the built-in
-/// service an empty one is the model its card uses), none listed twice. The selected model may be
+/// service an empty one is the model its card uses), none listed twice; for recognition also a
+/// whole-take model of this device's `library` (§3.14), downloaded or not. The selected model may be
 /// listed: it is skipped.
-fn check_fallback_models(kind: ServiceKind, fallback: &FallbackSettings) -> Result<(), CoreError> {
+fn check_fallback_models(kind: ServiceKind, fallback: &FallbackSettings, library: Option<&[crate::models::ModelState]>) -> Result<(), CoreError> {
     let field = |i: usize| format!("{}_fallback.models[{i}]", kind_name(kind));
     if fallback.models.len() > MAX_FALLBACK_MODELS {
         return Err(CoreError::Invalid(format!("{}_fallback: 最多 {MAX_FALLBACK_MODELS} 个候补模型", kind_name(kind))));
     }
     for (i, entry) in fallback.models.iter().enumerate() {
-        if entry.provider == ProviderId::Local || !entry.provider.spec().offers(kind) {
-            return Err(CoreError::Invalid(format!("{}: {} 不能作为候补模型", field(i), entry.provider.as_str())));
+        let refused = || CoreError::Invalid(format!("{}: {} 不能作为候补模型", field(i), entry.provider.as_str()));
+        if !entry.provider.spec().offers(kind) || (entry.provider == ProviderId::Local && (kind != ServiceKind::Asr || library.is_none())) {
+            return Err(refused());
         }
         let model = entry.model.trim();
         if model.is_empty() && entry.provider != ProviderId::Builtin {
             return Err(CoreError::Invalid(format!("{}: 未填写模型", field(i))));
+        }
+        let whole_take = |m: &&crate::models::ModelState| m.id == model && m.capabilities.iter().any(|c| c == crate::models::CAPABILITY_OFFLINE);
+        if entry.provider == ProviderId::Local && !library.unwrap_or_default().iter().any(|m| whole_take(&m)) {
+            return Err(refused());
         }
         let repeated = fallback.models[..i].iter().any(|e| e.provider == entry.provider && e.model.trim() == model);
         if repeated {
@@ -1920,7 +1926,7 @@ impl Runtime {
             return Err(CoreError::Invalid(format!("local_threads: 1–{MAX_LOCAL_THREADS}")));
         }
         for kind in [ServiceKind::Asr, ServiceKind::Llm] {
-            check_fallback_models(kind, engines.fallback(kind))?;
+            check_fallback_models(kind, engines.fallback(kind), self.models.is_some().then_some(self.library.as_slice()))?;
         }
         if engines.asr_provider == ProviderId::Local {
             // The model has to exist in the catalogue; it need not be installed yet (the UI then
@@ -2144,7 +2150,7 @@ impl Runtime {
     /// Re-emit the engine's current status (with the lock flag stamped on).
     fn emit_dictation_status(&mut self) {
         let status = self.dictation.status().clone();
-        self.apply_dictation(vec![Effect::Status(status)]);
+        self.apply_dictation(vec![Effect::Status(Box::new(status))]);
     }
 
     /// (Re)arm the grace timer for the earliest deadline of the two machines, if any.
@@ -2639,7 +2645,8 @@ impl Runtime {
     fn apply_dictation(&mut self, effects: Vec<Effect>) {
         for effect in effects {
             match effect {
-                Effect::Status(mut status) => {
+                Effect::Status(status) => {
+                    let mut status = *status;
                     self.follow_remote_take(&mut status);
                     // The lock lives in the runtime; a phase that is not `Listening` ends it.
                     match &mut status.phase {
@@ -2671,7 +2678,8 @@ impl Runtime {
                         }
                     }
                 }
-                Effect::Record(mut entry) => {
+                Effect::Record(entry) => {
+                    let mut entry = *entry;
                     // A phone's take is recorded as the phone's (docs/dictation.md §20.6).
                     if let Some(name) = self.remote_take_name() {
                         entry.origin = Some(crate::history::EntryOrigin { device: name, kind: crate::history::OriginKind::Take });
@@ -3642,6 +3650,9 @@ impl Runtime {
             self.start_peer_handshake(key, link).await;
         }
         self.retry_attaches(now).await;
+        // docs/dictation.md §3.14: a model skipped for a minute shows as asked again once its
+        // minute is over (the ledger's change re-sends the engines' status).
+        self.dictation.quota().forget_expired();
         self.sync_tick().await;
         self.usage_tick();
         self.backup_tick_at(now_ms());
@@ -3765,6 +3776,31 @@ mod tests {
         let lost = StateChange { from: ConnectionState::Connected, to: ConnectionState::Reconnecting };
         rt.handle_link_event(LinkId::Relay, LinkEvent::State(lost)).await;
         assert_eq!(rt.pairing_state(), Some(PairingState::Failed { reason: FailureReason::Relay { code: RelayErrorCode::SessionExpired } }));
+    }
+
+    /// docs/dictation.md §3.14: the tick forgets the marks whose time has come, and the ledger's
+    /// change re-sends the engines' status: a model skipped for a minute shows as asked again once
+    /// its minute is over. A mark still running is left alone.
+    #[tokio::test]
+    async fn the_tick_forgets_a_skipped_model_once_its_time_is_over() {
+        use crate::dictation::{QuotaKey, SwitchReason};
+        let dir = tempfile::tempdir().unwrap();
+        SettingsStore::new(dir.path()).save(&Settings { relay_enabled: false, ..Settings::default() }).unwrap();
+        let store: Arc<dyn SecretStore> = Arc::new(voltip_identity::MemorySecretStore::new());
+        let (mut rt, _inbox, _handle, _events) = AppCore::build(CoreConfig::new(dir.path().to_path_buf()), store, crate::dictation::fakes::ports()).unwrap();
+        let ledger = rt.dictation.quota().clone();
+        let key = QuotaKey { kind: ServiceKind::Asr, provider: ProviderId::Groq, model: "whisper-large-v3".into(), url: "https://<asr-host>/v1".into() };
+        let now = ledger.now_ms();
+        ledger.mark_until(&key, now + 60_000, SwitchReason::Outage);
+        let mut changes = ledger.subscribe();
+        rt.tick().await;
+        assert!(!changes.has_changed().unwrap(), "a running mark stays");
+        assert!(ledger.retry_at(&key).is_some());
+        ledger.mark_until(&key, now.saturating_sub(1), SwitchReason::Outage);
+        changes.borrow_and_update();
+        rt.tick().await;
+        assert!(changes.has_changed().unwrap(), "the change re-sends the status");
+        assert_eq!(ledger.retry_at(&key), None);
     }
 
     /// Pairing needs the relay (docs/pairing.md 「只走中继」): without one, starting or joining says

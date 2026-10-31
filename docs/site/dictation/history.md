@@ -13,7 +13,7 @@ The latest results are also listed on the home page: four, or more when the wind
 - The text that was inserted and the text that was recognised, with a view of what changed between them.
 - Which dictionary corrections and replacement rules applied, and the app and [scene](/recognition/scenes) the dictation was for.
 - The [AI preset](/recognition/polish#presets) that AI polish used, when it ran.
-- The models used and how long each step took; when a local model was moved to the processor because the graphics card failed, **Recognised on** says so.
+- The models used and how long each step took; when a local model was moved to the processor because the graphics card failed, **Recognised on** says so. On the computer the entry also names the provider of the recognition and of the polish; when a fallback model did the work, it says whether the selected model's quota was used up or the model failed (see [When a model's quota runs out](/recognition/cloud#when-a-model-s-quota-runs-out)).
 - Where the text went: pasted at the cursor, or left on the clipboard, with the reason. A paste that Voltip found did not arrive is marked **Not written**; when Voltip could not tell, the technical details say **Not confirmed as written** (see [Checking that the text arrived](/dictation/output#checking-that-the-text-arrived)).
 
 From an entry you can:

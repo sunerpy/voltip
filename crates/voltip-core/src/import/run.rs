@@ -271,7 +271,12 @@ pub async fn run(job: Job, mut partial: Partial, report: Report) -> Outcome {
         asr_model,
         // The weightiest note of any segment, as for a long take's (docs/dictation.md §29.5).
         asr_note: partial.recognized.iter().filter_map(|r| r.note).max(),
+        // An import never goes along a fallback chain (docs/dictation.md §31): its models are the chosen ones.
+        asr_provider: Some(clients.asr_provider),
+        asr_fallback: None,
         refine_model: refined.then(|| polish.model.unwrap_or(clients.refine_model)),
+        refine_provider: clients.refine_provider.filter(|_| refined),
+        refine_fallback: None,
         duration_ms,
         asr_ms: partial.recognized.iter().map(|r| r.asr_ms).sum(),
         refine_ms: refined.then_some(polish.ms),
@@ -404,6 +409,7 @@ mod tests {
     use crate::history::{ImportedFile, Outcome as Delivered};
     use crate::import::{ImportFailure, MediaError};
     use crate::presets::TakePreset;
+    use crate::providers::ProviderId;
     use crate::usage::{UsageOrigin, UsagePurpose};
     use crate::vocabulary::{EntrySource, ReplacementRule, RuleKind};
 
@@ -428,7 +434,7 @@ mod tests {
             if self.fail.contains(&n) {
                 return Err(DictationError::Refine(format!("polish {n} failed")));
             }
-            Ok(Refined { text: format!("{text}（润色）"), latency_ms: 7, model: "polish-model".into() })
+            Ok(Refined { text: format!("{text}（润色）"), latency_ms: 7, model: "polish-model".into(), provider: None, fallback: None })
         }
 
         async fn edit(&self, _selection: &str, _instruction: &str, _hints: &RefineHints) -> Result<Refined, DictationError> {
@@ -478,6 +484,8 @@ mod tests {
                     refine: Some(polishing),
                     asr_model: "whisper-1".into(),
                     refine_model: "chat-model".into(),
+                    asr_provider: ProviderId::Groq,
+                    refine_provider: self.polish.is_some().then_some(ProviderId::Deepseek),
                 },
                 language: Some("zh".into()),
                 script: ChineseScript::Simplified,

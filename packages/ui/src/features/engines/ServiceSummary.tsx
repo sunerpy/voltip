@@ -1,7 +1,8 @@
 import {
   type ServiceKind,
+  fallbackOnOutage,
   fallbackRows,
-  fallbackStatusOf,
+  fallbackTargets,
   serviceTarget,
   shortModel,
 } from "@voltip/shared";
@@ -41,11 +42,12 @@ export function CurrentService({ kind }: { kind: ServiceKind }) {
 
 /** Where `kind` sends its data now: the provider in use (never the built-in service's host), and
  *  while the fallback models run, the providers of those that can (docs/dictation.md §3.5) —
- *  with the switch off, or a selected service the chain does not run for, nobody else. Nothing
- *  for a clean-up without a provider. */
+ *  with the switch off, or a selected service the chain does not run for, nobody else; a model of
+ *  this computer in the chain sends nothing (§3.14). Nothing for a clean-up without a provider. */
 export function ServicePrivacy({ kind }: { kind: ServiceKind }) {
   const { t, locale } = useI18n();
-  const engines = useUiState().engines;
+  const state = useUiState();
+  const engines = state.engines;
   const provider = kind === "asr" ? engines.asr_provider : engines.llm_provider;
   if (kind === "llm" && provider === undefined) return null;
   const host = kind === "asr" ? engines.asr_host : engines.refine_host;
@@ -58,28 +60,18 @@ export function ServicePrivacy({ kind }: { kind: ServiceKind }) {
       : target === undefined
         ? t("engines.privacy.textLocal")
         : t("engines.privacy.textSent", { target });
-  const others = fallbackStatusOf(engines, kind).in_use
-    ? [
-        ...new Set(
-          fallbackRows(engines, kind)
-            .rows.filter(
-              (r) =>
-                r.index !== "selected" &&
-                (r.state === "ready" || r.state === "active" || r.state === "exhausted"),
-            )
-            .map((r) => r.provider)
-            .filter((p) => p !== provider),
-        ),
-      ]
-    : [];
+  const others = fallbackTargets(engines, kind);
+  const targets = others
+    .map((p) => t(`engines.provider.${p}`))
+    .join(locale === "zh-CN" ? "、" : ", ");
   const text =
     others.length === 0
       ? sent
-      : `${sent}${t("engines.privacy.fallbackTargets", {
-          targets: others
-            .map((p) => t(`engines.provider.${p}`))
-            .join(locale === "zh-CN" ? "、" : ", "),
-        })}`;
+      : `${sent}${
+          fallbackOnOutage(state.settings.engines, kind)
+            ? t("fallbackOutage.privacyTargets", { targets })
+            : t("engines.privacy.fallbackTargets", { targets })
+        }`;
   return (
     <p className="mono text-[11px] text-fg-subtle" data-testid={`privacy-${kind}`}>
       {text}

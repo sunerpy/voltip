@@ -10,6 +10,7 @@ import type {
   FallbackModelStatus,
   FallbackStatus,
   KeyPolicy,
+  ModelState,
   ProviderId,
   ProviderStatus,
   SecretState,
@@ -272,6 +273,9 @@ export interface EngineResolveInput {
   local: { id: string; name: string; installed: boolean };
   /** The switch is on and the library's streaming model is installed (the local source). */
   liveReady: boolean;
+  /** The model library as the core sees it: what a recognition chain's models of this device
+   *  resolve against (docs/dictation.md §3.14). Absent: no library (a phone). */
+  library?: readonly Pick<ModelState, "id" | "capabilities" | "state">[];
   /** The selected models that ran out of quota, by service, and when they are tried again (the
    *  mock's ledger: it only ever marks the selected model, docs/dictation.md §3.5). */
   quotaOut?: Partial<Record<ServiceKind, number>>;
@@ -405,46 +409,100 @@ function serviceStatus(
   };
 }
 
-/** Mirrors `fallback_plan` + `FallbackPlan::status` without a ledger (docs/dictation.md §3.5):
- *  one row per settings entry, its problem or why it is skipped; `selected` is the provider and
- *  service in use when it is remote and ready. */
+/** A ledger key as `fallbackStatus` compares them: a model of this device has no endpoint. */
+function keyOf(provider: ProviderId, t: Target): string {
+  return JSON.stringify([provider, t.model, t.url]);
+}
+
+function localKeyOf(id: string): string {
+  return keyOf("local", { url: "", model: id, key: false });
+}
+
+/** Mirrors `local_target`: an installed whole-take model of the library, or why it cannot run. */
+function localIssue(
+  kind: ServiceKind,
+  id: string,
+  input: EngineResolveInput,
+): EngineIssue | undefined {
+  const model = (input.library ?? []).find(
+    (m) => m.id === id && m.capabilities.includes("offline"),
+  );
+  if (model === undefined || kind !== "asr") return "unavailable";
+  return model.state.kind === "installed" ? undefined : "model_not_installed";
+}
+
+/** The selected model a chain starts from (`Primary`): its ledger key, and whether it is a model of
+ *  this device. */
+interface Primary {
+  key: string;
+  local: boolean;
+}
+
+/** Mirrors `fallback_plan` + `FallbackPlan::status` without a ledger (docs/dictation.md §3.5,
+ *  §3.14): one row per settings entry, its problem or why it is skipped; `selected` is the model in
+ *  use when it is ready. With recognition on this device (`onDevice`) every service is left out,
+ *  and the chain runs only with 服务出错时也改用候补 on and a model of this device ready. */
 function fallbackStatus(
   kind: ServiceKind,
   input: EngineResolveInput,
-  selected: { provider: ProviderId; target: Target } | undefined,
-): { status: FallbackStatus; standIn: Target | undefined } {
+  selected: Primary | undefined,
+  onDevice: boolean,
+): { status: FallbackStatus; standIn: { streams: boolean } | undefined } {
   const config = fallbackSettingsOf(input.settings, kind);
-  const keyOf = (provider: ProviderId, t: Target) => JSON.stringify([provider, t.model, t.url]);
-  const selectedKey =
-    selected === undefined ? undefined : keyOf(selected.provider, selected.target);
   const seen = new Set<string>();
-  const ready: Target[] = [];
+  const ready: { streams: boolean }[] = [];
+  let localReady = false;
+  const place = (
+    key: string,
+    provider: ProviderId,
+    model: string,
+  ): FallbackModelStatus | undefined => {
+    if (key === selected?.key) return { provider, model, skip: "same_as_selected" };
+    if (seen.has(key)) return { provider, model, skip: "duplicate" };
+    seen.add(key);
+    return undefined;
+  };
   const models = config.models.map((entry): FallbackModelStatus => {
     const asked = trimmed(entry.model);
+    if (entry.provider === "local") {
+      const id = asked ?? "";
+      const issue = localIssue(kind, id, input);
+      if (issue !== undefined) return { provider: "local", model: id, issue };
+      const skipped = place(localKeyOf(id), "local", id);
+      if (skipped !== undefined) return skipped;
+      localReady = true;
+      ready.push({ streams: false });
+      return { provider: "local", model: id };
+    }
     const r = target(entry.provider, kind, input, asked);
-    if (!("ok" in r))
-      return {
+    let row: FallbackModelStatus;
+    if (!("ok" in r)) {
+      row = { provider: entry.provider, model: asked ?? r.model, issue: r.issue };
+    } else {
+      const model = r.ok.model;
+      row = place(keyOf(entry.provider, r.ok), entry.provider, model) ?? {
         provider: entry.provider,
-        model: asked ?? r.model,
-        issue: r.issue,
+        model,
       };
-    const key = keyOf(entry.provider, r.ok);
-    const model = r.ok.model;
-    if (key === selectedKey) return { provider: entry.provider, model, skip: "same_as_selected" };
-    if (seen.has(key)) return { provider: entry.provider, model, skip: "duplicate" };
-    seen.add(key);
-    ready.push(r.ok);
-    return { provider: entry.provider, model };
+      if (row.skip === undefined && !onDevice) ready.push({ streams: asrStreams(r.ok.url, model) });
+    }
+    // §3.14: recognition on this device never moves on to a service.
+    return onDevice ? { provider: row.provider, model: row.model, skip: "not_for_local" } : row;
   });
-  const inUse = config.enabled && selectedKey !== undefined;
+  const inUse =
+    config.enabled &&
+    selected !== undefined &&
+    (!selected.local || (config.on_outage === true && localReady));
   // `status_with(ledger)`: the selected model's retry time while the chain runs, and the model
-  // standing in for it — the first fallback model, as the mock marks no other.
+  // standing in for it — the first fallback model, as the mock marks no other (for its quota).
   const retry = inUse ? input.quotaOut?.[kind] : undefined;
   return {
     status: {
       enabled: config.enabled,
       in_use: inUse,
-      ...(retry === undefined ? {} : { selected_retry_at_ms: retry }),
+      ...(retry === undefined
+        ? {}
+        : { selected_retry_at_ms: retry, selected_retry_reason: "quota" as const }),
       models,
     },
     standIn: retry === undefined ? undefined : ready[0],
@@ -525,19 +583,23 @@ export function resolveEngineStatus(input: EngineResolveInput): EngineStatus {
         : input.liveReady
           ? "local"
           : undefined;
-  const asrFallback = fallbackStatus(
-    "asr",
-    input,
-    asrProvider !== "local" && asrTarget !== undefined
-      ? { provider: asrProvider, target: asrTarget }
-      : undefined,
-  );
+  const asrPrimary: Primary | undefined =
+    asrProvider === "local"
+      ? input.local.installed
+        ? { key: localKeyOf(input.local.id), local: true }
+        : undefined
+      : asrTarget === undefined
+        ? undefined
+        : { key: keyOf(asrProvider, asrTarget), local: false };
+  // A phone has no library: its rows read as before (nothing of the device recognises there).
+  const onDevice = asrProvider === "local" && (input.library?.length ?? 0) > 0;
+  const asrFallback = fallbackStatus("asr", input, asrPrimary, onDevice);
   // §3.5: while a model taking whole recordings only stands in for the realtime one, no take
   // previews or streams; the live source stays the realtime model.
   const standIn = asrFallback.standIn;
   const liveReady =
     liveSource !== undefined &&
-    (liveSource !== "stream" || standIn === undefined || asrStreams(standIn.url, standIn.model));
+    (liveSource !== "stream" || standIn === undefined || standIn.streams);
   // `effective_output_mode`: a realtime model's stream is the take's text (§11.9).
   const effective =
     settings.output_mode === "whole_take" && liveReady && liveSource === "stream"
@@ -571,8 +633,9 @@ export function resolveEngineStatus(input: EngineResolveInput): EngineStatus {
       "llm",
       input,
       llmProvider !== undefined && refineTarget !== undefined
-        ? { provider: llmProvider, target: refineTarget }
+        ? { key: keyOf(llmProvider, refineTarget), local: false }
         : undefined,
+      false,
     ).status,
   };
 }

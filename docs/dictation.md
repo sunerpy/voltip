@@ -203,10 +203,10 @@ Kimi（`api.moonshot.cn` / `api.moonshot.ai`）和智谱 GLM（智谱开放平�
 
 ### 3.5 候补模型：额度用完后改用其他模型（2026-10-04）
 
-用户需求（2026-10-04）：百炼的每个模型各有一份免费额度，希望按顺序列出多个模型，一个的额度用完就自动改用下一个，并做成可复用的能力。用户决定：识别和 AI 润色都做；**只在额度用完时切换**，缺模型、无权限、限流、网络错误都不切换。
+用户需求（2026-10-04）：百炼的每个模型各有一份免费额度，希望按顺序列出多个模型，一个的额度用完就自动改用下一个，并做成可复用的能力。用户决定：识别和 AI 润色都做；**只在额度用完时切换**，缺模型、无权限、限流、网络错误都不切换。2026-10-31 起可以选择服务出错时也切换（§3.14）。
 
 - **信号**：百炼没有用 API Key 查询剩余免费额度的接口（只有控制台页面）。2026-10-12 复查（用户要求按模型读取额度并据此切换，在候补列表和服务商设置中显示用量与额度）：官方命令行工具（`modelstudioai/cli`，Apache-2.0）的 `bl usage free`、`bl usage stats` 能查各模型的剩余免费额度和用量，但要先在浏览器登录阿里云账号（`bl auth login --console`，或用 AccessKey 生成访问令牌），调用的是控制台网关的内部接口（`zeldaEasy.bailian-commerce.freeTrial.queryFreeTierQuota` 等）；用 API Key 只能查每分钟请求数与 token 数的限流（`bl quota list`），不是额度。Voltip 不持有账号级凭据，也不依赖控制台的内部接口，所以额度和用量在控制台查看（界面上的「查看额度」），切换仍以服务拒绝请求为信号。额度用完的唯一可靠信号是服务拒绝请求：控制台为该模型打开「免费额度用完即停」（国际站 Free Quota Only，未实名账号强制打开）后，额度用完时 HTTP 请求回 403、实时任务回 `task-failed`，错误码 `AllocationQuota.FreeTierOnly`；没打开时用完直接计费，Voltip 收不到信号。OpenAI 兼容接口的 `insufficient_quota` 同样算额度用完。`voltip_asr::is_quota_exhausted` 与 `voltip_refine::is_quota_exhausted` 是同一条规则：错误码或消息含 `FreeTierOnly`，或错误码为 `insufficient_quota`；`Throttling…`、`rate_limit_exceeded` 仍是限流。识别与润色客户端对**所有非 2xx** 先读响应体判断，再按状态码分类（此前润色把百炼的 403 FreeTierOnly 报成密钥错误，回归测试 `regression_a_free_tier_stop_on_polish_is_not_reported_as_a_bad_key`）。核心收到的是 `DictationError::QuotaExhausted { service, detail }`（`voltip_cloud::asr_error` / `refine_error`）。
-- **设置**：`EngineSettings.asr_fallback` / `llm_fallback: FallbackSettings { enabled, models: Vec<FallbackModel { provider, model }> }`，默认关闭，最多 `MAX_FALLBACK_MODELS = 8` 项。每项用该服务商卡片上的地址和**该服务商自己的密钥**（`service_target_for`），只是换了模型；内置服务只有它自己的模型。识别不能把本机模型列为候补。`Runtime::set_engines` 拒绝超出数量、不提供该服务的服务商、空模型和重复项；与当前选择相同的项不拒绝，解析时跳过。
+- **设置**：`EngineSettings.asr_fallback` / `llm_fallback: FallbackSettings { enabled, models: Vec<FallbackModel { provider, model }> }`，默认关闭，最多 `MAX_FALLBACK_MODELS = 8` 项。每项用该服务商卡片上的地址和**该服务商自己的密钥**（`service_target_for`），只是换了模型；内置服务只有它自己的模型。识别不能把本机模型列为候补（§3.14 起可以列已在目录里的本机模型）。`Runtime::set_engines` 拒绝超出数量、不提供该服务的服务商、空模型和重复项；与当前选择相同的项不拒绝，解析时跳过。
 - **解析**：`ResolvedEngines.asr_fallback` / `refine_fallback: FallbackPlan { enabled, in_use, selected, rows }`，设置里的每一项一行（`Ready(FallbackTarget)` / `Issue(EngineIssue)` / `SameAsSelected` / `Duplicate`）。`in_use`：开关打开且当前选择就绪、是远程服务（识别不在本机，润色有服务商）。当前选择不可用时不启用候补：候补只在额度用完时接手。
 - **链与账本**（`voltip_core::dictation::fallback`，不依赖具体服务商和端口）：`QuotaLedger` 记哪些模型（`QuotaKey { kind, provider, model, url }`）何时用完，用 `tokio::sync::watch` 通知变化；`first_with_quota` 按顺序调用仍有额度的项，额度用完就记账并试下一项，其他错误原样返回，成功则清掉该项的记录；全部用完时只再试第一项（用户可能已续上）。`FallbackTranscriber` / `FallbackRefiner` 把链放在识别、润色端口后面。账本归 `DictationEngine` 所有，配置变化时客户端重建，账本不变；引擎经 `ResolvedEngines::with_candidate` 为每个候补再调一次外壳的客户端工厂，外壳不用改。
 - **重试**：用完的模型 `QUOTA_RETRY_AFTER = 24 h` 内跳过，之后再试一次（被拒的请求不计费）。记录只在内存里，重启后从第一个重新开始。命令 `engines_quota_reset { kind }`（「重新检查」）清除该服务的记录；保存或删除某服务商的密钥清除该服务商的记录（可能换了账号）。账本变化时运行时重发 `CoreEvent::Engines`（`status_with(ledger)`）。
@@ -214,7 +214,7 @@ Kimi（`api.moonshot.cn` / `api.moonshot.ai`）和智谱 GLM（智谱开放平�
 - **实时识别**：边说边识别仍只在当前选择是实时模型时启用（`asr_streams` 不变，不影响「当前选择非实时 + 本机实时预览」）。录音开始用第一个仍有额度的项：实时模型就推流，否则整段识别。实时模型在录音中报额度用完时预览降级，录音结束后整段走候补链（第一次多一次被拒请求，之后跳过它）。当前选择不是实时模型时，排在后面的实时模型只做整段识别。界面看到的状态按同一顺序计算（`status_with(ledger)` 经 `open_order` 取第一个仍有额度的项，与引擎的链一致）：顶替实时模型的是整段识别模型时，`live_preview_ready` 为 `false`、`live_source` 仍是 `stream`、`effective_output_mode` 为整段输出，「实时预览」显示「暂不可用 · 候补模型不支持实时识别」，不提示下载模型（goal 评审 2026-10-04：此前状态仍显示边说边识别生效，而实际按整段运行，回归测试 `regression_the_status_shows_the_mode_the_next_take_runs_with`）。
 - **历史里的模型**：记这次听写最后一段文字实际来自的模型，由实际执行识别的客户端报告：`Transcript.model`（HTTP、百炼、本机客户端都报告，候补链在为空时补上所用项的模型）、`StreamingSession::model()`（流降级时读）、`StreamFinal.model`（flush 完成后由会话填写：内置服务的边说边识别在 `finish()` 里还会发出最后几次请求）。`Take.served_asr_model` 只被带来非空文字的结果覆盖；没有回执时（fake、本机实时预览模型）沿用配置的模型。客户端仍在每一步取引擎当前的那个，录音中改了设置时记新客户端报告的模型。
 - **界面**（`packages/ui` `FallbackSection`，桌面「语音模型」「AI 模型」两页与手机两页）：开关、模型顺序（当前选择在第一行）、每行的状态（使用中 / 可用 / 额度已用完 · 何时再试 / 缺少密钥等 / 与当前选择相同 / 已在列表中）、上移下移和红色文字的「移除」（读屏时为「移除 {模型}」）、与服务商和模型在同一行的「添加」（窄时换行）、「重新检查」（2026-10-26 用户要求：「添加按钮应与provider和model位于一行，且有数据时，额度池列表中的各个项自动出展示删除按钮」，原来的移除是灰色小图标）；有百炼时说明「免费额度用完即停」。「查看额度」打开百炼控制台的免费额度页（`provider_console_open { page: quota }`），百炼的服务商设置里也有这个入口和说明。「当前：服务商 · 模型」在候补顶替时注明「（候补）」；隐私说明在候补链运行时（`in_use`：开关打开且当前选择可用）列出额度用完时会收到音频或文字的其他服务商，开关关闭或当前选择不可用时不列。两者是 `packages/ui` 的 `CurrentService` / `ServicePrivacy`：桌面在服务商区块的标题旁与列表下方，手机在服务商卡片下方。
-- **不做**：读取剩余额度、替用户改控制台开关；把本机模型作为候补；欠费（`Arrearage`）、限流、网络错误时切换；账本持久化与同步到手机；一次听写记多个识别模型。
+- **不做**：读取剩余额度、替用户改控制台开关；欠费（`Arrearage`）时切换；账本持久化与同步到手机；一次听写记多个识别模型。本机模型作为候补、限流和网络错误时切换见 §3.14。
 
 ### 3.6 润色未生效的原因与内置服务繁忙提示（2026-10-05）
 
@@ -350,6 +350,35 @@ Kimi（`api.moonshot.cn` / `api.moonshot.ai`）和智谱 GLM（智谱开放平�
 **未在真实账户上验证**：没有这几家的密钥。只用无效密钥核对了地址与 `GET /models`：Kimi、TokenHub、小米 MiMo 的 `/models` 回 401，OpenRouter 的不要密钥、回 200，无效路径都回 404；智谱和火山方舟先鉴权，`/models` 与无效路径都回 401。请求参数按各家文档。
 
 **测试**：`voltip-core` 的 `a_vendors_sites_start_with_its_default_and_have_their_own_key_pages`、`each_service_offers_the_listed_models_it_can_use`；`voltip-refine` 的 `each_family_is_asked_to_answer_at_once_its_own_way`、`regression_kimi_gets_no_temperature_and_glm_no_thinking`；`voltip-reply` 的 `regression_keys_tokens_and_accounts_are_masked`；`packages/ui` 的 `switches Kimi between its China and international sites, each with its own key page`；手机的 `Kimi's sheet switches between its China and international sites`。
+
+### 3.14 服务出错时改用候补（2026-10-31）
+
+路线图 R11：候补链从「只在额度用完时切换」扩展为可选的「服务出错时也切换」，默认关闭。只对明确的故障切换，密钥与请求错误不切换；有冷却、尝试次数与总时长上限；已安装的本机模型可以进识别的候补链；选用本机识别时，故障永远不会让录音上传到云端。历史记录写下实际写出文字的服务商，以及是不是候补模型（原在 PR-5）。
+
+- **错误分型**：`DictationError::Unreachable { service, cause: Outage::{Timeout, Network, Server(status)}, detail }`；`RateLimited`、`Overloaded` 带 `retry_after_ms`（服务给的 `Retry-After`）；本机识别在 CPU 重试之后仍失败时返回 `LocalFailed { failure: LocalFailure, detail }`（§29）。`voltip_cloud::asr_error`：超时 → `Unreachable{Timeout}`，网络 → `Unreachable{Network}`，503 → `Overloaded{Asr}`，其他 5xx → `Unreachable{Server}`，429 → `RateLimited{Asr}`；`refine_error` 同样。百炼实时识别结束时等不到最后一句 → `Unreachable{Timeout}`。`FailureCode` 仍是原来的识别、润色码，消息原文与此前相同（只是类型更细），界面文案不变。
+- **哪些错误切换**（`DictationError::is_outage`）：
+
+| 错误 | 开关关 | 开关开 |
+|---|---|---|
+| 额度用完（`QuotaExhausted`） | 切换（§3.5） | 切换 |
+| 超时、网络错误、5xx、503、429 | 不切换 | 切换 |
+| 本机识别的显卡、内存、模型错误（`Device`、`Memory`、`Model`） | 不切换 | 切换（只切到本机项） |
+| 密钥被拒、其他 4xx、没有语音、取消（`Aborted`）、输入过长、其他 | 不切换 | 不切换 |
+
+- **设置**：`FallbackSettings.on_outage`（默认关，关时不写进设置文件），识别与润色各一个。桌面「语音模型」「AI 模型」两页在候补区块里显示「服务出错时也改用候补」，候补开关关闭时它不可用；手机不显示，字段默认关，行为不变。
+- **执行器**（`first_available(links, ledger, policy, call) -> (T, Served)`，`ChainPolicy { on_outage, deadline }`）：额度用完的规则不受开关影响（§3.5）。开关开时：
+  - 出错的那一项冷却：服务给了等待时间（429 的 `Retry-After`）就冷却到那时，最多一天，否则 `OUTAGE_RETRY_AFTER = 60 s`。`QuotaLedger` 的标记是 `Mark { until_ms, reason: SwitchReason::{Quota, Outage} }`，原因在之后的状态里仍看得到。
+  - 每次请求最多 `MAX_OUTAGE_TRIES = 3` 项因出错被试（额度用完的拒绝不计）。整次请求从第一次尝试起算截止点（`tokio::time::Instant`，识别 `ASR_DEADLINE = 150 s`，润色与语音编辑 `REFINE_DEADLINE = 60 s`），每次尝试用 `tokio::time::timeout(剩余时间)` 包住，单次请求自己的超时仍在里面；剩余不足 `MIN_ATTEMPT = 5 s` 不再开始新的尝试；截止点到了以 `Unreachable{Timeout}` 结束。第一项用完整段时间仍未回应时也冷却 60 s，下一次请求不再等它。
+  - 全部项都在冷却或额度用完时沿用 `open_order`：只试第一项一次，失败就返回它的错误，不等待、不轮询。
+  - 开关关时与 §3.5 完全相同：没有截止点，只有额度用完会切换。
+  - 长录音每段各有自己的截止点，冷却让后面的段直接用下一项。流式会话中途出错不换到另一项的流（已插入的文字不会重复），照 §12 降级；降级后的整段识别（或 `live_inject` 的补齐）照常走候补链。
+  - `Served { index, provider, model, reason }`：哪一项答出、是谁的模型、为什么不是所选模型（账本跳过它的原因，或这次请求被拒的原因）。
+- **本机模型进链**（只限识别）：`FallbackModel { provider: local, model: <目录里的 id> }`。`FallbackTarget { provider, service: FallbackService::{Remote, Local}, key }`，本机项的 `QuotaKey.url` 为空。目录里有、能整段识别（`offline`）且已安装的模型为 `Ready`，未下载的为 `Issue(ModelNotInstalled)`，实时预览模型和目录里没有的 id 为 `Unavailable`。`with_candidate` 对本机项设 `asr_provider = Local`、`local_model = Some(id)`，外壳的工厂按同一个配置视图建出本机识别器。`Runtime::set_engines` 接受目录里能整段识别的本机模型（没有模型库的手机仍拒绝），润色不能列本机模型。
+- **选用本机识别时不上传**：选中本机识别时（模型装没装都算），链里的服务一律跳过（行状态 `NotForLocal`，界面写「选用本地识别时，出错不会改用云端服务」），只用链里的本机项。`in_use`：选中的是可用的远程服务；或选中已安装的本机模型、开关开且链里至少有一个本机项就绪。本机模型没有额度，开关关时本机为主的链不运行。回归测试 `regression_a_local_primary_never_uploads_on_failure`：本机为主，链里一项服务、一项本机，所选模型显卡出错 → 本机项识别，服务调用 0 次；链里只有服务时这一条照旧失败，服务调用 0 次；开关关时照旧失败。
+- **导入不走候补**（§31）：导入的配置把两条候补都关掉，开关开时也一样（`regression_an_import_never_moves_on_to_a_fallback_for_a_failure`）。
+- **历史**：`Transcript`、`StreamFinal`、`Refined` 带 `provider` 与 `fallback`，由候补链写上。`HistoryEntry` 新增可选的 `asr_provider`、`asr_fallback`、`refine_provider`、`refine_fallback`（`#[serde(default, skip_serializing_if = "Option::is_none")]`）。服务商、模型和原因取自同一个回执（`Receipt`）：管线自己识别的用它的回执，否则用流或分段的回执，都没有时用这一条所选的模型和服务商；没有候补链时服务商就是所选的服务商，`fallback` 为空。导入记所选的服务商，`fallback` 为空。旧条目没有这些字段，界面不显示。桌面历史详情的技术信息显示「识别服务商：Groq · 候补模型 · 所选模型出错」，润色同样。
+- **状态与界面**：`FallbackStatus.selected_retry_reason` 与 `FallbackModelStatus.retry_reason`；行状态新增「出错，暂时跳过 · 何时再试」（`cooling`）与「选用本地识别时，出错不会改用云端服务」（`not_for_local`）。运行时每次 tick 调 `QuotaLedger::forget_expired`：到期的标记清除时重发引擎状态，冷却过后的行恢复为可用。「重新检查」同时清除出错记录。开关开时，候补区块的说明改为「额度用完或服务出错时」，隐私说明写「额度用完或服务出错时改发给…」（本机项不算）。添加一行在识别里列出已下载的本机模型（按名称）。手机的 `Fallback.tsx` 能显示新的行状态，不加开关。
+- **测试**：`voltip-core` `fallback.rs` 的单元测试（可控时钟与 `start_paused` 虚拟时间：开关关时 503、超时不切换且没有截止点；开时超时、网络、5xx、503、429 切换，401、400 不切换；冷却与到期、`Retry-After`、冷却原因、全部冷却只试第一项、最多 3 项、永不回应的链接在截止点被截断，假链接用 `std::future::pending`），`engines.rs` 的本机项行状态与 `in_use`，引擎的 `with_the_switch_on_a_failing_service_hands_the_take_to_the_next_and_the_history_says_why`、`a_failure_moves_on_only_with_the_switch_on_and_never_for_a_refused_request`、`with_the_switch_on_a_stream_failing_mid_take_degrades_and_its_remainder_moves_on`，`tests/long.rs` 的 `a_long_takes_segment_moves_on_when_its_model_fails`，`tests/fallback.rs`，`tests/import.rs`，运行时的 `the_tick_forgets_a_skipped_model_once_its_time_is_over`；`voltip-cloud` 的 `every_client_failure_reaches_the_core_with_its_kind_and_its_words`；前端 `fallback.test.ts`、`FallbackSection.test.tsx`、`HistoryDetail.test.tsx`、手机的 `Fallback.test.tsx`。
 
 ## 4. 历史记录（`voltip_core::history`）
 

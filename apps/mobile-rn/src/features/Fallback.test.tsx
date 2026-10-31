@@ -200,6 +200,50 @@ describe("额度用完后改用其他模型", () => {
     });
   });
 
+  it("reads a model that failed and a service left out for recognition on the device (§3.14)", async () => {
+    const backend = await core(
+      "asr",
+      { enabled: true, models: [{ provider: "groq", model: "whisper-large-v3" }] },
+      { providerKeys: [{ provider: "groq", kind: "asr" }] },
+    );
+    const section = await open("asr", backend);
+    const list = within(section.getByTestId("fallback-asr-list"));
+    expect(await list.findByText("使用中")).toBeOnTheScreen();
+    // The phone offers no switch for failures.
+    expect(section.queryByText("服务出错时也改用候补")).toBeNull();
+    await act(async () => {
+      backend.simulateServiceFailed("asr", new Date(2026, 9, 5, 14, 6).getTime());
+      await Promise.resolve();
+    });
+    expect(await list.findByText(/^出错，暂时跳过 · .*14:06 再试$/)).toBeOnTheScreen();
+    await fireEvent.press(section.getByTestId("fallback-asr-recheck"));
+    expect(
+      await screen.findByText("已清除额度与出错记录，之后的请求从所选模型开始"),
+    ).toBeOnTheScreen();
+    await waitFor(() => {
+      expect(list.queryByText(/暂时跳过/)).toBeNull();
+    });
+  });
+
+  it("says a service in the list is not used for recognition on the device", async () => {
+    const whisper = { provider: "groq" as const, model: "whisper-large-v3" };
+    const backend = await core(
+      "asr",
+      { enabled: true, models: [whisper] },
+      {
+        engines: {
+          asr_fallback: {
+            enabled: true,
+            in_use: false,
+            models: [{ ...whisper, skip: "not_for_local" }],
+          },
+        },
+      },
+    );
+    const section = await open("asr", backend);
+    expect(await section.findByText("选用本地识别时，出错不会改用云端服务")).toBeOnTheScreen();
+  });
+
   it("explains why the chain is not used while the selected service is not set up", async () => {
     const backend = await core(
       "asr",

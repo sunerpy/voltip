@@ -687,6 +687,7 @@ fn engines_quota_reset_forgets_a_model_that_ran_out() {
         let engines = voltip_core::EngineSettings {
             asr_fallback: voltip_core::FallbackSettings {
                 enabled: true,
+                on_outage: false,
                 models: vec![voltip_core::FallbackModel { provider: voltip_core::ProviderId::Custom, model: "fallback-asr".into() }],
             },
             ..fake_engines()

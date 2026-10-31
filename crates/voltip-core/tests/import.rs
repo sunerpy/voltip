@@ -48,9 +48,9 @@ const BUILT_IN: BuiltIn = BuiltIn {
 };
 
 /// The settings: Model Studio recognises, Groq cleans up, and both fall back to the built-in
-/// service when their model runs out.
-fn saved() -> EngineSettings {
-    let builtin = || FallbackSettings { enabled: true, models: vec![FallbackModel { provider: ProviderId::Builtin, model: String::new() }] };
+/// service when their model runs out — and, with `on_outage`, when it fails (docs/dictation.md §3.14).
+fn saved(on_outage: bool) -> EngineSettings {
+    let builtin = || FallbackSettings { enabled: true, on_outage, models: vec![FallbackModel { provider: ProviderId::Builtin, model: String::new() }] };
     EngineSettings {
         asr_provider: ProviderId::Aliyun,
         llm_provider: ProviderId::Groq,
@@ -122,17 +122,19 @@ struct Setup {
     /// The fake library with the light local model installed.
     models: bool,
     fakes: Fakes,
+    /// The saved fallback lists move on for failures too.
+    on_outage: bool,
 }
 
 impl Default for Setup {
     fn default() -> Self {
-        Self { decoder: FakeMediaDecoder::new(25), built_in: BUILT_IN, imports: true, models: false, fakes: Fakes::default() }
+        Self { decoder: FakeMediaDecoder::new(25), built_in: BUILT_IN, imports: true, models: false, fakes: Fakes::default(), on_outage: false }
     }
 }
 
 fn start(dir: &Path, setup: Setup) -> Node {
-    SettingsStore::new(dir).save(&Settings { relay_enabled: false, engines: saved(), ..Settings::default() }).unwrap();
-    let Setup { decoder, built_in, imports, models, fakes } = setup;
+    SettingsStore::new(dir).save(&Settings { relay_enabled: false, engines: saved(setup.on_outage), ..Settings::default() }).unwrap();
+    let Setup { decoder, built_in, imports, models, fakes, on_outage: _ } = setup;
     let decoder = Arc::new(decoder);
     let mut config = CoreConfig::new(dir.to_path_buf());
     config.default_device_name = "Import Test".into();
@@ -385,6 +387,57 @@ async fn regression_an_import_never_reaches_a_saved_builtin_fallback() {
     assert_eq!((e.text.as_str(), e.refined, e.refine_failure), ("第1段。第2段。第3段。", false, Some(RefineFailure::Quota)));
     assert!(e.segments.as_ref().unwrap().iter().all(|s| s.refined.is_none()), "each segment kept its text");
     assert_eq!((node.fakes.saved_asr.calls(), node.fakes.builtin_asr.calls()), (0, 0));
+    node.handle.send(CoreCommand::Shutdown).await.unwrap();
+}
+
+/// docs/dictation.md §31, §3.14: 服务出错时也改用候补 does not reach an import either. With both
+/// saved lists moving on for failures, a recognition model that cannot be reached fails the job
+/// after its two tries, and a clean-up model that times out keeps each segment's text: the
+/// built-in clients are never asked, every configuration the import got has no fallback model,
+/// and the entry names the chosen providers with no fallback.
+#[tokio::test]
+async fn regression_an_import_never_moves_on_to_a_fallback_for_a_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let unreachable =
+        |service| voltip_core::DictationError::Unreachable { service, cause: voltip_core::dictation::Outage::Network, detail: "connection refused".into() };
+    let fakes = Fakes {
+        other_asr: Arc::new(FakeTranscriber::failing(unreachable(voltip_core::ServiceKind::Asr))),
+        other_llm: Arc::new(FakeRefiner::failing(unreachable(voltip_core::ServiceKind::Llm))),
+        ..Fakes::default()
+    };
+    let mut node = start(dir.path(), Setup { fakes, on_outage: true, ..Setup::default() });
+    ready(&mut node).await;
+    let file = media(dir.path(), "季度会议.mkv");
+    let no_fallback = |views: &[ResolvedEngines]| {
+        assert!(!views.is_empty(), "the import's clients were built");
+        for view in views {
+            assert_eq!((view.asr_fallback.targets().count(), view.refine_fallback.targets().count()), (0, 0), "{view:?}");
+            assert!(!view.asr_fallback.on_outage && !view.refine_fallback.on_outage, "{view:?}");
+        }
+    };
+
+    let built = node.views.lock().unwrap().len();
+    let [recognition] = added(&mut node, vec![request(&file, remote(ProviderId::Aliyun, OTHER_ASR), None)]).await[..] else { panic!() };
+    let job = finished(&mut node, recognition).await;
+    let ImportState::Failed { failure: ImportFailure::Recognition { detail }, resumable: true } = &job.state else { panic!("{job:?}") };
+    assert!(detail.contains("connection refused"), "{detail}");
+    assert_eq!((node.fakes.other_asr.calls(), node.fakes.builtin_asr.calls(), node.fakes.saved_asr.calls()), (2, 0, 0));
+    no_fallback(&node.views.lock().unwrap()[built..]);
+
+    let built = node.views.lock().unwrap().len();
+    let polish = Some(PolishModel { provider: ProviderId::Aliyun, model: OTHER_LLM.into() });
+    let [polished] = added(&mut node, vec![request(&file, remote(ProviderId::Groq, GROQ_ASR), polish)]).await[..] else { panic!() };
+    let job = finished(&mut node, polished).await;
+    let ImportState::Done { entry, polish_failed: 3 } = job.state else { panic!("{job:?}") };
+    assert_eq!((node.fakes.other_llm.calls(), node.fakes.builtin_llm.calls(), node.fakes.saved_llm.calls()), (3, 0, 0));
+    no_fallback(&node.views.lock().unwrap()[built..]);
+    while node.recent.first().map(|e| e.id) != Some(entry) {
+        next(&mut node).await;
+    }
+    let e = &node.recent[0];
+    assert_eq!((e.text.as_str(), e.refined, e.refine_failure), ("第1段。第2段。第3段。", false, Some(RefineFailure::Failed)));
+    assert_eq!((e.asr_model.as_str(), e.asr_provider, e.asr_fallback), (GROQ_ASR, Some(ProviderId::Groq), None));
+    assert_eq!((e.refine_provider, e.refine_fallback), (None, None), "nothing was polished");
     node.handle.send(CoreCommand::Shutdown).await.unwrap();
 }
 

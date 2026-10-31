@@ -13,8 +13,12 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, RecvTimeoutError, TryRecvError};
 use std::time::{Duration, Instant};
 
-use super::ports::{DictationError, LIVE_SAMPLE_RATE_HZ, Segment, StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber, Transcriber, Transcript};
+use super::ports::{
+    DictationError, LIVE_SAMPLE_RATE_HZ, Receipt, Segment, StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber, SwitchReason, Transcriber,
+    Transcript,
+};
 use super::wav;
+use crate::providers::ProviderId;
 use crate::usage::{AsrCall, UsageOrigin};
 
 /// Samples in the 20 ms frame the pause detector looks at.
@@ -130,8 +134,8 @@ impl RedecodeStreaming {
             committed: Vec::new(),
             tail: String::new(),
             last_preview: String::new(),
-            model: None,
-            preview_model: None,
+            receipt: Receipt::default(),
+            preview: Receipt::default(),
             failure: None,
         }
     }
@@ -202,10 +206,10 @@ struct RedecodeSession {
     committed: Vec<Segment>,
     tail: String,
     last_preview: String,
-    /// The model behind the last non-empty committed sentence or tail (docs/dictation.md §3.5).
-    model: Option<String>,
-    /// The model behind `last_preview`.
-    preview_model: Option<String>,
+    /// Who wrote the last non-empty committed sentence or tail (docs/dictation.md §3.5, §3.14).
+    receipt: Receipt,
+    /// Who wrote `last_preview`.
+    preview: Receipt,
     failure: Option<DictationError>,
 }
 
@@ -287,7 +291,7 @@ impl RedecodeSession {
                 let text = t.text.trim();
                 if sentence == self.current.id && !text.is_empty() && text != self.last_preview {
                     self.last_preview = text.to_owned();
-                    self.preview_model = t.model;
+                    self.preview = t.receipt();
                     self.events.push_back(StreamEvent::Partial { current: text.to_owned() });
                 }
             }
@@ -299,14 +303,14 @@ impl RedecodeSession {
             (Job::Close { last: true, .. }, Ok(t)) => {
                 self.tail = t.text.trim().to_owned();
                 if !self.tail.is_empty() {
-                    self.model = t.model;
+                    self.receipt = t.receipt();
                 }
             }
             (Job::Close { start_ms, end_ms, last: false }, Ok(t)) => {
                 self.last_preview.clear();
                 let text = t.text.trim().to_owned();
                 if !text.is_empty() {
-                    self.model = t.model;
+                    self.receipt = t.receipt();
                     self.committed.push(Segment { text: text.clone(), refined: None, start_ms, end_ms });
                     self.events.push_back(StreamEvent::Endpoint { text, start_ms, end_ms });
                 }
@@ -341,7 +345,12 @@ impl StreamingSession for RedecodeSession {
 
     /// The model behind the sentences committed so far (docs/dictation.md §3.5).
     fn model(&self) -> Option<String> {
-        self.model.clone()
+        self.receipt.model.clone()
+    }
+
+    /// Whose model wrote them, and why a fallback model did (docs/dictation.md §3.14).
+    fn served(&self) -> (Option<ProviderId>, Option<SwitchReason>) {
+        (self.receipt.provider, self.receipt.fallback)
     }
 
     fn poll(&mut self) -> StreamEvent {
@@ -366,8 +375,14 @@ impl StreamingSession for RedecodeSession {
     fn finish(mut self: Box<Self>) -> Result<StreamFinal, DictationError> {
         if !self.flush {
             // A whole take: its transcriber has the audio; the preview so far is all there is.
-            let model = self.model.take().or_else(|| self.preview_model.take());
-            return Ok(StreamFinal { committed: std::mem::take(&mut self.committed), tail: std::mem::take(&mut self.last_preview), model });
+            let receipt = if self.receipt.model.is_some() { std::mem::take(&mut self.receipt) } else { std::mem::take(&mut self.preview) };
+            return Ok(StreamFinal {
+                committed: std::mem::take(&mut self.committed),
+                tail: std::mem::take(&mut self.last_preview),
+                model: receipt.model,
+                provider: receipt.provider,
+                fallback: receipt.fallback,
+            });
         }
         self.close_current(true);
         let deadline = Instant::now() + self.params.finish_timeout;
@@ -393,7 +408,14 @@ impl StreamingSession for RedecodeSession {
             }
         }
         // After the flush: its own requests may have recognised the last sentences.
-        Ok(StreamFinal { committed: std::mem::take(&mut self.committed), tail: std::mem::take(&mut self.tail), model: self.model.take() })
+        let receipt = std::mem::take(&mut self.receipt);
+        Ok(StreamFinal {
+            committed: std::mem::take(&mut self.committed),
+            tail: std::mem::take(&mut self.tail),
+            model: receipt.model,
+            provider: receipt.provider,
+            fallback: receipt.fallback,
+        })
     }
 }
 
@@ -525,7 +547,9 @@ mod tests {
             StreamFinal {
                 committed: vec![Segment { text: "第3段。".into(), refined: None, start_ms: 200, end_ms: 3000 }],
                 tail: "第5段。".into(),
-                model: None
+                model: None,
+                provider: None,
+                fallback: None
             }
         );
         // The previews grew by a second from the pre-roll on; the close carried the sentence with
@@ -641,7 +665,7 @@ mod tests {
             Box::new(s).finish().unwrap()
         })
         .await;
-        assert_eq!(fin, StreamFinal { committed: Vec::new(), tail: "第1段。".into(), model: None });
+        assert_eq!(fin, StreamFinal { committed: Vec::new(), tail: "第1段。".into(), model: None, provider: None, fallback: None });
         assert_eq!(transcriber.durations_ms(), [1000], "the preview only");
     }
 

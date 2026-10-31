@@ -425,8 +425,9 @@ struct Failed {
 }
 
 impl Job {
-    /// The text and what to tell about it, or the reason there is none.
-    fn run(self, mut samples: Vec<f32>, sample_rate: u32) -> Result<(String, Option<AsrNote>), String> {
+    /// The text and what to tell about it, or why there is none: the failure of the attempt that
+    /// ended the take (the CPU's, when it tried again where the GPU failed), with both reasons.
+    fn run(self, mut samples: Vec<f32>, sample_rate: u32) -> Result<(String, Option<AsrNote>), RecognizeError> {
         if let Some(vad) = &self.vad {
             // Blocking (may load the VAD model): inside the blocking task. Fail-open.
             let trim = vad.trim(&samples, sample_rate);
@@ -457,10 +458,13 @@ impl Job {
                 let cpu = Compute { device: LocalDevice::Cpu, gpu: None, ..compute };
                 match self.attempt(&pieces, &samples, sample_rate, &cpu) {
                     Ok(text) => Ok((text, Some(if now_off { AsrNote::GpuOffUntilRestart } else { AsrNote::GpuFailedRanOnCpu }))),
-                    Err(again) => Err(format!("显卡出错（{}），改用 CPU 也失败（{}）", error.message, again.error.message)),
+                    Err(again) => Err(RecognizeError {
+                        message: format!("显卡出错（{}），改用 CPU 也失败（{}）", error.message, again.error.message),
+                        ..again.error
+                    }),
                 }
             }
-            Err(Failed { error, .. }) => Err(error.message),
+            Err(Failed { error, .. }) => Err(error),
         }
     }
 
@@ -569,11 +573,13 @@ impl Transcriber for LocalTranscriber {
         let mut guard = AbortOnDrop(Some(job.abort.clone()));
         let outcome = tokio::task::spawn_blocking(move || job.run(samples, sample_rate)).await;
         guard.0 = None;
-        let (text, backend_note) =
-            outcome.map_err(|e| DictationError::Asr(format!("本地识别任务失败：{e}")))?.map_err(|e| DictationError::Asr(format!("本地识别失败：{e}")))?;
+        // docs/dictation.md §3.14: the kind decides whether a fallback model may take over.
+        let (text, backend_note) = outcome
+            .map_err(|e| DictationError::Asr(format!("本地识别任务失败：{e}")))?
+            .map_err(|e| DictationError::LocalFailed { failure: e.kind, detail: format!("本地识别失败：{}", e.message) })?;
         let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         // docs/dictation.md §3.5: the catalogue entry's name is the model the history records.
-        Ok(Transcript { text: text.trim().to_owned(), latency_ms, model: Some(entry.name.to_owned()), backend_note })
+        Ok(Transcript { text: text.trim().to_owned(), latency_ms, model: Some(entry.name.to_owned()), backend_note, provider: None, fallback: None })
     }
 }
 
@@ -960,7 +966,7 @@ mod tests {
         failing.warm_up(None).unwrap().join().unwrap();
         assert_eq!(failing.loaded(), None);
         let err = failing.transcribe(&speech, None, &[]).await.unwrap_err();
-        assert!(matches!(&err, DictationError::Asr(m) if m.contains("bad model")), "{err:?}");
+        assert!(matches!(&err, DictationError::LocalFailed { failure: LocalFailure::Model, detail } if detail.contains("bad model")), "{err:?}");
         assert_eq!(broken.loads.load(Ordering::SeqCst), 2);
     }
 
@@ -1007,13 +1013,17 @@ mod tests {
         assert_eq!(loader.loads.load(Ordering::SeqCst), 4);
         // The streaming entry is installed but not a whole-take model: the loader refuses.
         let zf = t.select("zipformer-stream-zh-en");
-        assert!(matches!(zf.transcribe(&speech, None, &[]).await.unwrap_err(), DictationError::Asr(m) if m.contains("识别整段录音")));
+        assert!(
+            matches!(zf.transcribe(&speech, None, &[]).await.unwrap_err(), DictationError::LocalFailed { failure: LocalFailure::Model, detail } if detail.contains("识别整段录音"))
+        );
         t.unload();
         assert_eq!(t.loaded(), None);
-        // Other rates pass through (the recognisers resample); a recogniser error maps to `Asr`.
+        // Other rates pass through (the recognisers resample); a recogniser error keeps its kind
+        // (docs/dictation.md §3.14) and reads as before.
         assert_eq!(t.transcribe(&pcm16(&[1000; 480], 48_000), None, &[]).await.unwrap().text, "sense-voice-small:auto:48000:60000");
         let err = t.transcribe(&pcm16(&[0; 1600], 16_000), None, &[]).await.unwrap_err();
-        assert_eq!(err, DictationError::Asr("本地识别失败：all zero".into()));
+        assert_eq!(err, DictationError::LocalFailed { failure: LocalFailure::Other, detail: "本地识别失败：all zero".into() });
+        assert_eq!(err.to_string(), "asr: 本地识别失败：all zero");
         // Bad audio and unknown ids.
         assert!(matches!(t.transcribe(b"RIFF", None, &[]).await.unwrap_err(), DictationError::Asr(m) if m.contains("wav")));
         assert_eq!(t.transcribe(&pcm16(&[], 16_000), None, &[]).await.unwrap_err(), DictationError::NoSpeech);
@@ -1026,11 +1036,13 @@ mod tests {
             "not a recogniser, not installed either"
         );
         crate::vad::tests::install_vad(dir.path());
-        assert!(matches!(vad.transcribe(&speech, None, &[]).await.unwrap_err(), DictationError::Asr(m) if m.contains("语音活动检测模型不能做整段识别")));
-        // A loader failure is an `Asr` error too, and nothing is cached.
+        assert!(
+            matches!(vad.transcribe(&speech, None, &[]).await.unwrap_err(), DictationError::LocalFailed { failure: LocalFailure::Model, detail } if detail.contains("语音活动检测模型不能做整段识别"))
+        );
+        // A loader failure is the model's, and nothing is cached.
         let failing = LocalTranscriber::with_loader(dir.path(), CATALOGUE, FakeLoader::failing()).select("sense-voice-small");
         let err = failing.transcribe(&speech, None, &[]).await.unwrap_err();
-        assert_eq!(err, DictationError::Asr("本地识别失败：onnxruntime: bad model".into()));
+        assert_eq!(err, DictationError::LocalFailed { failure: LocalFailure::Model, detail: "本地识别失败：onnxruntime: bad model".into() });
         assert_eq!(failing.loaded(), None);
     }
 
@@ -1133,7 +1145,7 @@ mod tests {
         // A failure on the CPU is reported as it is, and the instance is not kept.
         loader.script.fail(false, LocalFailure::Device);
         let err = on_cpu.transcribe(&speech, None, &[]).await.unwrap_err();
-        assert_eq!(err, DictationError::Asr("本地识别失败：scripted device".into()));
+        assert_eq!(err, DictationError::LocalFailed { failure: LocalFailure::Device, detail: "本地识别失败：scripted device".into() });
         assert_eq!(t.loaded(), None);
         assert_eq!(loader.loads(), loads, "no second attempt");
     }
@@ -1148,12 +1160,19 @@ mod tests {
         loader.script.fail(true, LocalFailure::Device);
         loader.script.fail(false, LocalFailure::Other);
         let err = t.transcribe(&pcm16(&[1000; 24_000], 16_000), None, &[]).await.unwrap_err();
-        assert_eq!(err, DictationError::Asr("本地识别失败：显卡出错（scripted device），改用 CPU 也失败（scripted other）".into()));
+        // docs/dictation.md §3.14: the kind is the CPU's, the attempt that ended the take.
+        assert_eq!(
+            err,
+            DictationError::LocalFailed {
+                failure: LocalFailure::Other,
+                detail: "本地识别失败：显卡出错（scripted device），改用 CPU 也失败（scripted other）".into()
+            }
+        );
         assert_eq!(loader.loads(), 2);
         // A failure that is not the device's is not tried on the CPU.
         loader.script.fail(true, LocalFailure::Other);
         let err = t.transcribe(&pcm16(&[1000; 24_000], 16_000), None, &[]).await.unwrap_err();
-        assert_eq!(err, DictationError::Asr("本地识别失败：scripted other".into()));
+        assert_eq!(err, DictationError::LocalFailed { failure: LocalFailure::Other, detail: "本地识别失败：scripted other".into() });
         assert_eq!(*loader.computes.lock(), [gpu(), cpu_of(&gpu()), gpu()]);
     }
 
@@ -1183,7 +1202,7 @@ mod tests {
         until(|| t.shared.pool.counts() == (2, 0, 0), "both instances idle").await;
         loader.script.fail(false, LocalFailure::Model);
         let err = t.transcribe(&speech, None, &[]).await.unwrap_err();
-        assert_eq!(err, DictationError::Asr("本地识别失败：scripted model".into()));
+        assert_eq!(err, DictationError::LocalFailed { failure: LocalFailure::Model, detail: "本地识别失败：scripted model".into() });
         assert_eq!((t.loaded(), t.shared.pool.counts()), (None, (0, 0, 0)), "every instance of the model dropped");
         assert_eq!(t.transcribe(&speech, None, &[]).await.unwrap().text, echo("sense-voice-small", "auto", 24_000));
         assert_eq!(loader.loads(), 4, "loaded afresh");
@@ -1309,7 +1328,7 @@ mod tests {
         loader.script.until_running(2).await;
         let started = Instant::now();
         let err = t.clone().with_lock_wait(Duration::from_millis(300)).transcribe(&speech, Some("zh"), &[]).await.unwrap_err();
-        assert_eq!(err, DictationError::Asr(format!("本地识别失败：{BUSY}")));
+        assert_eq!(err, DictationError::LocalFailed { failure: LocalFailure::Other, detail: format!("本地识别失败：{BUSY}") });
         assert!(started.elapsed() >= Duration::from_millis(300));
         assert_eq!(loader.loads(), 2, "never a third instance");
         // Free again: both come back and are reused.
@@ -1363,7 +1382,7 @@ mod tests {
         cancelled.abort();
         assert!(cancelled.await.unwrap_err().is_cancelled());
         let err = t.clone().with_lock_wait(Duration::from_millis(300)).transcribe(&speech, Some("zh"), &[]).await.unwrap_err();
-        assert_eq!(err, DictationError::Asr(format!("本地识别失败：{BUSY}")));
+        assert_eq!(err, DictationError::LocalFailed { failure: LocalFailure::Other, detail: format!("本地识别失败：{BUSY}") });
         loader.script.release();
         assert_eq!(t.transcribe(&speech, Some("zh"), &[]).await.unwrap().text, echo("sense-voice-small", "zh", 24_000), "once the piece is done");
     }

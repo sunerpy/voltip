@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   fallbackAddProblem,
+  fallbackOnOutage,
   fallbackRows,
   fallbackSettingsOf,
   fallbackStatusOf,
+  localFallbackModels,
   moveFallback,
   withFallback,
 } from "./fallback";
@@ -18,6 +20,7 @@ import {
   type EngineStatus,
   type FallbackModel,
   MAX_FALLBACK_MODELS,
+  type ModelState,
 } from "./schema";
 
 const entry = (provider: FallbackModel["provider"], model: string): FallbackModel => ({
@@ -48,6 +51,7 @@ function resolve(
   settings: EngineSettings,
   keys: string[] = ["provider-key.aliyun"],
   quotaOut?: { asr?: number; llm?: number },
+  library?: ModelState[],
 ): EngineStatus {
   return resolveEngineStatus({
     settings,
@@ -59,7 +63,34 @@ function resolve(
     local: { id: "qwen3-asr-0.6b", name: "Qwen3-ASR 0.6B", installed: true },
     liveReady: false,
     ...(quotaOut === undefined ? {} : { quotaOut }),
+    ...(library === undefined ? {} : { library }),
   });
+}
+
+/** A library entry of the fake catalogue: `id`, installed or not, recognising whole takes or streaming. */
+function libraryModel(
+  id: string,
+  installed: boolean,
+  capability: "offline" | "streaming" = "offline",
+): ModelState {
+  return {
+    id,
+    name: id,
+    engine: "paraformer",
+    tier: "light",
+    capabilities: [capability],
+    languages: ["zh"],
+    size_bytes: 1,
+    description: "",
+    recommended: false,
+    repo: "",
+    dir: "",
+    files: [],
+    active: false,
+    state: installed
+      ? { kind: "installed", path: `/models/${id}`, installed_at: 1 }
+      : { kind: "not_installed" },
+  };
 }
 
 describe("fallback models (docs/dictation.md §3.5)", () => {
@@ -247,6 +278,98 @@ describe("fallback models (docs/dictation.md §3.5)", () => {
       "streaming_final",
       undefined,
     ]);
+  });
+
+  it("models of this device join a recognition chain and a local primary never moves on to a service (§3.14)", () => {
+    const library = [
+      libraryModel("qwen3-asr-0.6b", true),
+      libraryModel("paraformer-zh", true),
+      libraryModel("sense-voice", false),
+      libraryModel("zipformer-stream-zh-en", true, "streaming"),
+    ];
+    expect(localFallbackModels(library).map((m) => m.id)).toEqual([
+      "qwen3-asr-0.6b",
+      "paraformer-zh",
+    ]);
+    const listed = [
+      entry("aliyun", "qwen-audio-3.1-asr-flash-message"),
+      entry("local", "paraformer-zh"),
+      entry("local", "sense-voice"),
+      entry("local", "zipformer-stream-zh-en"),
+    ];
+    // A service selected: the installed model of this device is ready, the others say why not.
+    const cloud = resolve(
+      { ...studio(), asr_fallback: { enabled: true, models: listed } },
+      undefined,
+      undefined,
+      library,
+    );
+    expect(fallbackStatusOf(cloud, "asr").models.map((m) => m.skip ?? m.issue ?? "ready")).toEqual([
+      "ready",
+      "ready",
+      "model_not_installed",
+      "unavailable",
+    ]);
+    expect(fallbackStatusOf(cloud, "asr").in_use).toBe(true);
+    // Recognition on this device: every service is left out; the chain runs only with the switch.
+    const onDevice = (on_outage: boolean): EngineSettings => ({
+      ...studio(),
+      asr_provider: "local",
+      asr_fallback: { enabled: true, on_outage, models: listed },
+    });
+    const local = resolve(onDevice(true), undefined, undefined, library);
+    const asr = fallbackStatusOf(local, "asr");
+    expect(asr.models.map((m) => m.skip ?? m.issue ?? "ready")).toEqual([
+      "not_for_local",
+      "ready",
+      "model_not_installed",
+      "unavailable",
+    ]);
+    expect(asr.in_use).toBe(true);
+    expect(fallbackRows(local, "asr").rows.map((r) => r.state)).toEqual([
+      "active",
+      "not_for_local",
+      "ready",
+      "issue",
+      "issue",
+    ]);
+    expect(
+      fallbackStatusOf(resolve(onDevice(false), undefined, undefined, library), "asr").in_use,
+    ).toBe(false);
+    expect([
+      fallbackOnOutage(onDevice(true), "asr"),
+      fallbackOnOutage(onDevice(false), "asr"),
+      fallbackOnOutage(studio(), "llm"),
+    ]).toEqual([true, false, false]);
+  });
+
+  it("a model that failed shows as skipped for now, apart from one out of quota (§3.14)", () => {
+    const status = resolve(studio());
+    const asr = fallbackStatusOf(status, "asr");
+    const models = asr.models.map((m, i) =>
+      i === 0 ? { ...m, retry_at_ms: 2_000, retry_reason: "quota" as const } : m,
+    );
+    const failed: EngineStatus = {
+      ...status,
+      asr_fallback: {
+        ...asr,
+        selected_retry_at_ms: 1_000,
+        selected_retry_reason: "outage",
+        models,
+      },
+    };
+    const { rows, active } = fallbackRows(failed, "asr");
+    expect(rows.slice(0, 2).map((r) => [r.state, r.retryAtMs])).toEqual([
+      ["cooling", 1_000],
+      ["exhausted", 2_000],
+    ]);
+    expect(active).toBeUndefined();
+    // An older core says no reason: out of quota, as before.
+    const older: EngineStatus = {
+      ...status,
+      asr_fallback: { ...asr, selected_retry_at_ms: 1_000 },
+    };
+    expect(fallbackRows(older, "asr").rows[0]?.state).toBe("exhausted");
   });
 
   it("the preview takes the lists and answers 重新检查 with the engines' status", async () => {
