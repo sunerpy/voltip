@@ -4,6 +4,7 @@ import {
   type PreviewDraft,
   type ReplacementRule,
   type RuleDraft,
+  type RuleWarning,
   type TFunction,
   type VocabularyPreview,
   pendingRules,
@@ -33,7 +34,14 @@ import {
   useNow,
   useUiState,
 } from "@voltip/ui";
-import { type KeyboardEvent, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  type KeyboardEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { usePageShortcuts, withCommand } from "../app/page-shortcuts";
 import { useRouter } from "../app/router";
 import { copyWithToast, useShell } from "../app/shell-context";
@@ -89,6 +97,48 @@ type DryRun =
   | { kind: "result"; input: string; preview: VocabularyPreview; withDraft: boolean }
   | { kind: "error"; message: string };
 
+/** A hint as the line under its rule says it. */
+function warningText(warning: RuleWarning, t: TFunction): string {
+  switch (warning.kind) {
+    case "duplicate":
+      return t("rules.warnings.duplicate", { name: warning.other_name });
+    case "inverse":
+      return t("rules.warnings.inverse", { name: warning.other_name });
+    case "undoes_entry":
+      return t("rules.warnings.undoesEntry", { term: warning.term, heard: warning.heard });
+  }
+}
+
+/** The hints under the rules (`rules_warnings`, docs/dictation.md §16.10) by rule: a duplicate, two
+ *  rules that turn each other back, a rule that undoes a dictionary entry. Asked again whenever the
+ *  rules or the dictionary change; a failed answer shows no hints, since they only advise. */
+function useRuleWarnings(): ReadonlyMap<string, readonly RuleWarning[]> {
+  const { backend } = useBackend();
+  const { rules, dictionary } = useUiState();
+  const [warnings, setWarnings] = useState<readonly RuleWarning[]>([]);
+  useEffect(() => {
+    let alive = true;
+    backend.rulesWarnings().then(
+      (answer) => {
+        if (alive) setWarnings(answer);
+      },
+      () => {
+        if (alive) setWarnings([]);
+      },
+    );
+    return () => {
+      alive = false;
+    };
+    // The rules and the dictionary are what the hints are about.
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies
+  }, [backend, rules, dictionary]);
+  return useMemo(() => {
+    const byRule = new Map<string, RuleWarning[]>();
+    for (const w of warnings) byRule.set(w.rule_id, [...(byRule.get(w.rule_id) ?? []), w]);
+    return byRule;
+  }, [warnings]);
+}
+
 /** Replacement rules (docs/dictation.md §16): the core's `state.rules` in execution order. Add /
  *  edit / enable / reorder / delete go through the `rules_*` commands; the editor has the core
  *  check the draft (`vocabulary_preview` with it), so a regex is judged by the Rust dialect the
@@ -118,6 +168,7 @@ export function Rules({ compose = false }: RulesProps) {
   const [exported, setExported] = useState<string | undefined>(undefined);
 
   const hits = useHitTotals("rules");
+  const warnings = useRuleWarnings();
   const enabled = rules.filter((r) => r.enabled && !r.pending).length;
   // The rules an AI tool created (docs/dictation.md §25): they run once the user turns them on.
   const pending = pendingRules(rules);
@@ -433,6 +484,27 @@ export function Rules({ compose = false }: RulesProps) {
     },
   ];
 
+  /** The hints under a rule, if it has any. */
+  const hintsOf = (rule: ReplacementRule): ReactNode => {
+    const list = warnings.get(rule.id);
+    if (list === undefined || list.length === 0) return null;
+    return (
+      <ul
+        aria-label={t("rules.warnings.label", { name: rule.name })}
+        data-testid="rule-warnings"
+        className="flex flex-col gap-1 px-2 py-1.5 text-[11px] text-warning">
+        {list.map((w) => (
+          <li
+            key={`${w.kind}:${"other_id" in w ? w.other_id : w.entry_id}`}
+            className="flex items-start gap-1.5">
+            <Icon name="alert" size={12} className="mt-0.5 shrink-0" />
+            <span data-user-text>{warningText(w, t)}</span>
+          </li>
+        ))}
+      </ul>
+    );
+  };
+
   const editorKeys = (e: KeyboardEvent) => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
       e.preventDefault();
@@ -662,7 +734,7 @@ export function Rules({ compose = false }: RulesProps) {
               rowKey={(r) => r.id}
               dense
               selectedKey={draft?.id}
-              expandRow={(r) => (draft?.id === r.id ? editor : null)}
+              expandRow={(r) => (draft?.id === r.id ? editor : hintsOf(r))}
               rowClassName={(r) =>
                 r.pending
                   ? "bg-warning-soft/60 shadow-[inset_3px_0_0_var(--warning)]"

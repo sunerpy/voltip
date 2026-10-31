@@ -437,6 +437,20 @@
   },
   {
     "args": {
+      "heard": "提成",
+      "polished": "集成"
+    },
+    "name": "vocabulary_suggestion_ignore"
+  },
+  {
+    "args": {
+      "heard": "提成",
+      "polished": "集成"
+    },
+    "name": "vocabulary_suggestion_unignore"
+  },
+  {
+    "args": {
       "rule": {
         "case_sensitive": false,
         "enabled": true,

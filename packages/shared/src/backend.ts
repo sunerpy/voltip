@@ -1,4 +1,5 @@
 import type {
+  AcceptOutcome,
   AppRef,
   ArgsOf,
   BackupExportOutcome,
@@ -32,6 +33,10 @@ import type {
   PreviewDraft,
   Permission,
   SegmentText,
+  RuleWarning,
+  SuggestionAcceptArgs,
+  SuggestionsAnswer,
+  UndoOutcome,
   PermissionReport,
   GuidePage,
   ProjectLink,
@@ -111,6 +116,20 @@ export interface Backend {
    *  page's quick-fix card shows it before anything is saved. Rejects with the core's message when
    *  the draft is wrong on its own or `limit` is outside 1–`MAX_BACKTEST_LIMIT`. */
   vocabularyBacktest(args: VocabularyBacktestArgs): Promise<VocabularyBacktest>;
+  /** The dictionary's learning suggestions (`vocabulary_suggestions`, docs/dictation.md §16.10):
+   *  the pairs the AI clean-up changed in the newest recognised takes that the dictionary does not
+   *  correct yet and that are not ignored, most frequent first, at most `limit` (default and most
+   *  `MAX_SUGGESTIONS`); `history_off` while history recording is off. Desktop only. */
+  vocabularySuggestions(limit?: number): Promise<SuggestionsAnswer>;
+  /** 加入词典 on a suggestion (`vocabulary_suggestion_accept`): a new entry from history entry
+   *  `historyId`, or `heard` added to the entry with that spelling; resolves with what 撤销 needs,
+   *  or why nothing changed (a refusal is an outcome, not a rejection). */
+  vocabularySuggestionAccept(args: SuggestionAcceptArgs): Promise<AcceptOutcome>;
+  /** 撤销 of an accepted suggestion (`vocabulary_suggestion_undo`), by the undo's `id`. */
+  vocabularySuggestionUndo(id: string): Promise<UndoOutcome>;
+  /** The rules page's hints (`rules_warnings`, §16.10): duplicate rules, rules that turn each
+   *  other back, rules that undo a dictionary entry. */
+  rulesWarnings(): Promise<RuleWarning[]>;
   /** The replacement rules as TOML text (`rules_export`, §16.5). */
   rulesExport(): Promise<string>;
   /** The applications the history saw, newest first, one per id (`recent_apps`,

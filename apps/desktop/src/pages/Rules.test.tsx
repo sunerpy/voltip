@@ -475,3 +475,87 @@ describe("Rules page · rules an AI tool created (docs/dictation.md §25)", () =
     expect(within(page).getByRole("button", { name: "Enable 非书 → 飞书" })).toBeInTheDocument();
   });
 });
+
+describe("Rules page · hints (docs/dictation.md §16.10)", () => {
+  const A = "00000000-0000-4000-9000-0000000000d1";
+  const B = "00000000-0000-4000-9000-0000000000d2";
+  const C = "00000000-0000-4000-9000-0000000000d3";
+  const D = "00000000-0000-4000-9000-0000000000d4";
+  const VOLTIP = "00000000-0000-4000-8000-0000000000e1";
+
+  function hintsOf(name: string): string[] {
+    return within(screen.getByRole("list", { name: `规则提示：${name}` }))
+      .getAllByRole("listitem")
+      .map((li) => li.textContent ?? "");
+  }
+
+  it("name a duplicate, two rules that turn each other back and a rule that undoes an entry, and follow the lists", async () => {
+    const backend = new MockBackend({
+      devices: sampleDevices(1_758_700_000),
+      now: () => NOW,
+      rules: [
+        rule(A, "飞书", "非书", "飞书"),
+        rule(B, "飞书 2", "非书", "飞书 Lark"),
+        rule(C, "改回非书", "飞书", "非书"),
+        rule(D, "Voltip", "Voltip", "维他命"),
+      ],
+      dictionary: [
+        {
+          id: VOLTIP,
+          term: "Voltip",
+          heard_as: ["维他命"],
+          enabled: true,
+          source: { kind: "manual" },
+          created_at_ms: NOW,
+          updated_at_ms: NOW,
+        },
+      ],
+      history: [],
+    });
+    renderApp({ path: "/rules", backend });
+    expect(await screen.findByRole("list", { name: "规则提示：飞书" })).toBeInTheDocument();
+    expect(hintsOf("飞书")).toEqual([
+      "与规则「飞书 2」重复：匹配内容相同，只有排在前面的一条会命中。",
+      "与规则「改回非书」互为反向替换，文字可能被改回原样。",
+    ]);
+    expect(hintsOf("飞书 2")).toEqual([
+      "与规则「飞书」重复：匹配内容相同，只有排在前面的一条会命中。",
+    ]);
+    expect(hintsOf("改回非书")).toEqual(["与规则「飞书」互为反向替换，文字可能被改回原样。"]);
+    expect(hintsOf("Voltip")).toEqual([
+      "会把词条「Voltip」的正确写法改回「维他命」，抵消词典的纠正。",
+    ]);
+    // The hints follow the lists: the duplicate deleted, the entry turned off.
+    await act(async () => {
+      await backend.invoke("rules_remove", { id: B });
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole("list", { name: "规则提示：飞书 2" })).toBeNull();
+    });
+    expect(hintsOf("飞书")).toEqual(["与规则「改回非书」互为反向替换，文字可能被改回原样。"]);
+    await act(async () => {
+      await backend.invoke("dictionary_update", {
+        id: VOLTIP,
+        entry: { term: "Voltip", heard_as: ["维他命"], enabled: false },
+      });
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole("list", { name: "规则提示：Voltip" })).toBeNull();
+    });
+  });
+
+  it("rules without a problem have no hints", async () => {
+    const backend = seeded();
+    const asked = vi.spyOn(backend, "rulesWarnings");
+    renderApp({ path: "/rules", backend });
+    await screen.findByRole("table", { name: "规则" });
+    // The answer is in before nothing is checked for.
+    await waitFor(() => {
+      expect(asked).toHaveBeenCalled();
+    });
+    await act(async () => {
+      await asked.mock.results.at(-1)?.value;
+    });
+    expect(screen.queryAllByTestId("rule-warnings")).toEqual([]);
+  });
+});

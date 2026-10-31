@@ -532,6 +532,40 @@ pub enum CoreCommand {
     DictionaryRemove(Uuid),
     /// Reorder the dictionary (a permutation of the current ids; order = glossary priority).
     DictionaryReorder(Vec<Uuid>),
+    /// Add a learning suggestion to the dictionary (docs/dictation.md §16.10): a new entry from
+    /// history entry `history_id`, or `heard` added to the entry with that right spelling; `reply`
+    /// gets what 撤销 needs, or why nothing changed.
+    SuggestionAccept {
+        /// What the recogniser wrote.
+        heard: String,
+        /// What the polished text has instead: the right spelling.
+        polished: String,
+        /// The take the first example comes from.
+        history_id: Uuid,
+        /// Where the answer goes.
+        reply: crate::vocabulary::Reply<crate::vocabulary::AcceptOutcome>,
+    },
+    /// Take an accept back while the entry is still as the accept left it.
+    SuggestionUndo {
+        /// The accept (`SuggestionUndo::id`).
+        id: Uuid,
+        /// Where the answer goes.
+        reply: crate::vocabulary::Reply<crate::vocabulary::UndoOutcome>,
+    },
+    /// Leave a pair out of the learning suggestions from now on (忽略).
+    SuggestionIgnore {
+        /// What the recogniser wrote.
+        heard: String,
+        /// What the polished text has instead.
+        polished: String,
+    },
+    /// Suggest a pair again (取消忽略).
+    SuggestionUnignore {
+        /// What the recogniser wrote.
+        heard: String,
+        /// What the polished text has instead.
+        polished: String,
+    },
     /// Append a replacement rule.
     RuleAdd(RuleDraft),
     /// Replace a rule (id and position stay).
@@ -765,6 +799,9 @@ pub enum CoreEvent {
     Dictionary(Vec<DictionaryEntry>),
     /// Replacement rules in execution order (full replacement); on `Ready` and after every change.
     Rules(Vec<ReplacementRule>),
+    /// The pairs the learning suggestions leave out (docs/dictation.md §16.10), oldest first; on
+    /// `Ready` and after every change.
+    VocabularyIgnored(Vec<crate::vocabulary::IgnoredPair>),
     /// Scenes in matching order (full replacement); on `Ready` and after every change.
     Scenes(Vec<Scene>),
     /// Custom presets, full replacement (docs/dictation.md §21).
@@ -879,6 +916,7 @@ impl AppCore {
         let sent_texts = crate::phone::SentTexts::open(&config.data_dir);
         let (dictionary, dictionary_notice) = DictionaryStore::open(&config.data_dir);
         let (rules, rules_notice) = RuleStore::open(&config.data_dir);
+        let (ignored, ignored_notice) = crate::vocabulary::IgnoreStore::open(&config.data_dir);
         let scene_host = if config.manual_scenes {
             voltip_protocol::Platform::Android
         } else if config.builtin_scenes {
@@ -957,9 +995,14 @@ impl AppCore {
             recovery: Recovery { leftovers, stop: Arc::new(std::sync::atomic::AtomicBool::new(false)), tx: recover_tx },
             dictionary,
             rules,
+            ignored,
+            suggestion_undos: crate::vocabulary::UndoLog::default(),
             scenes,
             presets,
-            startup_notices: [dictionary_notice, rules_notice, scenes_notice, presets_notice, proxy_notice, mcp_notice].into_iter().flatten().collect(),
+            startup_notices: [dictionary_notice, rules_notice, ignored_notice, scenes_notice, presets_notice, proxy_notice, mcp_notice]
+                .into_iter()
+                .flatten()
+                .collect(),
             models,
             library,
             downloads: HashMap::new(),
@@ -1183,6 +1226,10 @@ struct Runtime {
     dictionary: DictionaryStore,
     /// `rules.json` (docs/dictation.md §16).
     rules: RuleStore,
+    /// The pairs the learning suggestions leave out (docs/dictation.md §16.10).
+    ignored: crate::vocabulary::IgnoreStore,
+    /// The accepted suggestions 撤销 can still take back, in memory only.
+    suggestion_undos: crate::vocabulary::UndoLog,
     /// `scenes.json` (docs/dictation.md §18).
     scenes: SceneStore,
     presets: PresetStore,
@@ -1416,6 +1463,7 @@ impl Runtime {
         self.start_recovery();
         self.emit(CoreEvent::Dictionary(self.dictionary.entries().to_vec()));
         self.emit(CoreEvent::Rules(self.rules.rules().to_vec()));
+        self.emit(CoreEvent::VocabularyIgnored(self.ignored.list().to_vec()));
         self.emit(CoreEvent::Scenes(self.scenes.scenes().to_vec()));
         self.emit(CoreEvent::Presets(self.presets.presets().to_vec()));
         self.emit_sent_texts();
@@ -1617,6 +1665,22 @@ impl Runtime {
             CoreCommand::DictionaryReorder(ids) => {
                 let result = self.dictionary.reorder(&ids);
                 self.dictionary_changed(result)
+            }
+            CoreCommand::SuggestionAccept { heard, polished, history_id, reply } => {
+                reply.send(self.accept_suggestion(&heard, &polished, history_id));
+                Ok(())
+            }
+            CoreCommand::SuggestionUndo { id, reply } => {
+                reply.send(self.undo_suggestion(id));
+                Ok(())
+            }
+            CoreCommand::SuggestionIgnore { heard, polished } => {
+                let result = self.ignored.add(&heard, &polished, now_ms());
+                self.ignored_changed(result)
+            }
+            CoreCommand::SuggestionUnignore { heard, polished } => {
+                let result = self.ignored.remove(&heard, &polished);
+                self.ignored_changed(result)
             }
             CoreCommand::RuleAdd(draft) => {
                 let result = self.rules.add(&draft, now_ms()).map(drop);
@@ -2429,6 +2493,40 @@ impl Runtime {
         result?;
         self.emit(CoreEvent::Rules(self.rules.rules().to_vec()));
         self.recompile_vocabulary();
+        Ok(())
+    }
+
+    /// 加入词典 on a learning suggestion (docs/dictation.md §16.10): on success the new list goes
+    /// out and the accept is remembered for 撤销.
+    fn accept_suggestion(&mut self, heard: &str, polished: &str, history_id: Uuid) -> crate::vocabulary::AcceptOutcome {
+        use crate::vocabulary::AcceptOutcome;
+        match crate::vocabulary::accept(&mut self.dictionary, self.rules.rules(), heard, polished, history_id, now_ms()) {
+            Ok(accepted) => {
+                let undo = self.suggestion_undos.push(accepted);
+                self.emit(CoreEvent::Dictionary(self.dictionary.entries().to_vec()));
+                self.recompile_vocabulary();
+                AcceptOutcome::Accepted { undo }
+            }
+            Err(refusal) => AcceptOutcome::Refused { refusal },
+        }
+    }
+
+    /// 撤销 of an accepted suggestion: once, and only while the entry is as the accept left it.
+    fn undo_suggestion(&mut self, id: Uuid) -> crate::vocabulary::UndoOutcome {
+        use crate::vocabulary::UndoOutcome;
+        let Some(accepted) = self.suggestion_undos.take(id) else { return UndoOutcome::Expired };
+        let outcome = crate::vocabulary::undo(&mut self.dictionary, &accepted);
+        if outcome == UndoOutcome::Undone {
+            self.emit(CoreEvent::Dictionary(self.dictionary.entries().to_vec()));
+            self.recompile_vocabulary();
+        }
+        outcome
+    }
+
+    /// After 忽略 / 取消忽略: on success tell the UI; a refusal changed nothing.
+    fn ignored_changed(&mut self, result: Result<(), crate::vocabulary::VocabularyError>) -> Result<(), CoreError> {
+        result?;
+        self.emit(CoreEvent::VocabularyIgnored(self.ignored.list().to_vec()));
         Ok(())
     }
 

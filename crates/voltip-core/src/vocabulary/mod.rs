@@ -11,9 +11,11 @@
 //! back in [`Step::error`] together with the unchanged input.
 
 mod backtest;
+mod ignored;
 mod matcher;
 pub mod packs;
 mod store;
+mod suggest;
 mod toml_io;
 
 use std::collections::BTreeMap;
@@ -23,9 +25,14 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 pub use backtest::{BACKTEST_LIMIT, BACKTEST_SNIPPET_CHARS, Backtest, BacktestDraft, BacktestExample, MAX_BACKTEST_EXAMPLES, MAX_BACKTEST_LIMIT, backtest};
+pub use ignored::{IGNORED_FILE_NAME, IGNORED_SCHEMA, IgnoreStore, IgnoredPair, MAX_IGNORED, validate_pair};
 use matcher::LiteralMatcher;
 pub use matcher::is_word_char;
 pub use store::{DICTIONARY_FILE_NAME, DictionaryStore, RULES_FILE_NAME, RuleStore, VOCABULARY_SCHEMA};
+pub use suggest::{
+    AcceptOutcome, Accepted, EntryClash, MAX_SUGGESTIONS, MAX_UNDOS, Refusal, Reply, Suggestion, SuggestionUndo, Suggestions, SuggestionsAnswer, UndoLog,
+    UndoOutcome, accept, suggestions, undo,
+};
 pub use toml_io::{RULES_TOML_VERSION, export_rules_toml, parse_rules_toml};
 
 /// Most dictionary entries kept.
@@ -420,6 +427,88 @@ pub fn check_rules(rules: &[ReplacementRule]) -> Result<(), VocabularyError> {
         }
     }
     Ok(())
+}
+
+/// A hint the rules page shows beside a rule (docs/dictation.md §16.10). Unlike [`check_rules`] it
+/// refuses nothing: it names rules that work against each other or against the dictionary. Only
+/// the rules that run and the entries that are on count.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RuleWarning {
+    /// Another rule finds exactly the same: the same pattern, kind and case setting.
+    Duplicate {
+        /// The rule the hint is about.
+        rule_id: Uuid,
+        /// The other rule.
+        other_id: Uuid,
+        /// Its name.
+        other_name: String,
+    },
+    /// Another rule of the same kind turns this one's replacement back into its pattern: the two
+    /// replace each other's text back and forth.
+    Inverse {
+        /// The rule the hint is about.
+        rule_id: Uuid,
+        /// The other rule.
+        other_id: Uuid,
+        /// Its name.
+        other_name: String,
+    },
+    /// The rule turns an entry's right spelling into one of its mis-hearings, undoing the
+    /// correction.
+    UndoesEntry {
+        /// The rule the hint is about.
+        rule_id: Uuid,
+        /// The entry.
+        entry_id: Uuid,
+        /// Its right spelling.
+        term: String,
+        /// The mis-hearing the rule writes instead.
+        heard: String,
+    },
+}
+
+impl RuleWarning {
+    /// The rule the hint is about.
+    pub fn rule_id(&self) -> Uuid {
+        match self {
+            Self::Duplicate { rule_id, .. } | Self::Inverse { rule_id, .. } | Self::UndoesEntry { rule_id, .. } => *rule_id,
+        }
+    }
+}
+
+/// The hints of `rules` against each other and against `dictionary`, in rule order: for each rule
+/// that runs, the first other rule that duplicates it, the first that reverses it, and every entry
+/// that is on whose right spelling it turns into one of its mis-hearings.
+pub fn rule_warnings(rules: &[ReplacementRule], dictionary: &[DictionaryEntry]) -> Vec<RuleWarning> {
+    let running: Vec<&ReplacementRule> = rules.iter().filter(|r| r.runs()).collect();
+    let entries: Vec<&DictionaryEntry> = dictionary.iter().filter(|e| e.enabled).collect();
+    let mut out = Vec::new();
+    for rule in &running {
+        let mut others = running.iter().filter(|o| o.id != rule.id);
+        if let Some(other) = others.clone().find(|o| o.kind == rule.kind && o.pattern == rule.pattern && o.case_sensitive == rule.case_sensitive) {
+            out.push(RuleWarning::Duplicate { rule_id: rule.id, other_id: other.id, other_name: other.name.clone() });
+        }
+        if rule.pattern != rule.replacement
+            && let Some(other) = others.find(|o| o.kind == rule.kind && o.pattern == rule.replacement && o.replacement == rule.pattern)
+        {
+            out.push(RuleWarning::Inverse { rule_id: rule.id, other_id: other.id, other_name: other.name.clone() });
+        }
+        if entries.is_empty() {
+            continue;
+        }
+        // The rule alone on each right spelling, as it would run on the final text.
+        let alone = Vocabulary::compile(&[], std::slice::from_ref(*rule));
+        for entry in &entries {
+            let after = alone.apply_rules(&entry.term).text;
+            if after != entry.term
+                && let Some(heard) = entry.heard_as.iter().find(|h| h.eq_ignore_ascii_case(&after))
+            {
+                out.push(RuleWarning::UndoesEntry { rule_id: rule.id, entry_id: entry.id, term: entry.term.clone(), heard: heard.clone() });
+            }
+        }
+    }
+    out
 }
 
 /// The glossary prompt for the cloud recogniser (OpenAI `prompt` field): the terms joined with

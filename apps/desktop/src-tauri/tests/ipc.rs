@@ -944,6 +944,104 @@ fn vocabulary_backtest_reads_the_recent_takes_through_the_command_layer() {
     });
 }
 
+/// docs/dictation.md §16.10 through the command layer: a take the fake clean-up rewrote gives a
+/// suggestion; 加入词典 answers with what 撤销 needs and the entry arrives in the state; 撤销 puts
+/// it back; 忽略 and 取消忽略 ride on the ignored list; the rules page's hints come from the
+/// lists; wrong arguments are the command's error.
+#[test]
+fn learning_suggestions_run_through_the_command_layer() {
+    let refiner = Arc::new(fakes::FakeRefiner::ok("你好，World"));
+    let ports = fakes::ports_with(
+        Arc::new(fakes::FakeAudio::speech()),
+        Arc::new(fakes::FakeTranscriber::ok(fakes::FAKE_TRANSCRIPT)),
+        Some(refiner),
+        Arc::new(fakes::FakeInjector::paste()),
+    );
+    with_running_app_on(ports, |_, webview, _| {
+        wait_state(webview, |s| s.identity.is_some());
+        assert_eq!(invoke(webview, "dictation_start", json!({})), Ok(Value::Null));
+        wait_state(webview, |s| matches!(s.dictation.phase, DictationPhase::Listening { .. }));
+        assert_eq!(invoke(webview, "dictation_stop", json!({})), Ok(Value::Null));
+        let take = wait_state(webview, |s| s.history_recent.len() == 1).history_recent[0].clone();
+        assert!(take.refined && take.text == "你好，World", "{take:?}");
+
+        let answer = invoke(webview, "vocabulary_suggestions", json!({})).unwrap();
+        assert_eq!(
+            (answer["status"].as_str(), answer["scanned"].as_u64(), answer["refined"].as_u64(), answer["total"].as_u64()),
+            (Some("ready"), Some(1), Some(1), Some(1)),
+            "{answer}"
+        );
+        assert_eq!((answer["pairs"][0]["heard"].as_str(), answer["pairs"][0]["polished"].as_str()), (Some("世界"), Some("World")));
+        assert_eq!(answer["pairs"][0]["examples"][0]["history_id"], take.id.to_string());
+        assert_eq!(invoke(webview, "vocabulary_suggestions", json!({ "limit": 1 })).unwrap()["pairs"].as_array().map(Vec::len), Some(1));
+        let err = invoke(webview, "vocabulary_suggestions", json!({ "limit": 0 })).unwrap_err();
+        assert!(err.as_str().unwrap().starts_with("vocabulary_suggestions: limit"), "{err}");
+
+        let pair = json!({ "heard": "世界", "polished": "World", "historyId": take.id });
+        let accepted = invoke(webview, "vocabulary_suggestion_accept", pair.clone()).unwrap();
+        assert_eq!(
+            (accepted["kind"].as_str(), accepted["undo"]["term"].as_str(), accepted["undo"]["created"].as_bool()),
+            (Some("accepted"), Some("World"), Some(true)),
+            "{accepted}"
+        );
+        let st = wait_state(webview, |s| s.dictionary.len() == 1);
+        assert_eq!((st.dictionary[0].term.as_str(), st.dictionary[0].heard_as.clone()), ("World", vec!["世界".to_owned()]));
+        assert_eq!(invoke(webview, "vocabulary_suggestions", json!({})).unwrap()["total"], 0, "the dictionary corrects it now");
+        let again = invoke(webview, "vocabulary_suggestion_accept", pair.clone()).unwrap();
+        assert_eq!(
+            (again["kind"].as_str(), again["refusal"]["kind"].as_str(), again["refusal"]["clash"].as_str()),
+            (Some("refused"), Some("entry"), Some("heard_taken")),
+            "{again}"
+        );
+        assert_eq!(invoke(webview, "vocabulary_suggestion_undo", json!({ "id": accepted["undo"]["id"] })), Ok(json!({ "kind": "undone" })));
+        wait_state(webview, |s| s.dictionary.is_empty());
+        assert_eq!(invoke(webview, "vocabulary_suggestion_undo", json!({ "id": accepted["undo"]["id"] })), Ok(json!({ "kind": "expired" })));
+        assert!(invoke(webview, "vocabulary_suggestion_undo", json!({ "id": "nope" })).is_err(), "the id is a UUID");
+        let err = invoke(webview, "vocabulary_suggestion_accept", json!({ "heard": " ", "polished": "World", "historyId": take.id })).unwrap_err();
+        assert!(err.as_str().unwrap().contains("不能为空"), "{err}");
+        assert!(invoke(webview, "vocabulary_suggestion_accept", json!({ "heard": "世界", "polished": "World", "historyId": "nope" })).is_err());
+
+        let ignore = json!({ "heard": "世界", "polished": "World" });
+        let before = voltip_core::now_ms();
+        assert_eq!(invoke(webview, "vocabulary_suggestion_ignore", ignore.clone()), Ok(Value::Null));
+        wait_state(webview, |s| s.vocabulary_ignored.len() == 1);
+        assert_eq!(invoke(webview, "vocabulary_suggestions", json!({})).unwrap()["total"], 0, "ignored");
+        // 已忽略 reads the pairs and when each was ignored from the state a page mounts with; 取消忽略
+        // works for a pair no take has.
+        let other = json!({ "heard": "集成", "polished": "继承" });
+        assert_eq!(invoke(webview, "vocabulary_suggestion_ignore", other.clone()), Ok(Value::Null));
+        wait_state(webview, |s| s.vocabulary_ignored.len() == 2);
+        let state = invoke(webview, "core_state", json!({})).unwrap();
+        let listed = state["vocabulary_ignored"].as_array().cloned().unwrap_or_default();
+        assert_eq!(
+            listed.iter().map(|p| (p["heard"].as_str().unwrap_or_default(), p["polished"].as_str().unwrap_or_default())).collect::<Vec<_>>(),
+            [("世界", "World"), ("集成", "继承")],
+            "{state}"
+        );
+        let after = voltip_core::now_ms();
+        assert!(listed.iter().all(|p| p["at_ms"].as_u64().is_some_and(|at| (before..=after).contains(&at))), "{listed:?}");
+        assert_eq!(invoke(webview, "vocabulary_suggestion_unignore", other), Ok(Value::Null));
+        wait_state(webview, |s| s.vocabulary_ignored.len() == 1);
+        assert_eq!(invoke(webview, "vocabulary_suggestion_unignore", ignore), Ok(Value::Null));
+        wait_state(webview, |s| s.vocabulary_ignored.is_empty());
+        assert_eq!(invoke(webview, "vocabulary_suggestions", json!({})).unwrap()["total"], 1);
+        assert!(invoke(webview, "vocabulary_suggestion_ignore", json!({ "heard": "同", "polished": "同" })).is_err(), "refused here");
+
+        assert_eq!(invoke(webview, "rules_warnings", json!({})), Ok(json!([])));
+        for name in ["一", "二"] {
+            let rule = json!({ "rule": { "name": name, "pattern": "世界", "replacement": "World" } });
+            assert_eq!(invoke(webview, "rules_add", rule), Ok(Value::Null));
+        }
+        wait_state(webview, |s| s.rules.len() == 2);
+        let warnings = invoke(webview, "rules_warnings", json!({})).unwrap();
+        assert_eq!(
+            warnings.as_array().map(|w| w.iter().map(|w| w["kind"].as_str().unwrap_or_default().to_owned()).collect::<Vec<_>>()),
+            Some(vec!["duplicate".to_owned(), "duplicate".to_owned()]),
+            "{warnings}"
+        );
+    });
+}
+
 /// Scenes and context (docs/dictation.md §18) through the command layer: a draft wrong on its own
 /// is the command's error, a name clash an `error` event; the list rides on `scenes` events and
 /// `core_state`; the context switch persists; a take on the fakes with a probe carries the scene on
@@ -1619,6 +1717,10 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
             "rules_export",
             "vocabulary_preview",
             "vocabulary_backtest",
+            "vocabulary_suggestions",
+            "vocabulary_suggestion_accept",
+            "vocabulary_suggestion_undo",
+            "rules_warnings",
             "recent_apps",
             "history_query",
             "history_entry",

@@ -18,6 +18,7 @@ import {
   Segmented,
   Table,
   type TableColumn,
+  Tabs,
   Textarea,
   useBackend,
   useI18n,
@@ -35,9 +36,23 @@ import {
   movedBy,
   splitHeardAs,
 } from "../features/vocabulary/vocabulary";
+import { SuggestionsPanel } from "./dictionary/Suggestions";
+import { useSuggestions } from "./dictionary/useSuggestions";
 
 /** `mcp`: the entries an AI tool wrote (docs/dictation.md §25), offered while there are any. */
 type Filter = "all" | "enabled" | "disabled" | "mcp";
+
+/** The page's views: the entries, and the learning suggestions (docs/dictation.md §16.10). */
+type View = "entries" | "suggestions";
+
+const TAB_ID: Record<View, string> = {
+  entries: "dictionary-tab-entries",
+  suggestions: "dictionary-tab-suggestions",
+};
+const PANEL_ID: Record<View, string> = {
+  entries: "dictionary-panel-entries",
+  suggestions: "dictionary-panel-suggestions",
+};
 
 /** The row being edited; `id` is absent for a new entry (shown above the table). */
 interface Editing {
@@ -51,7 +66,8 @@ const ASCII_ONLY = /^[\x20-\x7e]+$/;
 /** The personal dictionary (docs/dictation.md §16): the core's `state.dictionary`, in matching
  *  order. Add / edit / enable / reorder / delete go through the `dictionary_*` commands; the hit
  *  counts come from the history rows (`HistoryEntry.vocabulary`); the test panel asks the core
- *  (`vocabulary_preview`), so it corrects exactly as a take would. */
+ *  (`vocabulary_preview`), so it corrects exactly as a take would. 学习建议 (§16.10) is the second
+ *  view: what AI polish changed in the history, for the dictionary. */
 export function Dictionary() {
   const shell = useShell();
   const { backend } = useBackend();
@@ -66,6 +82,9 @@ export function Dictionary() {
   const [deleting, setDeleting] = useState<string | undefined>(undefined);
   const [sample, setSample] = useState("");
   const preview = useVocabularyPreview(sample);
+  const [view, setView] = useState<View>("entries");
+  // Held by the page, so switching views keeps the rows acted on and their 撤销.
+  const suggestions = useSuggestions();
 
   const hits = useHitTotals("corrections");
   const enabled = entries.filter((e) => e.enabled).length;
@@ -93,10 +112,18 @@ export function Dictionary() {
   }, [entries, shownFilter, query]);
 
   const startNew = useCallback(() => {
+    setView("entries");
     setEditing({ id: undefined, term: "", heard: "" });
     setSaveError(undefined);
     setDeleting(undefined);
   }, []);
+  /** 查看词条 on a suggestion's refusal: the entry, picked out in the whole list. */
+  const showEntry = (id: string) => {
+    setView("entries");
+    setHighlight(id);
+    setQuery("");
+    setFilter("all");
+  };
   // Ctrl N: a new entry (not while a modal is over the page).
   usePageShortcuts((e) => {
     if (!withCommand(e) || e.key.toLowerCase() !== "n") return false;
@@ -388,13 +415,42 @@ export function Dictionary() {
       className="mx-auto flex w-full max-w-[1440px] flex-col gap-4 p-6"
       data-testid="page-dictionary">
       {/* list left, test panel right. The test column follows the window between 280 and
-          360 px (designed at 320); below `lg` the panel drops under the list. */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)]">
+          360 px (designed at 320); below `lg` the panel drops under the list. 学习建议 takes the
+          whole width: beside the panel its pairs were cut short in the default window. */}
+      <div
+        className={
+          view === "entries"
+            ? "grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)]"
+            : "grid grid-cols-1 gap-4"
+        }>
         <div className="flex min-w-0 flex-col gap-3">
           <div className="flex flex-wrap items-center gap-3">
             <h2 className="text-[18px] font-semibold text-fg">{t("dictionary.title")}</h2>
             <Badge mono>{t("dictionary.countBadge", { n: entries.length })}</Badge>
             <Badge tone="ok">{t("dictionary.enabledBadge", { n: enabled })}</Badge>
+            <Tabs
+              size="sm"
+              label={t("dictionary.tabs.label")}
+              value={view}
+              onChange={setView}
+              items={[
+                {
+                  value: "entries",
+                  label: t("dictionary.tabs.entries"),
+                  id: TAB_ID.entries,
+                  panelId: PANEL_ID.entries,
+                },
+                {
+                  value: "suggestions",
+                  label:
+                    suggestions.count === undefined || suggestions.count === 0
+                      ? t("dictionary.tabs.suggestions")
+                      : t("dictionary.tabs.suggestionsCount", { n: suggestions.count }),
+                  id: TAB_ID.suggestions,
+                  panelId: PANEL_ID.suggestions,
+                },
+              ]}
+            />
             <div className="ml-auto flex gap-2">
               <Button
                 size="sm"
@@ -408,168 +464,193 @@ export function Dictionary() {
             </div>
           </div>
 
-          <Card padding="sm" className="flex items-start gap-3" data-testid="dictionary-explain">
-            <Lamp tone={enabled > 0 ? "ok" : "idle"} className="mt-1" />
-            <div className="min-w-0 flex-1">
-              <div className="text-[13px] font-medium text-fg">{t("dictionary.explainTitle")}</div>
-              <div className="text-[12px] leading-5 text-fg-muted">{t("dictionary.explain")}</div>
-              <div className="mono mt-1 text-[11px] text-fg-subtle">
-                {t("dictionary.facts", { limit: MAX_DICTIONARY_ENTRIES, heard: MAX_HEARD_AS })}
-              </div>
+          {view === "suggestions" ? (
+            <div
+              role="tabpanel"
+              id={PANEL_ID.suggestions}
+              aria-labelledby={TAB_ID.suggestions}
+              className="flex min-w-0 flex-col gap-3">
+              <SuggestionsPanel view={suggestions} onShowEntry={showEntry} />
             </div>
-          </Card>
+          ) : (
+            <div
+              role="tabpanel"
+              id={PANEL_ID.entries}
+              aria-labelledby={TAB_ID.entries}
+              className="flex min-w-0 flex-col gap-3">
+              <Card
+                padding="sm"
+                className="flex items-start gap-3"
+                data-testid="dictionary-explain">
+                <Lamp tone={enabled > 0 ? "ok" : "idle"} className="mt-1" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-[13px] font-medium text-fg">
+                    {t("dictionary.explainTitle")}
+                  </div>
+                  <div className="text-[12px] leading-5 text-fg-muted">
+                    {t("dictionary.explain")}
+                  </div>
+                  <div className="mono mt-1 text-[11px] text-fg-subtle">
+                    {t("dictionary.facts", { limit: MAX_DICTIONARY_ENTRIES, heard: MAX_HEARD_AS })}
+                  </div>
+                </div>
+              </Card>
 
-          {top.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2" data-testid="dictionary-hits">
-              <span className="eyebrow mr-1">{t("dictionary.hitsTitle")}</span>
-              {top.map((e) => (
-                <Chip
-                  key={e.id}
-                  count={`×${hits.get(e.id) ?? 0}`}
-                  active={highlight === e.id}
-                  onClick={() => {
+              {top.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2" data-testid="dictionary-hits">
+                  <span className="eyebrow mr-1">{t("dictionary.hitsTitle")}</span>
+                  {top.map((e) => (
+                    <Chip
+                      key={e.id}
+                      count={`×${hits.get(e.id) ?? 0}`}
+                      active={highlight === e.id}
+                      onClick={() => {
+                        setHighlight(e.id);
+                        setQuery("");
+                        setFilter("all");
+                      }}>
+                      <span data-user-text>{e.term}</span>
+                    </Chip>
+                  ))}
+                </div>
+              )}
+
+              <Panel
+                eyebrow={t("dictionary.list")}
+                right={
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <Input
+                      icon="search"
+                      placeholder={t("dictionary.searchPlaceholder")}
+                      size="sm"
+                      value={query}
+                      onChange={(e) => {
+                        setQuery(e.target.value);
+                      }}
+                      className="w-56"
+                      aria-label={t("dictionary.searchLabel")}
+                    />
+                    <Segmented
+                      label={t("dictionary.filterLabel")}
+                      variant="ink"
+                      size="sm"
+                      value={shownFilter}
+                      onChange={setFilter}
+                      options={[
+                        { value: "all", label: t("dictionary.filter.all") },
+                        { value: "enabled", label: t("dictionary.filter.enabled") },
+                        { value: "disabled", label: t("dictionary.filter.disabled") },
+                        ...(fromTools
+                          ? [{ value: "mcp" as const, label: t("dictionary.filter.mcp") }]
+                          : []),
+                      ]}
+                    />
+                  </div>
+                }
+                padding="sm">
+                {editing?.id === undefined && editing && (
+                  <div
+                    className="mb-2 flex items-start gap-2 rounded-6 bg-inset p-2"
+                    data-testid="add-row"
+                    onKeyDown={cancelOnEscape}>
+                    <div className="flex-1">{termInput(editing)}</div>
+                    <div className="flex-1">{heardInput(editing)}</div>
+                    {editorButtons}
+                  </div>
+                )}
+                <Table
+                  label={t("dictionary.table")}
+                  columns={columns}
+                  rows={visible}
+                  rowKey={(e) => e.id}
+                  selectedKey={highlight}
+                  onSelect={(e) => {
                     setHighlight(e.id);
-                    setQuery("");
-                    setFilter("all");
-                  }}>
-                  <span data-user-text>{e.term}</span>
-                </Chip>
-              ))}
+                  }}
+                  empty={
+                    entries.length === 0 ? (
+                      <EmptyState
+                        compact
+                        title={t("dictionary.empty.title")}
+                        actions={
+                          <Button size="sm" variant="primary" onClick={startNew}>
+                            {t("dictionary.newEntry")}
+                          </Button>
+                        }>
+                        {t("dictionary.empty.body")}
+                      </EmptyState>
+                    ) : (
+                      <EmptyState compact title={t("dictionary.noMatch")} />
+                    )
+                  }
+                />
+                <div className="mt-2 text-[11px] text-fg-subtle">{t("dictionary.legend")}</div>
+              </Panel>
             </div>
           )}
-
-          <Panel
-            eyebrow={t("dictionary.list")}
-            right={
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                <Input
-                  icon="search"
-                  placeholder={t("dictionary.searchPlaceholder")}
-                  size="sm"
-                  value={query}
-                  onChange={(e) => {
-                    setQuery(e.target.value);
-                  }}
-                  className="w-56"
-                  aria-label={t("dictionary.searchLabel")}
-                />
-                <Segmented
-                  label={t("dictionary.filterLabel")}
-                  variant="ink"
-                  size="sm"
-                  value={shownFilter}
-                  onChange={setFilter}
-                  options={[
-                    { value: "all", label: t("dictionary.filter.all") },
-                    { value: "enabled", label: t("dictionary.filter.enabled") },
-                    { value: "disabled", label: t("dictionary.filter.disabled") },
-                    ...(fromTools
-                      ? [{ value: "mcp" as const, label: t("dictionary.filter.mcp") }]
-                      : []),
-                  ]}
-                />
-              </div>
-            }
-            padding="sm">
-            {editing?.id === undefined && editing && (
-              <div
-                className="mb-2 flex items-start gap-2 rounded-6 bg-inset p-2"
-                data-testid="add-row"
-                onKeyDown={cancelOnEscape}>
-                <div className="flex-1">{termInput(editing)}</div>
-                <div className="flex-1">{heardInput(editing)}</div>
-                {editorButtons}
-              </div>
-            )}
-            <Table
-              label={t("dictionary.table")}
-              columns={columns}
-              rows={visible}
-              rowKey={(e) => e.id}
-              selectedKey={highlight}
-              onSelect={(e) => {
-                setHighlight(e.id);
-              }}
-              empty={
-                entries.length === 0 ? (
-                  <EmptyState
-                    compact
-                    title={t("dictionary.empty.title")}
-                    actions={
-                      <Button size="sm" variant="primary" onClick={startNew}>
-                        {t("dictionary.newEntry")}
-                      </Button>
-                    }>
-                    {t("dictionary.empty.body")}
-                  </EmptyState>
-                ) : (
-                  <EmptyState compact title={t("dictionary.noMatch")} />
-                )
-              }
-            />
-            <div className="mt-2 text-[11px] text-fg-subtle">{t("dictionary.legend")}</div>
-          </Panel>
         </div>
 
-        <Panel
-          eyebrow={t("dictionary.test.title")}
-          radius={14}
-          className="min-w-0"
-          bodyClassName="flex flex-col gap-3">
-          <Textarea
-            aria-label={t("dictionary.test.inputLabel")}
-            rows={6}
-            value={sample}
-            placeholder={t("dictionary.test.placeholder")}
-            onChange={(e) => {
-              setSample(e.target.value);
-            }}
-          />
-          <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              disabled={lastRaw === undefined}
-              onClick={() => {
-                setSample(lastRaw ?? "");
-              }}>
-              {t("dictionary.test.useLast")}
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => {
-                void navigator.clipboard
-                  ?.readText()
-                  .then((clip) => {
-                    setSample(clip);
-                  })
-                  .catch(() => {
-                    shell.toast({
-                      message: t("dictionary.test.clipboardFailed"),
-                      duration: 2000,
-                      tone: "danger",
+        {view === "entries" && (
+          <Panel
+            eyebrow={t("dictionary.test.title")}
+            radius={14}
+            className="min-w-0"
+            bodyClassName="flex flex-col gap-3">
+            <Textarea
+              aria-label={t("dictionary.test.inputLabel")}
+              rows={6}
+              value={sample}
+              placeholder={t("dictionary.test.placeholder")}
+              onChange={(e) => {
+                setSample(e.target.value);
+              }}
+            />
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                disabled={lastRaw === undefined}
+                onClick={() => {
+                  setSample(lastRaw ?? "");
+                }}>
+                {t("dictionary.test.useLast")}
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => {
+                  void navigator.clipboard
+                    ?.readText()
+                    .then((clip) => {
+                      setSample(clip);
+                    })
+                    .catch(() => {
+                      shell.toast({
+                        message: t("dictionary.test.clipboardFailed"),
+                        duration: 2000,
+                        tone: "danger",
+                      });
                     });
-                  });
-              }}>
-              {t("dictionary.test.useClipboard")}
-            </Button>
-            <Button
-              size="sm"
-              variant="text"
-              onClick={() => {
-                setSample("");
-              }}>
-              {t("dictionary.test.clear")}
-            </Button>
-          </div>
-          <TestResult
-            preview={preview}
-            empty={sample.length === 0}
-            termOf={termOf}
-            onCopy={(text) => {
-              void copyWithToast(shell, text, t("dictionary.test.copiedCorrected"));
-            }}
-          />
-        </Panel>
+                }}>
+                {t("dictionary.test.useClipboard")}
+              </Button>
+              <Button
+                size="sm"
+                variant="text"
+                onClick={() => {
+                  setSample("");
+                }}>
+                {t("dictionary.test.clear")}
+              </Button>
+            </div>
+            <TestResult
+              preview={preview}
+              empty={sample.length === 0}
+              termOf={termOf}
+              onCopy={(text) => {
+                void copyWithToast(shell, text, t("dictionary.test.copiedCorrected"));
+              }}
+            />
+          </Panel>
+        )}
       </div>
     </div>
   );

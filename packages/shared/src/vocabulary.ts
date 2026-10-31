@@ -97,6 +97,16 @@ export function validateDictionaryDraft(draft: DictionaryDraft): DictionaryDraft
   return { term, heard_as: heardAs, enabled: draft.enabled };
 }
 
+/** A learning suggestion's pair as the core takes it (`validate_pair`, docs/dictation.md §16.10):
+ *  both sides trimmed single lines of 1–`MAX_TERM_CHARS` characters, not the same; or a
+ *  `dictionary: …` refusal. */
+export function validateSuggestionPair(heard: string, polished: string): [string, string] {
+  const h = cleanLine(heard, "识别结果", MAX_TERM_CHARS, dictErr);
+  const p = cleanLine(polished, "润色结果", MAX_TERM_CHARS, dictErr);
+  if (h === p) throw dictErr(`「${h}」前后相同`);
+  return [h, p];
+}
+
 /** The whole list: at most `MAX_DICTIONARY_ENTRIES`, unique terms, a mis-hearing belongs to one
  *  entry and is nobody's term. Each entry is checked against the earlier ones, so a refusal names
  *  the entry that was there first. */

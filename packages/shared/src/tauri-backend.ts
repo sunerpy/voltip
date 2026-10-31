@@ -20,8 +20,10 @@ import {
   type ProviderId,
   type SegmentText,
   type SiteId,
+  type SuggestionAcceptArgs,
   type VocabularyBacktestArgs,
   UI_EVENT_NAME,
+  acceptOutcomeSchema,
   appRefSchema,
   audioDeviceSchema,
   backupExportOutcomeSchema,
@@ -44,9 +46,12 @@ import {
   levelFrameSchema,
   pasteOutcomeSchema,
   permissionReportSchema,
+  ruleWarningSchema,
   stagedAttachmentSchema,
+  suggestionsAnswerSchema,
   uiEventSchema,
   uiStateSchema,
+  undoOutcomeSchema,
   updateStatusSchema,
   vocabularyBacktestSchema,
   vocabularyPreviewSchema,
@@ -196,6 +201,30 @@ export class TauriBackend implements Backend {
       limit: args.limit ?? null,
     });
     return vocabularyBacktestSchema.parse(raw);
+  }
+
+  async vocabularySuggestions(limit?: number) {
+    const raw = await this.transport.invoke("vocabulary_suggestions", { limit: limit ?? null });
+    return suggestionsAnswerSchema.parse(raw);
+  }
+
+  async vocabularySuggestionAccept(args: SuggestionAcceptArgs) {
+    const raw = await this.transport.invoke("vocabulary_suggestion_accept", {
+      heard: args.heard,
+      polished: args.polished,
+      historyId: args.historyId,
+    });
+    return acceptOutcomeSchema.parse(raw);
+  }
+
+  async vocabularySuggestionUndo(id: string) {
+    const raw = await this.transport.invoke("vocabulary_suggestion_undo", { id });
+    return undoOutcomeSchema.parse(raw);
+  }
+
+  async rulesWarnings() {
+    const raw = await this.transport.invoke("rules_warnings");
+    return ruleWarningSchema.array().parse(raw);
   }
 
   async rulesExport() {

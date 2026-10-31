@@ -15,11 +15,11 @@ export type BacktestState =
 const IDLE: BacktestState = { kind: "idle" };
 const COMPUTING: BacktestState = { kind: "computing" };
 
-/** What `draft` would change in the recent takes, leaving out `historyId` (`vocabulary_backtest`,
- *  docs/dictation.md §16.9): asked 200 ms after the draft last changed, and again when the
- *  dictionary or the history changes; `computing` until the answer for this draft is in.
- *  `undefined` asks nothing. */
-export function useBacktest(draft: BacktestDraft | undefined, historyId: string): BacktestState {
+/** What `draft` would change in the recent takes, leaving out `historyId` when given
+ *  (`vocabulary_backtest`, docs/dictation.md §16.9; the dictionary's suggestions leave none out,
+ *  §16.10): asked 200 ms after the draft last changed, and again when the dictionary or the history
+ *  changes; `computing` until the answer for this draft is in. `undefined` asks nothing. */
+export function useBacktest(draft: BacktestDraft | undefined, historyId?: string): BacktestState {
   const { backend } = useBackend();
   const { dictionary, history_total: total } = useUiState();
   const [answer, setAnswer] = useState<{ key: string; state: BacktestState } | undefined>();

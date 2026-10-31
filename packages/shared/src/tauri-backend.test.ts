@@ -165,6 +165,56 @@ describe("TauriBackend", () => {
     await expect(broken.rulesExport()).rejects.toThrow(/invalid|expected/i);
   });
 
+  it("the learning suggestions' queries (§16.10) send camelCase arguments and validate the answers", async () => {
+    const calls: { command: string; args: unknown }[] = [];
+    const ready = { status: "ready", scanned: 2, refined: 1, skipped: 0, total: 0, pairs: [] };
+    const undo = { id: "u", entry_id: "e", term: "Voltip", created: true, previous_heard_as: [] };
+    const answers: Record<string, unknown> = {
+      vocabulary_suggestions: ready,
+      vocabulary_suggestion_accept: { kind: "accepted", undo },
+      vocabulary_suggestion_undo: { kind: "undone" },
+      rules_warnings: [{ kind: "duplicate", rule_id: "a", other_id: "b", other_name: "B" }],
+    };
+    const backend = new TauriBackend({
+      ...fakeTransport().transport,
+      invoke: (command, args) => {
+        calls.push({ command, args });
+        return Promise.resolve(answers[command]);
+      },
+    });
+    expect(await backend.vocabularySuggestions()).toEqual(ready);
+    expect(await backend.vocabularySuggestions(20)).toEqual(ready);
+    expect(
+      await backend.vocabularySuggestionAccept({
+        heard: "维他命",
+        polished: "Voltip",
+        historyId: "h",
+      }),
+    ).toEqual({ kind: "accepted", undo });
+    expect(await backend.vocabularySuggestionUndo("u")).toEqual({ kind: "undone" });
+    expect(await backend.rulesWarnings()).toHaveLength(1);
+    expect(calls).toStrictEqual([
+      { command: "vocabulary_suggestions", args: { limit: null } },
+      { command: "vocabulary_suggestions", args: { limit: 20 } },
+      {
+        command: "vocabulary_suggestion_accept",
+        args: { heard: "维他命", polished: "Voltip", historyId: "h" },
+      },
+      { command: "vocabulary_suggestion_undo", args: { id: "u" } },
+      { command: "rules_warnings", args: undefined },
+    ]);
+    const broken = new TauriBackend({
+      ...fakeTransport().transport,
+      invoke: () => Promise.resolve({ status: "ready" }),
+    });
+    await expect(broken.vocabularySuggestions()).rejects.toThrow(/invalid|expected/i);
+    await expect(
+      broken.vocabularySuggestionAccept({ heard: "a", polished: "b", historyId: "h" }),
+    ).rejects.toThrow(/invalid|expected/i);
+    await expect(broken.vocabularySuggestionUndo("u")).rejects.toThrow(/invalid|expected/i);
+    await expect(broken.rulesWarnings()).rejects.toThrow(/invalid|expected/i);
+  });
+
   it("regression: recentApps queries recent_apps without arguments and validates the list", async () => {
     const calls: { command: string; args: unknown }[] = [];
     const apps = [{ id: "code", name: "Code" }];

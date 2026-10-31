@@ -380,3 +380,72 @@ fn a_rule_that_does_not_compile_is_skipped() {
     let step = vocab.apply_rules("a");
     assert_eq!((step.text.as_str(), step.hits), ("b", vec![VocabularyHit { id: fine.id, count: 1 }]));
 }
+
+/// docs/dictation.md §16.10: the rules page's hints, in rule order — a rule that finds exactly
+/// what another finds, two rules that turn each other's text back, and a rule that turns an
+/// entry's right spelling into one of its mis-hearings.
+#[test]
+fn rule_warnings_name_duplicates_inverses_and_rules_that_undo_an_entry() {
+    let a = rule("非书", RuleKind::Literal, "非书", "飞书");
+    let b = rule("非书 2", RuleKind::Literal, "非书", "飞书 Lark");
+    let c = rule("飞书 → 非书", RuleKind::Literal, "飞书", "非书");
+    let d = rule("Voltip", RuleKind::Literal, "Voltip", "维他命");
+    let shout = ReplacementRule { case_sensitive: false, ..rule("大写", RuleKind::Regex, "kubernetes", "酷伯") };
+    let voltip = entry("Voltip", &["维他命"]);
+    let kubernetes = entry("Kubernetes", &["酷伯"]);
+    let warnings = rule_warnings(&[a.clone(), b.clone(), c.clone(), d.clone(), shout.clone()], &[voltip.clone(), kubernetes.clone()]);
+    assert_eq!(
+        warnings,
+        [
+            RuleWarning::Duplicate { rule_id: a.id, other_id: b.id, other_name: b.name.clone() },
+            RuleWarning::Inverse { rule_id: a.id, other_id: c.id, other_name: c.name.clone() },
+            RuleWarning::Duplicate { rule_id: b.id, other_id: a.id, other_name: a.name.clone() },
+            RuleWarning::Inverse { rule_id: c.id, other_id: a.id, other_name: a.name.clone() },
+            RuleWarning::UndoesEntry { rule_id: d.id, entry_id: voltip.id, term: "Voltip".into(), heard: "维他命".into() },
+            RuleWarning::UndoesEntry { rule_id: shout.id, entry_id: kubernetes.id, term: "Kubernetes".into(), heard: "酷伯".into() },
+        ]
+    );
+    assert_eq!(warnings[4].rule_id(), d.id);
+    assert_eq!(
+        serde_json::to_value(&warnings[1]).unwrap(),
+        serde_json::json!({ "kind": "inverse", "rule_id": a.id, "other_id": c.id, "other_name": "飞书 → 非书" })
+    );
+    assert_eq!(
+        serde_json::to_value(&warnings[4]).unwrap(),
+        serde_json::json!({ "kind": "undoes_entry", "rule_id": d.id, "entry_id": voltip.id, "term": "Voltip", "heard": "维他命" })
+    );
+}
+
+/// Patterns that differ in letter case or in the case setting are not duplicates; a regex and a
+/// literal rule are neither duplicates nor inverses; rules that are off or wait for approval,
+/// entries that are off, and a rule that writes something else say nothing.
+#[test]
+fn rule_warnings_leave_out_near_misses_and_what_does_not_run() {
+    let upper = rule("Foo", RuleKind::Literal, "Foo", "x");
+    let lower = rule("foo", RuleKind::Literal, "foo", "x");
+    let loose = ReplacementRule { case_sensitive: false, ..rule("Foo 2", RuleKind::Literal, "Foo", "x") };
+    assert!(rule_warnings(&[upper.clone(), lower, loose], &[]).is_empty(), "letter case and the case setting differ");
+    let regex = rule("非书 regex", RuleKind::Regex, "非书", "飞书");
+    let literal_back = rule("飞书 → 非书", RuleKind::Literal, "飞书", "非书");
+    let literal_same = rule("非书 literal", RuleKind::Literal, "非书", "飞书");
+    assert!(rule_warnings(&[regex.clone(), literal_back.clone()], &[]).is_empty(), "a regex and a literal rule are not inverses");
+    assert!(rule_warnings(&[regex, literal_same.clone()], &[]).is_empty(), "nor duplicates");
+    let off = ReplacementRule { enabled: false, ..literal_back.clone() };
+    let waiting = ReplacementRule { pending: true, enabled: false, ..rule("非书 waiting", RuleKind::Literal, "非书", "飞书") };
+    assert!(rule_warnings(&[literal_same.clone(), off, waiting], &[]).is_empty(), "rules that do not run");
+    let voltip = DictionaryEntry { enabled: false, ..entry("Voltip", &["维他命"]) };
+    let back = rule("Voltip", RuleKind::Literal, "Voltip", "维他命");
+    assert!(rule_warnings(std::slice::from_ref(&back), &[voltip]).is_empty(), "an entry that is off");
+    let elsewhere = rule("Voltip → VOLTIP", RuleKind::Literal, "Voltip", "VOLTIP");
+    assert!(rule_warnings(&[elsewhere], &[entry("Voltip", &["维他命"])]).is_empty(), "it writes something that is not a mis-hearing");
+    let (one, two) = (rule("same", RuleKind::Literal, "same", "same"), rule("same 2", RuleKind::Literal, "same", "same"));
+    let kinds: Vec<&'static str> = rule_warnings(&[one, two], &[])
+        .iter()
+        .map(|w| match w {
+            RuleWarning::Duplicate { .. } => "duplicate",
+            RuleWarning::Inverse { .. } => "inverse",
+            RuleWarning::UndoesEntry { .. } => "undoes_entry",
+        })
+        .collect();
+    assert_eq!(kinds, ["duplicate", "duplicate"], "two rules that change nothing duplicate each other but reverse nothing");
+}

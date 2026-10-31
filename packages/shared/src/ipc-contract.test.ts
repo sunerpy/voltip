@@ -54,6 +54,10 @@ import {
   uiStateSchema,
   vocabularyBacktestSchema,
   usageNoticeSchema,
+  acceptOutcomeSchema,
+  ruleWarningSchema,
+  suggestionsAnswerSchema,
+  undoOutcomeSchema,
 } from "./schema";
 import { translate } from "./i18n";
 import { PROVIDER_CATALOGUE, resolveEngineStatus } from "./providers";
@@ -94,6 +98,7 @@ const EVENT_TYPE_SET: Record<UiEventType, null> = {
   models_location: null,
   dictionary: null,
   rules: null,
+  vocabulary_ignored: null,
   scenes: null,
   presets: null,
   preset_try: null,
@@ -181,6 +186,8 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   dictionary_update: null,
   dictionary_remove: null,
   dictionary_reorder: null,
+  vocabulary_suggestion_ignore: null,
+  vocabulary_suggestion_unignore: null,
   rules_add: null,
   rules_update: null,
   rules_remove: null,
@@ -338,6 +345,8 @@ const argSchemas = {
   dictionary_update: z.object({ id: z.string(), entry: dictionaryDraftSchema.strict() }).strict(),
   dictionary_remove: z.object({ id: z.string() }).strict(),
   dictionary_reorder: z.object({ ids: z.array(z.string()) }).strict(),
+  vocabulary_suggestion_ignore: z.object({ heard: z.string(), polished: z.string() }).strict(),
+  vocabulary_suggestion_unignore: z.object({ heard: z.string(), polished: z.string() }).strict(),
   rules_add: z.object({ rule: ruleDraftSchema.strict() }).strict(),
   rules_update: z.object({ id: z.string(), rule: ruleDraftSchema.strict() }).strict(),
   rules_remove: z.object({ id: z.string() }).strict(),
@@ -528,6 +537,10 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
       return backend.invoke(name, argSchemas.dictionary_remove.parse(args));
     case "dictionary_reorder":
       return backend.invoke(name, argSchemas.dictionary_reorder.parse(args));
+    case "vocabulary_suggestion_ignore":
+      return backend.invoke(name, argSchemas.vocabulary_suggestion_ignore.parse(args));
+    case "vocabulary_suggestion_unignore":
+      return backend.invoke(name, argSchemas.vocabulary_suggestion_unignore.parse(args));
     case "rules_add":
       return backend.invoke(name, argSchemas.rules_add.parse(args));
     case "rules_update":
@@ -1571,6 +1584,55 @@ describe("history queries (docs/dictation.md section 4.4)", () => {
       },
       { command: "mirror_profile", args: { desktop } },
     ]);
+  });
+
+  it("learning suggestions (section 16.10): every answer the shells return parses", () => {
+    const fixture = z
+      .record(z.string(), z.unknown())
+      .parse(loadFixture("vocabulary-suggestions.json"));
+    const ready = suggestionsAnswerSchema.parse(fixture.ready);
+    if (ready.status !== "ready") throw new Error("ready");
+    expect([ready.scanned, ready.refined, ready.skipped, ready.total]).toEqual([2000, 1480, 3, 41]);
+    expect(ready.pairs.map((p) => [p.heard, p.polished, p.count])).toEqual([
+      ["维他命", "Voltip", 12],
+      ["提成", "集成", 3],
+    ]);
+    expect(ready.pairs[0]?.examples).toHaveLength(2);
+    expect(suggestionsAnswerSchema.parse(fixture.history_off)).toEqual({ status: "history_off" });
+    expect(suggestionsAnswerSchema.parse(fixture.nothing)).toMatchObject({
+      status: "ready",
+      pairs: [],
+    });
+    const accepted = acceptOutcomeSchema.parse(fixture.accepted);
+    expect(accepted.kind === "accepted" && accepted.undo.previous_heard_as).toEqual(["沃提普"]);
+    const refused = z.array(acceptOutcomeSchema).parse(fixture.refused);
+    expect(refused.map((r) => (r.kind === "refused" ? r.refusal.kind : r.kind))).toEqual([
+      "rule",
+      "entry",
+      "entry",
+      "entry",
+      "entry",
+      "entry",
+      "full",
+      "failed",
+    ]);
+    expect(
+      refused.flatMap((r) =>
+        r.kind === "refused" && r.refusal.kind === "entry" ? [r.refusal.clash] : [],
+      ),
+    ).toEqual(["heard_is_term", "heard_taken", "term_taken", "disabled", "too_many"]);
+    expect(
+      z
+        .array(undoOutcomeSchema)
+        .parse(fixture.undo)
+        .map((u) => u.kind),
+    ).toEqual(["undone", "expired", "gone", "changed", "failed"]);
+    expect(
+      z
+        .array(ruleWarningSchema)
+        .parse(fixture.rule_warnings)
+        .map((w) => w.kind),
+    ).toEqual(["duplicate", "inverse", "undoes_entry"]);
   });
 
   it("vocabulary_backtest (section 16.9): the drafts and answers parse and TauriBackend sends the shell's arguments", async () => {

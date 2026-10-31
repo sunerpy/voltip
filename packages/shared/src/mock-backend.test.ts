@@ -3965,6 +3965,132 @@ describe("MockBackend history queries (docs/dictation.md section 4.4)", () => {
   });
 });
 
+describe("MockBackend learning suggestions (docs/dictation.md section 16.10)", () => {
+  const T = 1_758_700_000_000;
+  const take = (i: number, raw: string, text: string): HistoryEntry => ({
+    id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+    at_ms: T - i * 60_000,
+    raw_text: raw,
+    text,
+    refined: true,
+    asr_model: "m",
+    duration_ms: 1000,
+    asr_ms: 100,
+    refine_ms: 50,
+    outcome: { kind: "inserted", via: "paste" },
+    starred: false,
+    mode: "whole_take",
+    kind: "dictation",
+  });
+  const rows = [
+    take(0, "用维他命测了一下", "用 Voltip 测了一下。"),
+    take(1, "发到非书群", "发到飞书群。"),
+    take(2, "又是非书", "又是飞书。"),
+  ];
+  const heard = async (backend: MockBackend) => {
+    const answer = await backend.vocabularySuggestions();
+    return answer.status === "ready" ? answer.pairs.map((p) => p.heard) : answer.status;
+  };
+
+  it("suggests the clean-up's pairs; 加入词典 and 撤销 change the dictionary and the answer", async () => {
+    const backend = new MockBackend({ now: () => T, history: rows });
+    expect(await heard(backend)).toEqual(["非", "维他命"]);
+    const one = await backend.vocabularySuggestions(1);
+    expect(one).toMatchObject({ status: "ready", total: 2, refined: 3 });
+    for (const limit of [0, 201, 1.5]) {
+      await expect(backend.vocabularySuggestions(limit)).rejects.toThrow(
+        "vocabulary_suggestions: limit 1–200",
+      );
+    }
+    const pair = { heard: "维他命", polished: "Voltip", historyId: rows[0]?.id ?? "" };
+    const outcome = await backend.vocabularySuggestionAccept(pair);
+    if (outcome.kind !== "accepted") throw new Error(JSON.stringify(outcome));
+    expect(outcome.undo).toMatchObject({ term: "Voltip", created: true, previous_heard_as: [] });
+    expect(backend.peek().dictionary).toMatchObject([
+      {
+        term: "Voltip",
+        heard_as: ["维他命"],
+        source: { kind: "history", history_id: pair.historyId },
+      },
+    ]);
+    expect(await heard(backend)).toEqual(["非"]);
+    expect(await backend.vocabularySuggestionAccept(pair)).toMatchObject({
+      kind: "refused",
+      refusal: { kind: "entry", clash: "heard_taken", term: "Voltip" },
+    });
+    await expect(backend.vocabularySuggestionAccept({ ...pair, heard: " " })).rejects.toThrow(
+      /不能为空/,
+    );
+    await expect(
+      backend.vocabularySuggestionAccept({ ...pair, historyId: "nope" }),
+    ).rejects.toThrow(/UUID/);
+    expect(await backend.vocabularySuggestionUndo(outcome.undo.id)).toEqual({ kind: "undone" });
+    expect(backend.peek().dictionary).toEqual([]);
+    expect(await backend.vocabularySuggestionUndo(outcome.undo.id)).toEqual({ kind: "expired" });
+    await expect(backend.vocabularySuggestionUndo("nope")).rejects.toThrow(/UUID/);
+    // An entry changed after the accept is not taken back.
+    const again = await backend.vocabularySuggestionAccept(pair);
+    if (again.kind !== "accepted") throw new Error(JSON.stringify(again));
+    await backend.invoke("dictionary_update", {
+      id: again.undo.entry_id,
+      entry: { term: "Voltip", heard_as: ["维他命", "沃提普"], enabled: true },
+    });
+    expect(await backend.vocabularySuggestionUndo(again.undo.id)).toEqual({ kind: "changed" });
+    await backend.invoke("dictionary_remove", { id: again.undo.entry_id });
+    const third = await backend.vocabularySuggestionAccept(pair);
+    if (third.kind !== "accepted") throw new Error(JSON.stringify(third));
+    await backend.invoke("dictionary_remove", { id: third.undo.entry_id });
+    expect(await backend.vocabularySuggestionUndo(third.undo.id)).toEqual({ kind: "gone" });
+    backend.destroy();
+  });
+
+  it("starts from the ignored pairs it is given, oldest first; 取消忽略 works for a pair no take has", async () => {
+    const ignored = [
+      { heard: "集成", polished: "继承", at_ms: T - 86_400_000 },
+      { heard: "非", polished: "飞", at_ms: T - 60_000 },
+    ];
+    const backend = new MockBackend({ now: () => T, history: rows, vocabularyIgnored: ignored });
+    expect(backend.peek().vocabulary_ignored).toEqual(ignored);
+    expect(await heard(backend)).toEqual(["维他命"]);
+    await backend.invoke("vocabulary_suggestion_unignore", { heard: "集成", polished: "继承" });
+    expect(backend.peek().vocabulary_ignored).toEqual([ignored[1]]);
+    expect(await heard(backend)).toEqual(["维他命"]);
+    backend.destroy();
+  });
+
+  it("忽略 and 取消忽略 ride on the ignored list; the rules' hints; history off is its own answer", async () => {
+    const backend = new MockBackend({ now: () => T, history: rows });
+    const events = collect(backend);
+    await backend.invoke("vocabulary_suggestion_ignore", { heard: "非", polished: "飞" });
+    expect(backend.peek().vocabulary_ignored).toEqual([{ heard: "非", polished: "飞", at_ms: T }]);
+    expect(events.some((e) => e.type === "vocabulary_ignored")).toBe(true);
+    expect(await heard(backend)).toEqual(["维他命"]);
+    await backend.invoke("vocabulary_suggestion_ignore", { heard: "非", polished: "飞" });
+    expect(backend.peek().vocabulary_ignored).toHaveLength(1);
+    await backend.invoke("vocabulary_suggestion_unignore", { heard: "非", polished: "飞" });
+    expect(backend.peek().vocabulary_ignored).toEqual([]);
+    expect(await heard(backend)).toEqual(["非", "维他命"]);
+    await expect(
+      backend.invoke("vocabulary_suggestion_ignore", { heard: "同", polished: "同" }),
+    ).rejects.toThrow(/前后相同/);
+    expect(await backend.rulesWarnings()).toEqual([]);
+    const feishu = {
+      name: "一",
+      kind: "literal" as const,
+      pattern: "非书",
+      replacement: "飞书",
+      case_sensitive: true,
+      enabled: true,
+    };
+    await backend.invoke("rules_add", { rule: feishu });
+    await backend.invoke("rules_add", { rule: { ...feishu, name: "二" } });
+    expect((await backend.rulesWarnings()).map((w) => w.kind)).toEqual(["duplicate", "duplicate"]);
+    await backend.invoke("settings_set_history", { enabled: false, keep: 20_000 });
+    expect(await backend.vocabularySuggestions()).toEqual({ status: "history_off" });
+    backend.destroy();
+  });
+});
+
 describe("MockBackend local service (docs/dictation.md section 23.6)", () => {
   it("a listener that starts is starting first, then running or failed; other changes are not", async () => {
     const backend = new MockBackend();

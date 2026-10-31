@@ -56,6 +56,9 @@ const BUILTIN_SCENES_FILE: &str = "scenes-builtin.json";
 const HISTORY_QUERIES_FILE: &str = "history-queries.json";
 /// The drafts and answers of `vocabulary_backtest` (docs/dictation.md §16.9).
 const VOCABULARY_BACKTEST_FILE: &str = "vocabulary-backtest.json";
+/// The answers of the dictionary's learning suggestions and the rules page's hints
+/// (docs/dictation.md §16.10).
+const VOCABULARY_SUGGESTIONS_FILE: &str = "vocabulary-suggestions.json";
 /// The commands that connect an AI tool to the MCP service (docs/dictation.md §25), as the core
 /// copies them; `packages/shared/src/mcp.ts` shows the same with a placeholder.
 const MCP_SETUP_FILE: &str = "mcp-setup.json";
@@ -790,6 +793,15 @@ fn dictionary() -> Vec<DictionaryEntry> {
 }
 
 /// The replacement rules (docs/dictation.md §16.1): one literal, one regex.
+/// The pairs the learning suggestions leave out (docs/dictation.md §16.10), oldest first.
+fn ignored_pairs() -> Vec<voltip_core::vocabulary::IgnoredPair> {
+    use voltip_core::vocabulary::IgnoredPair;
+    vec![
+        IgnoredPair { heard: "集成".into(), polished: "继承".into(), at_ms: AT_MS - 86_400_000 },
+        IgnoredPair { heard: "提成".into(), polished: "集成".into(), at_ms: AT_MS },
+    ]
+}
+
 fn rules() -> Vec<ReplacementRule> {
     vec![
         ReplacementRule {
@@ -1217,6 +1229,7 @@ fn full_state() -> UiState {
         models_location: models_location(),
         dictionary: dictionary(),
         rules: rules(),
+        vocabulary_ignored: ignored_pairs(),
         scenes: scenes(),
         phone_take: Some(PhoneTakeView {
             device: DESKTOP_KEY.to_hex(),
@@ -1319,6 +1332,7 @@ fn event_tag(event: &UiEvent) -> &'static str {
         UiEvent::Update(_) => "update",
         UiEvent::Dictionary { .. } => "dictionary",
         UiEvent::Rules { .. } => "rules",
+        UiEvent::VocabularyIgnored { .. } => "vocabulary_ignored",
         UiEvent::Scenes { .. } => "scenes",
         UiEvent::Presets { .. } => "presets",
         UiEvent::PresetTry { .. } => "preset_try",
@@ -2070,6 +2084,9 @@ fn all_events() -> Vec<UiEvent> {
         dictionary_event(Vec::new()),
         rules_event(rules()),
         rules_event(Vec::new()),
+        // The pairs the learning suggestions leave out (docs/dictation.md §16.10), and none.
+        UiEvent::VocabularyIgnored { pairs: ignored_pairs() },
+        UiEvent::VocabularyIgnored { pairs: Vec::new() },
         // Voice edit (docs/dictation.md §19): the edit hotkey switched off, and an edit take in every
         // phase the pill discriminates on, with the four refusals.
         UiEvent::Settings(Settings { edit_hotkey: None, ..settings() }),
@@ -2342,6 +2359,8 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::DictionaryUpdate { .. } => "DictionaryUpdate",
         UiCommand::DictionaryRemove { .. } => "DictionaryRemove",
         UiCommand::DictionaryReorder { .. } => "DictionaryReorder",
+        UiCommand::VocabularySuggestionIgnore { .. } => "VocabularySuggestionIgnore",
+        UiCommand::VocabularySuggestionUnignore { .. } => "VocabularySuggestionUnignore",
         UiCommand::RulesAdd { .. } => "RulesAdd",
         UiCommand::RulesUpdate { .. } => "RulesUpdate",
         UiCommand::RulesRemove { .. } => "RulesRemove",
@@ -2482,6 +2501,8 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         ),
         ("dictionary_remove", json!({ "id": DICT_ID_2 }), "DictionaryRemove"),
         ("dictionary_reorder", json!({ "ids": [DICT_ID_2, DICT_ID] }), "DictionaryReorder"),
+        ("vocabulary_suggestion_ignore", json!({ "heard": "提成", "polished": "集成" }), "VocabularySuggestionIgnore"),
+        ("vocabulary_suggestion_unignore", json!({ "heard": "提成", "polished": "集成" }), "VocabularySuggestionUnignore"),
         (
             "rules_add",
             json!({ "rule": RuleDraft {
@@ -2639,7 +2660,7 @@ fn regression_text_files_check_out_with_lf_on_every_os() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.gitattributes");
     let attributes = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     assert!(attributes.lines().any(|l| l.split_whitespace().eq(["*", "text=auto", "eol=lf"])), "{attributes}");
-    for name in [STATE_FILE, EVENTS_FILE, COMMANDS_FILE, BUILTIN_SCENES_FILE, MCP_SETUP_FILE, DIFF_FILE] {
+    for name in [STATE_FILE, EVENTS_FILE, COMMANDS_FILE, BUILTIN_SCENES_FILE, MCP_SETUP_FILE, DIFF_FILE, VOCABULARY_SUGGESTIONS_FILE] {
         let fixture = std::fs::read_to_string(fixtures_dir().join(name)).unwrap();
         assert!(!fixture.contains('\r'), "{name} has CRLF line endings");
     }
@@ -2964,6 +2985,8 @@ fn commands_fixture_is_the_wire_form_and_parses_into_every_variant() {
         "DictionaryUpdate",
         "DictionaryRemove",
         "DictionaryReorder",
+        "VocabularySuggestionIgnore",
+        "VocabularySuggestionUnignore",
         "RulesAdd",
         "RulesUpdate",
         "RulesRemove",
@@ -3097,6 +3120,70 @@ fn vocabulary_backtest_fixture_matches_serde_output() {
         "nothing": Backtest::default(),
     });
     check_fixture(VOCABULARY_BACKTEST_FILE, &pretty(&answers));
+}
+
+/// docs/dictation.md §16.10: the learning suggestions' answers, 加入词典's outcomes, 撤销's
+/// outcomes and the rules page's hints, as the shells return them.
+#[test]
+fn vocabulary_suggestions_fixture_matches_serde_output() {
+    use voltip_core::mcp::candidates::PairExample;
+    use voltip_core::vocabulary::{AcceptOutcome, EntryClash, Refusal, RuleWarning, Suggestion, SuggestionUndo, Suggestions, SuggestionsAnswer, UndoOutcome};
+    let ready = SuggestionsAnswer::Ready(Suggestions {
+        scanned: 2000,
+        refined: 1480,
+        skipped: 3,
+        total: 41,
+        pairs: vec![
+            Suggestion {
+                heard: "维他命".into(),
+                polished: "Voltip".into(),
+                count: 12,
+                last_at_ms: AT_MS,
+                examples: vec![
+                    PairExample { history_id: uuid(HISTORY_ID), snippet: "维他命的安装包发给我".into() },
+                    PairExample { history_id: uuid(HISTORY_ID_2), snippet: "…今天用维他命跑了一遍回归".into() },
+                ],
+            },
+            Suggestion {
+                heard: "提成".into(),
+                polished: "集成".into(),
+                count: 3,
+                last_at_ms: AT_MS - 86_400_000,
+                examples: vec![PairExample { history_id: uuid(HISTORY_ID_3), snippet: "提成在 Teams 里面".into() }],
+            },
+        ],
+    });
+    let undo =
+        SuggestionUndo { id: uuid(HISTORY_ID_4), entry_id: uuid(DICT_ID), term: "Voltip".into(), created: false, previous_heard_as: vec!["沃提普".into()] };
+    let answers = json!({
+        "ready": ready,
+        "history_off": SuggestionsAnswer::HistoryOff,
+        "nothing": SuggestionsAnswer::Ready(Suggestions::default()),
+        "accepted": AcceptOutcome::Accepted { undo },
+        "refused": [
+            AcceptOutcome::Refused { refusal: Refusal::Rule { rule_id: uuid(RULE_ID), name: "改回去".into(), becomes: "维他命".into() } },
+            AcceptOutcome::Refused { refusal: Refusal::Entry { entry_id: uuid(DICT_ID_2), term: "Vitamin".into(), clash: EntryClash::HeardIsTerm } },
+            AcceptOutcome::Refused { refusal: Refusal::Entry { entry_id: uuid(DICT_ID_2), term: "Vitamin".into(), clash: EntryClash::HeardTaken } },
+            AcceptOutcome::Refused { refusal: Refusal::Entry { entry_id: uuid(DICT_ID_2), term: "Vitamin".into(), clash: EntryClash::TermTaken } },
+            AcceptOutcome::Refused { refusal: Refusal::Entry { entry_id: uuid(DICT_ID), term: "Voltip".into(), clash: EntryClash::Disabled } },
+            AcceptOutcome::Refused { refusal: Refusal::Entry { entry_id: uuid(DICT_ID), term: "Voltip".into(), clash: EntryClash::TooMany } },
+            AcceptOutcome::Refused { refusal: Refusal::Full { max: 500 } },
+            AcceptOutcome::Refused { refusal: Refusal::Failed { message: "vocabulary: dictionary.json：磁盘已满".into() } },
+        ],
+        "undo": [
+            UndoOutcome::Undone,
+            UndoOutcome::Expired,
+            UndoOutcome::Gone,
+            UndoOutcome::Changed,
+            UndoOutcome::Failed { message: "vocabulary: dictionary.json：磁盘已满".into() },
+        ],
+        "rule_warnings": [
+            RuleWarning::Duplicate { rule_id: uuid(RULE_ID), other_id: uuid(RULE_ID_2), other_name: "非书 → 飞书 (2)".into() },
+            RuleWarning::Inverse { rule_id: uuid(RULE_ID_2), other_id: uuid(RULE_ID), other_name: "飞书 → 非书".into() },
+            RuleWarning::UndoesEntry { rule_id: uuid(RULE_ID), entry_id: uuid(DICT_ID), term: "Voltip".into(), heard: "维他命".into() },
+        ],
+    });
+    check_fixture(VOCABULARY_SUGGESTIONS_FILE, &pretty(&answers));
 }
 
 /// docs/dictation.md §25: the setup commands the core copies, for every tool and both shells'

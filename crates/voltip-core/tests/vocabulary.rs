@@ -10,7 +10,9 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use voltip_core::dictation::fakes::{FAKE_TRANSCRIPT, FakeAudio, FakeInjector, FakeTranscriber};
 use voltip_core::dictation::{DictationPorts, Transcriber};
-use voltip_core::vocabulary::{DICTIONARY_FILE_NAME, RULES_FILE_NAME, export_rules_toml, parse_rules_toml};
+use voltip_core::vocabulary::{
+    AcceptOutcome, DICTIONARY_FILE_NAME, IGNORED_FILE_NAME, IgnoredPair, RULES_FILE_NAME, Refusal, Reply, UndoOutcome, export_rules_toml, parse_rules_toml,
+};
 use voltip_core::{
     AppCore, CoreCommand, CoreConfig, CoreEvent, CoreHandle, DictationPhase, DictionaryDraft, DictionaryEntry, EntrySource, ImportMode, ReplacementRule,
     RuleDraft, RuleKind, Settings, SettingsStore, VocabularyHit, VocabularyHits,
@@ -58,6 +60,10 @@ async fn dictionary(node: &mut Node) -> Vec<DictionaryEntry> {
 
 async fn rules(node: &mut Node) -> Vec<ReplacementRule> {
     wait(node, |e| if let CoreEvent::Rules(r) = e { Some(r.clone()) } else { None }).await
+}
+
+async fn ignored(node: &mut Node) -> Vec<IgnoredPair> {
+    wait(node, |e| if let CoreEvent::VocabularyIgnored(p) = e { Some(p.clone()) } else { None }).await
 }
 
 async fn error(node: &mut Node) -> String {
@@ -193,5 +199,92 @@ async fn regression_corrupt_vocabulary_files_are_set_aside_and_reported_after_re
     node.handle.send(CoreCommand::RuleAdd(rule("a", RuleKind::Literal, "a", "b"))).await.unwrap();
     assert_eq!(rules(&mut node).await.len(), 1);
     assert!(dir.path().join(RULES_FILE_NAME).exists());
+    node.handle.send(CoreCommand::Shutdown).await.unwrap();
+}
+
+/// The answer a command with a reply gets, within [`STEP`].
+async fn answer<T>(rx: tokio::sync::oneshot::Receiver<T>) -> T {
+    tokio::time::timeout(STEP, rx).await.expect("answer within 10 s").expect("the core answered")
+}
+
+/// docs/dictation.md §16.10 through the real core task: 加入词典 answers with what 撤销 needs and
+/// the new list follows; 撤销 puts the entry back, once; a rule that rewrites the spelling refuses;
+/// 忽略 / 取消忽略 change the ignored list, which is on disk, read back after a restart, and
+/// announced on `Ready`.
+#[tokio::test]
+async fn learning_suggestions_through_the_core() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut node = start(dir.path(), Arc::new(FakeInjector::paste()));
+    assert!(dictionary(&mut node).await.is_empty());
+    assert!(ignored(&mut node).await.is_empty(), "Ready announces the ignored list");
+    let history_id = uuid::Uuid::new_v4();
+
+    let (reply, rx) = Reply::channel();
+    node.handle.send(CoreCommand::SuggestionAccept { heard: "维他命".into(), polished: "Voltip".into(), history_id, reply }).await.unwrap();
+    let AcceptOutcome::Accepted { undo } = answer(rx).await else { panic!("accepted") };
+    let list = dictionary(&mut node).await;
+    assert_eq!(list.len(), 1);
+    assert_eq!(
+        (list[0].term.as_str(), list[0].heard_as.clone(), list[0].source.clone()),
+        ("Voltip", vec!["维他命".to_owned()], EntrySource::History { history_id })
+    );
+    assert_eq!((undo.entry_id, undo.term.as_str(), undo.created), (list[0].id, "Voltip", true));
+    assert_eq!(dictionary_file(dir.path()), list, "on disk");
+
+    let (reply, rx) = Reply::channel();
+    node.handle.send(CoreCommand::SuggestionUndo { id: undo.id, reply }).await.unwrap();
+    assert_eq!(answer(rx).await, UndoOutcome::Undone);
+    assert!(dictionary(&mut node).await.is_empty());
+    let (reply, rx) = Reply::channel();
+    node.handle.send(CoreCommand::SuggestionUndo { id: undo.id, reply }).await.unwrap();
+    assert_eq!(answer(rx).await, UndoOutcome::Expired, "once");
+
+    node.handle.send(CoreCommand::RuleAdd(rule("改回去", RuleKind::Literal, "Voltip", "维他命"))).await.unwrap();
+    let back = rules(&mut node).await;
+    let (reply, rx) = Reply::channel();
+    node.handle.send(CoreCommand::SuggestionAccept { heard: "维他命".into(), polished: "Voltip".into(), history_id, reply }).await.unwrap();
+    assert_eq!(answer(rx).await, AcceptOutcome::Refused { refusal: Refusal::Rule { rule_id: back[0].id, name: "改回去".into(), becomes: "维他命".into() } });
+    assert!(dictionary_file(dir.path()).is_empty(), "nothing changed");
+
+    node.handle.send(CoreCommand::SuggestionIgnore { heard: "非".into(), polished: "飞".into() }).await.unwrap();
+    let list = ignored(&mut node).await;
+    assert_eq!(list.iter().map(|p| (p.heard.as_str(), p.polished.as_str())).collect::<Vec<_>>(), [("非", "飞")]);
+    node.handle.send(CoreCommand::SuggestionIgnore { heard: "同".into(), polished: "同".into() }).await.unwrap();
+    assert!(error(&mut node).await.contains("前后相同"), "refused, the list unchanged");
+    assert!(dir.path().join(IGNORED_FILE_NAME).exists());
+
+    node.handle.send(CoreCommand::Shutdown).await.unwrap();
+    drop(node);
+    let mut node = start(dir.path(), Arc::new(FakeInjector::paste()));
+    assert_eq!(ignored(&mut node).await, list, "read back after a restart");
+    node.handle.send(CoreCommand::SuggestionUnignore { heard: "非".into(), polished: "飞".into() }).await.unwrap();
+    assert!(ignored(&mut node).await.is_empty());
+    node.handle.send(CoreCommand::Shutdown).await.unwrap();
+}
+
+/// docs/dictation.md §16.10, 已忽略: each ignored pair comes with when it was ignored, oldest first;
+/// ignoring a pair again moves it to the end with the new time; 取消忽略 takes out that pair only,
+/// whether or not a take still has it (this history is empty).
+#[tokio::test]
+async fn the_ignored_list_holds_each_pair_with_when_it_was_ignored() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut node = start(dir.path(), Arc::new(FakeInjector::paste()));
+    assert!(ignored(&mut node).await.is_empty());
+    let before = voltip_core::now_ms();
+    let mut lists = Vec::new();
+    for (heard, polished) in [("非", "飞"), ("集成", "继承"), ("非", "飞")] {
+        node.handle.send(CoreCommand::SuggestionIgnore { heard: heard.into(), polished: polished.into() }).await.unwrap();
+        lists.push(ignored(&mut node).await);
+    }
+    let after = voltip_core::now_ms();
+    let pairs = |list: &[IgnoredPair]| list.iter().map(|p| format!("{} → {}", p.heard, p.polished)).collect::<Vec<_>>();
+    assert_eq!(pairs(&lists[1]), ["非 → 飞", "集成 → 继承"], "oldest first");
+    let last = &lists[2];
+    assert_eq!(pairs(last), ["集成 → 继承", "非 → 飞"], "ignored again: to the end");
+    assert!(last.iter().all(|p| (before..=after).contains(&p.at_ms)), "{last:?}");
+    assert!(last[1].at_ms >= lists[0][0].at_ms, "with the new time");
+
+    node.handle.send(CoreCommand::SuggestionUnignore { heard: "集成".into(), polished: "继承".into() }).await.unwrap();
+    assert_eq!(ignored(&mut node).await, [last[1].clone()], "the other pair stays");
     node.handle.send(CoreCommand::Shutdown).await.unwrap();
 }

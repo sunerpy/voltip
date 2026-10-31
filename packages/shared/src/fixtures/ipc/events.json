@@ -4863,6 +4863,25 @@
     "rules": []
   },
   {
+    "type": "vocabulary_ignored",
+    "pairs": [
+      {
+        "heard": "集成",
+        "polished": "继承",
+        "at_ms": 1758614200000
+      },
+      {
+        "heard": "提成",
+        "polished": "集成",
+        "at_ms": 1758700600000
+      }
+    ]
+  },
+  {
+    "type": "vocabulary_ignored",
+    "pairs": []
+  },
+  {
     "type": "settings",
     "schema": 1,
     "theme": "graphite",
