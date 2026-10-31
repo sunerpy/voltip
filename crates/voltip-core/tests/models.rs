@@ -13,7 +13,7 @@ use voltip_core::dictation::fakes::{FakeAudio, FakeInjector, FakeModels, FakeRel
 use voltip_core::models_location::{self, LOCATION_FILE, ModelsLocation, ModelsLocationView, ModelsMoveOutcome};
 use voltip_core::{
     AppCore, CoreCommand, CoreConfig, CoreEvent, CoreHandle, DEFAULT_LOCAL_MODEL_ID, DictationPhase, EngineSettings, EngineStatus, ModelInstallState,
-    ModelState, ProviderId, ProviderSettings, ResolvedEngines, Settings, SettingsStore,
+    ModelState, PackageProblem, ProviderId, ProviderSettings, ResolvedEngines, Settings, SettingsStore,
 };
 use voltip_identity::MemorySecretStore;
 
@@ -242,7 +242,7 @@ async fn cancel_and_failure_keep_the_library_honest() {
     wait_models(&mut node, |_| true).await;
     node.handle.send(CoreCommand::ModelDownload(DEFAULT_LOCAL_MODEL_ID.into())).await.unwrap();
     let models = wait_models(&mut node, |m| matches!(state_of(m, DEFAULT_LOCAL_MODEL_ID), ModelInstallState::Failed { .. })).await;
-    assert_eq!(state_of(&models, DEFAULT_LOCAL_MODEL_ID), &ModelInstallState::Failed { message: "sha256 mismatch: model.int8.onnx".into() });
+    assert_eq!(state_of(&models, DEFAULT_LOCAL_MODEL_ID), &ModelInstallState::Failed { message: "sha256 mismatch: model.int8.onnx".into(), package: None });
     // Another change (selecting it) re-emits the list; the failure is still there.
     node.handle.send(CoreCommand::SetEngines(local(None))).await.unwrap();
     let models = wait_models(&mut node, |m| m[0].active).await;
@@ -254,6 +254,40 @@ async fn cancel_and_failure_keep_the_library_honest() {
     // … and removal clears it.
     node.handle.send(CoreCommand::ModelRemove(DEFAULT_LOCAL_MODEL_ID.into())).await.unwrap();
     wait_models(&mut node, |m| state_of(m, DEFAULT_LOCAL_MODEL_ID) == &ModelInstallState::NotInstalled).await;
+    node.handle.send(CoreCommand::Shutdown).await.unwrap();
+}
+
+/// docs/dictation.md §29.12: a package that cannot be used, downloaded or put into the folder by
+/// hand, reaches the card as its problem, which the interface says in its own language; the message
+/// stays for the log.
+#[tokio::test]
+async fn a_package_that_cannot_be_used_reaches_the_card_as_its_problem() {
+    let dir = tempfile::tempdir().unwrap();
+    let missing = PackageProblem::Missing { files: vec!["tokens.txt".into()] };
+    let failing = Arc::new(FakeModels::failing_package("模型包无法使用：包里没有 tokens.txt", missing.clone()));
+    let mut node = start(dir.path(), Some(failing));
+    wait_models(&mut node, |_| true).await;
+    node.handle.send(CoreCommand::ModelDownload(DEFAULT_LOCAL_MODEL_ID.into())).await.unwrap();
+    let models = wait_models(&mut node, |m| matches!(state_of(m, DEFAULT_LOCAL_MODEL_ID), ModelInstallState::Failed { .. })).await;
+    assert_eq!(
+        state_of(&models, DEFAULT_LOCAL_MODEL_ID),
+        &ModelInstallState::Failed { message: "模型包无法使用：包里没有 tokens.txt".into(), package: Some(missing) }
+    );
+    node.handle.send(CoreCommand::Shutdown).await.unwrap();
+
+    let dir = tempfile::tempdir().unwrap();
+    let fake = Arc::new(FakeModels::new(1).with_import_package_problem(PackageProblem::Broken));
+    let mut node = start(dir.path(), Some(fake.clone()));
+    wait_models(&mut node, |_| true).await;
+    node.handle.send(CoreCommand::ModelImport(DEFAULT_LOCAL_MODEL_ID.into())).await.unwrap();
+    let models = wait_models(&mut node, |m| matches!(state_of(m, DEFAULT_LOCAL_MODEL_ID), ModelInstallState::Failed { .. })).await;
+    assert_eq!(
+        state_of(&models, DEFAULT_LOCAL_MODEL_ID),
+        &ModelInstallState::Failed { message: "模型包无法使用".into(), package: Some(PackageProblem::Broken) }
+    );
+    fake.fix_import();
+    node.handle.send(CoreCommand::ModelImport(DEFAULT_LOCAL_MODEL_ID.into())).await.unwrap();
+    wait_models(&mut node, |m| state_of(m, DEFAULT_LOCAL_MODEL_ID).is_installed()).await;
     node.handle.send(CoreCommand::Shutdown).await.unwrap();
 }
 

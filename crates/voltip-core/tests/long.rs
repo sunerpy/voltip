@@ -182,6 +182,22 @@ fn numbered(from: usize, to: usize) -> String {
     (from..=to).map(|n| format!("第{n}段。")).collect()
 }
 
+/// docs/dictation.md §29: a long take's segments recognised on the CPU after the GPU failed leave
+/// that note in the history.
+#[tokio::test]
+async fn a_long_take_keeps_its_segments_backend_note() {
+    let transcriber = FakeTranscriber::numbered(0, &[], Duration::ZERO).with_note(voltip_core::dictation::AsrNote::GpuOffUntilRestart);
+    let mut node = start(FakeAudio::speech().long(150), transcriber, FakeInjector::paste(), 10);
+    ready(&mut node).await;
+    node.handle.send(CoreCommand::DictationStart).await.unwrap();
+    statuses_until(&mut node, |s| s.segments.is_some_and(|c| c.done >= 1)).await;
+    let (done, _) = stop(&mut node).await;
+    assert!(matches!(done, DictationPhase::Done { .. }), "{done:?}");
+    let entry = newest_entry(&mut node).await;
+    assert!(entry.segments.is_some(), "a long take");
+    assert_eq!(entry.asr_note, Some(voltip_core::dictation::AsrNote::GpuOffUntilRestart));
+}
+
 /// Ten minutes: the segments past the first two are recognised while the take goes on and the
 /// status counts them; every one is read back from the file (none longer than 30 s); at the stop
 /// the text is the segments in order, cleaned up (it is short), pasted, and kept with its segments

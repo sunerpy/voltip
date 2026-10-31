@@ -3,9 +3,12 @@
 //! `pub async fn`s; calling them from Rust keeps its twelve webview commands unregistered (no
 //! capability grant needed).
 
+use std::ptr::NonNull;
+use std::sync::Arc;
+
 use objc2::runtime::{AnyObject, NSObjectProtocol as _};
-use objc2_app_kit::{NSRunningApplication, NSWorkspace};
-use objc2_foundation::NSLocale;
+use objc2_app_kit::{NSRunningApplication, NSWorkspace, NSWorkspaceDidWakeNotification, NSWorkspaceSessionDidBecomeActiveNotification};
+use objc2_foundation::{NSLocale, NSNotification};
 use tauri_plugin_macos_permissions as tcc;
 use voltip_core::ForegroundApp;
 use voltip_platform::foreground::from_bundle;
@@ -57,5 +60,23 @@ pub async fn permissions_request(permission: Permission) -> Result<(), String> {
             tcc::request_accessibility_permission().await;
             Ok(())
         }
+    }
+}
+
+/// Call `wake` after the computer woke and when the user's session became active again
+/// (`NSWorkspaceDidWakeNotification`, `NSWorkspaceSessionDidBecomeActiveNotification`). The
+/// notification center keeps the observations until they are removed, which the shell never does.
+#[allow(unsafe_code)]
+pub fn on_wake(wake: impl Fn() + Send + Sync + 'static) {
+    let wake = Arc::new(wake);
+    let center = NSWorkspace::sharedWorkspace().notificationCenter();
+    // SAFETY: reading two immutable AppKit constants.
+    let names = unsafe { [NSWorkspaceDidWakeNotification, NSWorkspaceSessionDidBecomeActiveNotification] };
+    for name in names {
+        let wake = wake.clone();
+        let block = block2::RcBlock::new(move |_: NonNull<NSNotification>| wake());
+        // SAFETY: no object filter; no queue, so the block runs on the posting thread, and it only
+        // calls a `Send + Sync` closure.
+        let _observer = unsafe { center.addObserverForName_object_queue_usingBlock(Some(name), None, None, &block) };
     }
 }

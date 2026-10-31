@@ -289,7 +289,8 @@ fn regression_the_keychain_harness_is_a_bin_behind_its_own_feature() {
     let harness = desktop_target("keychain_preinstall");
     assert_eq!(harness["kind"], serde_json::json!(["bin"]));
     assert_eq!(harness["required-features"], serde_json::json!(["keychain-harness"]));
-    assert!(harness["src_path"].as_str().unwrap().ends_with("src/bin/keychain_preinstall.rs"), "{}", harness["src_path"]);
+    // By path components: `cargo metadata` writes `\` on Windows.
+    assert!(Path::new(harness["src_path"].as_str().unwrap()).ends_with("src/bin/keychain_preinstall.rs"), "{}", harness["src_path"]);
 }
 
 /// A target of the desktop shell as `cargo metadata` describes it (the workspace's own

@@ -109,6 +109,32 @@ class Notices(unittest.TestCase):
         self.assertIn("Apache License", (HERE / "licenses" / "vulkan-loader-LICENSE.txt").read_text(encoding="utf-8"))
         self.assertIn("sherpa-onnx", text)
 
+    def transcribe_sources(self, components: list[str]) -> Path:
+        """A transcribe-cpp-sys source tree with the licence files of `components` and their table."""
+        crate = self.root / "transcribe-cpp-sys"
+        files = {"LICENSE": "MIT License transcribe.cpp", "ggml/LICENSE": "MIT License ggml", "src/third_party/miniz/LICENSE": "Copyright miniz", "src/third_party/silero_vad/LICENSE": "MIT License Silero Team"}
+        for name, text in files.items():
+            (crate / name).parent.mkdir(parents=True, exist_ok=True)
+            (crate / name).write_text(text, encoding="utf-8")
+        rows = "".join(f"| {c} | MIT | x | y |\n" for c in components)
+        (crate / "THIRD-PARTY-LICENSES.md").write_text(f"# Third-party licenses\n\n| Component | License | Vendored at | Pin |\n|---|---|---|---|\n{rows}\n## ggml\n", encoding="utf-8")
+        return crate
+
+    def test_every_component_transcribe_cpp_vendors_carries_its_text(self) -> None:
+        """transcribe.cpp 0.4 vendors Silero VAD's segment logic and miniz besides ggml (its
+        THIRD-PARTY-LICENSES.md); each one's licence travels with the binary."""
+        natives = notices.native_components(self.transcribe_sources(["ggml", "Silero VAD", "miniz"]))
+        texts = {name: text for name, _, _, text in natives}
+        self.assertEqual(texts["transcribe.cpp"], "MIT License transcribe.cpp")
+        self.assertEqual(texts["ggml"], "MIT License ggml")
+        self.assertEqual(texts["miniz"], "Copyright miniz")
+        self.assertEqual(texts["Silero VAD"], "MIT License Silero Team")
+
+    def test_a_component_transcribe_cpp_vendors_that_the_notices_do_not_know_fails(self) -> None:
+        with self.assertRaises(notices.Failure) as raised:
+            notices.native_components(self.transcribe_sources(["ggml", "miniz", "Silero VAD", "zstd"]))
+        self.assertIn("zstd", str(raised.exception))
+
     def test_the_android_app_lists_its_crates_and_packages_and_no_desktop_library(self) -> None:
         out = self.root / "android" / "THIRD-PARTY-NOTICES.txt"
         code = notices.main(["--out", str(out), "--app", "mobile", "--version", "0.0.1", "--about-json", str(self.root / "about.json"), "--pnpm-json", str(self.root / "pnpm.json")])

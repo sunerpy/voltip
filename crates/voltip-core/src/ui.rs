@@ -428,9 +428,19 @@ pub struct HotkeyStatus {
     /// platform has not got).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub solo_error: Option<String>,
+    /// The lone key's hook is gone and being brought back (docs/dictation.md §29), and why: the
+    /// settings page words it in the interface's language, naming the key. `None` while the hook
+    /// runs, and when it could not be installed at all (that is `solo_error`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub solo_loss: Option<crate::SoloLoss>,
     /// The lone key is currently held down on its own.
     #[serde(default)]
     pub solo_pressed: bool,
+    /// When the shell last put the lone key's hook back by itself (docs/dictation.md §29: the
+    /// system had removed it, the computer woke, the session was unlocked, the connection came
+    /// back), milliseconds since the epoch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub solo_recovered_at: Option<u64>,
 }
 
 /// What the global hotkey can do in the session the desktop runs in (docs/dictation.md §13, §14),
@@ -881,6 +891,7 @@ mod tests {
             text: "a。".into(),
             refined: true,
             asr_model: "m".into(),
+            asr_note: None,
             refine_model: Some("r".into()),
             duration_ms: 2,
             asr_ms: 3,
@@ -929,6 +940,7 @@ mod tests {
             repo: "example/model".into(),
             dir: String::new(),
             files: Vec::new(),
+            package: None,
             active: true,
             state: crate::ModelInstallState::Verifying,
         };

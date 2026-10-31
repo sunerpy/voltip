@@ -40,8 +40,8 @@ pub mod vocabulary;
 pub use channel::{is_initiator, rendezvous_channel};
 pub use dictation::activation::{Activation, ActivationConfig, ActivationMachine, Edge, EdgeSource, Intent, PhaseHint};
 pub use dictation::{
-    DictationError, DictationPhase, DictationPorts, DictationStatus, FailureCode, ForegroundApp, ForegroundProbe, LiveText, MAX_EDIT_SELECTION_CHARS,
-    ProcessingStage, RefineFailure, Segment, SelectionTiming, TakeKind,
+    AsrNote, DictationError, DictationPhase, DictationPorts, DictationStatus, FailureCode, ForegroundApp, ForegroundProbe, LiveText, LocalFailure,
+    MAX_EDIT_SELECTION_CHARS, ProcessingStage, RefineFailure, Segment, SelectionTiming, TakeKind,
 };
 pub use engines::{
     BuiltIn, ChineseScript, ClipboardAfter, EngineIssue, EngineSettings, EngineStatus, FallbackModel, FallbackModelStatus, FallbackPlan, FallbackRow,
@@ -53,10 +53,10 @@ pub use history::{
     EditRecord, EntryOrigin, HistoryEntry, HistoryHits, HistoryPage, HistoryQuery, HistoryReader, HistoryStats, HistoryStatsBucket, HistoryStore, OriginKind,
     Outcome,
 };
-pub use hotkey::{DEFAULT_EDIT_HOTKEY, DEFAULT_HOTKEY, Hotkey, HotkeyError, Modifier, SoloKey};
+pub use hotkey::{DEFAULT_EDIT_HOTKEY, DEFAULT_HOTKEY, Hotkey, HotkeyError, Modifier, SoloKey, SoloLoss};
 pub use models::{
-    CAPABILITY_OFFLINE, CAPABILITY_STREAMING, CAPABILITY_VAD, CancelToken, DEFAULT_LOCAL_MODEL_ID, ModelFileView, ModelImportError, ModelInstallState,
-    ModelManager, ModelState, ProgressSink, RelocateCommit, RelocateProgress, Relocated,
+    CAPABILITY_OFFLINE, CAPABILITY_STREAMING, CAPABILITY_VAD, CancelToken, DEFAULT_LOCAL_MODEL_ID, ModelDownloadError, ModelFileView, ModelImportError,
+    ModelInstallState, ModelManager, ModelPackageView, ModelState, PackageProblem, ProgressSink, RelocateCommit, RelocateProgress, Relocated,
 };
 pub use presets::{BuiltinPreset, CustomPreset, PresetDraft, PresetError, PresetId, PresetRef, PresetTrial, PresetTryOutcome, TakePreset};
 pub use providers::{

@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use super::{ImportFailure, ImportState, MediaDecoder, MediaError, SEGMENT_BOUNDS};
 use crate::dictation::long::{self, EnergySegmenter, RATE, SEGMENT_ATTEMPTS};
-use crate::dictation::{OutputMode, RefineFailure, RefineHints, Segment, Segmenter, SegmenterFactory, TakeClients, TakeKind, Via, steps};
+use crate::dictation::{AsrNote, OutputMode, RefineFailure, RefineHints, Segment, Segmenter, SegmenterFactory, TakeClients, TakeKind, Via, steps};
 use crate::engines::ChineseScript;
 use crate::history::{HistoryEntry, ImportedFile, Outcome as Delivered};
 use crate::models::CancelToken;
@@ -68,6 +68,9 @@ pub struct Recognized {
     pub asr_ms: u64,
     /// The model that answered, when the client said.
     pub model: Option<String>,
+    /// How the on-device model got this text when it was not the usual way (docs/dictation.md
+    /// §29.5: the graphics card failed and the CPU did it).
+    pub note: Option<AsrNote>,
 }
 
 /// What earlier tries of a job got done. A failed job keeps it, so 重试 goes on from the first
@@ -165,7 +168,7 @@ pub async fn run(job: Job, mut partial: Partial, report: Report) -> Outcome {
             };
             match answer {
                 Ok(t) => {
-                    recognized = Some(Recognized { text: t.text, asr_ms: t.latency_ms, model: t.model });
+                    recognized = Some(Recognized { text: t.text, asr_ms: t.latency_ms, model: t.model, note: t.backend_note });
                     break;
                 }
                 Err(e) => {
@@ -266,6 +269,8 @@ pub async fn run(job: Job, mut partial: Partial, report: Report) -> Outcome {
         text: long::assemble(&final_pieces, &[]),
         refined,
         asr_model,
+        // The weightiest note of any segment, as for a long take's (docs/dictation.md §29.5).
+        asr_note: partial.recognized.iter().filter_map(|r| r.note).max(),
         refine_model: refined.then(|| polish.model.unwrap_or(clients.refine_model)),
         duration_ms,
         asr_ms: partial.recognized.iter().map(|r| r.asr_ms).sum(),
@@ -540,6 +545,19 @@ mod tests {
         assert_eq!(setup.transcriber.languages(), vec![Some("zh".to_owned()); 3]);
         assert_eq!(setup.transcriber.durations_ms(), [10_000, 10_000, 5_000]);
         assert!(setup.pcm().exists(), "the decoded file is the runtime's to remove");
+    }
+
+    /// docs/dictation.md §29.5: a segment the on-device model recognised on the CPU after the
+    /// graphics card failed marks the imported file's entry as a take's would be, so its technical
+    /// details say so; an import that ran as usual carries no note.
+    #[tokio::test]
+    async fn a_segment_the_cpu_took_over_from_the_graphics_card_marks_the_entry() {
+        let setup = Setup::new(25, FakeTranscriber::ok("一段话").with_note(AsrNote::GpuFailedRanOnCpu));
+        let (entry, _) = done(run_collecting(setup.job(), Partial::default()).await.0);
+        assert_eq!(entry.asr_note, Some(AsrNote::GpuFailedRanOnCpu));
+        let setup = Setup::new(25, FakeTranscriber::ok("一段话"));
+        let (entry, _) = done(run_collecting(setup.job(), Partial::default()).await.0);
+        assert_eq!(entry.asr_note, None);
     }
 
     /// docs/dictation.md §31 (D6): the polish runs segment by segment with the 校对 preset, for an

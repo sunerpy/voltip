@@ -15,7 +15,15 @@
 //!
 //! Only hardware input counts: Voltip's own paste and copy chords and other synthetic input are
 //! ignored, so a paste never looks like a chord.
+//!
+//! The hooks keep themselves alive (docs/dictation.md §29): Windows puts back a hook the system
+//! removed, and does so again after a wake and an unlock; macOS installs a disabled tap again and
+//! keeps trying while it is refused; X11 reconnects. Each reports [`SoloEdge::Recovered`] /
+//! [`SoloEdge::Lost`], which only the status hears. A hook whose thread ended anyway is
+//! [`SoloHook::is_alive`] `false`, and the next settings sync installs a new one.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::thread::JoinHandle;
 
@@ -71,12 +79,30 @@ pub struct SoloHook {
     #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     backend: Option<voltip_hooks::Backend>,
     forwarder: Option<JoinHandle<()>>,
+    /// The forwarder still runs: the hook's thread has not ended.
+    alive: Arc<AtomicBool>,
 }
 
 impl SoloHook {
     /// The key it watches.
     pub fn key(&self) -> SoloKey {
         self.key
+    }
+
+    /// Whether the hook's thread still runs. One that ended (it should not: every backend brings
+    /// its hook back by itself) is replaced at the next settings sync.
+    pub fn is_alive(&self) -> bool {
+        self.alive.load(Ordering::SeqCst)
+    }
+
+    /// The computer woke or the session became active again (macOS, docs/dictation.md §29): make
+    /// sure the hook is installed and enabled. Windows does this on its hook thread, X11 needs
+    /// nothing.
+    pub fn refresh(&self) {
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+        if let Some(backend) = &self.backend {
+            backend.refresh();
+        }
     }
 }
 
@@ -107,12 +133,15 @@ pub fn watch(key: SoloKey, session: Option<SessionKind>, synthetic: bool, sink: 
     {
         let _ = (tx, synthetic);
     }
+    let alive = Arc::new(AtomicBool::new(true));
+    let running = alive.clone();
     let forwarder = std::thread::Builder::new()
         .name("voltip-solo-key".into())
         .spawn(move || {
             for edge in rx {
                 sink(edge);
             }
+            running.store(false, Ordering::SeqCst);
         })
         .map_err(|e| format!("{} 无法单独触发：{e}", label(key, std::env::consts::OS)))?;
     Ok(SoloHook {
@@ -120,6 +149,7 @@ pub fn watch(key: SoloKey, session: Option<SessionKind>, synthetic: bool, sink: 
         #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
         backend: Some(backend),
         forwarder: Some(forwarder),
+        alive,
     })
 }
 

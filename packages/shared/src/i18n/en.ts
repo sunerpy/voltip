@@ -1084,6 +1084,13 @@ export const en: Messages = {
     },
     detail: {
       asrModel: "Transcription model",
+      /** docs/dictation.md §29: how the local engine recognised a take, when worth telling. */
+      asrNote: {
+        label: "Recognised on",
+        gpu_failed_ran_on_cpu: "The graphics card failed; this one was recognised on the CPU",
+        gpu_off_until_restart:
+          "The graphics card failed again; the CPU recognises until Voltip restarts",
+      },
       refineModel: "Polish model",
       preset: "AI preset",
       notRefined: "Not polished",
@@ -1649,6 +1656,8 @@ export const en: Messages = {
     manual: {
       toggle: "Download by hand",
       lede: "If the app cannot download the model, download these files in a browser, put them in this folder, then choose Check and import.",
+      ledePackage:
+        "If the app cannot download the model, download this package in a browser and put it in this folder as it is, without unpacking it, then choose Check and import.",
       folder: "Folder",
       copyFolder: "Copy path",
       folderCopied: "Path copied",
@@ -1753,6 +1762,11 @@ export const en: Messages = {
     removed: "Deleted · {name}",
     activated: "Switched · local recognition · {name}",
     failedPrefix: "Reason",
+    package: {
+      broken: "The model package is damaged or incomplete. Download it again.",
+      missing: "Files missing from the model package: {files}",
+      mismatched: "Files in the model package that don't match this model: {files}",
+    },
   },
   devices: {
     sync: {
@@ -2474,6 +2488,14 @@ export const en: Messages = {
         pressed: "Pressed",
         waiting: "Waiting",
         failed: "Not active",
+        recovered: "Recovered automatically ({time})",
+        loss: {
+          hook: "{key} can't start a recording on its own right now: the system removed the input hook, and Voltip is putting it back.",
+          accessibility:
+            "{key} can't start a recording on its own: allow Voltip again in System Settings › Privacy & Security › Accessibility. It works again by itself once allowed.",
+          display:
+            "{key} can't start a recording on its own right now: the connection to the X server was lost, and Voltip is reconnecting.",
+        },
         unavailable:
           "This session does not support a single-key trigger (pure Wayland supports key combinations only)",
         key: {
@@ -2946,7 +2968,7 @@ export const en: Messages = {
           "Voltip is open source under this license; THIRD-PARTY-NOTICES.txt in the installed package lists the third-party components it includes and their licenses.",
         models: "Local model sources",
         modelsHelp:
-          "Model files download from these Hugging Face repositories, each under the license on its page.",
+          "Model files download from these repositories (on Hugging Face, or a release package on GitHub), each under the license on its page.",
         modelsNone: "No local models in the catalogue",
         update: "Updates",
         updateHelp: "The update source and the automatic update switch are under General.",

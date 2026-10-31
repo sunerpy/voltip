@@ -653,6 +653,18 @@ export function HistoryDetail({
       {!sentAsText(entry) && <TimingBar entry={entry} t={t} />}
       <div className="grid grid-cols-2 gap-x-6 gap-y-2 border-t border-border pt-3">
         <Readout label={t("history.detail.asrModel")} value={entry.asr_model} size="sm" />
+        {entry.asr_note !== undefined && (
+          // docs/dictation.md §29: the local engine's GPU failed and the CPU did the take.
+          <Readout
+            label={t("history.detail.asrNote.label")}
+            value={
+              <span data-testid="history-asr-note">
+                {t(`history.detail.asrNote.${entry.asr_note}`)}
+              </span>
+            }
+            size="sm"
+          />
+        )}
         <Readout
           label={t("history.detail.refineModel")}
           value={refineModelText(entry, locale)}

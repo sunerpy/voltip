@@ -1,4 +1,4 @@
-import { APP_LICENSE, type ProjectLink } from "@voltip/shared";
+import { APP_LICENSE, type ModelState, type ProjectLink } from "@voltip/shared";
 import {
   Button,
   Readout,
@@ -27,7 +27,7 @@ export function AboutPane() {
   const open = (link: ProjectLink) => {
     openProjectLink(backend, shell, link);
   };
-  const sources = [...new Set(state.models.map((m) => m.repo).filter((r) => r.length > 0))];
+  const sources = [...new Set(state.models.map(modelSource).filter((r) => r.length > 0))];
   return (
     <SettingsPane
       title={t("settings.brief.about.title")}
@@ -103,4 +103,24 @@ export function AboutPane() {
       </SettingsRows>
     </SettingsPane>
   );
+}
+
+/** Where a model's files come from, as 关于 credits it: its Hugging Face repository, or for a model
+ *  that comes as a release package (docs/dictation.md §29.12) the repository of that release
+ *  (`github.com/<owner>/<repo>`). */
+function modelSource(model: ModelState): string {
+  const url = model.package?.urls[0];
+  if (url === undefined) return model.repo;
+  try {
+    const { host, pathname } = new URL(url);
+    return [
+      host,
+      ...pathname
+        .split("/")
+        .filter((p) => p.length > 0)
+        .slice(0, 2),
+    ].join("/");
+  } catch {
+    return model.repo;
+  }
 }

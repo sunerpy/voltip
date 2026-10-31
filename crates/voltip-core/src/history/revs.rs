@@ -263,6 +263,7 @@ fn shallow(entry: &HistoryEntry) -> HistoryEntry {
         text: String::new(),
         refined: entry.refined,
         asr_model: String::new(),
+        asr_note: None,
         refine_model: None,
         duration_ms: entry.duration_ms,
         asr_ms: entry.asr_ms,

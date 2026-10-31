@@ -814,6 +814,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bzip2"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3a53fac24f34a81bc9954b5d6cfce0c21e18ec6959f44f56e8e90e4bb7c346c"
+dependencies = [
+ "libbz2-rs-sys",
+]
+
+[[package]]
 name = "bzip2-sys"
 version = "0.1.13+1.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3356,6 +3365,12 @@ dependencies = [
  "libloading",
  "once_cell",
 ]
+
+[[package]]
+name = "libbz2-rs-sys"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32f454fd6831a29c0e827ed075bca2a15be201bd57f4168f0fd1041124eab17e"
 
 [[package]]
 name = "libc"
@@ -7159,9 +7174,9 @@ dependencies = [
 
 [[package]]
 name = "transcribe-cpp"
-version = "0.2.3"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b405c121ef674311b9e8eba83e45d859663da681952c7b95b730792ffde358e7"
+checksum = "8bab65d30f5a4c3ea0ab6f38236823389f3914b0605bbc0073a4ec88018c0714"
 dependencies = [
  "log",
  "thiserror 2.0.21",
@@ -7170,9 +7185,9 @@ dependencies = [
 
 [[package]]
 name = "transcribe-cpp-sys"
-version = "0.2.3"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00e81030804f0ce2dd83761ba18e90e0c0c0c2794d68ca008e24245ed6d2702e"
+checksum = "23a837974fdb873998a59a21ad2bf5a4b7bbf721c20d03d2a3ab8c221726a444"
 dependencies = [
  "cmake",
  "serde_json",
@@ -7626,6 +7641,7 @@ name = "voltip-asr-local"
 version = "0.0.0"
 dependencies = [
  "async-trait",
+ "bzip2 0.6.1",
  "fs4",
  "hound",
  "parking_lot",
@@ -7636,6 +7652,7 @@ dependencies = [
  "sha2 0.11.0",
  "sherpa-onnx",
  "sherpa-onnx-sys",
+ "tar",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -7750,6 +7767,7 @@ name = "voltip-desktop"
 version = "0.0.0"
 dependencies = [
  "async-trait",
+ "block2",
  "clap",
  "core-foundation 0.10.1",
  "core-foundation-sys",

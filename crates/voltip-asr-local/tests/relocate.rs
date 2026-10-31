@@ -59,7 +59,9 @@ fn catalogue() -> &'static [ModelEntry] {
                 description: "test",
                 recommended: true,
                 repo: "test/tiny-model",
+                package: None,
                 files,
+                max_piece: Duration::from_secs(119),
             },
             ModelEntry {
                 id: "tiny-vad",
@@ -71,7 +73,9 @@ fn catalogue() -> &'static [ModelEntry] {
                 description: "test",
                 recommended: false,
                 repo: "test/tiny-vad",
+                package: None,
                 files: aux_files,
+                max_piece: Duration::ZERO,
             },
         ]
         .into_boxed_slice(),

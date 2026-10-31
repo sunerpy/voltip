@@ -1078,7 +1078,7 @@ enum ModelProgress {
     /// An intermediate state (`Downloading` / `Verifying`), already throttled.
     State { id: String, state: ModelInstallState },
     /// The task is over: installed, failed or cancelled.
-    Finished { id: String, result: Result<ModelInstallState, String>, cancelled: bool },
+    Finished { id: String, result: Result<ModelInstallState, crate::models::ModelDownloadError>, cancelled: bool },
     /// A manual import is over.
     Imported { id: String, result: Result<ModelInstallState, crate::models::ModelImportError> },
     /// A move of the library copied this much (docs/dictation.md §10.9), already throttled.
@@ -2267,7 +2267,7 @@ impl Runtime {
                     }
                     Err(e) => {
                         tracing::warn!(model = %id, error = %e, "model download failed");
-                        ModelInstallState::Failed { message: e }
+                        ModelInstallState::Failed { message: e.message, package: e.package }
                     }
                 };
                 if let Some(m) = self.library.iter_mut().find(|m| m.id == id) {
@@ -2285,9 +2285,13 @@ impl Runtime {
                         state
                     }
                     Err(crate::models::ModelImportError::Incomplete { missing, mismatched }) => ModelInstallState::ImportIncomplete { missing, mismatched },
+                    Err(crate::models::ModelImportError::Package(e)) => {
+                        tracing::warn!(model = %id, error = %e, "model import failed: the package cannot be used");
+                        ModelInstallState::Failed { message: e.message, package: e.package }
+                    }
                     Err(crate::models::ModelImportError::Failed(message)) => {
                         tracing::warn!(model = %id, error = %message, "model import failed");
-                        ModelInstallState::Failed { message }
+                        ModelInstallState::Failed { message, package: None }
                     }
                 };
                 if let Some(m) = self.library.iter_mut().find(|m| m.id == id) {

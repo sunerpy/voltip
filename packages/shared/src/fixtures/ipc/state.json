@@ -244,6 +244,7 @@
       "text": "把 fetchUser 改成 async，然后加上错误处理。",
       "refined": true,
       "asr_model": "Qwen/Qwen3-ASR-1.7B",
+      "asr_note": "gpu_failed_ran_on_cpu",
       "refine_model": "qwen/qwen3.8-27b",
       "duration_ms": 3200,
       "asr_ms": 640,
@@ -1141,44 +1142,35 @@
         {
           "name": "encoder.int8.onnx",
           "size_bytes": 155278641,
-          "urls": [
-            "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/encoder.int8.onnx",
-            "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/encoder.int8.onnx"
-          ]
+          "urls": []
         },
         {
           "name": "decoder.onnx",
           "size_bytes": 11309084,
-          "urls": [
-            "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/decoder.onnx",
-            "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/decoder.onnx"
-          ]
+          "urls": []
         },
         {
           "name": "joiner.int8.onnx",
           "size_bytes": 2581422,
-          "urls": [
-            "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/joiner.int8.onnx",
-            "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/joiner.int8.onnx"
-          ]
+          "urls": []
         },
         {
           "name": "tokens.txt",
           "size_bytes": 58806,
-          "urls": [
-            "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/tokens.txt",
-            "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/tokens.txt"
-          ]
+          "urls": []
         },
         {
           "name": "bpe.model",
           "size_bytes": 119265,
-          "urls": [
-            "https://huggingface.co/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/bpe.model",
-            "https://hf-mirror.com/csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05/resolve/main/bpe.model"
-          ]
+          "urls": []
         }
       ],
+      "package": {
+        "name": "sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05.tar.bz2",
+        "urls": [
+          "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05.tar.bz2"
+        ]
+      },
       "active": false,
       "state": {
         "kind": "installed",

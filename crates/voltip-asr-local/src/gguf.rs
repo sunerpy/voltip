@@ -1,24 +1,24 @@
 //! The [`RecognizerLoader`] for [`Engine::TranscribeCpp`]: transcribe.cpp (ggml) over a Qwen3-ASR
 //! GGUF, through the `transcribe-cpp` crate. The only module that names that binding.
 //!
-//! Verified 2026-09-25 (docs/dictation.md §10): `transcribe-cpp = "=0.2.3"` with
-//! `default-features = false` builds from source with cmake on Linux (39 s) and cross-compiles to
-//! `x86_64-pc-windows-msvc` under cargo-xwin, statically — no runtime DLL. `Model::load` then
-//! `Model::session()`; `Session::run(&[f32] /* 16 kHz mono */, &RunOptions)` returns the
-//! `Transcript`. The `Session` keeps the model resident, so one is held per loaded entry. The
-//! Qwen3 family does not take a language hint (`RunOptions.language` stays `None`; the model
-//! detects the language itself), and it does not stream. Measured here: Qwen3-ASR-0.6B Q6_K loads
-//! in 0.64 s and transcribes 16 s of Chinese in 1.56 s.
+//! `transcribe-cpp = "=0.4.1"` (docs/dictation.md §10, §29) with `default-features = false` builds
+//! from source with cmake and cross-compiles to `x86_64-pc-windows-msvc` under cargo-xwin,
+//! statically — no runtime DLL. `Model::load_with` then `Model::session_with()`;
+//! `Session::run(&[f32] /* 16 kHz mono */, &RunOptions)` returns the `Transcript`. The `Session`
+//! keeps the model resident, so one is held per loaded entry. Voltip passes no language hint
+//! (`RunOptions.language` stays `None`; the model detects the language itself) and no vocabulary,
+//! and the family does not stream. Measured with 0.2.3 (2026-09-25): Qwen3-ASR-0.6B Q6_K loads in
+//! 0.64 s and transcribes 16 s of Chinese in 1.56 s.
 
 use std::path::Path;
 
 use rubato::audioadapter_buffers::direct::InterleavedSlice;
 use rubato::{Fft, FixedSync, Resampler as _};
-use transcribe_cpp::{Backend, DeviceType, Model, ModelOptions, RunOptions, Session, SessionOptions};
+use transcribe_cpp::{Backend, CancelToken, DeviceType, Model, ModelOptions, RunOptions, Session, SessionOptions};
 
 use crate::catalogue::ModelEntry;
 use crate::compute::{Compute, GpuInfo, LocalDevice};
-use crate::transcriber::{Recognizer, RecognizerLoader};
+use crate::transcriber::{Abort, LocalFailure, RecognizeError, Recognizer, RecognizerLoader};
 
 /// The sample rate transcribe.cpp models take.
 pub const MODEL_RATE_HZ: u32 = 16_000;
@@ -78,18 +78,26 @@ pub(crate) fn gpus() -> Vec<GpuInfo> {
 /// the first GPU. `None` means no GPU could be found for `gpu`.
 fn model_options(compute: &Compute) -> Option<ModelOptions> {
     match compute.device {
-        LocalDevice::Auto => Some(ModelOptions::default()),
-        LocalDevice::Cpu => Some(ModelOptions { backend: Backend::Cpu, device: None }),
+        LocalDevice::Auto => Some(load_options(Backend::Auto, None)),
+        LocalDevice::Cpu => Some(CPU_ONLY),
         LocalDevice::Gpu => {
             let gpus = gpu_devices();
             let wanted = compute.gpu.as_deref();
             let device = gpus.iter().find(|d| Some(d.name.as_str()) == wanted).or_else(|| gpus.first()).cloned()?;
-            Some(ModelOptions { backend: Backend::Auto, device: Some(device) })
+            Some(load_options(Backend::Auto, Some(device)))
         }
     }
 }
 
-const CPU_ONLY: ModelOptions = ModelOptions { backend: Backend::Cpu, device: None };
+/// Every load's options. The weights are copied into memory (`no_mmap`), as 0.2.3 always did:
+/// transcribe.cpp maps the GGUF by default since 0.4, and a mapped model reads its file for as long
+/// as it is loaded. The model folder may be on another disk (the store's chosen location): if that
+/// disk goes away, a page the system reads again faults the process, where a copy keeps working.
+const fn load_options(backend: Backend, device: Option<transcribe_cpp::Device>) -> ModelOptions {
+    ModelOptions { backend, device, no_mmap: true }
+}
+
+const CPU_ONLY: ModelOptions = load_options(Backend::Cpu, None);
 
 /// Loads Qwen3-ASR GGUF sessions from an installed model directory.
 #[derive(Clone, Copy, Debug, Default)]
@@ -134,7 +142,7 @@ struct Gguf {
 }
 
 impl Recognizer for Gguf {
-    fn transcribe(&mut self, sample_rate: u32, samples: &[f32]) -> Result<String, String> {
+    fn transcribe(&mut self, sample_rate: u32, samples: &[f32], abort: &Abort) -> Result<String, RecognizeError> {
         let resampled;
         let pcm = if sample_rate == MODEL_RATE_HZ {
             samples
@@ -142,14 +150,45 @@ impl Recognizer for Gguf {
             resampled = resample_to_model_rate(samples, sample_rate)?;
             &resampled
         };
-        // No language hint: unsupported by the Qwen3 family (the call would be refused).
-        let transcript = self.session.run(pcm, &RunOptions::default()).map_err(|e| e.to_string())?;
+        // docs/dictation.md §29: a cancelled take's token. transcribe.cpp (0.4.1 as 0.2.3) looks at
+        // it before a Qwen3-ASR run only (that family runs in one shot); a family that polls it
+        // between decode steps stops there.
+        let token = CancelToken::new();
+        self.session.set_cancel_token(&token);
+        abort.on_abort(move || token.cancel());
+        // No language hint: the model detects the language (docs/dictation.md §17).
+        let result = self.session.run(pcm, &RunOptions::default());
+        self.session.clear_cancel_token();
+        let transcript = result.map_err(|e| recognize_error(&e))?;
         tracing::debug!(language = ?transcript.language, "gguf transcription done");
         Ok(transcript.text)
     }
 
     fn backend(&self) -> String {
         self.backend.clone()
+    }
+}
+
+/// A transcribe.cpp error as the transcriber takes it (docs/dictation.md §29): `Aborted` comes
+/// only from the take's cancel token, so it is the take's cancel; an output budget or a repetition
+/// that ends a run is a failure of the run, whether or not the take is being cancelled.
+pub fn recognize_error(error: &transcribe_cpp::Error) -> RecognizeError {
+    match error {
+        transcribe_cpp::Error::Aborted { .. } => RecognizeError::cancelled(error.to_string()),
+        _ => RecognizeError::new(failure(error), error.to_string()),
+    }
+}
+
+/// What a transcribe.cpp error means for the transcriber (docs/dictation.md §29).
+pub fn failure(error: &transcribe_cpp::Error) -> LocalFailure {
+    use transcribe_cpp::Error as E;
+    match error {
+        E::Backend(_) => LocalFailure::Device,
+        E::OutOfMemory(_) => LocalFailure::Memory,
+        E::ModelLoad(_) | E::ModelFileNotFound(_) => LocalFailure::Model,
+        E::InputTooLong(_) => LocalFailure::InputTooLong,
+        E::Aborted { .. } | E::OutputTruncated { .. } | E::OutputRepetition { .. } => LocalFailure::Aborted,
+        _ => LocalFailure::Other,
     }
 }
 
@@ -197,6 +236,46 @@ mod tests {
         assert!(reason.contains("AVX2 / FMA") && reason.contains(entry.name) && reason.contains("轻量"), "{reason}");
         #[cfg(target_arch = "x86_64")]
         assert!(missing_cpu_features().is_empty(), "the test host is below the baseline the packages need: {:?}", missing_cpu_features());
+    }
+
+    /// docs/dictation.md §29: transcribe.cpp's typed errors become the transcriber's kinds.
+    #[test]
+    fn transcribe_cpp_errors_map_to_their_kind() {
+        use transcribe_cpp::Error as E;
+        let cases = [
+            (E::Backend("vk lost".into()), LocalFailure::Device),
+            (E::OutOfMemory("vram".into()), LocalFailure::Memory),
+            (E::ModelLoad("bad gguf".into()), LocalFailure::Model),
+            (E::ModelFileNotFound("gone".into()), LocalFailure::Model),
+            (E::InputTooLong("too long".into()), LocalFailure::InputTooLong),
+            (E::Aborted { message: "abort".into(), partial: None }, LocalFailure::Aborted),
+            (E::OutputTruncated { message: "budget".into(), partial: None }, LocalFailure::Aborted),
+            // 0.4: a decode that starts repeating itself stops early; its transcript is cut short
+            // as a truncated one is.
+            (E::OutputRepetition { message: "loop".into(), partial: None }, LocalFailure::Aborted),
+            (E::InputTooShort("short".into()), LocalFailure::Other),
+            (E::UnsupportedRole("vad".into()), LocalFailure::Other),
+            (E::Busy("busy".into()), LocalFailure::Other),
+            (E::Other("?".into()), LocalFailure::Other),
+            (E::InvalidArgument("x".into()), LocalFailure::Other),
+        ];
+        for (error, kind) in cases {
+            assert_eq!(failure(&error), kind, "{error}");
+            // Only the cancel token's abort is the take's cancel; the instance stays for that alone.
+            let taken = recognize_error(&error);
+            assert_eq!((taken.kind, taken.by_cancel), (kind, matches!(error, E::Aborted { .. })), "{error}");
+        }
+    }
+
+    /// transcribe-cpp 0.4.1 maps the GGUF unless told not to; every load copies the weights, as
+    /// 0.2.3 always did (docs/dictation.md §29.11), so a loaded model does not depend on its file.
+    #[test]
+    fn every_load_copies_the_weights_into_memory() {
+        for device in [LocalDevice::Auto, LocalDevice::Cpu] {
+            let options = model_options(&Compute { device, ..Compute::default() }).unwrap();
+            assert!(options.no_mmap, "{device:?} maps the model file");
+        }
+        assert!(CPU_ONLY.no_mmap && load_options(Backend::Auto, None).no_mmap);
     }
 
     /// A missing file is a load error with the entry's id, not a panic (no model needed).

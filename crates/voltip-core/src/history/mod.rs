@@ -106,6 +106,10 @@ pub struct HistoryEntry {
     pub refined: bool,
     /// ASR model.
     pub asr_model: String,
+    /// How the on-device recogniser got the text when it was not the usual way (docs/dictation.md
+    /// §29: the GPU failed and the CPU did it); shown with the technical details.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asr_note: Option<crate::dictation::AsrNote>,
     /// Refine model when refinement ran.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refine_model: Option<String>,

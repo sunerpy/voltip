@@ -1101,6 +1101,12 @@ export const zhCN = {
     },
     detail: {
       asrModel: "识别模型",
+      /** docs/dictation.md §29: how the local engine recognised a take, when worth telling. */
+      asrNote: {
+        label: "识别方式",
+        gpu_failed_ran_on_cpu: "显卡出错，这条改用 CPU 识别",
+        gpu_off_until_restart: "显卡多次出错，重启 Voltip 前都用 CPU 识别",
+      },
       refineModel: "润色模型",
       preset: "AI 预设",
       notRefined: "未润色",
@@ -1652,6 +1658,9 @@ export const zhCN = {
     manual: {
       toggle: "手动下载",
       lede: "无法在应用中下载时，可以用浏览器下载下面的文件，放进这个文件夹，再点「检查并导入」。",
+      /** A model that comes as one package (docs/dictation.md §29.12). */
+      ledePackage:
+        "无法在应用中下载时，可以用浏览器下载下面的模型包，不用解压，直接放进这个文件夹，再点「检查并导入」。",
       folder: "放入文件夹",
       copyFolder: "复制路径",
       folderCopied: "已复制路径",
@@ -1752,6 +1761,12 @@ export const zhCN = {
     removed: "已删除 · {name}",
     activated: "已切换 · 本地识别 · {name}",
     failedPrefix: "失败原因",
+    /** Why the package a model comes in could not be used (docs/dictation.md §29.12). */
+    package: {
+      broken: "模型包已损坏或不完整，请重新下载",
+      missing: "模型包里缺少文件：{files}",
+      mismatched: "模型包里的文件与这个模型不符：{files}",
+    },
   },
   devices: {
     sync: {
@@ -2449,6 +2464,15 @@ export const zhCN = {
         pressed: "按下中",
         waiting: "等待生效",
         failed: "未生效",
+        recovered: "已自动恢复（{time}）",
+        /** Why the key's input hook is gone while Voltip brings it back (docs/dictation.md §29);
+         *  `{key}` is the key's name. */
+        loss: {
+          hook: "{key} 暂时无法单独触发：系统移除了输入钩子，Voltip 正在重新安装",
+          accessibility:
+            "{key} 无法单独触发：需要在「系统设置 › 隐私与安全性 › 辅助功能」里重新允许 Voltip，允许后自动恢复",
+          display: "{key} 暂时无法单独触发：与 X 服务器的连接断开了，正在重新连接",
+        },
         unavailable: "当前会话不支持单键触发（纯 Wayland 下只能使用组合键）",
         key: {
           right_ctrl: "右 Ctrl",
@@ -2890,7 +2914,8 @@ export const zhCN = {
         licenceHelp:
           "Voltip 以这个许可证开源发布；安装包里的 THIRD-PARTY-NOTICES.txt 列出它包含的第三方组件及其许可证。",
         models: "本地模型来源",
-        modelsHelp: "模型文件从这些 Hugging Face 仓库下载，各自遵循其发布页上的许可证。",
+        modelsHelp:
+          "模型文件从这些仓库下载（Hugging Face，或 GitHub 上的发布包），各自遵循其发布页上的许可证。",
         modelsNone: "目录中没有本地模型",
         update: "更新",
         updateHelp: "更新源与自动更新开关在「通用」分组。",

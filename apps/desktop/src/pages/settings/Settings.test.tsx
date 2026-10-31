@@ -3,6 +3,8 @@ import {
   MAX_ACTIVATION_MS,
   createTranslator,
   defaultEngineSettings,
+  SOLO_LOSSES,
+  formatDateTime,
   zhT,
 } from "@voltip/shared";
 import {
@@ -197,6 +199,15 @@ describe("Settings · 外观", () => {
     expect(screen.getByTestId("model-sources")).toHaveTextContent(
       "handy-computer/Qwen3-ASR-0.6B-gguf",
     );
+    // docs/dictation.md §29.12 (user decision D21): the live preview model comes from sherpa-onnx's
+    // release on GitHub; its Hugging Face repository is gone.
+    expect(screen.getByTestId("model-sources")).toHaveTextContent("github.com/k2-fsa/sherpa-onnx");
+    expect(screen.getByTestId("model-sources")).not.toHaveTextContent("x-asr");
+    expect(
+      screen.getByText(
+        "模型文件从这些仓库下载（Hugging Face，或 GitHub 上的发布包），各自遵循其发布页上的许可证。",
+      ),
+    ).toBeInTheDocument();
     // AGPL left this guard on 2026-10-01: it is the licence now (see above).
     expect(screen.queryByText(/私有|All rights reserved/)).toBeNull();
     expect(screen.getByTestId("update-status")).toHaveTextContent("尚未检查更新");
@@ -785,6 +796,74 @@ describe("Settings · 热键", () => {
       expect(backend.peek().settings.solo_key).toBeNull();
     });
     expect(within(row).queryByTestId("solo-key-status")).toBeNull();
+  });
+
+  it("regression: section 29 a lone-key hook the system took away says it is coming back, then when it came back", async () => {
+    const user = userEvent.setup();
+    const { backend } = renderApp({ path: "/settings/hotkey" });
+    const row = await screen.findByTestId("solo-key");
+    await user.selectOptions(
+      within(row).getByRole("combobox", { name: "单键触发的按键" }),
+      "right_ctrl",
+    );
+    await waitFor(() => {
+      expect(within(row).getByTestId("solo-key-status")).toHaveTextContent("已生效");
+    });
+    expect(within(row).queryByTestId("solo-key-recovered")).toBeNull();
+    // Gone: why, in the interface's words, as an alert.
+    act(() => {
+      backend.simulateSoloHook("hook");
+    });
+    expect(within(row).getByTestId("solo-key-status")).toHaveTextContent("未生效");
+    expect(within(row).getByRole("alert")).toHaveTextContent(
+      "右 Ctrl 暂时无法单独触发：系统移除了输入钩子，Voltip 正在重新安装",
+    );
+    expect(within(row).queryByTestId("solo-key-recovered")).toBeNull();
+    // Back: no alert, and when it came back.
+    const at = new Date(2026, 9, 30, 14, 5).getTime();
+    act(() => {
+      backend.simulateSoloHook(null, at);
+    });
+    expect(within(row).getByTestId("solo-key-status")).toHaveTextContent("已生效");
+    expect(within(row).queryByRole("alert")).toBeNull();
+    const when = formatDateTime("zh-CN", at, { dateStyle: "medium", timeStyle: "short" });
+    expect(within(row).getByTestId("solo-key-recovered")).toHaveTextContent(
+      `已自动恢复（${when}）`,
+    );
+  });
+
+  it("regression: section 29 an English interface says in English why the lone key's hook is gone, naming the key", async () => {
+    const user = userEvent.setup();
+    const { backend } = renderApp({ path: "/settings/hotkey", systemLanguage: "en-US" });
+    const row = await screen.findByTestId("solo-key");
+    await user.selectOptions(
+      within(row).getByRole("combobox", { name: "Single-key trigger" }),
+      "right_ctrl",
+    );
+    await waitFor(() => {
+      expect(within(row).getByTestId("solo-key-status")).toHaveTextContent("Active");
+    });
+    const said = {
+      hook: "Right Ctrl can't start a recording on its own right now: the system removed the input hook, and Voltip is putting it back.",
+      accessibility:
+        "Right Ctrl can't start a recording on its own: allow Voltip again in System Settings › Privacy & Security › Accessibility. It works again by itself once allowed.",
+      display:
+        "Right Ctrl can't start a recording on its own right now: the connection to the X server was lost, and Voltip is reconnecting.",
+    } as const;
+    for (const loss of SOLO_LOSSES) {
+      act(() => {
+        backend.simulateSoloHook(loss);
+      });
+      expect(within(row).getByTestId("solo-key-status")).toHaveTextContent("Not active");
+      expect(within(row).getByRole("alert")).toHaveTextContent(said[loss]);
+    }
+    act(() => {
+      backend.simulateSoloHook(null);
+    });
+    expect(within(row).queryByRole("alert")).toBeNull();
+    expect(within(row).getByTestId("solo-key-recovered")).toHaveTextContent(
+      "Recovered automatically",
+    );
   });
 
   it("regression: the conflict banner comes from the shell's registration error and its action starts recording", async () => {

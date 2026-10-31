@@ -13,6 +13,9 @@ workspace = true
 
 [dependencies]
 async-trait.workspace = true
+# The streaming model comes as one tar.bz2 from the sherpa-onnx release (docs/dictation.md §29.12),
+# unpacked in Rust: bzip2's default backend is libbz2-rs-sys, a Rust port of libbzip2 (no C).
+bzip2 = "=0.6.1"
 fs4.workspace = true
 hound.workspace = true
 parking_lot.workspace = true
@@ -29,6 +32,7 @@ sherpa-onnx.workspace = true
 # that this crate's build script provides, and Cargo runs a dependency's build script first only for
 # an immediate dependency with a `links` key.
 sherpa-onnx-sys.workspace = true
+tar = "=0.4.46"
 thiserror.workspace = true
 # transcribe.cpp (ggml, static) for the Qwen3-ASR GGUF tiers; see the workspace manifest. CPU
 # everywhere, plus Metal on macOS below and Vulkan behind the `vulkan` feature (docs/dictation.md §10.6),
@@ -51,6 +55,12 @@ transcribe-cpp = { workspace = true, features = ["metal"] }
 # it is off by default because building it needs the Vulkan SDK (headers, loader, glslc), which the
 # test and lint gates do not install (scripts/lib/vulkan-sdk.sh fetches it for the packages).
 vulkan = ["transcribe-cpp/vulkan"]
+
+# The measurement behind `max_piece` and `LOCK_WAIT` (docs/dictation.md §29,
+# scripts/measure/local-pieces.sh); `cargo test` runs its scoring tests.
+[[example]]
+name = "piece_quality"
+test = true
 
 [dev-dependencies]
 tempfile.workspace = true

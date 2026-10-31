@@ -8,7 +8,11 @@
 //! that take is cut by the core every 30 s, the next ones where the speech pauses. An imported file
 //! asks for shorter segments ([`SegmenterFactory::create_with`], docs/dictation.md §31): the same
 //! cuts within its bounds.
+//!
+//! The same rules cut an input longer than a model's `max_piece` into pieces inside the local
+//! transcriber ([`pieces`], docs/dictation.md §29), with `max_piece` for the longest segment.
 
+use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,7 +24,7 @@ use crate::catalogue::{ModelEntry, vad_entry};
 use crate::root::ModelsRoot;
 use crate::sherpa::SherpaVadLoader;
 use crate::store::{self, ModelStore};
-use crate::vad::{VAD_SAMPLE_RATE_HZ, VadLoader, VoiceActivity, samples_at};
+use crate::vad::{VAD_SAMPLE_RATE_HZ, VadLoader, VadTrimmer, VoiceActivity, samples_at};
 
 /// A segment ends at the first pause once it is this long (20 s)…
 pub const MIN_SEGMENT: u64 = 20 * RATE;
@@ -79,6 +83,38 @@ impl SegmenterFactory for VadSegmenterFactory {
         }
         Ok(Box::new(VadSegmenter::with_bounds(Detector::Pending { loader: self.loader.clone(), entry: self.entry, dir }, bounds)))
     }
+}
+
+/// Where `samples` (mono at `rate`) is cut so that no piece is longer than `max_piece`
+/// (docs/dictation.md §29): the whole input when it fits (or when `max_piece` is zero, no limit);
+/// otherwise a piece ends at the first pause the VAD of `vad`'s library finds once it is 20 s long
+/// (half of `max_piece` when that is shorter), and where it is quietest once it reaches
+/// `max_piece`. Without the VAD model only the quietest-moment cuts are made. Blocking (loads the
+/// detector).
+pub fn pieces(samples: &[f32], rate: u32, max_piece: Duration, vad: &VadTrimmer) -> Vec<Range<usize>> {
+    let max = samples_at(max_piece, rate);
+    if max == 0 || samples.len() <= max || rate == 0 {
+        return std::iter::once(0..samples.len()).collect();
+    }
+    // The cuts are found at the detector's rate and taken back to the input's.
+    let pcm16k = match crate::gguf::resample_to_model_rate(samples, rate) {
+        Ok(pcm) => pcm,
+        Err(e) => {
+            tracing::warn!(error = %e, "could not resample for the piece cuts; cutting at fixed lengths");
+            return (0..samples.len()).step_by(max).map(|start| start..(start + max).min(samples.len())).collect();
+        }
+    };
+    let max16k = samples_at(max_piece, VAD_SAMPLE_RATE_HZ) as u64;
+    let detector = if vad.is_installed() { Detector::Pending { loader: vad.loader(), entry: vad.entry(), dir: vad.dir() } } else { Detector::Off };
+    let mut segmenter = VadSegmenter::with_bounds(detector, SegmentBounds { min: MIN_SEGMENT.min(max16k / 2), max: max16k });
+    let mut cuts: Vec<u64> = Vec::new();
+    for chunk in pcm16k.chunks(4096) {
+        cuts.extend(segmenter.push(chunk));
+    }
+    let scale = |at: u64| usize::try_from(u128::from(at) * u128::from(rate) / u128::from(VAD_SAMPLE_RATE_HZ)).unwrap_or(usize::MAX).min(samples.len());
+    let mut bounds: Vec<usize> = std::iter::once(0).chain(cuts.into_iter().map(scale)).chain(std::iter::once(samples.len())).collect();
+    bounds.dedup();
+    bounds.windows(2).filter(|w| w[0] < w[1]).map(|w| w[0]..w[1]).collect()
 }
 
 /// The take's detector: loaded on the first samples.
@@ -312,5 +348,40 @@ mod tests {
         assert!(failing.push(&[0.1; 512]).is_empty());
         assert!(matches!(failing.detector, Detector::Off));
         assert!(format!("{:?}", factory(dir.path(), Arc::new(FakeVadLoader::energy()))).contains("silero-vad"));
+    }
+
+    /// docs/dictation.md §29: an input longer than a model's `max_piece` is cut into pieces no
+    /// longer than it, which together cover the input once: at the first pause once a piece is
+    /// half of `max_piece` long (20 s at most), inside the pause; where it is quietest without the
+    /// VAD model. An input that fits, or a model without a limit, is one piece.
+    #[test]
+    fn an_input_longer_than_max_piece_is_cut_into_pieces_that_fit() {
+        let dir = tempfile::tempdir().unwrap();
+        let vad = VadTrimmer::with_loader(dir.path(), vad_entry(), Arc::new(FakeVadLoader::energy()));
+        let max = Duration::from_secs(30);
+        let signal = talk(70, 8, 600);
+        let check = |pieces: &[Range<usize>], len: usize, rate: usize| {
+            assert!(pieces.len() >= 3, "{pieces:?}");
+            assert_eq!((pieces[0].start, pieces[pieces.len() - 1].end), (0, len));
+            assert!(pieces.windows(2).all(|w| w[0].end == w[1].start), "{pieces:?}");
+            assert!(pieces.iter().all(|p| p.len() <= 30 * rate), "{pieces:?}");
+        };
+        let rate = RATE as usize;
+        let whole = |len: usize| std::iter::once(0..len).collect::<Vec<_>>();
+        assert_eq!(pieces(&signal[..30 * rate], RATE as u32, max, &vad), whole(30 * rate), "fits");
+        assert_eq!(pieces(&signal, RATE as u32, Duration::ZERO, &vad), whole(signal.len()), "no limit");
+        let forced = pieces(&signal, RATE as u32, max, &vad);
+        check(&forced, signal.len(), rate);
+        install_vad(dir.path());
+        let at_pauses = pieces(&signal, RATE as u32, max, &vad);
+        check(&at_pauses, signal.len(), rate);
+        assert_ne!(forced, at_pauses);
+        for piece in &at_pauses[..at_pauses.len() - 1] {
+            assert!(piece.len() >= 15 * rate, "{at_pauses:?}");
+            assert!(signal[piece.end - 1] == 0.0 && signal[piece.end] == 0.0, "the cut at {:.2} s is inside the sound", piece.end as f64 / RATE as f64);
+        }
+        // Another rate: the cuts are found at 16 kHz and taken back.
+        let at_48k: Vec<f32> = signal.iter().flat_map(|&s| [s, s, s]).collect();
+        check(&pieces(&at_48k, 48_000, max, &vad), at_48k.len(), 48_000);
     }
 }

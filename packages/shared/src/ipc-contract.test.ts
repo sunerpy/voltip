@@ -1057,6 +1057,47 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     expect(argSchemas.phone_text_send.parse(send?.args).source).toBe("typed");
   });
 
+  it("regression: section 29.12 a model that comes as a package survives parsing: the package to download by hand and why it could not be used", () => {
+    const lists = events.flatMap((raw) => {
+      const r = uiEventSchema.safeParse(raw);
+      return r.success && r.data.type === "models" ? [r.data.models] : [];
+    });
+    const streaming = lists.flat().filter((m) => m.id === "zipformer-stream-zh-en");
+    expect(streaming.length).toBeGreaterThan(0);
+    for (const m of streaming) {
+      expect(m.package?.name).toBe(
+        "sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05.tar.bz2",
+      );
+      expect(m.package?.urls).toEqual([
+        "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05.tar.bz2",
+      ]);
+      expect(m.files.every((f) => f.urls.length === 0)).toBe(true);
+    }
+    expect(
+      lists
+        .flat()
+        .filter((m) => m.id !== "zipformer-stream-zh-en")
+        .every((m) => m.package === undefined),
+    ).toBe(true);
+    expect(streaming.flatMap((m) => (m.state.kind === "failed" ? [m.state.package] : []))).toEqual([
+      { kind: "broken" },
+      { kind: "missing", files: ["tokens.txt"] },
+      { kind: "mismatched", files: ["decoder.onnx", "bpe.model"] },
+    ]);
+    const failed = events.find((e) => JSON.stringify(e).includes('"kind":"mismatched"'));
+    const index = z
+      .object({
+        models: z.array(z.object({ state: z.object({ package: z.unknown().optional() }) })),
+      })
+      .parse(failed)
+      .models.findIndex((m) => m.state.package !== undefined);
+    expect(
+      uiEventSchema.safeParse(
+        mutate(failed, ["models", String(index), "state", "package", "kind"], "corrupt"),
+      ).success,
+    ).toBe(false);
+  });
+
   it("regression: section 13.1 the lone-key trigger survives parsing: the setting, what the hook watches and why not, and the session's keys", () => {
     const hotkeys = events.flatMap((raw) => {
       const r = uiEventSchema.safeParse(raw);
@@ -1066,14 +1107,18 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       hotkeys.map((h) => [
         h.solo_registered,
         h.solo_error !== undefined,
+        h.solo_loss,
         h.solo_pressed,
         h.capabilities?.solo_keys.length,
       ]),
     ).toEqual([
-      ["mouse_back", false, true, 7],
-      ["right_alt", false, false, 7],
-      [undefined, true, false, 0],
+      ["mouse_back", false, undefined, true, 7],
+      // docs/dictation.md §29: the hook's X connection went away; the page words why.
+      ["right_alt", false, "display", false, 7],
+      [undefined, true, undefined, false, 0],
     ]);
+    const lost = events.find((e) => JSON.stringify(e).includes('"solo_loss"'));
+    expect(uiEventSchema.safeParse(mutate(lost, ["solo_loss"], "permission")).success).toBe(false);
     const parsedState = uiStateSchema.parse(state);
     expect(parsedState.settings.solo_key).toBe("right_ctrl");
     expect(parsedState.hotkey.solo_registered).toBe("right_ctrl");

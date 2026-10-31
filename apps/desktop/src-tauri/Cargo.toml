@@ -119,9 +119,11 @@ tauri-plugin-macos-permissions = "=2.3.0"
 # The exact versions tray-icon / muda already pull; only the two AppKit classes the probe touches.
 objc2 = "=0.6.4"
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "libc", "NSEvent", "NSRunningApplication", "NSWorkspace"] }
-# The tray menu's language when `settings.locale` is `system` (`NSLocale.preferredLanguages`); the
-# version objc2-app-kit already pulls.
-objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSLocale", "NSString"] }
+# The tray menu's language when `settings.locale` is `system` (`NSLocale.preferredLanguages`), and
+# the wake and session notifications the lone-key tap checks itself on (docs/dictation.md §29);
+# the versions objc2-app-kit already pulls.
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "block2", "NSArray", "NSLocale", "NSNotification", "NSOperation", "NSString"] }
+block2 = "=0.6.2"
 # The keychain hand-over of an in-app update (src/keychain_handoff.rs): this build's designated
 # requirement and cdhash, and the other process's code; the versions voltip-identity already pulls.
 core-foundation = "=0.10.1"

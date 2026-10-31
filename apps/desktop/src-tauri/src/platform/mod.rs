@@ -229,6 +229,16 @@ impl ForegroundProbe for PlatformProbe {
     }
 }
 
+/// Call `wake` when the computer wakes from sleep and when the user's session becomes active again
+/// (macOS; docs/dictation.md §29: the lone-key tap checks itself then). Windows hears both on the
+/// hook thread itself; Linux needs neither.
+pub fn on_wake(wake: impl Fn() + Send + Sync + 'static) {
+    #[cfg(target_os = "macos")]
+    macos::on_wake(wake);
+    #[cfg(not(target_os = "macos"))]
+    let _ = wake;
+}
+
 /// The tray where this build has one (macOS / Windows, docs/dictation.md §15.4). A failed install
 /// with `--start-hidden` would leave the user without any way back to the window (on macOS the
 /// Dock icon is gone too under the `Accessory` policy, applied before the event loop started), so

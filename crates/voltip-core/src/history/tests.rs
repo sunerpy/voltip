@@ -17,6 +17,7 @@ pub(super) fn entry(text: &str) -> HistoryEntry {
         text: format!("{text}。"),
         refined: true,
         asr_model: "Qwen/Qwen3-ASR-1.7B".into(),
+        asr_note: None,
         refine_model: Some("qwen/qwen3.8-27b".into()),
         duration_ms: 1500,
         asr_ms: 420,
@@ -239,6 +240,25 @@ fn vocabulary_hits_round_trip_and_are_omitted_when_absent() {
     let mut store = HistoryStore::open(dir.path());
     store.push(fired.clone(), MAX_ENTRIES).unwrap();
     assert_eq!(HistoryStore::open(dir.path()).recent(1)[0], fired);
+}
+
+/// docs/dictation.md §29: how an on-device recognition got its text is on the wire only when there
+/// is something to tell, and an entry written before it reads without.
+#[test]
+fn an_asr_note_round_trips_and_older_entries_read_without() {
+    let plain = entry("你好");
+    let json = serde_json::to_string(&plain).unwrap();
+    assert!(!json.contains("asr_note"), "{json}");
+    assert_eq!(serde_json::from_str::<HistoryEntry>(&json).unwrap().asr_note, None);
+    let noted = HistoryEntry { asr_note: Some(crate::dictation::AsrNote::GpuFailedRanOnCpu), ..plain };
+    let json = serde_json::to_string(&noted).unwrap();
+    assert!(json.contains(r#""asr_model":"Qwen/Qwen3-ASR-1.7B","asr_note":"gpu_failed_ran_on_cpu","#), "next to the model: {json}");
+    assert_eq!(serde_json::from_str::<HistoryEntry>(&json).unwrap(), noted);
+    let off = r#""asr_note":"gpu_off_until_restart""#;
+    assert_eq!(
+        serde_json::from_str::<HistoryEntry>(&json.replace(r#""asr_note":"gpu_failed_ran_on_cpu""#, off)).unwrap().asr_note,
+        Some(crate::dictation::AsrNote::GpuOffUntilRestart)
+    );
 }
 
 /// docs/dictation.md §19: an edit entry carries its kind, instruction and selection; an entry

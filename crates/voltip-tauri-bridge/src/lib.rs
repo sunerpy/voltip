@@ -928,13 +928,17 @@ impl Bridge {
         self.state.lock().models_location.clone()
     }
 
-    /// `model_link_open`: where `file` of model `id` downloads from its `source`-th public source.
-    /// Like the folder, the address comes from the core's catalogue: the webview names a file.
+    /// `model_link_open`: where `file` of model `id` downloads from its `source`-th public source;
+    /// `file` may name the package the model comes in (docs/dictation.md §29.12). Like the folder,
+    /// the address comes from the core's catalogue: the webview names a file.
     pub fn model_link(&self, id: &str, file: &str, source: usize) -> Result<String, BridgeError> {
         let state = self.state.lock();
         let model = state.models.iter().find(|m| m.id == id).ok_or_else(|| BridgeError::BadArgument(format!("model_link_open: no model {id}")))?;
-        let entry = model.files.iter().find(|f| f.name == file).ok_or_else(|| BridgeError::BadArgument(format!("model_link_open: {id} has no {file}")))?;
-        entry.urls.get(source).cloned().ok_or_else(|| BridgeError::BadArgument(format!("model_link_open: {file} has no source {source}")))
+        let urls = match model.package.as_ref().filter(|p| p.name == file) {
+            Some(package) => &package.urls,
+            None => &model.files.iter().find(|f| f.name == file).ok_or_else(|| BridgeError::BadArgument(format!("model_link_open: {id} has no {file}")))?.urls,
+        };
+        urls.get(source).cloned().ok_or_else(|| BridgeError::BadArgument(format!("model_link_open: {file} has no source {source}")))
     }
 
     /// Subscribe to UI events.
@@ -1525,6 +1529,29 @@ mod tests {
         assert!(bridge.model_link(&id, "evil.txt", 0).is_err(), "only the catalogue's files");
         assert!(bridge.model_link("nope", &file, 0).is_err());
         assert!(bridge.model_folder("nope").is_err());
+        bridge.shutdown();
+    }
+
+    /// docs/dictation.md §29.12: a model that comes as a package names the package, and the address
+    /// the link opens is the package's; its files have none of their own.
+    #[tokio::test]
+    async fn the_manual_download_of_a_packaged_model_opens_the_package_address() {
+        let dir = tempfile::tempdir().unwrap();
+        voltip_core::SettingsStore::new(dir.path())
+            .save(&voltip_core::Settings { relay_enabled: false, engines: voltip_core::dictation::fakes::fake_engines(), ..Default::default() })
+            .unwrap();
+        let bridge = Bridge::start(CoreConfig::new(dir.path().to_path_buf()), Arc::new(MemorySecretStore::new())).unwrap();
+        let mut model = voltip_core::dictation::fakes::FakeModels::catalogue().remove(0);
+        for file in &mut model.files {
+            file.urls.clear();
+        }
+        let url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/model.tar.bz2".to_owned();
+        model.package = Some(voltip_core::ModelPackageView { name: "model.tar.bz2".into(), urls: vec![url.clone()] });
+        let (id, file) = (model.id.clone(), model.files[0].name.clone());
+        bridge.state.lock().models = vec![model];
+        assert_eq!(bridge.model_link(&id, "model.tar.bz2", 0).unwrap(), url);
+        assert!(bridge.model_link(&id, "model.tar.bz2", 1).is_err(), "one address");
+        assert!(bridge.model_link(&id, &file, 0).is_err(), "a file in the package has no address of its own");
         bridge.shutdown();
     }
 

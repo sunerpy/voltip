@@ -24,9 +24,16 @@ The **Language** setting on the Speech models page's **Recognition** tab is pass
 
 When **Silence trimming** is on, a 1.8 MB silence detection model is downloaded with the first local model.
 
+### Longer recordings
+
+The longer the recording a local model recognises in one go, the more words it misses. In our tests with Chinese and English speech from the FLEURS test set, SenseVoice Small's Chinese character error rate was 8.9% at 30 seconds and 16.7% at 60 seconds; Qwen3-ASR 0.6B's English word error rate rose from 4.8% at 30 seconds to 10.7% at 60 seconds and 20.4% at 90 seconds, and Paraformer and Qwen3-ASR 1.7B also got clearly worse in English at 60 seconds. With every local model, recordings longer than 30 seconds are therefore split at pauses, recognised part by part and joined into one text. This happens automatically; recordings longer than 2 minutes are still recognised in parts while you record.
+
+After you cancel a dictation, the next one does not wait for the cancelled recognition to finish: with SenseVoice or Paraformer, the cancelled recognition finishes in the background while the next dictation runs on a second copy of the model, or on the language or model you switched to; with Qwen3-ASR, it waits at most for the part being recognised. When a local model fails to recognise a recording, Voltip loads it afresh for the next one.
+
 ## Downloading
 
 - Release packages download from the project's own mirror first, then from Hugging Face, then from hf-mirror.com. When a source is slow or unreachable, Voltip switches to the next one by itself.
+- The live transcription model is no longer on Hugging Face. After the project's mirror, it comes as one package from the sherpa-onnx project's releases on GitHub, and Voltip takes the model's files out of the package. A copy you already downloaded stays as it is.
 - An interrupted download resumes where it stopped.
 - Every file is checked against a SHA-256 hash before it is used.
 - Before a download starts, Voltip checks that there is enough free disk space.
@@ -53,6 +60,8 @@ When the app cannot download a model, for example on a network where only anothe
 2. Open each file's address (Hugging Face or hf-mirror.com) in a browser, or copy it to download the file on another device, and save the file into the folder the card shows, under the same name. **Open folder** opens that folder, and **Copy path** copies its location.
 3. Once every file is there, choose **Check and import**. Voltip checks each file's size and SHA-256. When they are all right, the model is ready to use; otherwise the card lists the files that are missing or wrong.
 
+The live transcription model's card lists one package instead of its files: download it and put it into the folder as it is, without unpacking it. **Check and import** takes the model's files out of it and then deletes the package.
+
 When the app downloads a model itself, it checks the files already in the folder first and downloads again any that are wrong.
 
 ## CPU or GPU
@@ -64,6 +73,8 @@ Under **This computer**, **Run on** offers:
 - **GPU**: the graphics card, and which one if there are several.
 
 Only the two Qwen3-ASR models use the graphics card: through Vulkan on Windows and Linux, which needs a graphics driver with Vulkan support, and through Metal on a Mac. SenseVoice, Paraformer and the live transcription model always run on the processor. If the graphics card cannot be used, Voltip falls back to the processor and dictation continues.
+
+If the graphics card fails during recognition, Voltip recognises the recording again on the processor, and **Recognised on** in the [history](/dictation/history) details says so. After a second failure within 10 minutes, the processor is used until Voltip restarts.
 
 The first run on a graphics card takes longer, because the driver prepares the model for it once: about 13 seconds on an NVIDIA L40S and about two minutes on a Tesla T4 in our measurements. Later runs start quickly.
 

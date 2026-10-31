@@ -521,6 +521,7 @@ impl Runtime {
             text: text.to_owned(),
             refined: false,
             asr_model: String::new(),
+            asr_note: None,
             refine_model: None,
             duration_ms: samples.saturating_mul(1000) / u64::from(TAKE_SAMPLE_RATE_HZ),
             asr_ms: 0,

@@ -19,6 +19,8 @@
 //!   macOS bundle id) → the normalised app id scenes match on (docs/dictation.md §18).
 //! - [`solo_key`]: the lone-key trigger (docs/dictation.md §13.1): the keys each platform offers,
 //!   the codes its input hook reports them with, and raw input → press / release / chorded.
+//! - [`held_key`]: the key a hold-to-talk take is held with and the codes each platform's
+//!   key-state query takes for it (docs/dictation.md §29).
 //! - [`HostOs`]: which platform this binary was compiled for; [`PermissionReport::for_host`] is
 //!   the `not_applicable` skeleton the shell starts from.
 
@@ -27,6 +29,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 pub mod foreground;
+pub mod held_key;
 pub mod insert_check;
 pub mod macos;
 pub mod permissions;

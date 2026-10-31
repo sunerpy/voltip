@@ -8,11 +8,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use voltip_asr_local::{
-    CATALOGUE, CATALOGUE_VERSION, Capability, Compute, Engine, LocalDevice, LocalTranscriber, MANIFEST_FILE, Manifest, ModelEntry, ModelFile, ModelStore,
-    Recognizer, RecognizerLoader, Source, Tier, entry,
+    Abort, CATALOGUE, CATALOGUE_VERSION, Capability, Compute, Engine, LocalDevice, LocalTranscriber, MANIFEST_FILE, Manifest, ModelEntry, ModelFile,
+    ModelStore, RecognizeError, Recognizer, RecognizerLoader, Source, Tier, entry,
 };
 use voltip_core::dictation::fakes::speech_recording;
 use voltip_core::{ChineseScript, DEFAULT_LOCAL_MODEL_ID, EdgeSource, EngineSettings, ProviderId, Settings, SettingsStore, TakeKind};
+use voltip_desktop_lib::DEV_DATA_DIR_ENV;
 use voltip_desktop_lib::cli::{
     Action, Cli, ExitCode, Remote, TranscribeArgs, TranscribeOutput, compute_for, copy_last_from_args, default_model, download_model, list_compute,
     list_devices, list_models, quit_from_args, remote_from_args, run_headless, transcribe_file, transcribe_path,
@@ -210,9 +211,9 @@ struct Echo {
 }
 
 impl Recognizer for Echo {
-    fn transcribe(&mut self, sample_rate: u32, samples: &[f32]) -> Result<String, String> {
+    fn transcribe(&mut self, sample_rate: u32, samples: &[f32], _abort: &Abort) -> Result<String, RecognizeError> {
         if samples.iter().all(|s| *s == 0.0) {
-            return Err("all zero".into());
+            return Err(RecognizeError::other("all zero"));
         }
         Ok(format!(" {}@{sample_rate}:{} ", self.id, samples.len()))
     }
@@ -266,7 +267,7 @@ impl RecognizerLoader for TraditionalLoader {
     fn load(&self, _entry: &ModelEntry, _dir: &Path, _language: Option<&str>, _compute: &Compute) -> Result<Box<dyn Recognizer>, String> {
         struct Traditional;
         impl Recognizer for Traditional {
-            fn transcribe(&mut self, _sample_rate: u32, _samples: &[f32]) -> Result<String, String> {
+            fn transcribe(&mut self, _sample_rate: u32, _samples: &[f32], _abort: &Abort) -> Result<String, RecognizeError> {
                 Ok("開放時間：早上九點至下午五點。".into())
             }
         }
@@ -545,7 +546,9 @@ static TINY_CATALOGUE: [ModelEntry; 1] = [ModelEntry {
     description: "test",
     recommended: true,
     repo: TINY_REPO,
+    package: None,
     files: &TINY_FILES,
+    max_piece: std::time::Duration::from_secs(119),
 }];
 
 fn download(store: &ModelStore, id: &str) -> (ExitCode, String, String) {
@@ -629,9 +632,14 @@ fn download_model_rejects_an_unknown_id_and_reports_a_dead_chain_with_an_empty_s
 
 // --- the real binary ----------------------------------------------------------------------------
 
-/// Point every per-user directory the app could resolve at `dir` (Linux XDG, macOS HOME, Windows).
+/// Point every per-user directory the app could resolve at `dir` (Linux XDG, macOS HOME, Windows),
+/// and its data directory at `dir/voltip`, where Linux puts it under `XDG_DATA_HOME`. Windows
+/// resolves its known folders without reading `APPDATA`, so without the debug build's
+/// [`DEV_DATA_DIR_ENV`] the binary read the real profile of whoever ran the tests (2026-10-30, the
+/// Windows build machine: a model installed there turned up in the listing).
 fn isolated(command: &mut std::process::Command, dir: &Path) {
     command.env("XDG_DATA_HOME", dir).env("XDG_CONFIG_HOME", dir).env("HOME", dir).env("APPDATA", dir).env("LOCALAPPDATA", dir);
+    command.env(DEV_DATA_DIR_ENV, dir.join("voltip"));
 }
 
 /// Regression (2026-09-26): `run()` logged to stdout and held the stdout lock across a headless
@@ -697,7 +705,7 @@ fn real_binary_transcribe_file_with_debug_logs_finishes_and_prints_json() {
     let id = if model_dir.to_string_lossy().contains("paraformer") { "paraformer-zh" } else { "sense-voice-small" };
     let e = entry(id).unwrap();
     let data = tempfile::tempdir().unwrap();
-    // `data_dir()` on Linux is `$XDG_DATA_HOME/voltip`; the model library is its `models/`.
+    // `data_dir()` is `dir/voltip` under `isolated()`; the model library is its `models/`.
     let dir = data.path().join("voltip").join("models").join(e.id);
     std::fs::create_dir_all(&dir).unwrap();
     for f in e.files() {

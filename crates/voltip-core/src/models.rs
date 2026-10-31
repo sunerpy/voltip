@@ -55,6 +55,10 @@ pub enum ModelInstallState {
     Failed {
         /// Human-readable reason.
         message: String,
+        /// The package the model comes in could not be used (docs/dictation.md §29.12): the card
+        /// says why in the interface's language instead of `message`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        package: Option<PackageProblem>,
     },
     /// A manual import (docs/dictation.md §10) found files missing from the model directory or
     /// files that are not the catalogue's: the card names them.
@@ -76,8 +80,49 @@ pub enum ModelImportError {
         /// Files whose sha256 is not the catalogue's.
         mismatched: Vec<String>,
     },
+    /// The package put into the directory could not be used (docs/dictation.md §29.12).
+    Package(ModelDownloadError),
     /// Anything else (unknown id, file system trouble).
     Failed(String),
+}
+
+/// Why the package a model comes in (docs/dictation.md §29.12) could not be used.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PackageProblem {
+    /// It does not unpack: damaged, or cut short.
+    Broken,
+    /// These files of the model are not in it.
+    Missing {
+        /// Catalogue file names.
+        files: Vec<String>,
+    },
+    /// These files in it are not the model's: another size, or another sha256.
+    Mismatched {
+        /// Catalogue file names.
+        files: Vec<String>,
+    },
+}
+
+/// Why a model download did not install the model.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModelDownloadError {
+    /// The reason in words: the log, the command line, and the card when `package` is `None`.
+    pub message: String,
+    /// The package the model comes in could not be used (docs/dictation.md §29.12).
+    pub package: Option<PackageProblem>,
+}
+
+impl From<String> for ModelDownloadError {
+    fn from(message: String) -> Self {
+        Self { message, package: None }
+    }
+}
+
+impl std::fmt::Display for ModelDownloadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
 }
 
 impl ModelInstallState {
@@ -133,6 +178,10 @@ pub struct ModelState {
     /// Its files, primary first, with the public addresses each can be downloaded from.
     #[serde(default)]
     pub files: Vec<ModelFileView>,
+    /// The model is published as one package of its files (docs/dictation.md §29.12): a manual
+    /// download fetches the package instead of the files. `None`: each file downloads on its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package: Option<ModelPackageView>,
     /// Selected by the current `EngineSettings` in local mode.
     pub active: bool,
     /// Where it is on disk.
@@ -146,8 +195,19 @@ pub struct ModelFileView {
     pub name: String,
     /// Exact size in bytes.
     pub size_bytes: u64,
-    /// Where to download it, in the order the app tries them: huggingface.co, hf-mirror.com. A
-    /// build's own mirror is a host the interface never shows.
+    /// Where to download it, in the order the app tries them: huggingface.co, hf-mirror.com. Empty
+    /// for a model that comes as a package ([`ModelState::package`]). A build's own mirror is a
+    /// host the interface never shows.
+    pub urls: Vec<String>,
+}
+
+/// The package a catalogue model is published as (docs/dictation.md §29.12), as the card lists it
+/// for a manual download.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelPackageView {
+    /// The package's file name. Put into the model directory, it is unpacked by the import.
+    pub name: String,
+    /// Where to download it, in the order the app tries them.
     pub urls: Vec<String>,
 }
 
@@ -218,7 +278,7 @@ pub trait ModelManager: Send + Sync {
 
     /// Fetch and verify `id`. Progress goes to `progress`; `cancel` stops it between chunks (the
     /// `.part` files stay for a resume). Returns the final state (`Installed`) or the reason.
-    async fn download(&self, id: &str, progress: ProgressSink, cancel: CancelToken) -> Result<ModelInstallState, String>;
+    async fn download(&self, id: &str, progress: ProgressSink, cancel: CancelToken) -> Result<ModelInstallState, ModelDownloadError>;
 
     /// Delete the model directory (files, `.part`s and manifest).
     fn remove(&self, id: &str) -> Result<(), String>;
@@ -255,7 +315,19 @@ mod tests {
                 ModelInstallState::Installed { path: "/data/models/sense-voice-small".into(), installed_at: 1_758_700_000 },
                 r#"{"kind":"installed","path":"/data/models/sense-voice-small","installed_at":1758700000}"#,
             ),
-            (ModelInstallState::Failed { message: "sha256 mismatch".into() }, r#"{"kind":"failed","message":"sha256 mismatch"}"#),
+            (ModelInstallState::Failed { message: "sha256 mismatch".into(), package: None }, r#"{"kind":"failed","message":"sha256 mismatch"}"#),
+            (
+                ModelInstallState::Failed { message: "模型包无法使用：压缩包损坏".into(), package: Some(PackageProblem::Broken) },
+                r#"{"kind":"failed","message":"模型包无法使用：压缩包损坏","package":{"kind":"broken"}}"#,
+            ),
+            (
+                ModelInstallState::Failed { message: "m".into(), package: Some(PackageProblem::Missing { files: vec!["tokens.txt".into()] }) },
+                r#"{"kind":"failed","message":"m","package":{"kind":"missing","files":["tokens.txt"]}}"#,
+            ),
+            (
+                ModelInstallState::Failed { message: "m".into(), package: Some(PackageProblem::Mismatched { files: vec!["bpe.model".into()] }) },
+                r#"{"kind":"failed","message":"m","package":{"kind":"mismatched","files":["bpe.model"]}}"#,
+            ),
         ] {
             assert_eq!(serde_json::to_string(&state).unwrap(), wire);
             assert_eq!(serde_json::from_str::<ModelInstallState>(wire).unwrap(), state);
@@ -275,6 +347,7 @@ mod tests {
             repo: "example/model".into(),
             dir: String::new(),
             files: Vec::new(),
+            package: None,
             active: false,
             state: ModelInstallState::NotInstalled,
         };

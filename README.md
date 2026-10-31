@@ -214,9 +214,10 @@ bake your own defaults in, copy `.env.build.example` to `.env.build` and fill it
 scripts read it, and `.github/README-secrets.md` explains each value.
 
 Every package carries `THIRD-PARTY-NOTICES.txt`: the licences of the Rust crates, the web frontend
-packages, the fonts and the native libraries (sherpa-onnx, ONNX Runtime, transcribe.cpp / ggml, the
-Vulkan loader) it includes. `scripts/release/third-party-notices.py` writes it; the package scripts
-need `cargo-about` for that (`cargo install cargo-about --locked --features cli`).
+packages, the fonts and the native libraries (sherpa-onnx, ONNX Runtime, transcribe.cpp with the
+ggml, miniz and Silero VAD code it carries, the Vulkan loader) it includes.
+`scripts/release/third-party-notices.py` writes it; the package scripts need `cargo-about` for that
+(`cargo install cargo-about --locked --features cli`).
 
 ## Documentation
 

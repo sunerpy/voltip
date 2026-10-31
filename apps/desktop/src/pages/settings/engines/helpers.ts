@@ -76,6 +76,26 @@ export function modelStateCell(
   }
 }
 
+/** Why a download failed, as the card says it: the problem of the package the model comes in in
+ *  the interface's words (docs/dictation.md §29.12), else the core's message. */
+export function modelFailureText(
+  state: Extract<ModelInstallState, { kind: "failed" }>,
+  t: TFunction = zhT.t,
+  locale: Locale = DEFAULT_LOCALE,
+): string {
+  const files = (names: readonly string[]) => names.join(locale === "zh-CN" ? "、" : ", ");
+  switch (state.package?.kind) {
+    case undefined:
+      return state.message;
+    case "broken":
+      return t("model.package.broken");
+    case "missing":
+      return t("model.package.missing", { files: files(state.package.files) });
+    case "mismatched":
+      return t("model.package.mismatched", { files: files(state.package.files) });
+  }
+}
+
 /** Lamp tone of `modelStateCell` → badge tone (idle has no lamp, so it is the neutral chip). */
 export const STATE_BADGE_TONE: Readonly<Record<StateTone, BadgeTone>> = {
   ok: "ok",

@@ -5,6 +5,8 @@
 //! shows as a card, installed alongside the first local model when `vad_trim` is on. The UI shows
 //! tiers, never file formats.
 
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
 use voltip_core::{ModelInstallState, ModelState};
 
@@ -122,6 +124,23 @@ pub struct ModelFile {
     pub sha256: &'static str,
 }
 
+/// A model published as one package of its files (docs/dictation.md §29.12) rather than file by
+/// file on Hugging Face: a tar.bz2 under a release host (`Source::Release`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Package {
+    /// The package's path under the release host (`owner/repo/releases/download/<tag>/<name>`).
+    pub path: &'static str,
+    /// The folder in the package that holds the model's files.
+    pub dir: &'static str,
+}
+
+impl Package {
+    /// The package's file name (the last part of its path).
+    pub fn file_name(&self) -> &'static str {
+        self.path.rsplit('/').next().unwrap_or(self.path)
+    }
+}
+
 /// One downloadable model.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ModelEntry {
@@ -141,11 +160,18 @@ pub struct ModelEntry {
     pub description: &'static str,
     /// The catalogue's default choice.
     pub recommended: bool,
-    /// Hugging Face repo (`owner/name`).
+    /// Hugging Face repo (`owner/name`); a build's own mirror keeps the same layout.
     pub repo: &'static str,
+    /// `Some`: the model is published as this package instead, and Hugging Face is not tried for
+    /// it (the streaming model, whose repository was deleted). `None`: file by file on Hugging Face.
+    pub package: Option<Package>,
     /// Every file of the model, primary first (one GGUF; ONNX model + tokens; the streaming
     /// transducer's five files).
     pub files: &'static [ModelFile],
+    /// The longest audio one recognition is given (docs/dictation.md §29, measured): the local
+    /// transcriber cuts a longer input where it pauses and recognises it piece by piece. Zero for
+    /// the entries that recognise no whole take (the preview, the VAD).
+    pub max_piece: Duration,
 }
 
 impl ModelEntry {
@@ -190,6 +216,7 @@ impl ModelEntry {
             // The store knows where the library is and which sources are public (`ModelStore::view`).
             dir: String::new(),
             files: Vec::new(),
+            package: None,
             active: false,
             state,
         }
@@ -212,7 +239,11 @@ pub const CATALOGUE: &[ModelEntry] = &[
         description: "推荐；Qwen3-ASR 0.6B，30 语种自动识别，自带标点；690 MB",
         recommended: true,
         repo: "handy-computer/Qwen3-ASR-0.6B-gguf",
+        package: None,
         files: &[ModelFile { name: "Qwen3-ASR-0.6B-Q6_K.gguf", size: 690_417_824, sha256: "3b051f108f03c0c91bbe1a3b2c1ee15e3ed51e4caec2a48751b01f2a21441cc3" }],
+        // docs/dictation.md §29.8 (transcribe-cpp 0.4.1): the English error rate doubles from 30 s
+        // to 60 s (WER 4.8 % → 10.7 % on Linux, 5.2 % → 10.9 % on the Windows build machine).
+        max_piece: Duration::from_secs(30),
     },
     ModelEntry {
         id: "qwen3-asr-1.7b",
@@ -224,11 +255,15 @@ pub const CATALOGUE: &[ModelEntry] = &[
         description: "Qwen3-ASR 1.7B，与云端同款，识别更准但更慢；1.7 GB",
         recommended: false,
         repo: "handy-computer/Qwen3-ASR-1.7B-gguf",
+        package: None,
         files: &[ModelFile {
             name: "Qwen3-ASR-1.7B-Q6_K.gguf",
             size: 1_692_554_208,
             sha256: "c75a961b7134a6c952d89797865cb0d0376876185aee04ef6d12c31c2952e4e1",
         }],
+        // docs/dictation.md §29.8 (measured on Linux only, as the user decided): the English error
+        // rate doubles from 30 s to 60 s (WER 7.5 % → 14.3 %).
+        max_piece: Duration::from_secs(30),
     },
     ModelEntry {
         id: "sense-voice-small",
@@ -240,10 +275,13 @@ pub const CATALOGUE: &[ModelEntry] = &[
         description: "SenseVoice Small，中英日韩粤，自带标点与数字规整（ITN）；240 MB",
         recommended: false,
         repo: "csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17",
+        package: None,
         files: &[
             ModelFile { name: "model.int8.onnx", size: 239_233_841, sha256: "c71f0ce00bec95b07744e116345e33d8cbbe08cef896382cf907bf4b51a2cd51" },
             ModelFile { name: "tokens.txt", size: 315_894, sha256: "f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc" },
         ],
+        // docs/dictation.md §29: longer input loses words (Chinese CER 8.9 % at 30 s, 16.7 % at 60 s).
+        max_piece: Duration::from_secs(30),
     },
     ModelEntry {
         id: "paraformer-zh",
@@ -255,10 +293,14 @@ pub const CATALOGUE: &[ModelEntry] = &[
         description: "Paraformer 中文（含方言）更准，中英混读；无标点，开启 AI 润色可补；227 MB",
         recommended: false,
         repo: "csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09",
+        package: None,
         files: &[
             ModelFile { name: "model.int8.onnx", size: 227_330_205, sha256: "90bc03034ae1bef9575f8cc798cd1519c8be8aa9e8b458a033e32017ff4d584c" },
             ModelFile { name: "tokens.txt", size: 75_354, sha256: "6c0e3b35cece259829e6cb5b8d90d13db88f61ea3a2953d11898e4b2bfd7a2e2" },
         ],
+        // docs/dictation.md §29.8: English loses words from 30 s to 60 s (WER 29.2 % → 40.2 % on
+        // Linux); Chinese stays within a point up to 60 s, not past it.
+        max_piece: Duration::from_secs(30),
     },
     ModelEntry {
         id: STREAMING_MODEL_ID,
@@ -270,6 +312,12 @@ pub const CATALOGUE: &[ModelEntry] = &[
         description: "边说边出字的预览模型（Zipformer 流式，中英混读，自带标点）；最终文本仍由所选引擎识别；169 MB",
         recommended: false,
         repo: "csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05",
+        // The Hugging Face repository is gone (huggingface.co answers 401, checked 2026-10-30); the
+        // same files come in sherpa-onnx's release package (the user's decision of 2026-10-30).
+        package: Some(Package {
+            path: "k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05.tar.bz2",
+            dir: "sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05",
+        }),
         files: &[
             ModelFile { name: "encoder.int8.onnx", size: 155_278_641, sha256: "908596dcc137a73b95be908ca55e88caa1b3dbbe8027c171615f4b0609c5eb1e" },
             ModelFile { name: "decoder.onnx", size: 11_309_084, sha256: "a1cbc9eac2d5e3fb6617a218c67ad6daaa7f4e0fd225f08b2c22ab0413c8c257" },
@@ -277,6 +325,7 @@ pub const CATALOGUE: &[ModelEntry] = &[
             ModelFile { name: "tokens.txt", size: 58_806, sha256: "b818a60878b9aae978cbb8ad594acbd403d76d1af2e31ef4197c84e2dbdba27c" },
             ModelFile { name: "bpe.model", size: 119_265, sha256: "f87a38025a5fdd1e4e9591f6a44bb81295097ce0b80df6f4ab9f44e52c64ca5f" },
         ],
+        max_piece: Duration::ZERO,
     },
     ModelEntry {
         id: VAD_MODEL_ID,
@@ -291,7 +340,9 @@ pub const CATALOGUE: &[ModelEntry] = &[
         // verified against the downloaded file; sherpa-onnx's own release asset (643 854 B) is a
         // different export of the same v4 model and is not what this entry pins.
         repo: "csukuangfj/vad",
+        package: None,
         files: &[ModelFile { name: "silero_vad.onnx", size: 1_807_522, sha256: "a35ebf52fd3ce5f1469b2a36158dba761bc47b973ea3382b3186ca15b1f5af28" }],
+        max_piece: Duration::ZERO,
     },
 ];
 
@@ -318,6 +369,41 @@ pub fn vad_entry() -> &'static ModelEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// docs/dictation.md §29: every model that recognises a whole take has a `max_piece` between
+    /// the rule's 30 s floor and the 120 s a take goes whole at; the preview and the VAD have none.
+    #[test]
+    fn every_whole_take_model_has_a_max_piece() {
+        for e in CATALOGUE {
+            match e.engine {
+                Engine::ZipformerStreaming | Engine::SileroVad => assert_eq!(e.max_piece, Duration::ZERO, "{}", e.id),
+                Engine::TranscribeCpp | Engine::SenseVoice | Engine::Paraformer => {
+                    assert!((Duration::from_secs(30)..Duration::from_secs(120)).contains(&e.max_piece), "{}: {:?}", e.id, e.max_piece);
+                }
+            }
+        }
+    }
+
+    /// docs/dictation.md §29.12 (user decision D21, 2026-10-30): only the streaming model comes as a
+    /// package, sherpa-onnx's release, with its files in the package's top folder; its files, sizes
+    /// and hashes did not change, so a model already downloaded is not fetched again.
+    #[test]
+    fn only_the_streaming_model_comes_as_a_release_package() {
+        for e in CATALOGUE {
+            assert_eq!(e.package.is_some(), e.id == STREAMING_MODEL_ID, "{}", e.id);
+        }
+        let package = streaming_entry().package.unwrap();
+        let name = "sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05";
+        assert_eq!(package.path, format!("k2-fsa/sherpa-onnx/releases/download/asr-models/{name}.tar.bz2"));
+        assert_eq!(package.file_name(), format!("{name}.tar.bz2"));
+        assert_eq!(package.dir, name);
+        assert_eq!(streaming_entry().repo, format!("csukuangfj/{name}"), "the mirror keeps the old repository's layout");
+        let files: Vec<(&str, u64)> = streaming_entry().files.iter().map(|f| (f.name, f.size)).collect();
+        assert_eq!(
+            files,
+            [("encoder.int8.onnx", 155_278_641), ("decoder.onnx", 11_309_084), ("joiner.int8.onnx", 2_581_422), ("tokens.txt", 58_806), ("bpe.model", 119_265)]
+        );
+    }
 
     #[test]
     fn catalogue_invariants() {

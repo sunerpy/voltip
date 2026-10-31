@@ -553,6 +553,13 @@ export const SOLO_KEYS = [
 export const soloKeySchema = z.enum(SOLO_KEYS);
 export type SoloKey = z.infer<typeof soloKeySchema>;
 
+/** Why the lone key's input hook is gone while the shell brings it back
+ *  (`voltip_platform::solo_key::SoloLoss`, docs/dictation.md §29): Windows refused the hook, macOS
+ *  the event tap (Accessibility), or the X server connection went away. */
+export const SOLO_LOSSES = ["hook", "accessibility", "display"] as const;
+export const soloLossSchema = z.enum(SOLO_LOSSES);
+export type SoloLoss = z.infer<typeof soloLossSchema>;
+
 // ---- the local speech service (docs/dictation.md §23.6; `voltip_core::ServeSettings`) -------
 
 /** `voltip_core::serve::DEFAULT_PORT`. */
@@ -1599,6 +1606,13 @@ export const processStateSchema = z.discriminatedUnion("state", [
 ]);
 export type ProcessState = z.infer<typeof processStateSchema>;
 
+// ---- on-device recognition notes (docs/dictation.md §29) ----------------------------------
+
+/** How an on-device recognition got its text, when that is worth telling
+ *  (`voltip_core::dictation::AsrNote`). */
+export const asrNoteSchema = z.enum(["gpu_failed_ran_on_cpu", "gpu_off_until_restart"]);
+export type AsrNote = z.infer<typeof asrNoteSchema>;
+
 export const historyEntrySchema = z.object({
   id: z.string(),
   at_ms: z.number().nonnegative(),
@@ -1606,6 +1620,9 @@ export const historyEntrySchema = z.object({
   text: z.string(),
   refined: z.boolean(),
   asr_model: z.string(),
+  /** The local engine's GPU failed and the CPU recognised the take (§29); absent otherwise and
+   *  in entries written before it. */
+  asr_note: asrNoteSchema.optional(),
   refine_model: z.string().optional(),
   duration_ms: z.number().nonnegative(),
   asr_ms: z.number().nonnegative(),
@@ -2071,6 +2088,16 @@ export const MODEL_CAPABILITIES = ["offline", "streaming", "vad"] as const;
 export const modelCapabilitySchema = z.enum(MODEL_CAPABILITIES);
 export type ModelCapability = z.infer<typeof modelCapabilitySchema>;
 
+/** Why the package a model comes in could not be used (`voltip_core::models::PackageProblem`,
+ *  docs/dictation.md §29.12): it does not unpack, these files are not in it, or these files in it
+ *  are not the model's. */
+export const packageProblemSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("broken") }),
+  z.object({ kind: z.literal("missing"), files: z.array(z.string()) }),
+  z.object({ kind: z.literal("mismatched"), files: z.array(z.string()) }),
+]);
+export type PackageProblem = z.infer<typeof packageProblemSchema>;
+
 /** `voltip_core::models::ModelInstallState` (`#[serde(tag = "kind")]`). */
 export const modelInstallStateSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("not_installed") }),
@@ -2088,8 +2115,13 @@ export const modelInstallStateSchema = z.discriminatedUnion("kind", [
     /** Unix seconds. */
     installed_at: z.number().nonnegative(),
   }),
-  /** The `.part` files stay on disk; `model_download` resumes. */
-  z.object({ kind: z.literal("failed"), message: z.string() }),
+  /** The `.part` files stay on disk; `model_download` resumes. `package`: the package the model
+   *  comes in could not be used (§29.12), which the card says instead of `message`. */
+  z.object({
+    kind: z.literal("failed"),
+    message: z.string(),
+    package: packageProblemSchema.optional(),
+  }),
   /** A manual import (`model_import`, docs/dictation.md §10) found catalogue files absent from
    *  the model's directory (or of another size) and files whose sha256 is not the catalogue's. */
   z.object({
@@ -2102,13 +2134,22 @@ export type ModelInstallState = z.infer<typeof modelInstallStateSchema>;
 export type ModelInstallKind = ModelInstallState["kind"];
 
 /** One file of a catalogue model (`voltip_core::models::ModelFileView`): huggingface.co first, then
- *  hf-mirror.com, as the app tries them. */
+ *  hf-mirror.com, as the app tries them; none for a model that comes as a package. */
 export const modelFileSchema = z.object({
   name: z.string(),
   size_bytes: z.number().nonnegative(),
   urls: z.array(z.string()),
 });
 export type ModelFile = z.infer<typeof modelFileSchema>;
+
+/** The package a model comes in (`voltip_core::models::ModelPackageView`, docs/dictation.md
+ *  §29.12): its file name and its public addresses. Put into the model's folder, the import unpacks
+ *  it. */
+export const modelPackageSchema = z.object({
+  name: z.string(),
+  urls: z.array(z.string()),
+});
+export type ModelPackage = z.infer<typeof modelPackageSchema>;
 
 /** One catalogue row plus its install state (`voltip_core::models::ModelState`, `UiState.models`). */
 export const modelStateSchema = z.object({
@@ -2129,6 +2170,8 @@ export const modelStateSchema = z.object({
   dir: z.string().default(""),
   /** Its files, primary first, with the public addresses to download each from. */
   files: z.array(modelFileSchema).default(() => []),
+  /** Absent unless the model comes as one package of its files (§29.12). */
+  package: modelPackageSchema.optional(),
   /** The model `Settings.engines` currently selects. */
   active: z.boolean(),
   state: modelInstallStateSchema,
@@ -2384,12 +2427,18 @@ export const hotkeyStatusSchema = z.object({
    *  chosen one is not watched; both absent while it is off. */
   solo_registered: soloKeySchema.optional(),
   solo_error: z.string().optional(),
+  /** The lone key's input hook is gone and being brought back (docs/dictation.md §29), and why;
+   *  the settings page words it in the interface's language. Absent while the hook runs. */
+  solo_loss: soloLossSchema.optional(),
   /** The lone key is held down on its own (Rust always sends it; absent in old payloads). */
   solo_pressed: z.boolean().optional(),
   /** The 复制上一条结果 chord (docs/dictation.md §28): registered, or why not; both absent while
    *  none is set. */
   copy_last_registered: z.string().optional(),
   copy_last_error: z.string().optional(),
+  /** When the lone key's input hook last came back by itself after the system took it away
+   *  (docs/dictation.md §29), in ms since the epoch; absent until it has. */
+  solo_recovered_at: z.number().int().nonnegative().optional(),
 });
 export type HotkeyStatus = z.infer<typeof hotkeyStatusSchema>;
 

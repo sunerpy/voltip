@@ -13,6 +13,7 @@ import {
   activationDescription,
   activationHint,
   activationLabel,
+  formatDateTime,
   hotkeyMethodText,
   platformLabel,
 } from "@voltip/shared";
@@ -184,7 +185,9 @@ export function soloKeyNotes(
 
 /** The lone-key trigger (docs/dictation.md §13.1): `settings.solo_key`, saved through
  *  `settings_set_solo_key`; the keys come from the shell (`capabilities.solo_keys`), and so does
- *  what its input hook watches (`solo_registered`, `solo_error`, `solo_pressed`). */
+ *  what its input hook watches (`solo_registered`, `solo_error`, `solo_pressed`), why the hook is
+ *  gone while the shell brings it back (`solo_loss`, worded here) and when it last came back by
+ *  itself (`solo_recovered_at`, §29). */
 function SoloKeyRow({
   status,
   soloKey,
@@ -195,7 +198,7 @@ function SoloKeyRow({
   platform: Platform | undefined;
 }) {
   const { backend } = useBackend();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const offered = status.capabilities?.solo_keys ?? [];
   // A key the session cannot watch (Fn on Windows) stays visible while it is the setting.
   const keys = soloKey !== null && !offered.includes(soloKey) ? [...offered, soloKey] : offered;
@@ -204,10 +207,19 @@ function SoloKeyRow({
     ...keys.map((key) => ({ value: key, label: soloKeyLabel(key, platform, t) })),
   ];
   const watching = soloKey !== null && status.solo_registered === soloKey;
+  // The key whose hook is gone, named the way this page names it.
+  const lost = status.solo_registered ?? soloKey;
+  const error =
+    status.solo_error ??
+    (status.solo_loss !== undefined && lost !== null
+      ? t(`settings.hotkey.solo.loss.${status.solo_loss}`, {
+          key: soloKeyLabel(lost, platform, t),
+        })
+      : undefined);
   const lamp =
     soloKey === null
       ? undefined
-      : status.solo_error !== undefined
+      : error !== undefined
         ? { tone: "danger" as const, text: t("settings.hotkey.solo.failed") }
         : watching
           ? status.solo_pressed === true
@@ -215,6 +227,15 @@ function SoloKeyRow({
             : { tone: "ok" as const, text: t("settings.hotkey.solo.watching") }
           : { tone: "idle" as const, text: t("settings.hotkey.solo.waiting") };
   const notes = soloKeyNotes(soloKey, platform, status.capabilities?.everywhere ?? true, t);
+  const recovered =
+    watching && error === undefined && status.solo_recovered_at !== undefined
+      ? t("settings.hotkey.solo.recovered", {
+          time: formatDateTime(locale, status.solo_recovered_at, {
+            dateStyle: "medium",
+            timeStyle: "short",
+          }),
+        })
+      : undefined;
   return (
     <StatusRow
       label={t("settings.hotkey.solo.label")}
@@ -223,13 +244,14 @@ function SoloKeyRow({
       note={
         offered.length === 0 ? (
           t("settings.hotkey.solo.unavailable")
-        ) : status.solo_error !== undefined || notes.length > 0 ? (
+        ) : error !== undefined || recovered !== undefined || notes.length > 0 ? (
           <span className="flex flex-col gap-1" data-testid="solo-key-notes">
-            {status.solo_error !== undefined && (
+            {error !== undefined && (
               <span role="alert" className="text-danger">
-                {status.solo_error}
+                {error}
               </span>
             )}
+            {recovered !== undefined && <span data-testid="solo-key-recovered">{recovered}</span>}
             {notes.map((note) => (
               <span key={note}>{note}</span>
             ))}

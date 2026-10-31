@@ -432,6 +432,43 @@ fn settings_set_solo_key_persists_and_a_chorded_edge_cancels_its_take() {
     });
 }
 
+/// docs/dictation.md §29: a hold-to-talk take whose key-up never arrived (the hook was gone at
+/// the release, the window system kept it) ends once the key reads as up: the shell sends the
+/// release itself, and not while the key is still held.
+#[test]
+fn regression_a_missed_release_stops_a_hold_take() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    use voltip_desktop_lib::held::{KeyReader, Source};
+    use voltip_hooks::HeldKey;
+
+    with_running_app(|app, webview, rx| {
+        let st = wait_state(webview, |s| s.identity.is_some());
+        assert_eq!(st.settings.activation, Activation::Hold);
+        let registry = app.state::<Arc<voltip_desktop_lib::hotkey::HotkeyRegistry>>();
+        let down = Arc::new(AtomicBool::new(true));
+        let reads = Arc::new(AtomicUsize::new(0));
+        let (keyboard, counter) = (down.clone(), reads.clone());
+        registry.set_key_reader(KeyReader::new(move |key| {
+            assert_eq!(key, &HeldKey::Solo(voltip_core::SoloKey::RightCtrl));
+            counter.fetch_add(1, Ordering::SeqCst);
+            Some(keyboard.load(Ordering::SeqCst))
+        }));
+        // The lone key went down: the shell remembers the press, the core starts the take.
+        registry.held_pressed(Source::Solo, HeldKey::Solo(voltip_core::SoloKey::RightCtrl), TakeKind::Dictation);
+        assert_eq!(invoke(webview, "hotkey_edge", json!({ "pressed": true, "source": "hotkey" })), Ok(Value::Null));
+        wait_event(rx, "listening", |e| e["type"] == "dictation" && e["phase"]["phase"] == "listening");
+        // Held: readings come and the take listens on.
+        let before = reads.load(Ordering::SeqCst);
+        wait_for(|| (reads.load(Ordering::SeqCst) >= before + 4).then_some(()));
+        assert!(matches!(core_state(webview).dictation.phase, DictationPhase::Listening { .. }), "a held key ends nothing");
+        // Up, and its release never comes: two readings later the take stops.
+        down.store(false, Ordering::SeqCst);
+        wait_event(rx, "processing", |e| e["type"] == "dictation" && e["phase"]["phase"] == "processing");
+        wait_for(|| registry.held_is_empty().then_some(()));
+    });
+}
+
 /// The settings page suspends the OS registration while it records (otherwise the bound chord is
 /// swallowed by `RegisterHotKey` and never reaches the webview). Headless shells only track the
 /// flag, but the command must exist, accept both edges and reject a missing argument.

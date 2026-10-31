@@ -7,7 +7,7 @@
 1. **其他云端服务的流式识别**：内置服务的实时预览由客户端重复识别实现（`docs/dictation.md` §11.8）；使用其他云端服务商时，预览仍要本机的流式 Zipformer。服务端流式（WebSocket）等 GPU 显存允许再部署。
 2. **插入前判断焦点控件能否编辑**：Windows 上已经检查提权窗口与安全桌面（§15.3）；焦点控件的读取（UI Automation、macOS 辅助功能接口、AT-SPI）已经用于粘贴之后的插入确认（`docs/dictation.md` §28：确定没写进去时显示常驻的结果卡片）。粘贴之前还不判断焦点控件是否可编辑：不可编辑时照常粘贴，再由插入确认报「没有写进去」。
 3. **更多本地模型与自有镜像**：还没有 Whisper；模型文件来自 Hugging Face、hf-mirror 和可选的构建期镜像，没有官方镜像。加载模型前也不检查内存。
-4. **GPU 的覆盖面**：Windows 和 Linux 的发行包用 Vulkan（在 NVIDIA L40S 和 Tesla T4 上实测过），macOS 用 Metal；AMD、Intel 显卡还没有实测。第一次在 GPU 上加载要编译 Vulkan 管线（实测十几秒到两分钟），还没有预先编译或进度提示。sherpa-onnx 的几个模型只用 CPU。
+4. **GPU 的覆盖面**：Windows 和 Linux 的发行包用 Vulkan（在 NVIDIA L40S 和 Tesla T4 上实测过），macOS 用 Metal；AMD、Intel 显卡还没有实测。第一次在 GPU 上加载要编译 Vulkan 管线（实测十几秒到两分钟），还没有预先编译或进度提示。sherpa-onnx 的几个模型只用 CPU。显卡在识别中出错时，这一条改用 CPU 重新识别，10 分钟内第二次出错后重启前都用 CPU（`docs/dictation.md` §29）。
 5. **备份与诊断**：历史、词典、规则和设置只有本机文件；没有导出 / 导入全部数据、没有一键诊断包。连接问题有「连接自检」（`docs/pairing.md`），其他问题还没有自检。
 6. **悬浮窗健康检查**：已经预热并由事件驱动；没有渲染确认、置顶保活和多显示器 / DPI 自检。
 7. **平台交付**：
