@@ -22,7 +22,10 @@
 //! `Downloading` progress, verifies its signature, publishes `Ready`, then `Installing`, and hands
 //! over to the installer: on Windows the NSIS installer takes over, runs without a window
 //! ([`windows_install_mode`]) and relaunches the app itself; on macOS / Linux the bundle is replaced
-//! in place and the shell asks Tauri to restart the process.
+//! in place and the shell asks Tauri to restart the process. Right before the installer, on the
+//! same blocking thread, the core writes the automatic backup before an update
+//! (docs/dictation.md §4.6.1, [`backup_then_install`]): the Windows installer ends this process
+//! from inside `install`, so nothing after it runs.
 //!
 //! **Automatic path** (`Settings.auto_update`, off by default). When it is on and the updater is
 //! configured, the shell checks [`AUTO_CHECK_DELAY`] after start; an available package is
@@ -66,6 +69,7 @@ use tauri_plugin_updater::{Update, UpdaterExt as _};
 use tokio::sync::Notify;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::time::Instant;
+use voltip_core::backup::auto::{AutoKind, AutoOutcome};
 use voltip_core::ui::{UiEvent, UpdateStatus};
 use voltip_identity::Entries;
 use voltip_tauri_bridge::Bridge;
@@ -626,22 +630,28 @@ async fn run<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge, slot: &Arc<UpdateS
     #[cfg(not(target_os = "macos"))]
     let entries = None;
     // Windows: the installer is launched and the process exits inside `install`; macOS / Linux: the
-    // bundle is replaced and the app has to relaunch itself.
+    // bundle is replaced and the app has to relaunch itself. The automatic backup goes first.
+    let backup = bridge.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        prepare_then_install(
-            bytes,
-            entries,
-            |package, entries| {
-                #[cfg(target_os = "macos")]
-                {
-                    crate::keychain_handoff::prepare_update(package, entries)?;
-                    tracing::info!(entries = entries.len(), "staged update persisted the keychain hand-over");
-                }
-                #[cfg(not(target_os = "macos"))]
-                let _ = (package, entries);
-                Ok(())
+        backup_then_install(
+            || backup.backup_auto(AutoKind::Update),
+            || {
+                prepare_then_install(
+                    bytes,
+                    entries,
+                    |package, entries| {
+                        #[cfg(target_os = "macos")]
+                        {
+                            crate::keychain_handoff::prepare_update(package, entries)?;
+                            tracing::info!(entries = entries.len(), "staged update persisted the keychain hand-over");
+                        }
+                        #[cfg(not(target_os = "macos"))]
+                        let _ = (package, entries);
+                        Ok(())
+                    },
+                    |package| update.install(package).map_err(|e| describe(&e)),
+                )
             },
-            |package| update.install(package).map_err(|e| describe(&e)),
         )
     })
     .await
@@ -650,6 +660,21 @@ async fn run<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge, slot: &Arc<UpdateS
     tracing::info!(version, "update installed; restarting");
     crate::restart::after_update(app);
     Ok(None)
+}
+
+/// The automatic backup before an update (docs/dictation.md §4.6.1), then `install`. The backup
+/// takes as long as the history does, with no time limit (given up halfway, it would leave a
+/// `.part`); its time goes to the log. One that fails does not hold the update up: it is logged,
+/// and the core shows it once after the restart.
+fn backup_then_install(backup: impl FnOnce() -> AutoOutcome, install: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+    let started = std::time::Instant::now();
+    let outcome = backup();
+    let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    match outcome {
+        Ok(file) => tracing::info!(file = %file.name, ms, "automatic backup before the update written"),
+        Err(e) => tracing::warn!(error = %e, ms, "automatic backup before the update failed; installing all the same"),
+    }
+    install()
 }
 
 fn prepare_then_install(
@@ -823,6 +848,107 @@ mod tests {
             ),
             Err("persistence failed".into())
         );
+    }
+
+    fn written() -> AutoOutcome {
+        Ok(voltip_core::backup::auto::AutoBackupFile {
+            name: "voltip-auto-20261030-152000-update-a7c4198e.voltip-backup".into(),
+            at_ms: 1_793_000_000_000,
+            kind: AutoKind::Update,
+        })
+    }
+
+    /// docs/dictation.md §4.6.1: the backup is written before the installer runs; one that fails
+    /// does not stop the update; an install that fails still says why.
+    #[test]
+    fn the_backup_before_an_update_runs_first_and_never_stops_it() {
+        let order = std::sync::Mutex::new(Vec::new());
+        backup_then_install(
+            || {
+                order.lock().unwrap().push("backup");
+                written()
+            },
+            || {
+                order.lock().unwrap().push("install");
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(*order.lock().unwrap(), ["backup", "install"]);
+
+        let installed = std::sync::atomic::AtomicBool::new(false);
+        backup_then_install(
+            || Err("No space left on device (os error 28)".into()),
+            || {
+                installed.store(true, Ordering::SeqCst);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(installed.load(Ordering::SeqCst), "a failed backup does not hold the update up");
+        assert_eq!(backup_then_install(written, || Err("signature mismatch".into())), Err("signature mismatch".into()));
+    }
+
+    /// Through the real bridge and core: a backup before an update that cannot be written still
+    /// lets the (fake) installer run, and leaves the notice the next start shows; one that can is
+    /// in the automatic backups' folder before the installer starts.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_update_backs_up_through_the_core_before_its_installer() {
+        let start = |dir: &Path, folder: Option<String>| {
+            voltip_core::SettingsStore::new(dir)
+                .save(&voltip_core::Settings {
+                    relay_enabled: false,
+                    engines: voltip_core::dictation::fakes::fake_engines(),
+                    backup: voltip_core::BackupSettings { weekly: true, folder },
+                    ..Default::default()
+                })
+                .unwrap();
+            let mut config = voltip_core::CoreConfig::new(dir.to_path_buf());
+            config.auto_backup = true;
+            Bridge::start(config, Arc::new(voltip_identity::MemorySecretStore::new())).unwrap()
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let bridge = start(dir.path(), None);
+        let folder = dir.path().join(voltip_core::backup::auto::AUTO_BACKUP_DIR);
+        let seen = folder.clone();
+        let core = bridge.clone();
+        let outcome = tauri::async_runtime::spawn_blocking(move || {
+            backup_then_install(
+                || core.backup_auto(AutoKind::Update),
+                move || {
+                    let kinds: Vec<AutoKind> = voltip_core::backup::auto::list(&seen, None).unwrap().iter().map(|f| f.kind).collect();
+                    assert_eq!(kinds, [AutoKind::Update], "written before the installer starts");
+                    Ok(())
+                },
+            )
+        })
+        .await
+        .unwrap();
+        assert_eq!(outcome, Ok(()));
+        bridge.shutdown();
+
+        let dir = tempfile::tempdir().unwrap();
+        let blocker = dir.path().join("a file");
+        std::fs::write(&blocker, b"x").unwrap();
+        let bridge = start(dir.path(), Some(blocker.join("backups").display().to_string()));
+        let installed = Arc::new(AtomicBool::new(false));
+        let ran = installed.clone();
+        let core = bridge.clone();
+        let outcome = tauri::async_runtime::spawn_blocking(move || {
+            backup_then_install(
+                || core.backup_auto(AutoKind::Update),
+                move || {
+                    ran.store(true, Ordering::SeqCst);
+                    Ok(())
+                },
+            )
+        })
+        .await
+        .unwrap();
+        assert_eq!(outcome, Ok(()));
+        assert!(installed.load(Ordering::SeqCst));
+        assert!(dir.path().join(voltip_core::backup::auto::NOTICE_FILE_NAME).exists(), "the next start shows the failure");
+        bridge.shutdown();
     }
 
     /// An error with an optional cause, standing in for reqwest's and hyper's chain.

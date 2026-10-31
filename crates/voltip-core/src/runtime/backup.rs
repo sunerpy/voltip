@@ -3,17 +3,39 @@
 //! in one go, then announced like any other change of that list, so every page, the engine and the
 //! phones that sync follow. A merge that adds nothing writes nothing. A part that cannot be written
 //! stays as it was; the others go on.
+//!
+//! A replacing import first writes an automatic backup of everything here (§4.6.1), in this same
+//! step: the core handles commands one at a time and records the history on this task, so the
+//! backup holds every change queued before the import and nothing changes while it is written. No
+//! backup, no replacement.
 
 use std::collections::HashMap;
 
+use super::auto_backup::failure_detail;
 use super::{Runtime, now_ms};
-use crate::backup::{Backup, BackupPart, BackupParts, ImportReport, PartFailure, PartReport, count, merge};
+use crate::backup::auto::AutoKind;
+use crate::backup::{Backup, BackupPart, BackupParts, ImportFailure, ImportOutcome, ImportReport, PartFailure, PartReport, count, merge};
 use crate::vocabulary::ImportMode;
 
 impl Runtime {
     /// Restore `parts` of `backup`: the presets first (the scenes may name them), the history last.
-    pub(super) fn import_backup(&mut self, backup: &Backup, parts: BackupParts, mode: ImportMode) -> ImportReport {
-        let mut report = ImportReport { mode, parts: Vec::new() };
+    /// A replacing import makes its automatic backup first, and is refused while a take runs.
+    pub(super) fn import_backup(&mut self, backup: &Backup, parts: BackupParts, mode: ImportMode) -> ImportOutcome {
+        let mut snapshot = None;
+        if mode == ImportMode::Replace && parts != BackupParts::default() {
+            if self.import_needs_the_take_to_end() {
+                tracing::info!("replacing import refused: a take runs");
+                return ImportOutcome::failed(ImportFailure::Busy);
+            }
+            match self.write_auto_now(AutoKind::Import) {
+                Ok(file) => snapshot = Some(file.path.display().to_string()),
+                Err(e) => {
+                    tracing::warn!(error = %e, "replacing import refused: the backup before it could not be written");
+                    return ImportOutcome::Failed { code: ImportFailure::SnapshotFailed, detail: failure_detail(&e) };
+                }
+            }
+        }
+        let mut report = ImportReport { mode, parts: Vec::new(), snapshot };
         // A preset of the backup skipped for one of the same name here: its scenes name that one.
         let mut same_preset = HashMap::new();
         if parts.presets {
@@ -78,7 +100,7 @@ impl Runtime {
             report.parts.push(self.import_history(backup, mode));
         }
         tracing::info!(?mode, parts = report.parts.len(), "backup imported");
-        report
+        ImportOutcome::Done { report }
     }
 
     /// The history part: the newest `Settings.history.keep` of the backup's entries and the ones

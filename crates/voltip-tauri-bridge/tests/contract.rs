@@ -15,6 +15,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use voltip_core::audio_cache::{AudioCacheView, KeptFormat, KeptRecording, KeptStatus};
+use voltip_core::backup::auto::{AutoBackupFailure, AutoBackupFile, AutoBackupView, AutoKind};
 use voltip_core::connectivity::{ConnectivityReport, ConnectivityStatus, PeerCheck, ProbeResult, RelayCheck};
 use voltip_core::dictation::{ClipboardCode, FailureCode, InsertCheck, ProcessingStage, Via};
 use voltip_core::history::process::ProcessState;
@@ -397,6 +398,8 @@ fn settings() -> Settings {
         phone_talk: voltip_core::PhoneTalkMode::Tap,
         // docs/dictation.md §26: the recording cache keeps more, in more space, than by default.
         audio_cache: voltip_core::AudioCacheSettings { enabled: true, keep: 50, max_mb: 500 },
+        // docs/dictation.md §4.6.1: no weekly backup, and a folder of the user's.
+        backup: voltip_core::BackupSettings { weekly: false, folder: Some("D:\\同步盘\\Voltip 备份".into()) },
         ..Settings::default()
     }
 }
@@ -1166,6 +1169,24 @@ fn models_location() -> ModelsLocationView {
     }
 }
 
+/// The automatic backups (docs/dictation.md §4.6.1): a folder of the user's with this computer's
+/// weekly backup in it (its tag in the name, user decision D23), the failure of the one before an
+/// update, and its notice on home.
+fn auto_backup() -> AutoBackupView {
+    let failure = AutoBackupFailure { kind: AutoKind::Update, at_ms: AT_MS - 60_000, detail: "Access is denied. (os error 5)".into() };
+    let device = voltip_core::backup::auto::device_tag(&DESKTOP_KEY);
+    AutoBackupView {
+        available: true,
+        last: Some(AutoBackupFile { name: format!("voltip-auto-20261030-152000-weekly-{device}.voltip-backup"), at_ms: AT_MS, kind: AutoKind::Weekly }),
+        device,
+        folder: "D:\\同步盘\\Voltip 备份".into(),
+        default_folder: "C:\\Users\\me\\AppData\\Roaming\\voltip\\Voltip\\data\\backups".into(),
+        custom: true,
+        failure: Some(failure.clone()),
+        notice: Some(failure),
+    }
+}
+
 /// A fully populated state: every `Option` is `Some`, so the TypeScript schema sees each key.
 fn full_state() -> UiState {
     UiState {
@@ -1216,6 +1237,7 @@ fn full_state() -> UiState {
         history_recent: history_entries(),
         audio_cache: audio_cache(),
         imports: imports_view(),
+        auto_backup: auto_backup(),
         // More entries than the recent ones: the rest are read through the queries.
         history_total: 312,
         engines: engine_status(),
@@ -1339,6 +1361,7 @@ fn event_tag(event: &UiEvent) -> &'static str {
         UiEvent::HistoryProcess { .. } => "history_process",
         UiEvent::AudioCache(_) => "audio_cache",
         UiEvent::Imports(_) => "imports",
+        UiEvent::AutoBackup(_) => "auto_backup",
         UiEvent::ProviderProbe(_) => "provider_probe",
         UiEvent::PhoneTake { .. } => "phone_take",
         UiEvent::SentTexts { .. } => "sent_texts",
@@ -1355,7 +1378,7 @@ fn event_tag(event: &UiEvent) -> &'static str {
     }
 }
 
-const ALL_EVENT_TAGS: [&str; 32] = [
+const ALL_EVENT_TAGS: [&str; 33] = [
     "state",
     "identity",
     "settings",
@@ -1388,6 +1411,7 @@ const ALL_EVENT_TAGS: [&str; 32] = [
     "mcp",
     "usage",
     "imports",
+    "auto_backup",
 ];
 
 /// The computer's settings as a phone shows them (docs/dictation.md §20.8): every `Option` set.
@@ -2263,6 +2287,11 @@ fn all_events() -> Vec<UiEvent> {
         }),
         UiEvent::Imports(ImportsView::default()),
         history_event(vec![imported_history_entry()]),
+        // docs/dictation.md §4.6.1: the automatic backups in a folder of the user's, the default
+        // folder before it was looked at, and the phone (none made there).
+        UiEvent::AutoBackup(auto_backup()),
+        UiEvent::AutoBackup(AutoBackupView { folder: auto_backup().default_folder, custom: false, last: None, failure: None, notice: None, ..auto_backup() }),
+        UiEvent::AutoBackup(AutoBackupView::default()),
         // docs/dictation.md §10.9: a move halfway, every way one ends, and the phone (no library).
         UiEvent::ModelsLocation(models_location()),
         UiEvent::ModelsLocation(ModelsLocationView { moving: None, last: Some(ModelsMoveOutcome::Cancelled), ..models_location() }),
@@ -2320,6 +2349,9 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::SettingsSetAutoUpdate { .. } => "SettingsSetAutoUpdate",
         UiCommand::SettingsSetHistory { .. } => "SettingsSetHistory",
         UiCommand::SettingsSetAudioCache { .. } => "SettingsSetAudioCache",
+        UiCommand::SettingsSetBackup { .. } => "SettingsSetBackup",
+        UiCommand::BackupFolderReset => "BackupFolderReset",
+        UiCommand::BackupNoticeDismiss => "BackupNoticeDismiss",
         UiCommand::AudioCacheClear => "AudioCacheClear",
         UiCommand::AudioCacheDelete { .. } => "AudioCacheDelete",
         UiCommand::AudioRetake { .. } => "AudioRetake",
@@ -2437,6 +2469,10 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         ("settings_set_audio_cache", json!({ "enabled": true, "keep": 50, "maxMb": 500 }), "SettingsSetAudioCache"),
         ("audio_cache_clear", Value::Null, "AudioCacheClear"),
         ("audio_cache_delete", json!({ "id": RECORDING_ID_2 }), "AudioCacheDelete"),
+        // docs/dictation.md §4.6.1: the weekly backup, the default folder again, home's notice closed.
+        ("settings_set_backup", json!({ "weekly": false }), "SettingsSetBackup"),
+        ("backup_folder_reset", Value::Null, "BackupFolderReset"),
+        ("backup_notice_dismiss", Value::Null, "BackupNoticeDismiss"),
         // §26.4: on other models than the settings', for that take only.
         (
             "audio_retake",
@@ -2997,6 +3033,9 @@ fn commands_fixture_is_the_wire_form_and_parses_into_every_variant() {
         "ScenesRemove",
         "ScenesReorder",
         "SettingsSetContextSharing",
+        "SettingsSetBackup",
+        "BackupFolderReset",
+        "BackupNoticeDismiss",
         "SettingsSetMcp",
         "McpCopyToken",
         "McpRotateToken",
@@ -3250,6 +3289,7 @@ fn backup_fixture_matches_serde_output() {
     };
     let part = |part: BackupPart, in_file: u32, restored: u32, skipped: Skipped| PartReport { part, in_file, restored, skipped, removed: 0, error: None };
     let report = ImportReport {
+        snapshot: None,
         mode: ImportMode::Merge,
         parts: vec![
             part(BackupPart::Presets, 2, 1, Skipped { duplicate: 1, ..Skipped::default() }),
@@ -3281,10 +3321,22 @@ fn backup_fixture_matches_serde_output() {
         ],
         "import": [
             ImportOutcome::Done { report },
-            ImportOutcome::Done { report: ImportReport { mode: ImportMode::Replace, parts: vec![unavailable] } },
-            ImportOutcome::Failed { code: ImportFailure::Expired },
-            ImportOutcome::Failed { code: ImportFailure::Unavailable },
-            ImportOutcome::Failed { code: ImportFailure::Unsupported },
+            // docs/dictation.md §4.6.1: a replacing import names the automatic backup it made first.
+            ImportOutcome::Done {
+                report: ImportReport {
+                    mode: ImportMode::Replace,
+                    parts: vec![unavailable],
+                    snapshot: Some(format!(
+                        "C:\\Users\\me\\AppData\\Roaming\\voltip\\Voltip\\data\\backups\\voltip-auto-20261030-152000-import-{}.voltip-backup",
+                        voltip_core::backup::auto::device_tag(&DESKTOP_KEY)
+                    )),
+                },
+            },
+            ImportOutcome::failed(ImportFailure::Expired),
+            ImportOutcome::failed(ImportFailure::Unavailable),
+            ImportOutcome::failed(ImportFailure::Unsupported),
+            ImportOutcome::failed(ImportFailure::Busy),
+            ImportOutcome::Failed { code: ImportFailure::SnapshotFailed, detail: "No space left on device (os error 28)".into() },
         ],
     });
     check_fixture(BACKUP_FILE, &pretty(&answers));

@@ -27,6 +27,7 @@ import {
   appRefSchema,
   audioDeviceSchema,
   backupExportOutcomeSchema,
+  backupFolderOutcomeSchema,
   backupImportOutcomeSchema,
   backupOpenOutcomeSchema,
   audioOutputsSchema,
@@ -182,6 +183,15 @@ export class TauriBackend implements Backend {
 
   async backupDiscard(token: string): Promise<void> {
     await this.transport.invoke("backup_discard", { token });
+  }
+
+  async backupFolderChoose(title: string) {
+    const raw = await this.transport.invoke("backup_folder_choose", { title });
+    return backupFolderOutcomeSchema.parse(raw);
+  }
+
+  async backupFolderOpen(): Promise<void> {
+    await this.transport.invoke("backup_folder_open");
   }
 
   async updateStatus() {

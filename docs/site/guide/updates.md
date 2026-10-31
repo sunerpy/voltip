@@ -17,6 +17,8 @@ With automatic updates off, Voltip contacts the update server only when you pres
 
 On Windows the new version installs in the background without showing the installer, and Voltip opens again when it is done, including when you update from 0.1.6 or earlier. On macOS and Linux the app is replaced in place and restarts.
 
+Before an update installs, Voltip makes an automatic backup of the history, the dictionary, the rules, the scenes and the AI presets; see [Automatic backups](/dictation/history#automatic-backups).
+
 On a Mac, updating from 0.0.6 or earlier asks for the permissions once more; see [Install](/guide/install#macos). From version 0.0.7 every release is signed with the same certificate so that later updates keep the microphone and Accessibility permissions. The first such update, from 0.0.7 to 0.0.8, has not been checked on a real Mac yet.
 
 ### On an Android phone
@@ -52,7 +54,7 @@ Settings, the history, the dictionary, the rules, the scenes, the kept recording
 | macOS | `~/Library/Application Support/dev.voltip.Voltip` |
 | Linux | `~/.local/share/voltip` |
 
-By default the models are in the `models` folder inside it and usually account for most of its size; they can move to another drive, see [Where the models are saved](/recognition/local#where-the-models-are-saved). Deleting a model from the Speech models page removes its files. The kept recordings are in the `audio-cache` folder, 200 MB at most by default; delete them under **Settings → Privacy and history**, in **Recording cache**, see [Recognise or polish again](/dictation/history#recognise-or-polish-again).
+By default the models are in the `models` folder inside it and usually account for most of its size; they can move to another drive, see [Where the models are saved](/recognition/local#where-the-models-are-saved). Deleting a model from the Speech models page removes its files. The kept recordings are in the `audio-cache` folder, 200 MB at most by default; delete them under **Settings → Privacy and history**, in **Recording cache**, see [Recognise or polish again](/dictation/history#recognise-or-polish-again). The automatic backups are in the `backups` folder unless you chose another one, see [Automatic backups](/dictation/history#automatic-backups).
 
 Keys for cloud providers and this computer's device identity are kept in the system keychain — Windows Credential Manager, the macOS keychain, or the Secret Service on Linux — under entries whose names begin with `dev.voltip.desktop`.
 
@@ -64,4 +66,4 @@ Keys for cloud providers and this computer's device identity are kept in the sys
    - **macOS**: move Voltip from Applications to the Trash.
    - **Linux, .deb**: `sudo apt remove voltip`.
    - **Linux, AppImage**: delete `~/.local/bin/Voltip.AppImage` and `~/.local/share/applications/voltip.desktop`.
-3. To remove your data as well, delete the folder listed above, and the keychain entries whose names begin with `dev.voltip.desktop`. When the models are saved elsewhere, delete that folder too.
+3. To remove your data as well, delete the folder listed above, and the keychain entries whose names begin with `dev.voltip.desktop`. When the models or the automatic backups are saved elsewhere, delete those folders too.

@@ -55,6 +55,7 @@ import { useDictation, useTickingNow } from "../features/dictation/useDictation"
 import { HomeRecordings } from "../features/history/Recordings";
 import { ResultActions } from "../features/history/ResultActions";
 import { PermissionNotice } from "../features/permissions/PermissionNotice";
+import { BackupNotice } from "../features/backup/BackupNotice";
 import { PresetMenu } from "../features/presets/PresetMenu";
 import {
   MicrophoneMenu,
@@ -352,6 +353,7 @@ export function Home() {
       className="mx-auto flex w-full max-w-[1600px] flex-col gap-4 p-6"
       data-testid="page-home">
       <PermissionNotice />
+      <BackupNotice />
       {/* The usage notice says it when the built-in clean-up's day is used up. */}
       {!(refineOut && state.refine_notice?.failure === "quota") && (
         <RefineNotice

@@ -111,6 +111,25 @@ impl Default for AudioCacheSettings {
     }
 }
 
+/// The automatic backups (docs/dictation.md §4.6.1, user decision 2026-10-28): one a week, one
+/// before an update installs and one before a replacing import, the newest five kept.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BackupSettings {
+    /// Make one every week. The one before an update and the one before a replacing import are
+    /// made either way.
+    pub weekly: bool,
+    /// The folder they go to, an absolute path the folder dialog returned; `None`:
+    /// `<data dir>/backups` ([`crate::backup::auto::default_folder`]).
+    pub folder: Option<String>,
+}
+
+impl Default for BackupSettings {
+    fn default() -> Self {
+        Self { weekly: true, folder: None }
+    }
+}
+
 /// Where a dictation take's audio comes from (docs/dictation.md §22).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -259,6 +278,10 @@ pub struct Settings {
     /// written before it (on, the newest 20, at most 200 MB).
     #[serde(default)]
     pub audio_cache: AudioCacheSettings,
+    /// The automatic backups (docs/dictation.md §4.6.1); absent in files written before them (one
+    /// a week, into `<data dir>/backups`).
+    #[serde(default)]
+    pub backup: BackupSettings,
     /// Where the dictation pill appears.
     #[serde(default)]
     pub overlay: OverlayPlacement,
@@ -481,6 +504,7 @@ impl Default for Settings {
             phone_talk: PhoneTalkMode::Hold,
             history: HistorySettings::default(),
             audio_cache: AudioCacheSettings::default(),
+            backup: BackupSettings::default(),
             overlay: OverlayPlacement::Bottom,
             microphone: None,
             recording: RecordingSettings::default(),

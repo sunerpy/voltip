@@ -28,6 +28,7 @@ import {
   emptyEngineStatus,
   emptyHotkeyStatus,
   emptyModelsLocation,
+  emptyAutoBackup,
   engineReady,
   engineSettingsSchema,
   engineStatusSchema,
@@ -84,6 +85,7 @@ function baseState(): UiState {
     update: idleUpdate(),
     models: [],
     models_location: emptyModelsLocation(),
+    auto_backup: emptyAutoBackup(),
     dictionary: [],
     rules: [],
     vocabulary_ignored: [],
@@ -1240,5 +1242,44 @@ describe("release facts", () => {
     expect(readFileSync(new URL("LICENSE", root), "utf8")).toContain(
       "GNU AFFERO GENERAL PUBLIC LICENSE",
     );
+  });
+
+  it("docs/dictation.md section 4.6.1: an older settings file or state reads as weekly backups in the default folder, and the auto_backup event replaces the view whole", () => {
+    const { backup: _omitted, ...older } = defaultSettings();
+    expect(settingsSchema.parse(older).backup).toEqual({ weekly: true, folder: null });
+    expect(settingsSchema.parse({ ...older, backup: {} }).backup).toEqual({
+      weekly: true,
+      folder: null,
+    });
+    expect(settingsSchema.safeParse({ ...older, backup: { weekly: "yes" } }).success).toBe(false);
+    const { auto_backup: _none, ...oldState } = baseState();
+    const parsed = uiStateSchema.parse(oldState);
+    expect(parsed.auto_backup).toEqual(emptyAutoBackup());
+    expect(parsed.auto_backup.device).toBe("");
+    const view = {
+      available: true,
+      device: "a7c4198e",
+      folder: "/sync/Voltip",
+      default_folder: "/data/backups",
+      custom: true,
+      last: {
+        name: "voltip-auto-20261030-152000-update-a7c4198e.voltip-backup",
+        at_ms: 1,
+        kind: "update",
+      },
+    };
+    const event = uiEventSchema.parse({ type: "auto_backup", ...view });
+    const next = applyEvent(parsed, event);
+    expect(next.auto_backup).toEqual({ ...view, failure: null, notice: null });
+    // A view from before user decision D23 names no tag.
+    const { device: _untagged, ...untagged } = view;
+    expect(uiEventSchema.parse({ type: "auto_backup", ...untagged })).toMatchObject({ device: "" });
+    expect(
+      uiEventSchema.safeParse({
+        type: "auto_backup",
+        ...view,
+        last: { ...view.last, kind: "daily" },
+      }).success,
+    ).toBe(false);
   });
 });

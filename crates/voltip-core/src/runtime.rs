@@ -43,6 +43,8 @@ use crate::{CoreError, is_initiator, rendezvous_channel};
 mod always_on;
 mod audio;
 use audio::{Recovery, audio_at_start, keeps_audio, leftovers_at_start};
+mod auto_backup;
+pub use auto_backup::AUTO_WEEKLY_DELAY;
 mod backup;
 mod check;
 mod import;
@@ -127,6 +129,10 @@ pub struct CoreConfig {
     /// 窗口已切换 and the failures on screen until they are closed. Off (the default; the phone,
     /// the local speech service), every terminal state goes after its dwell.
     pub result_cards: bool,
+    /// Make the weekly automatic backup and show the automatic backups (docs/dictation.md
+    /// §4.6.1): the desktop yes, the phone and the local speech service no. The backups before an
+    /// update and before a replacing import are made wherever they are asked for.
+    pub auto_backup: bool,
     /// The shell shows the live preview (the desktop's pill). The phone does not, so the built-in
     /// service sends no previews there (docs/dictation.md §11.8): each would be a request for
     /// nothing.
@@ -236,6 +242,7 @@ impl CoreConfig {
             accepts_phone_takes: true,
             keeps_audio: true,
             result_cards: false,
+            auto_backup: false,
             shows_live_preview: true,
             builtin_scenes: true,
             manual_scenes: false,
@@ -588,7 +595,8 @@ pub enum CoreCommand {
     },
     /// Restore the chosen parts of a backup the shell read and checked (docs/dictation.md §4.6):
     /// the presets, the scenes, the dictionary, the rules, then the history, each written in one go
-    /// and announced by its event; `reply` gets what each part restored.
+    /// and announced by its event; `reply` gets what each part restored. A replacing import first
+    /// writes an automatic backup of what is here (§4.6.1) and replaces nothing when it cannot.
     BackupImport {
         /// The backup.
         backup: Arc<crate::backup::Backup>,
@@ -599,6 +607,21 @@ pub enum CoreCommand {
         /// Where the report goes.
         reply: crate::backup::ImportReply,
     },
+    /// Make the weekly automatic backup or not (docs/dictation.md §4.6.1); persisted.
+    SetBackupWeekly(bool),
+    /// The folder the automatic backups go to: one the shell's folder dialog returned, or `None`
+    /// for `<data dir>/backups`; persisted. The backups already made stay where they are.
+    SetBackupFolder(Option<PathBuf>),
+    /// Write an automatic backup of `kind` now (the shell, before an update installs); `reply`
+    /// gets the file or why there is none. One at a time: it waits for the one being written.
+    BackupAuto {
+        /// Why it is made.
+        kind: crate::backup::auto::AutoKind,
+        /// Where the answer goes.
+        reply: crate::backup::auto::AutoReply,
+    },
+    /// Close home's notice that the backup before the update failed.
+    BackupNoticeDismiss,
     /// Append a scene (docs/dictation.md §18).
     SceneAdd(SceneDraft),
     /// Replace a scene's name, flag, match and overrides (id and position stay).
@@ -711,6 +734,7 @@ struct Inbox {
     recover_rx: mpsc::Receiver<audio::Recovered>,
     usage_rx: mpsc::Receiver<usage::UsageInbound>,
     import_rx: mpsc::Receiver<import::ImportInbound>,
+    auto_rx: mpsc::Receiver<auto_backup::AutoInbound>,
 }
 
 /// Events to the UI.
@@ -784,6 +808,9 @@ pub enum CoreEvent {
     /// The recordings the audio cache holds (docs/dictation.md §26); on `Ready` and after every
     /// change.
     AudioCache(crate::audio_cache::AudioCacheView),
+    /// Where the automatic backups go, the newest one and the last failure (docs/dictation.md
+    /// §4.6.1); on `Ready` and after every change.
+    AutoBackup(crate::backup::auto::AutoBackupView),
     /// Resolved engine configuration (providers, models, user-entered hosts, key presence); on
     /// `Ready` and after changes.
     Engines(EngineStatus),
@@ -865,6 +892,12 @@ impl CoreHandle {
     /// Submit without awaiting (from sync Tauri commands).
     pub fn try_send(&self, cmd: CoreCommand) -> Result<(), CoreError> {
         self.cmd.try_send(cmd).map_err(|_| CoreError::NotRunning)
+    }
+
+    /// Submit from a blocking thread, waiting for room in the queue. Never from async code: it
+    /// would hold up the executor's thread.
+    pub fn blocking_send(&self, cmd: CoreCommand) -> Result<(), CoreError> {
+        self.cmd.blocking_send(cmd).map_err(|_| CoreError::NotRunning)
     }
 
     /// Input levels while a dictation capture runs (nothing arrives otherwise). The shell feeds
@@ -978,6 +1011,7 @@ impl AppCore {
         let serve_host = config.serve_host.clone();
         let (mcp, mcp_notice) = mcp::McpRuntime::new(config.mcp_host.clone(), &config.data_dir, mcp_tx);
         let (imports, import_rx) = import::ImportRuntime::new(config.media_decoder.clone(), &config.data_dir);
+        let (auto, auto_rx) = auto_backup::AutoBackups::new(&config.data_dir, now_ms());
         let mut rt = Runtime {
             config,
             manager,
@@ -1052,10 +1086,12 @@ impl AppCore {
             usage,
             last_result: None,
             imports,
+            auto,
         };
         rt.system_fingerprint = rt.config.network.system_fingerprint();
         rt.connect_relay()?;
-        let inbox = Inbox { cmd_rx, link_rx, dict_rx, model_rx, act_rx, phone_rx, check_rx, process_rx, listed_rx, mcp_rx, recover_rx, usage_rx, import_rx };
+        let inbox =
+            Inbox { cmd_rx, link_rx, dict_rx, model_rx, act_rx, phone_rx, check_rx, process_rx, listed_rx, mcp_rx, recover_rx, usage_rx, import_rx, auto_rx };
         Ok((rt, inbox, CoreHandle { cmd: cmd_tx, levels: levels_tx }, evt_rx))
     }
 }
@@ -1326,6 +1362,8 @@ struct Runtime {
     last_result: Option<String>,
     /// The import queue (docs/dictation.md §31).
     imports: import::ImportRuntime,
+    /// The automatic backups (docs/dictation.md §4.6.1).
+    auto: auto_backup::AutoBackups,
 }
 
 impl Runtime {
@@ -1448,6 +1486,7 @@ impl Runtime {
             mut recover_rx,
             mut usage_rx,
             mut import_rx,
+            mut auto_rx,
         } = inbox;
         self.emit(CoreEvent::Ready {
             identity: self.identity.public(),
@@ -1476,6 +1515,7 @@ impl Runtime {
         self.emit_network();
         self.emit_usage();
         self.emit_imports();
+        self.emit_auto_backup();
         self.apply_serve().await;
         self.apply_mcp().await;
         let mut ticker = tokio::time::interval(self.config.tick);
@@ -1504,6 +1544,7 @@ impl Runtime {
                 Some(recovered) = recover_rx.recv() => self.on_recovered(recovered),
                 Some(inbound) = usage_rx.recv() => self.on_usage(inbound),
                 Some(inbound) = import_rx.recv() => self.on_import(inbound),
+                Some(inbound) = auto_rx.recv() => self.on_auto_backup(inbound, now_ms()),
                 Ok(()) = quota_rx.changed() => self.emit(CoreEvent::Engines(self.engine_status())),
                 _ = ticker.tick() => self.tick().await,
             }
@@ -1515,6 +1556,13 @@ impl Runtime {
             // windows allow.
             self.sync_step().await;
         }
+        // Commands that came after Shutdown do not run, and their callers hear so: the queue is
+        // closed and emptied, which drops any reply in it. A sender that took its place before the
+        // close puts its command in afterwards; `recv` waits for it, where dropping the queue would
+        // leave that command, and its caller (the shell's backup before an update), waiting for as
+        // long as a handle lives.
+        cmd_rx.close();
+        while cmd_rx.recv().await.is_some() {}
         for (_, d) in self.downloads.drain() {
             d.cancel.cancel();
             d.task.abort();
@@ -1704,6 +1752,19 @@ impl Runtime {
             }
             CoreCommand::BackupImport { backup, parts, mode, reply } => {
                 reply.send(self.import_backup(&backup, parts, mode));
+                Ok(())
+            }
+            CoreCommand::SetBackupWeekly(on) => {
+                self.settings.backup.weekly = on;
+                self.save_settings()
+            }
+            CoreCommand::SetBackupFolder(folder) => self.set_backup_folder(folder),
+            CoreCommand::BackupAuto { kind, reply } => {
+                self.request_auto_backup(kind, Some(reply));
+                Ok(())
+            }
+            CoreCommand::BackupNoticeDismiss => {
+                self.dismiss_backup_notice();
                 Ok(())
             }
             CoreCommand::SceneAdd(draft) => {
@@ -3583,6 +3644,7 @@ impl Runtime {
         self.retry_attaches(now).await;
         self.sync_tick().await;
         self.usage_tick();
+        self.backup_tick_at(now_ms());
         self.check_takes();
         self.check_texts();
         self.check_deadline();

@@ -3,6 +3,7 @@ import type {
   AppRef,
   ArgsOf,
   BackupExportOutcome,
+  BackupFolderOutcome,
   BackupImportOutcome,
   BackupOpenOutcome,
   BackupParts,
@@ -101,6 +102,13 @@ export interface Backend {
   backupImport(token: string, parts: BackupParts, mode: ImportMode): Promise<BackupImportOutcome>;
   /** Close a preview without importing (`backup_discard`): the shell lets go of the backup. */
   backupDiscard(token: string): Promise<void>;
+  /** 自动备份位置 · 更改… (`backup_folder_choose`, docs/dictation.md §4.6.1): the shell's folder
+   *  dialog titled `title`, then a trial file in the folder chosen; the automatic backups go there
+   *  from now on, and `auto_backup` events follow. */
+  backupFolderChoose(title: string): Promise<BackupFolderOutcome>;
+  /** 打开文件夹 (`backup_folder_open`): the automatic backups' folder in the file manager, made
+   *  when missing. */
+  backupFolderOpen(): Promise<void>;
   /** Start the native input level meter on `deviceId` (default device when `undefined`). Frames
    *  stream at ≈ 30 Hz through a Tauri `Channel`; the returned function stops the meter. */
   meter(deviceId: string | undefined, onFrame: FrameListener): Promise<Unsubscribe>;

@@ -64,14 +64,14 @@ pub use providers::{
     ReasoningEffort, ServiceKind, ServicePreset, SiteId, key_entries, key_env_var, load_user_secrets, peek_user_secrets,
 };
 pub use runtime::{
-    AppCore, CoreCommand, CoreConfig, CoreEvent, CoreHandle, EXTRA_RECORDING_POLL, MAX_ACTIVATION_MS, PRESET_TRY_UNCONFIGURED, SERVE_UNAVAILABLE, TestHooks,
-    now_ms,
+    AUTO_WEEKLY_DELAY, AppCore, CoreCommand, CoreConfig, CoreEvent, CoreHandle, EXTRA_RECORDING_POLL, MAX_ACTIVATION_MS, PRESET_TRY_UNCONFIGURED,
+    SERVE_UNAVAILABLE, TestHooks, now_ms,
 };
 pub use scenes::{AppRef, BuiltinScene, ContextSharing, Scene, SceneDraft, SceneError, SceneMatch, SceneOverrides, SceneRef, TakeContext};
 pub use settings::{
-    AudioCacheSettings, DEFAULT_MAX_MINUTES, HistorySettings, Locale, MAX_MINUTES_CHOICES, MIN_SERVE_PORT, OverlayPlacement, PROXY_PASSWORD_ENTRY,
-    PhoneTalkMode, ProxyMode, ProxySettings, RecordingSettings, RecordingSource, SETTINGS_FILE_NAME, ServeSettings, Settings, SettingsStore, ThemeId,
-    load_proxy_password, peek_proxy_password, proxy_error, proxy_error_text,
+    AudioCacheSettings, BackupSettings, DEFAULT_MAX_MINUTES, HistorySettings, Locale, MAX_MINUTES_CHOICES, MIN_SERVE_PORT, OverlayPlacement,
+    PROXY_PASSWORD_ENTRY, PhoneTalkMode, ProxyMode, ProxySettings, RecordingSettings, RecordingSource, SETTINGS_FILE_NAME, ServeSettings, Settings,
+    SettingsStore, ThemeId, load_proxy_password, peek_proxy_password, proxy_error, proxy_error_text,
 };
 pub use view::{DeviceConnection, DeviceView, RelayFailure, RelaySource, RelayStatus};
 pub use vocabulary::{

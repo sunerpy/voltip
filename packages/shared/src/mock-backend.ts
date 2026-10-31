@@ -89,6 +89,12 @@ import {
   type PackageProblem,
   type ModelState,
   type ModelsLocationView,
+  type AutoBackupFile,
+  type AutoBackupKind,
+  type AutoBackupView,
+  AUTO_BACKUP_KEEP,
+  type BackupFolderOutcome,
+  emptyAutoBackup,
   type MutationCommand,
   type OutputMode,
   type Permission,
@@ -279,6 +285,9 @@ export interface MockBackendOptions {
   /** Where the model library is at start (docs/dictation.md §10.9); defaults to
    *  {@link MOCK_MODELS_ROOT}. */
   modelsLocation?: Partial<ModelsLocationView>;
+  /** The automatic backups at start (docs/dictation.md §4.6.1): the newest, a failure, home's
+   *  notice; the folder follows `settings.backup.folder` otherwise. */
+  autoBackup?: Partial<AutoBackupView>;
   /** Overrides for the resolved engine status (tests that need a status the settings cannot
    *  produce). */
   engines?: Partial<EngineStatus>;
@@ -552,6 +561,14 @@ export const MOCK_STREAMING_MODEL_ID = "zipformer-stream-zh-en";
 export const MOCK_MODELS_ROOT = "~/.local/share/voltip/models";
 /** The folder the preview's folder dialog answers with (docs/dictation.md §10.9). */
 export const MOCK_CHOSEN_MODELS_DIR = "/data/Voltip/models";
+/** Where the preview pretends the automatic backups go (`<app data dir>/backups`,
+ *  docs/dictation.md §4.6.1). */
+export const MOCK_BACKUPS_DIR = "~/.local/share/voltip/backups";
+/** The folder the preview's 自动备份位置 dialog answers with. */
+export const MOCK_CHOSEN_BACKUPS_DIR = "/data/Sync/Voltip";
+/** The preview computer's tag in its automatic backups' names: the start of `desktopIdentity()`'s
+ *  fingerprint, lower case, as `voltip_core::backup::auto::device_tag` makes it (user decision D23). */
+export const MOCK_DEVICE_TAG = "a7c4198e";
 
 /** The real catalogue's files, name and size (`voltip_asr_local::catalogue`). */
 const MOCK_MODEL_FILES: Record<string, readonly (readonly [string, number])[]> = {
@@ -1326,6 +1343,21 @@ export class MockBackend implements Backend {
               last: null,
               ...options.modelsLocation,
             },
+      // The phone makes no automatic backups (docs/dictation.md §4.6.1).
+      auto_backup:
+        this.role === "phone"
+          ? emptyAutoBackup()
+          : {
+              available: true,
+              device: MOCK_DEVICE_TAG,
+              folder: settings.backup.folder ?? MOCK_BACKUPS_DIR,
+              default_folder: MOCK_BACKUPS_DIR,
+              custom: settings.backup.folder !== null,
+              last: null,
+              failure: null,
+              notice: null,
+              ...options.autoBackup,
+            },
       dictionary: [...(options.dictionary ?? [])],
       rules: [...(options.rules ?? [])],
       vocabulary_ignored: [...(options.vocabularyIgnored ?? [])],
@@ -1618,6 +1650,19 @@ export class MockBackend implements Backend {
     if (this.role === "phone") return { kind: "failed", code: "unsupported" };
     const opened = this.openedBackup;
     if (opened?.token !== token) return { kind: "failed", code: "expired" };
+    // docs/dictation.md §4.6.1: what a replacing import would replace is backed up first; nothing
+    // is replaced while a take runs or when that backup cannot be written, and the preview stays
+    // for another try.
+    let snapshot: string | undefined;
+    if (mode === "replace" && Object.values(parts).some(Boolean)) {
+      const phase = this.state.dictation.phase.phase;
+      if (phase === "listening" || phase === "processing") return { kind: "failed", code: "busy" };
+      const written = this.writeAutoBackup("import");
+      if (written.kind === "failed")
+        return { kind: "failed", code: "snapshot_failed", detail: written.detail };
+      snapshot = written.path;
+    }
+    // As in the shell, the backup is let go of as the import runs: a token works once.
     this.openedBackup = undefined;
     const { file } = opened;
     const reports: BackupPartReport[] = [];
@@ -1655,13 +1700,106 @@ export class MockBackend implements Backend {
       reports.push(merged.report);
       if (changed(merged.report) || merged.report.removed > 0) this.setHistory(merged.list);
     }
-    return { kind: "done", report: { mode, parts: reports } };
+    return {
+      kind: "done",
+      report: { mode, parts: reports, ...(snapshot === undefined ? {} : { snapshot }) },
+    };
   }
 
   /** `backup_discard`: the preview was closed. */
   async backupDiscard(token: string): Promise<void> {
     await Promise.resolve();
     if (this.openedBackup?.token === token) this.openedBackup = undefined;
+  }
+
+  // ---- automatic backups (docs/dictation.md §4.6.1) --------------------------------------------
+
+  /** The automatic backups the preview wrote, newest first, the newest `AUTO_BACKUP_KEEP` (tests). */
+  readonly autoBackups: AutoBackupFile[] = [];
+  /** `backup_folder_open` calls: the folder each showed (tests). */
+  readonly backupFoldersOpened: string[] = [];
+  /** What the next 自动备份位置 dialog answers: a folder, `null` (closed), or a folder that
+   *  cannot be written. */
+  private nextBackupFolder: string | null | { unwritable: string } = MOCK_CHOSEN_BACKUPS_DIR;
+  /** The automatic backups fail with this message until cleared (tests). */
+  private autoBackupFailure: string | undefined;
+
+  /** What the next 更改… dialog answers (tests): a folder, `null` (closed), or `{ unwritable }`. */
+  simulateBackupFolder(next: string | null | { unwritable: string }) {
+    this.nextBackupFolder = next;
+  }
+
+  /** The automatic backups fail with `detail` (the system's message) until `undefined` (tests). */
+  simulateAutoBackupFails(detail: string | undefined) {
+    this.autoBackupFailure = detail;
+  }
+
+  /** The week's backup as the core makes it once one is due (tests and the dev pages). */
+  simulateWeeklyBackup() {
+    this.writeAutoBackup("weekly");
+  }
+
+  /** `backup_folder_choose`: the folder dialog, then a trial file in the folder chosen. */
+  backupFolderChoose(_title: string): Promise<BackupFolderOutcome> {
+    if (this.role === "phone") return Promise.reject(new Error("backup: 手机端不提供自动备份"));
+    const next = this.nextBackupFolder;
+    if (next === null) return Promise.resolve({ kind: "cancelled" });
+    if (typeof next !== "string")
+      return Promise.resolve({ kind: "failed", detail: next.unwritable });
+    this.setBackupFolder(next);
+    return Promise.resolve({ kind: "chosen", folder: next });
+  }
+
+  /** `backup_folder_open`: the automatic backups' folder in the file manager. */
+  backupFolderOpen(): Promise<void> {
+    if (this.role === "phone") return Promise.reject(new Error("backup: 手机端不提供自动备份"));
+    this.backupFoldersOpened.push(this.state.auto_backup.folder);
+    return Promise.resolve();
+  }
+
+  private emitAutoBackup(change: Partial<AutoBackupView>) {
+    this.emit({ type: "auto_backup", ...this.state.auto_backup, ...change });
+  }
+
+  /** As the core sets it: the default folder is saved as none; a change forgets the folder's
+   *  backups and its failure until the new folder is looked at. */
+  private setBackupFolder(folder: string | null) {
+    const saved = folder === MOCK_BACKUPS_DIR ? null : folder;
+    if (saved === this.state.settings.backup.folder) return;
+    this.emit({
+      type: "settings",
+      ...this.state.settings,
+      backup: { ...this.state.settings.backup, folder: saved },
+    });
+    this.emitAutoBackup({
+      folder: saved ?? MOCK_BACKUPS_DIR,
+      custom: saved !== null,
+      last: null,
+      failure: null,
+    });
+  }
+
+  /** One automatic backup of `kind`, named as the core names it, the newest five kept; a failure
+   *  is shown until one succeeds. */
+  private writeAutoBackup(
+    kind: AutoBackupKind,
+  ): { kind: "written"; path: string } | { kind: "failed"; detail: string } {
+    const at = this.now();
+    if (this.autoBackupFailure !== undefined) {
+      const failure = { kind, at_ms: at, detail: this.autoBackupFailure };
+      // The update's failure shows on home after the restart; the preview does not restart.
+      this.emitAutoBackup({ failure, ...(kind === "update" ? { notice: failure } : {}) });
+      return { kind: "failed", detail: this.autoBackupFailure };
+    }
+    const file: AutoBackupFile = {
+      name: autoBackupName(kind, at, MOCK_DEVICE_TAG),
+      at_ms: at,
+      kind,
+    };
+    this.autoBackups.unshift(file);
+    this.autoBackups.splice(AUTO_BACKUP_KEEP);
+    this.emitAutoBackup({ last: file, failure: null });
+    return { kind: "written", path: `${this.state.auto_backup.folder}/${file.name}` };
   }
 
   /** What `backupExport` writes. */
@@ -2485,6 +2623,20 @@ export class MockBackend implements Backend {
     audio_cache_delete: (args) => {
       const { id } = required(args);
       this.setRecordings(this.state.audio_cache.recordings.filter((r) => r.id !== id));
+    },
+    settings_set_backup: (args) => {
+      const { weekly } = required(args);
+      this.emit({
+        type: "settings",
+        ...this.state.settings,
+        backup: { ...this.state.settings.backup, weekly },
+      });
+    },
+    backup_folder_reset: () => {
+      this.setBackupFolder(null);
+    },
+    backup_notice_dismiss: () => {
+      if (this.state.auto_backup.notice !== null) this.emitAutoBackup({ notice: null });
     },
     audio_retake: (args) => {
       const { id, asr, refine } = required(args);
@@ -3916,6 +4068,9 @@ export class MockBackend implements Backend {
       return;
     }
     if (current.state === "ready") {
+      // docs/dictation.md §4.6.1: the backup before the update installs; a failed one does not
+      // stop it.
+      this.writeAutoBackup("update");
       this.emit({
         type: "update",
         state: "installing",
@@ -3930,6 +4085,7 @@ export class MockBackend implements Backend {
       if (n > MOCK_UPDATE_TICKS) {
         this.emit({ type: "update", state: "ready", version });
         this.laterUpdate(MOCK_UPDATE_TICK_MS, () => {
+          this.writeAutoBackup("update");
           this.emit({ type: "update", state: "installing", version });
         });
         return;
@@ -6068,6 +6224,21 @@ function sampleRowOutcome(row: SampleHistoryRow): HistoryEntry["outcome"] {
 /** The ids of the sample backup's items, apart from the sample history's own. */
 function sampleBackupId(n: number): string {
   return `00000000-0000-4000-9000-${String(n).padStart(12, "0")}`;
+}
+
+/** `voltip-auto-20261030-152000-weekly-a7c4198e.voltip-backup`: an automatic backup's name as the
+ *  core writes it (`voltip_core::backup::auto::auto_name`), in local time, with the tag of the
+ *  computer that wrote it (docs/dictation.md §4.6.1, user decision D23). */
+function autoBackupName(kind: AutoBackupKind, atMs: number, device: string): string {
+  const d = new Date(atMs);
+  const date = `${d.getFullYear()}${twoDigits(d.getMonth() + 1)}${twoDigits(d.getDate())}`;
+  const time = `${twoDigits(d.getHours())}${twoDigits(d.getMinutes())}${twoDigits(d.getSeconds())}`;
+  return `voltip-auto-${date}-${time}-${kind}-${device}.${BACKUP_EXTENSION}`;
+}
+
+/** `7` → `07`. */
+function twoDigits(n: number): string {
+  return String(n).padStart(2, "0");
 }
 
 /** Items per part of a backup's content. */

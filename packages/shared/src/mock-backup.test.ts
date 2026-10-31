@@ -1,8 +1,17 @@
 // The in-memory backend's backup and migration (docs/dictation.md section 4.6): what the UI
 // tests and the browser preview run on, with the core's merge rules.
 import { type MockBackupFile } from "./backup-merge";
-import { MockBackend, sampleBackup } from "./mock-backend";
-import { type BackupParts, type UiEvent } from "./schema";
+import {
+  MOCK_BACKUPS_DIR,
+  MOCK_CHOSEN_BACKUPS_DIR,
+  MOCK_DEVICE_TAG,
+  MOCK_UPDATE_CHECK_MS,
+  MOCK_UPDATE_TICK_MS,
+  MOCK_UPDATE_TICKS,
+  MockBackend,
+  sampleBackup,
+} from "./mock-backend";
+import { AUTO_BACKUP_KEEP, type BackupParts, type UiEvent } from "./schema";
 
 const NOW = 1_760_000_000_000;
 const ALL: BackupParts = {
@@ -170,5 +179,178 @@ describe("MockBackend backups (docs/dictation.md section 4.6)", () => {
     });
     expect(new Set(file.history.map((e) => e.id)).size).toBe(file.history.length);
     expect(file.history.every((e) => e.at_ms < NOW)).toBe(true);
+  });
+});
+
+describe("MockBackend automatic backups (docs/dictation.md section 4.6.1)", () => {
+  it("the weekly switch and the folder are settings; the default folder is saved as none", async () => {
+    const backend = new MockBackend({ now: () => NOW });
+    expect(backend.peek().auto_backup).toEqual({
+      available: true,
+      device: MOCK_DEVICE_TAG,
+      folder: MOCK_BACKUPS_DIR,
+      default_folder: MOCK_BACKUPS_DIR,
+      custom: false,
+      last: null,
+      failure: null,
+      notice: null,
+    });
+    await backend.invoke("settings_set_backup", { weekly: false });
+    expect(backend.peek().settings.backup).toEqual({ weekly: false, folder: null });
+    expect(await backend.backupFolderChoose("选择位置")).toEqual({
+      kind: "chosen",
+      folder: MOCK_CHOSEN_BACKUPS_DIR,
+    });
+    expect(backend.peek().settings.backup).toEqual({
+      weekly: false,
+      folder: MOCK_CHOSEN_BACKUPS_DIR,
+    });
+    expect(backend.peek().auto_backup).toMatchObject({
+      folder: MOCK_CHOSEN_BACKUPS_DIR,
+      custom: true,
+    });
+    backend.simulateBackupFolder({ unwritable: "Read-only file system (os error 30)" });
+    expect(await backend.backupFolderChoose("选择位置")).toEqual({
+      kind: "failed",
+      detail: "Read-only file system (os error 30)",
+    });
+    backend.simulateBackupFolder(null);
+    expect(await backend.backupFolderChoose("选择位置")).toEqual({ kind: "cancelled" });
+    expect(backend.peek().settings.backup.folder).toBe(MOCK_CHOSEN_BACKUPS_DIR);
+    await backend.backupFolderOpen();
+    // The same folder again changes nothing.
+    const events = backend.log.length;
+    backend.simulateBackupFolder(MOCK_CHOSEN_BACKUPS_DIR);
+    await backend.backupFolderChoose("选择位置");
+    expect(backend.log).toHaveLength(events);
+    // Choosing the default folder is the default again.
+    backend.simulateBackupFolder(MOCK_BACKUPS_DIR);
+    await backend.backupFolderChoose("选择位置");
+    expect(backend.peek().settings.backup.folder).toBeNull();
+    expect(backend.peek().auto_backup.custom).toBe(false);
+    backend.simulateBackupFolder(MOCK_CHOSEN_BACKUPS_DIR);
+    await backend.backupFolderChoose("选择位置");
+    await backend.invoke("backup_folder_reset");
+    expect(backend.peek().auto_backup).toMatchObject({ folder: MOCK_BACKUPS_DIR, custom: false });
+    await backend.backupFolderOpen();
+    expect(backend.backupFoldersOpened).toEqual([MOCK_CHOSEN_BACKUPS_DIR, MOCK_BACKUPS_DIR]);
+  });
+
+  it("a settings.json folder is where the backups go from the start; the phone makes none", async () => {
+    const backend = new MockBackend({
+      settings: { backup: { weekly: true, folder: "/sync/Voltip" } },
+    });
+    expect(backend.peek().auto_backup).toMatchObject({ folder: "/sync/Voltip", custom: true });
+    const phone = new MockBackend({ role: "phone" });
+    expect(phone.peek().auto_backup.available).toBe(false);
+    await expect(phone.backupFolderChoose("选择位置")).rejects.toThrow("手机端不提供自动备份");
+    await expect(phone.backupFolderOpen()).rejects.toThrow("手机端不提供自动备份");
+  });
+
+  it("names each backup as the core does, with this computer's tag, and keeps the newest five; a failure stays until one is written", async () => {
+    let now = NOW;
+    const backend = new MockBackend({ now: () => now });
+    // User decision D23: the tag is the start of the desktop identity's fingerprint, lower case.
+    const fingerprint = backend.peek().identity?.fingerprint ?? "";
+    expect(MOCK_DEVICE_TAG).toBe(
+      fingerprint
+        .replaceAll(/[^0-9A-F]/g, "")
+        .slice(0, 8)
+        .toLowerCase(),
+    );
+    expect(backend.peek().auto_backup.device).toBe("a7c4198e");
+    for (let i = 0; i < AUTO_BACKUP_KEEP + 2; i += 1) {
+      backend.simulateWeeklyBackup();
+      now += 60_000;
+    }
+    expect(backend.autoBackups).toHaveLength(AUTO_BACKUP_KEEP);
+    expect(
+      backend.autoBackups.every((b) =>
+        /^voltip-auto-\d{8}-\d{6}-weekly-a7c4198e\.voltip-backup$/.test(b.name),
+      ),
+    ).toBe(true);
+    expect(backend.peek().auto_backup.last).toEqual(backend.autoBackups[0]);
+    backend.simulateAutoBackupFails("No space left on device (os error 28)");
+    backend.simulateWeeklyBackup();
+    expect(backend.peek().auto_backup.failure).toEqual({
+      kind: "weekly",
+      at_ms: now,
+      detail: "No space left on device (os error 28)",
+    });
+    expect(backend.peek().auto_backup.notice).toBeNull();
+    backend.simulateAutoBackupFails(undefined);
+    backend.simulateWeeklyBackup();
+    expect(backend.peek().auto_backup.failure).toBeNull();
+  });
+
+  it("a replacing import backs up first; refused during a take or when that fails, its preview stays", async () => {
+    const backend = new MockBackend({ now: () => NOW });
+    backend.simulateBackupFile(sampleBackup(NOW));
+    const { token } = await openPreview(backend);
+    await backend.invoke("dictation_start");
+    expect(await backend.backupImport(token, ALL, "replace")).toEqual({
+      kind: "failed",
+      code: "busy",
+    });
+    await backend.invoke("dictation_cancel");
+    backend.simulateAutoBackupFails("Access is denied. (os error 5)");
+    expect(await backend.backupImport(token, ALL, "replace")).toEqual({
+      kind: "failed",
+      code: "snapshot_failed",
+      detail: "Access is denied. (os error 5)",
+    });
+    expect(backend.peek().dictionary).toEqual([]);
+    backend.simulateAutoBackupFails(undefined);
+    const done = await backend.backupImport(token, ALL, "replace");
+    if (done.kind !== "done") throw new Error(JSON.stringify(done));
+    const [snapshot] = backend.autoBackups;
+    expect(snapshot?.kind).toBe("import");
+    expect(done.report.snapshot).toBe(`${MOCK_BACKUPS_DIR}/${snapshot?.name ?? ""}`);
+    expect(await backend.backupImport(token, ALL, "replace")).toEqual({
+      kind: "failed",
+      code: "expired",
+    });
+    // Nothing chosen, or merged: nothing is replaced and nothing is backed up.
+    backend.simulateBackupFile(sampleBackup(NOW));
+    const none = { history: false, dictionary: false, rules: false, scenes: false, presets: false };
+    const empty = await backend.backupImport((await openPreview(backend)).token, none, "replace");
+    expect(empty.kind === "done" ? empty.report.snapshot : "not done").toBeUndefined();
+    backend.simulateBackupFile(sampleBackup(NOW));
+    const merged = await backend.backupImport((await openPreview(backend)).token, ALL, "merge");
+    expect(merged.kind === "done" ? merged.report.snapshot : "not done").toBeUndefined();
+    expect(backend.autoBackups).toHaveLength(1);
+  });
+
+  it("an update backs up before it installs; a failed backup does not stop it and leaves home's notice", async () => {
+    vi.useFakeTimers();
+    try {
+      const backend = new MockBackend({ now: () => NOW });
+      await backend.invoke("update_check");
+      vi.advanceTimersByTime(MOCK_UPDATE_CHECK_MS);
+      await backend.invoke("update_install");
+      vi.advanceTimersByTime(MOCK_UPDATE_TICK_MS * (MOCK_UPDATE_TICKS + 1));
+      expect(backend.peek().update.state).toBe("installing");
+      expect(backend.autoBackups.map((b) => b.kind)).toEqual(["update"]);
+
+      const failing = new MockBackend({ now: () => NOW });
+      failing.simulateAutoBackupFails("Access is denied. (os error 5)");
+      await failing.invoke("update_check");
+      vi.advanceTimersByTime(MOCK_UPDATE_CHECK_MS);
+      await failing.invoke("update_install");
+      vi.advanceTimersByTime(MOCK_UPDATE_TICK_MS * MOCK_UPDATE_TICKS);
+      expect(failing.peek().update.state).toBe("ready");
+      // An install from ready backs up first too.
+      await failing.invoke("update_install");
+      expect(failing.peek().update.state).toBe("installing");
+      const notice = { kind: "update", at_ms: NOW, detail: "Access is denied. (os error 5)" };
+      expect(failing.peek().auto_backup).toMatchObject({ failure: notice, notice });
+      await failing.invoke("backup_notice_dismiss");
+      expect(failing.peek().auto_backup).toMatchObject({ failure: notice, notice: null });
+      const events = failing.log.length;
+      await failing.invoke("backup_notice_dismiss");
+      expect(failing.log).toHaveLength(events);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -501,6 +501,18 @@ export const defaultAudioCacheSettings = (): AudioCacheSettings => ({
   max_mb: 200,
 });
 
+/** The automatic backups (`voltip_core::BackupSettings`, docs/dictation.md §4.6.1). An older
+ *  `settings.json` or core reads as weekly on, in the default folder. */
+export const backupSettingsSchema = z.object({
+  /** One a week; the one before an update and the one before a replacing import are made either
+   *  way. */
+  weekly: z.boolean().default(true),
+  /** The folder the folder dialog returned; `null`: `<data dir>/backups`. */
+  folder: z.string().nullable().default(null),
+});
+export type BackupSettings = z.infer<typeof backupSettingsSchema>;
+export const defaultBackupSettings = (): BackupSettings => ({ weekly: true, folder: null });
+
 /** Where a dictation take's audio comes from (`voltip_core::RecordingSource`, docs/dictation.md
  *  §22): the microphone, what the computer plays, or both mixed. */
 export const RECORDING_SOURCES = ["microphone", "system", "mixed"] as const;
@@ -784,6 +796,8 @@ export const settingsSchema = z.object({
   })),
   /** docs/dictation.md §26; an older `settings.json` or core reads as on, 20, 200 MB. */
   audio_cache: audioCacheSettingsSchema.default(defaultAudioCacheSettings),
+  /** docs/dictation.md §4.6.1; an older `settings.json` or core reads as weekly, default folder. */
+  backup: backupSettingsSchema.default(defaultBackupSettings),
   overlay: overlayPlacementSchema.default("bottom"),
   /** The microphone takes record from: an `audio_devices` id, or `null` for the system default.
    *  Always serialised; an older `settings.json` or core reads as the default. */
@@ -1921,17 +1935,93 @@ export type BackupPartReport = z.infer<typeof backupPartReportSchema>;
 export const backupImportReportSchema = z.object({
   mode: importModeSchema,
   parts: z.array(backupPartReportSchema),
+  /** A replacing import: where the automatic backup of what was here before went (§4.6.1). */
+  snapshot: z.string().optional(),
 });
 export type BackupImportReport = z.infer<typeof backupImportReportSchema>;
+/** `backup_import`'s answer: the report, or why nothing ran. */
+/** Why `backup_import` restored nothing (`voltip_core::backup::ImportFailure`): the preview is
+ *  gone, the app did not answer, the phone; a replacing import while a take runs (`busy`), or the
+ *  automatic backup a replacing import makes first could not be written (`snapshot_failed`). */
+export const BACKUP_IMPORT_FAILURES = [
+  "expired",
+  "unavailable",
+  "unsupported",
+  "busy",
+  "snapshot_failed",
+] as const;
+export type BackupImportFailure = (typeof BACKUP_IMPORT_FAILURES)[number];
 /** `backup_import`'s answer: the report, or why nothing ran. */
 export const backupImportOutcomeSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("done"), report: backupImportReportSchema }),
   z.object({
     kind: z.literal("failed"),
-    code: z.enum(["expired", "unavailable", "unsupported"]),
+    code: z.enum(BACKUP_IMPORT_FAILURES),
+    /** The system's message (the technical details), for `snapshot_failed`. */
+    detail: z.string().optional(),
   }),
 ]);
 export type BackupImportOutcome = z.infer<typeof backupImportOutcomeSchema>;
+
+/** docs/dictation.md §4.6.1: what made an automatic backup
+ *  (`voltip_core::backup::auto::AutoKind`): the week's, the one before an update installed, the
+ *  one before a replacing import. */
+export const AUTO_BACKUP_KINDS = ["weekly", "update", "import"] as const;
+export const autoBackupKindSchema = z.enum(AUTO_BACKUP_KINDS);
+export type AutoBackupKind = z.infer<typeof autoBackupKindSchema>;
+/** `voltip_core::backup::auto::AUTO_KEEP`: the automatic backups kept, newest first. */
+export const AUTO_BACKUP_KEEP = 5;
+/** One automatic backup (`AutoBackupFile`): its file name in the folder, when, which. */
+export const autoBackupFileSchema = z.object({
+  name: z.string(),
+  at_ms: z.number().int().nonnegative(),
+  kind: autoBackupKindSchema,
+});
+export type AutoBackupFile = z.infer<typeof autoBackupFileSchema>;
+/** An automatic backup that could not be written (`AutoBackupFailure`): which, when, and the
+ *  system's message. */
+export const autoBackupFailureSchema = z.object({
+  kind: autoBackupKindSchema,
+  at_ms: z.number().int().nonnegative(),
+  detail: z.string(),
+});
+export type AutoBackupFailure = z.infer<typeof autoBackupFailureSchema>;
+/** `UiState.auto_backup` (`voltip_core::backup::auto::AutoBackupView`): the folder, the newest
+ *  automatic backup in it, the last failure until one succeeds, and `notice`: the backup before an
+ *  update failed, shown on home in the first run after it until closed. `available` is false where
+ *  the app makes none (the phone). */
+export const autoBackupViewSchema = z.object({
+  available: z.boolean(),
+  /** This computer's tag in its automatic backups' names (user decision D23): the ones it keeps
+   *  and counts; other computers may share the folder. Empty before the core says. */
+  device: z.string().default(""),
+  folder: z.string(),
+  default_folder: z.string(),
+  custom: z.boolean(),
+  last: autoBackupFileSchema.nullable().default(null),
+  failure: autoBackupFailureSchema.nullable().default(null),
+  notice: autoBackupFailureSchema.nullable().default(null),
+});
+export type AutoBackupView = z.infer<typeof autoBackupViewSchema>;
+export const emptyAutoBackup = (): AutoBackupView => ({
+  available: false,
+  device: "",
+  folder: "",
+  default_folder: "",
+  custom: false,
+  last: null,
+  failure: null,
+  notice: null,
+});
+/** `backup_folder_choose`'s answer (the desktop shell's `backup::FolderOutcome`): the automatic
+ *  backups go to `folder` from now on, the dialog was closed, or the folder cannot be written
+ *  (`detail`: the system's message) and nothing changed. */
+export const backupFolderOutcomeSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("chosen"), folder: z.string() }),
+  z.object({ kind: z.literal("cancelled") }),
+  z.object({ kind: z.literal("failed"), detail: z.string() }),
+]);
+export type BackupFolderOutcome = z.infer<typeof backupFolderOutcomeSchema>;
 
 /** `voltip_core::history::MAX_ENTRIES`: older rows are dropped past this. */
 export const HISTORY_LIMIT = 20_000;
@@ -2995,6 +3085,8 @@ export const uiStateSchema = z.object({
   models: z.array(modelStateSchema).default(() => []),
   /** Where that library is (§10.9); not available on the phone. */
   models_location: modelsLocationViewSchema.default(emptyModelsLocation),
+  /** The automatic backups (§4.6.1); not available on the phone. */
+  auto_backup: autoBackupViewSchema.default(emptyAutoBackup),
   /** The personal dictionary and the replacement rules (§16), in order; `[]` on the phone. */
   dictionary: z.array(dictionaryEntrySchema).default(() => []),
   rules: z.array(replacementRuleSchema).default(() => []),
@@ -3105,6 +3197,8 @@ export const uiEventSchema = z.discriminatedUnion("type", [
   audioCacheViewSchema.extend({ type: z.literal("audio_cache") }),
   /** The import queue, whole, after every change (§31). */
   importsViewSchema.extend({ type: z.literal("imports") }),
+  /** The automatic backups, whole: the folder, a backup written or failed, the notice (§4.6.1). */
+  autoBackupViewSchema.extend({ type: z.literal("auto_backup") }),
   /** The phone's take to a desktop moved (§20); `null` before the first. */
   z.object({
     type: z.literal("phone_take"),
@@ -3399,6 +3493,20 @@ export interface CommandArgs {
   audio_cache_clear: undefined;
   /** Delete one kept recording. */
   audio_cache_delete: { id: string };
+  /** 每周自动备份 (§4.6.1): on / off; the core re-emits `settings`. The backups before an update
+   *  and before a replacing import are made either way. */
+  settings_set_backup: { weekly: boolean };
+  /** Query: 自动备份位置 · 更改… — the shell's folder dialog titled `title`, then a trial file in
+   *  the folder chosen (`Backend.backupFolderChoose`); `auto_backup` events follow. The webview
+   *  never names the folder. */
+  backup_folder_choose: { title: string };
+  /** 恢复默认位置: the automatic backups go to `<data dir>/backups` again. */
+  backup_folder_reset: undefined;
+  /** Query: 打开文件夹 — the automatic backups' folder in the file manager, made when missing
+   *  (`Backend.backupFolderOpen`). */
+  backup_folder_open: undefined;
+  /** Close home's notice that the backup before the update failed. */
+  backup_notice_dismiss: undefined;
   /** 重新识别 (§26): the take follows as `dictation` events (`retake`, `recording`); its text goes
    *  to the clipboard and into the history. Refused (an `error` event) while a take runs. */
   /** §26.4: `asr` / `refine` other models than the settings', for this take only. */
@@ -3623,6 +3731,8 @@ export type QueryCommand =
   | "backup_open"
   | "backup_import"
   | "backup_discard"
+  | "backup_folder_choose"
+  | "backup_folder_open"
   | "provider_console_open"
   | "project_link_open"
   | "guide_open"
@@ -3674,6 +3784,8 @@ export const QUERY_COMMANDS: readonly QueryCommand[] = [
   "backup_open",
   "backup_import",
   "backup_discard",
+  "backup_folder_choose",
+  "backup_folder_open",
   "provider_console_open",
   "project_link_open",
   "guide_open",
@@ -3729,6 +3841,7 @@ export function defaultSettings(): Settings {
     phone_talk: "hold",
     history: { enabled: true, keep: 20_000 },
     audio_cache: defaultAudioCacheSettings(),
+    backup: defaultBackupSettings(),
     overlay: "bottom",
     microphone: null,
     recording: defaultRecordingSettings(),
@@ -3798,6 +3911,10 @@ export function applyEvent(state: UiState, event: UiEvent): UiState {
     case "models_location": {
       const { type: _type, ...models_location } = event;
       return { ...state, models_location };
+    }
+    case "auto_backup": {
+      const { type: _type, ...auto_backup } = event;
+      return { ...state, auto_backup };
     }
     case "dictionary":
       return { ...state, dictionary: event.entries };

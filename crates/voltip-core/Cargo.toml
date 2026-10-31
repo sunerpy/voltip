@@ -17,6 +17,8 @@ keyring = ["voltip-identity/keyring"]
 [dependencies]
 aho-corasick.workspace = true
 async-trait.workspace = true
+# The local time in the automatic backups' file names (`backup::auto`, docs/dictation.md §4.6.1).
+chrono.workspace = true
 # The bodies a computer and its phones exchange (`sync`, docs/dictation.md §20.8).
 ciborium.workspace = true
 ferrous-opencc.workspace = true

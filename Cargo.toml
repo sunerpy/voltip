@@ -65,6 +65,9 @@ async-trait = "=0.1.92"
 axum = { version = "=0.8.9", features = ["ws", "multipart"] }
 base64 = "=0.23.1"
 bytes = "=1.12.1"
+# The local time in the names of the automatic backups (crates/voltip-core, docs/dictation.md
+# §4.6.1); already in the graph through rmcp. The clock only: no locales, no old time API.
+chrono = { version = "=0.4.45", default-features = false, features = ["clock", "std"] }
 ciborium = "=0.2.2"
 clap = { version = "=4.6.7", features = ["derive", "env"] }
 # No `jack` / `asio` / `pipewire` / `pulseaudio` features: WASAPI, CoreAudio and ALSA only.

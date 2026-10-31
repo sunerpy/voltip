@@ -56,7 +56,7 @@ pub const DEV_DATA_DIR_ENV: &str = "VOLTIP_DEV_DATA_DIR";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 152] = [
+pub const COMMANDS: [&str; 157] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -131,6 +131,11 @@ pub const COMMANDS: [&str; 152] = [
     "backup_open",
     "backup_import",
     "backup_discard",
+    "settings_set_backup",
+    "backup_folder_choose",
+    "backup_folder_reset",
+    "backup_folder_open",
+    "backup_notice_dismiss",
     "settings_set_locale",
     "settings_set_auto_update",
     "settings_set_history",
@@ -806,6 +811,44 @@ fn backup_discard(bridge: tauri::State<'_, Bridge>, token: uuid::Uuid) {
     bridge.backup_discard(token);
 }
 
+/// 每周自动备份 (docs/dictation.md §4.6.1): on / off; the backups before an update and before a
+/// replacing import are made either way.
+#[tauri::command]
+fn settings_set_backup(bridge: tauri::State<'_, Bridge>, weekly: bool) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetBackup { weekly })?)
+}
+
+/// 自动备份位置 · 更改… (docs/dictation.md §4.6.1): the folder dialog titled `title`, then a trial
+/// file in the folder chosen; `auto_backup` events follow. The webview never names the folder.
+#[tauri::command]
+async fn backup_folder_choose<R: Runtime>(app: tauri::AppHandle<R>, bridge: tauri::State<'_, Bridge>, title: String) -> Result<backup::FolderOutcome, String> {
+    Ok(backup::choose_folder(&app, bridge.inner().clone(), &title).await)
+}
+
+/// 恢复默认位置: the automatic backups go to `<data dir>/backups` again.
+#[tauri::command]
+fn backup_folder_reset(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::BackupFolderReset)?)
+}
+
+/// 打开文件夹: the automatic backups' folder (made when it is not there yet) in the file manager.
+/// The folder comes from the core, never from the webview.
+#[tauri::command]
+fn backup_folder_open(bridge: tauri::State<'_, Bridge>, options: tauri::State<'_, ShellOptions>) -> Result<(), String> {
+    let folder = bridge.backup_folder();
+    std::fs::create_dir_all(&folder).map_err(|e| format!("backup_folder_open: {e}"))?;
+    if !options.opens_folders {
+        return Ok(());
+    }
+    tauri_plugin_opener::open_path(folder, None::<&str>).map_err(|e| e.to_string())
+}
+
+/// Close home's notice that the automatic backup before the update failed.
+#[tauri::command]
+fn backup_notice_dismiss(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::BackupNoticeDismiss)?)
+}
+
 /// UI language (`system` | `zh-cn` | `en`); persisted by the core, every window follows `settings`.
 #[tauri::command]
 fn settings_set_locale(bridge: tauri::State<'_, Bridge>, locale: Locale) -> Result<(), String> {
@@ -1461,13 +1504,17 @@ pub struct ShellOptions {
     /// `voltip --start-hidden`: leave the main window hidden (tray and hotkey only). The window is
     /// declared invisible in `tauri.conf.json` and shown from the setup hook otherwise.
     pub start_hidden: bool,
+    /// Show a folder in the system's file manager (`backup_folder_open`). Off on the mock runtime:
+    /// the tests call every command, and a test run must open no window on the desktop it runs on
+    /// (a developer's, or the Windows build machine's).
+    pub opens_folders: bool,
 }
 
 impl ShellOptions {
     /// Production wiring.
-    pub const PRODUCTION: Self = Self { global_hotkey: true, start_hidden: false };
+    pub const PRODUCTION: Self = Self { global_hotkey: true, start_hidden: false, opens_folders: true };
     /// Headless / mock-runtime wiring.
-    pub const HEADLESS: Self = Self { global_hotkey: false, start_hidden: false };
+    pub const HEADLESS: Self = Self { global_hotkey: false, start_hidden: false, opens_folders: false };
 
     /// Production wiring with `--start-hidden`.
     pub const fn hidden(self, start_hidden: bool) -> Self {
@@ -1725,6 +1772,11 @@ pub fn build_app<R: Runtime>(
             backup_open,
             backup_import,
             backup_discard,
+            settings_set_backup,
+            backup_folder_choose,
+            backup_folder_reset,
+            backup_folder_open,
+            backup_notice_dismiss,
             settings_set_locale,
             settings_set_auto_update,
             settings_set_history,
@@ -1870,6 +1922,8 @@ pub fn run() {
     config.mcp_host = Some(std::sync::Arc::new(voltip_mcp::HttpHost));
     // docs/dictation.md §31: the history imports audio and video files.
     config.media_decoder = Some(Arc::new(voltip_media::Decoder));
+    // docs/dictation.md §4.6.1: the weekly automatic backup, and the backups' state in the settings.
+    config.auto_backup = true;
     let ports = dictation::production_ports(config.models_root.clone(), &config.network);
     let mut app = match build_app(tauri::Builder::default(), config, secret_store(), ShellOptions::PRODUCTION.hidden(start_hidden), ports).build(context) {
         Ok(app) => app,

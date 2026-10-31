@@ -2992,6 +2992,9 @@ export const en: Messages = {
             unavailable:
               "The import did not finish because Voltip did not respond. Try again later.",
             unsupported: "This device cannot import backups.",
+            busy: "A dictation is in progress. Replace the data after it has ended.",
+            snapshot_failed:
+              "The current data could not be backed up before replacing it, so nothing was imported: {detail}",
           },
           dialog: {
             title: "Import a backup",
@@ -3043,6 +3046,41 @@ export const en: Messages = {
             error: {
               unavailable: "The history could not be opened, so nothing was imported.",
               write: "Could not be saved; this part is unchanged.",
+            },
+            snapshot: "What was here before was backed up to: {path}",
+          },
+          auto: {
+            title: "Automatic backups",
+            note: "A backup is also made before an update installs and before an import replaces data. Each computer keeps only its own latest {keep} automatic backups and deletes older ones; backups you export yourself are left alone. Backup files are not encrypted: in a synced folder, they are uploaded with it.",
+            weekly: "Back up every week",
+            weeklyHelp:
+              "Every 7 days, backs up the history, the dictionary, the rules, the scenes and the AI presets.",
+            folder: "Automatic backup location",
+            default: "Default",
+            custom: "Custom",
+            folderHelp: "Backups already in the previous folder stay where they are.",
+            sync: "In a synced folder, the backups are kept even if this computer breaks, is lost or is reinstalled. Voltip does not sync data between computers: on a new computer, import a backup. Several computers can share one folder; each manages only the automatic backups whose names carry its own tag and leaves the other computers' backups alone. This computer's tag: {device}",
+            change: "Change…",
+            chooseTitle: "Choose where automatic backups are saved",
+            open: "Open folder",
+            reset: "Restore default location",
+            chosen: "Automatic backups will be saved to: {folder}",
+            unwritable:
+              "The chosen folder cannot be written to, so the location is unchanged: {detail}",
+            last: "Latest automatic backup",
+            lastValue: "{time} ({kind})",
+            none: "No automatic backup yet",
+            kind: {
+              weekly: "weekly",
+              update: "before an update",
+              import: "before a replacing import",
+            },
+            failed: "Automatic backup failed ({kind}, {time}): {detail}",
+            retry: "It will be tried again in 24 hours.",
+            notice: {
+              title: "The backup before the update could not be made",
+              body: "The backup could not be written; the update went ahead anyway. Reason: {detail}",
+              open: "Backup settings",
             },
           },
         },

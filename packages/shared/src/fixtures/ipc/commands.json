@@ -151,6 +151,20 @@
   },
   {
     "args": {
+      "weekly": false
+    },
+    "name": "settings_set_backup"
+  },
+  {
+    "args": null,
+    "name": "backup_folder_reset"
+  },
+  {
+    "args": null,
+    "name": "backup_notice_dismiss"
+  },
+  {
+    "args": {
       "asr": {
         "kind": "remote",
         "model": "whisper-2",

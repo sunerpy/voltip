@@ -125,7 +125,8 @@
               "older": 0
             }
           }
-        ]
+        ],
+        "snapshot": "C:\\Users\\me\\AppData\\Roaming\\voltip\\Voltip\\data\\backups\\voltip-auto-20261030-152000-import-02d449a3.voltip-backup"
       }
     },
     {
@@ -138,6 +139,15 @@
     },
     {
       "code": "unsupported",
+      "kind": "failed"
+    },
+    {
+      "code": "busy",
+      "kind": "failed"
+    },
+    {
+      "code": "snapshot_failed",
+      "detail": "No space left on device (os error 28)",
       "kind": "failed"
     }
   ],
