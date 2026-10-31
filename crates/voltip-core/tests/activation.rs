@@ -193,6 +193,24 @@ async fn hotkey_edges_drive_hold_toggle_and_lock_through_the_core() {
     node.handle.send(CoreCommand::Shutdown).await.unwrap();
 }
 
+/// docs/dictation.md §30.1: the extra recording shows in the take's timeline — from the release (the
+/// stop asked for) to the microphone closing — before recognition starts.
+#[tokio::test]
+async fn the_timeline_shows_the_extra_recording_after_the_release() {
+    let audio = Arc::new(FakeAudio::speech());
+    let mut node = start(audio, Arc::new(FakeTranscriber::ok(FAKE_TRANSCRIPT)));
+    wait(&mut node, |e| matches!(e, CoreEvent::Ready { .. }).then_some(())).await;
+    set_activation(&mut node, Activation::Hold, 300, 400).await;
+    node.handle.send(CoreCommand::DictationStart).await.unwrap();
+    wait_phase(&mut node, |p| matches!(p, DictationPhase::Listening { .. })).await;
+    node.handle.send(CoreCommand::DictationStop).await.unwrap();
+    let done = wait_phase(&mut node, DictationPhase::is_terminal).await;
+    let DictationPhase::Done { timing: Some(timing), .. } = done else { panic!("{done:?}") };
+    assert!((380..3_000).contains(&timing.tail_ms), "{timing:?}");
+    assert!(timing.released_ms.is_some_and(|ms| ms + timing.tail_ms <= timing.done_ms), "{timing:?}");
+    node.handle.send(CoreCommand::Shutdown).await.unwrap();
+}
+
 #[tokio::test]
 async fn extra_recording_keeps_the_microphone_open_and_a_cancel_or_second_stop_cuts_it_short() {
     let audio = Arc::new(FakeAudio::speech());

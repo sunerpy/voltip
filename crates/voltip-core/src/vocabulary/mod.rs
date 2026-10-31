@@ -758,6 +758,11 @@ fn glossary_chars(glossary: &[String]) -> usize {
     glossary.iter().map(|t| t.chars().count()).sum::<usize>() + GLOSSARY_SEPARATOR.chars().count() * glossary.len().saturating_sub(1)
 }
 
+/// Whether `dictionary` gives the recogniser a glossary at all (docs/dictation.md §30.6).
+pub fn has_glossary(dictionary: &[DictionaryEntry]) -> bool {
+    !build_glossary(dictionary).is_empty()
+}
+
 fn build_glossary(dictionary: &[DictionaryEntry]) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut chars = 0usize;

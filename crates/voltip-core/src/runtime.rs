@@ -27,7 +27,8 @@ use crate::dictation::activation::{Activation, ActivationConfig, ActivationMachi
 use crate::dictation::engine::{Effect, Internal};
 use crate::dictation::{DictationEngine, DictationError, DictationPhase, DictationPorts, DictationStatus, LevelFrame, RefineHints, SelectionTiming, TakeKind};
 use crate::engines::{
-    BuiltIn, EngineSettings, EngineStatus, FallbackSettings, MAX_FALLBACK_MODELS, MAX_LOCAL_THREADS, ProviderId, ResolvedEngines, ServiceKind, UserSecrets,
+    BuiltIn, EngineSettings, EngineStatus, FallbackSettings, GlossaryRoute, MAX_FALLBACK_MODELS, MAX_LOCAL_THREADS, ProviderId, ResolvedEngines, ServiceKind,
+    UserSecrets,
 };
 use crate::history::{HistoryEntry, HistoryStore};
 use crate::models::{CancelToken, DEFAULT_LOCAL_MODEL_ID, ModelInstallState, ModelManager, ModelState};
@@ -1027,6 +1028,7 @@ impl AppCore {
             history,
             audio,
             recovery: Recovery { leftovers, stop: Arc::new(std::sync::atomic::AtomicBool::new(false)), tx: recover_tx },
+            glossary_empty: !crate::vocabulary::has_glossary(dictionary.entries()),
             dictionary,
             rules,
             ignored,
@@ -1266,6 +1268,9 @@ struct Runtime {
     recovery: Recovery,
     /// `dictionary.json` (docs/dictation.md §16).
     dictionary: DictionaryStore,
+    /// The dictionary has no enabled entry to send as the glossary (docs/dictation.md §30.6), as
+    /// `UiState.engines` last said.
+    glossary_empty: bool,
     /// `rules.json` (docs/dictation.md §16).
     rules: RuleStore,
     /// The pairs the learning suggestions leave out (docs/dictation.md §16.10).
@@ -1880,6 +1885,10 @@ impl Runtime {
     fn engine_status_of(&self, resolved: &ResolvedEngines) -> EngineStatus {
         let mut status = resolved.status_with(self.dictation.quota());
         self.model_lists.fill(&mut status);
+        // docs/dictation.md §30.6: a service that would take the glossary gets none.
+        if self.glossary_empty && matches!(status.glossary, Some(GlossaryRoute::Prompt | GlossaryRoute::Hotwords)) {
+            status.glossary = Some(GlossaryRoute::Empty);
+        }
         status
     }
 
@@ -2001,6 +2010,8 @@ impl Runtime {
         if extra == 0 || !matches!(self.dictation.status().phase, DictationPhase::Listening { .. }) {
             return self.stop_now();
         }
+        // The take's timeline counts the window from here (docs/dictation.md §30.1).
+        self.dictation.note_release();
         let session = self.dictation.status().session;
         let cancel = Arc::new(AtomicBool::new(false));
         let flag = cancel.clone();
@@ -2540,11 +2551,17 @@ impl Runtime {
 
     // ---------------- dictionary and rules (docs/dictation.md §16) ----------------
 
-    /// The engine's next runs take the new lists; the running one keeps its snapshot.
+    /// The engine's next runs take the new lists; the running one keeps its snapshot. The status
+    /// says it when the glossary appears or goes (docs/dictation.md §30.6).
     fn recompile_vocabulary(&mut self) {
         let vocabulary = Vocabulary::compile(self.dictionary.entries(), self.rules.rules());
         tracing::debug!(?vocabulary, "vocabulary recompiled");
+        let empty = vocabulary.glossary().is_empty();
         self.dictation.set_vocabulary(Arc::new(vocabulary));
+        if empty != self.glossary_empty {
+            self.glossary_empty = empty;
+            self.emit(CoreEvent::Engines(self.engine_status()));
+        }
     }
 
     /// After a dictionary command: on success tell the UI and recompile; a refusal changed nothing.

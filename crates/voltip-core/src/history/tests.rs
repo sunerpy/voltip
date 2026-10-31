@@ -42,6 +42,8 @@ pub(super) fn entry(text: &str) -> HistoryEntry {
         origin: None,
         processed: None,
         file: None,
+        timing: None,
+        glossary_sent: None,
     }
 }
 
@@ -263,6 +265,34 @@ fn an_asr_note_round_trips_and_older_entries_read_without() {
         serde_json::from_str::<HistoryEntry>(&json.replace(r#""asr_note":"gpu_failed_ran_on_cpu""#, off)).unwrap().asr_note,
         Some(crate::dictation::AsrNote::GpuOffUntilRestart)
     );
+}
+
+/// docs/dictation.md §30: the take's timeline and whether the glossary went to the recognition
+/// service are on the wire only when known, and an entry written before them reads without.
+#[test]
+fn the_timeline_and_the_glossary_mark_round_trip_and_older_entries_read_without() {
+    let plain = entry("你好");
+    let json = serde_json::to_string(&plain).unwrap();
+    assert!(!json.contains("timing") && !json.contains("glossary_sent"), "{json}");
+    let back = serde_json::from_str::<HistoryEntry>(&json).unwrap();
+    assert_eq!((back.timing, back.glossary_sent), (None, None));
+    let timing = crate::dictation::TakeTiming {
+        pressed_at: 1_758_699_990_000,
+        device_open_ms: Some(38),
+        first_audio_ms: Some(212),
+        first_text_ms: None,
+        released_ms: Some(3_412),
+        tail_ms: 150,
+        asr_ms: 655,
+        refine_ms: Some(2_410),
+        insert_ms: 96,
+        done_ms: 6_731,
+    };
+    let timed = HistoryEntry { timing: Some(timing), glossary_sent: Some(false), ..plain };
+    let json = serde_json::to_string(&timed).unwrap();
+    assert!(json.contains(r#""glossary_sent":false"#), "a known \"not sent\" is kept: {json}");
+    assert!(!json.contains("first_text_ms"), "an unknown step is left out: {json}");
+    assert_eq!(serde_json::from_str::<HistoryEntry>(&json).unwrap(), timed);
 }
 
 /// docs/dictation.md §19: an edit entry carries its kind, instruction and selection; an entry
@@ -915,6 +945,9 @@ fn regression_a_huge_entry_goes_out_bounded_and_the_sync_moves_on() {
         asr_fallback: Some(crate::dictation::SwitchReason::Outage),
         refine_provider: Some(crate::providers::ProviderId::Aliyun),
         refine_fallback: Some(crate::dictation::SwitchReason::Quota),
+        // docs/dictation.md §30: the take's timeline and whether the glossary went out.
+        timing: Some(crate::dictation::TakeTiming { pressed_at: 1_758_699_990_000, done_ms: 4_200, released_ms: Some(3_000), ..Default::default() }),
+        glossary_sent: Some(true),
         ..entry("很长")
     };
     let after = HistoryEntry { at_ms: 1_758_700_000_001, ..entry("下一条") };
@@ -935,6 +968,7 @@ fn regression_a_huge_entry_goes_out_bounded_and_the_sync_moves_on() {
         (sent.asr_provider, sent.asr_fallback, sent.refine_provider, sent.refine_fallback),
         (huge.asr_provider, huge.asr_fallback, huge.refine_provider, huge.refine_fallback)
     );
+    assert_eq!((sent.timing, sent.glossary_sent), (huge.timing, huge.glossary_sent));
     assert!(crate::sync::cbor_len(sent) < 1_400_000, "{} bytes", crate::sync::cbor_len(sent));
     // The projection is small enough to share the batch: the sync moves past it.
     assert_eq!(batch.upserts.iter().map(|e| e.id).collect::<Vec<_>>(), [huge.id, after.id]);

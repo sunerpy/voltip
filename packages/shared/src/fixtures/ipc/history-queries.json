@@ -10,6 +10,7 @@
     "asr_provider": "builtin",
     "at_ms": 1758700600000,
     "duration_ms": 3200,
+    "glossary_sent": true,
     "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
     "kind": "dictation",
     "mode": "whole_take",
@@ -33,6 +34,18 @@
     },
     "starred": true,
     "text": "把 fetchUser 改成 async，然后加上错误处理。",
+    "timing": {
+      "asr_ms": 655,
+      "device_open_ms": 38,
+      "done_ms": 6731,
+      "first_audio_ms": 212,
+      "first_text_ms": 640,
+      "insert_ms": 96,
+      "pressed_at": 1758700593000,
+      "refine_ms": 2410,
+      "released_ms": 3412,
+      "tail_ms": 150
+    },
     "vocabulary": {
       "corrections": [
         {
@@ -68,6 +81,7 @@
       "asr_provider": "builtin",
       "at_ms": 1758700600000,
       "duration_ms": 3200,
+      "glossary_sent": true,
       "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
       "kind": "dictation",
       "mode": "whole_take",
@@ -95,6 +109,18 @@
       },
       "starred": true,
       "text": "把 fetchUser 改成 async，然后加上错误处理。",
+      "timing": {
+        "asr_ms": 655,
+        "device_open_ms": 38,
+        "done_ms": 6731,
+        "first_audio_ms": 212,
+        "first_text_ms": 640,
+        "insert_ms": 96,
+        "pressed_at": 1758700593000,
+        "refine_ms": 2410,
+        "released_ms": 3412,
+        "tail_ms": 150
+      },
       "vocabulary": {
         "corrections": [
           {
@@ -284,6 +310,7 @@
         "asr_provider": "builtin",
         "at_ms": 1758700600000,
         "duration_ms": 3200,
+        "glossary_sent": true,
         "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
         "kind": "dictation",
         "mode": "whole_take",
@@ -307,6 +334,18 @@
         },
         "starred": true,
         "text": "把 fetchUser 改成 async，然后加上错误处理。",
+        "timing": {
+          "asr_ms": 655,
+          "device_open_ms": 38,
+          "done_ms": 6731,
+          "first_audio_ms": 212,
+          "first_text_ms": 640,
+          "insert_ms": 96,
+          "pressed_at": 1758700593000,
+          "refine_ms": 2410,
+          "released_ms": 3412,
+          "tail_ms": 150
+        },
         "vocabulary": {
           "corrections": [
             {

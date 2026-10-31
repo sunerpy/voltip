@@ -81,6 +81,8 @@ pub struct FakeAudio {
     live_requests: AtomicUsize,
     /// Skip the `on_ready` call (a device that never delivers audio).
     never_ready: bool,
+    /// Hand `on_ready` to the test instead of calling it ([`FakeAudio::ready_by_hand`]).
+    held_ready: Option<HeldReady>,
     /// The live tap reports an overrun from its first read.
     tap_overrun: bool,
     /// `max_duration` of every successful start, in order.
@@ -130,6 +132,13 @@ impl FakeAudio {
         Self { never_ready: true, ..self }
     }
 
+    /// A device whose first samples arrive when the test says: every start hands its `on_ready`
+    /// to the returned [`HeldReady`] instead of calling it.
+    pub fn ready_by_hand(self) -> (Self, HeldReady) {
+        let held = HeldReady::default();
+        (Self { held_ready: Some(held.clone()), ..self }, held)
+    }
+
     /// The live tap reports an overrun at once (the decoder "fell behind").
     pub fn overrunning(self) -> Self {
         Self { tap_overrun: true, ..self }
@@ -156,6 +165,7 @@ impl FakeAudio {
             stops: Arc::new(AtomicUsize::new(0)),
             live_requests: AtomicUsize::new(0),
             never_ready: false,
+            held_ready: None,
             tap_overrun: false,
             max_durations: Mutex::new(Vec::new()),
             options: Mutex::new(Vec::new()),
@@ -192,6 +202,31 @@ impl FakeAudio {
     /// The device id every start asked for, in order (`None` = the default input).
     pub fn devices(&self) -> Vec<Option<String>> {
         self.devices.lock().clone()
+    }
+}
+
+/// A capture's `on_ready` (`AudioSource::start`).
+type OnReady = Box<dyn FnOnce() + Send>;
+
+/// The `on_ready` of the latest start of a [`FakeAudio::ready_by_hand`] device, delivered when the
+/// test says — from whichever thread it calls [`HeldReady::fire`] on, as an audio thread would.
+#[derive(Clone, Default)]
+pub struct HeldReady(Arc<Mutex<Option<OnReady>>>);
+
+impl HeldReady {
+    fn hold(&self, ready: OnReady) {
+        *self.0.lock() = Some(ready);
+    }
+
+    /// The device delivers its first samples now; `false` when no start is waiting for them.
+    pub fn fire(&self) -> bool {
+        let ready = self.0.lock().take();
+        ready.map(|ready| ready()).is_some()
+    }
+
+    /// A start's `on_ready` is waiting to be delivered.
+    pub fn is_waiting(&self) -> bool {
+        self.0.lock().is_some()
     }
 }
 
@@ -336,8 +371,10 @@ impl AudioSource for FakeAudio {
         for seq in 0..3 {
             on_level(LevelFrame { rms_dbfs: -20.0 - seq as f32, peak_dbfs: -6.0, clipping: false, sample_rate_hz: SAMPLE_RATE_HZ, channels: 1, seq });
         }
-        if !self.never_ready {
-            on_ready();
+        match &self.held_ready {
+            Some(held) => held.hold(on_ready),
+            None if !self.never_ready => on_ready(),
+            None => {}
         }
         let closed = Arc::new(AtomicBool::new(false));
         let live_tap: Option<Box<dyn LivePcm>> = match (&result, live) {
@@ -406,6 +443,9 @@ pub struct FakeTranscriber {
     quota_retry_at: Option<u64>,
     /// What its transcripts say about the backend that made them ([`FakeTranscriber::with_note`]).
     note: Option<AsrNote>,
+    /// Its requests carry a non-empty glossary, as an OpenAI-compatible service's `prompt` does
+    /// (docs/dictation.md §30.6); off for [`FakeTranscriber::ignoring_glossary`].
+    takes_glossary: bool,
 }
 
 impl FakeTranscriber {
@@ -499,12 +539,19 @@ impl FakeTranscriber {
             usage_calls: Mutex::new(Vec::new()),
             quota_retry_at: None,
             note: None,
+            takes_glossary: true,
         }
     }
 
     /// Its transcripts report `note` (docs/dictation.md §29: the local engine fell back to the CPU).
     pub fn with_note(self, note: AsrNote) -> Self {
         Self { note: Some(note), ..self }
+    }
+
+    /// Its requests never carry the glossary, as an on-device model's or a service's that takes
+    /// none (docs/dictation.md §30.6).
+    pub fn ignoring_glossary(self) -> Self {
+        Self { takes_glossary: false, ..self }
     }
 
     /// What every call was for and where its take came from, in order (docs/dictation.md §27);
@@ -579,6 +626,7 @@ impl Transcriber for FakeTranscriber {
                 backend_note: self.note,
                 provider: None,
                 fallback: None,
+                glossary_sent: self.takes_glossary && !glossary.is_empty(),
             }),
             Reply::Err(e) => Err(e.clone()),
             Reply::Slow(text, delay) => {
@@ -590,6 +638,7 @@ impl Transcriber for FakeTranscriber {
                     backend_note: self.note,
                     provider: None,
                     fallback: None,
+                    glossary_sent: self.takes_glossary && !glossary.is_empty(),
                 })
             }
             Reply::SlowErr(e, delay) => {
@@ -612,6 +661,7 @@ impl Transcriber for FakeTranscriber {
                     backend_note: self.note,
                     provider: None,
                     fallback: None,
+                    glossary_sent: self.takes_glossary && !glossary.is_empty(),
                 })
             }
         }
@@ -677,6 +727,9 @@ pub const FAKE_RATE_LIMIT_DETAIL: &str = "fake: too many requests";
 /// The explanation a fake's overloaded service carries (docs/dictation.md §3.6).
 pub const FAKE_OVERLOADED_DETAIL: &str = "fake: more demand than the model can serve";
 
+/// The explanation a fake's cut-off answer carries (docs/dictation.md §3.12).
+pub const FAKE_TRUNCATED_DETAIL: &str = "fake: the answer stopped at the output limit";
+
 impl FakeRefiner {
     fn with_reply(reply: Reply) -> Self {
         Self {
@@ -733,6 +786,11 @@ impl FakeRefiner {
             detail: FAKE_OVERLOADED_DETAIL.into(),
             retry_after_ms: None,
         }))
+    }
+
+    /// Always answers past the model's output limit (docs/dictation.md §3.12).
+    pub fn truncated() -> Self {
+        Self::with_reply(Reply::Err(DictationError::RefineTruncated { detail: FAKE_TRUNCATED_DETAIL.into() }))
     }
 
     /// Its answers report `model` as the model that wrote them.
@@ -841,6 +899,8 @@ enum ProbeReply {
     Panic,
     /// Block until [`FakeProbe::release`], then answer nothing (a hung window system).
     Hang,
+    /// Block until [`FakeProbe::release`], then answer the application (a slow window system).
+    HeldApp(ForegroundApp),
 }
 
 /// Foreground-probe stand-in (docs/dictation.md §18.2): answers with a fixed app (changeable
@@ -881,6 +941,12 @@ impl FakeProbe {
         Self::with(ProbeReply::Hang)
     }
 
+    /// Every call blocks until [`FakeProbe::release`], then answers `app_id` / `name` (its
+    /// deadline is the fakes' long one, so only the release ends the wait).
+    pub fn app_when_released(app_id: &str, name: &str) -> Self {
+        Self::with(ProbeReply::HeldApp(ForegroundApp { app_id: app_id.to_owned(), name: name.to_owned(), title: None, window: None }))
+    }
+
     /// Answer `app_id` / `name` / `title` from the next call on.
     pub fn set_app(&self, app_id: &str, name: &str, title: Option<&str>) {
         *self.reply.lock() = ProbeReply::App(ForegroundApp { app_id: app_id.to_owned(), name: name.to_owned(), title: title.map(str::to_owned), window: None });
@@ -914,6 +980,13 @@ impl FakeProbe {
     pub fn calls(&self) -> usize {
         self.calls.load(Ordering::SeqCst)
     }
+
+    /// Block until [`FakeProbe::release`] (at most `HOLD_LIMIT`).
+    fn wait_for_release(&self) {
+        let (open, cv) = &*self.gate;
+        let released = open.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        drop(wait_released(released, cv, HOLD_LIMIT, |released| !*released));
+    }
 }
 
 /// How long the core waits for a [`FakeProbe`] that answers: long, so a busy test machine cannot
@@ -935,10 +1008,12 @@ impl ForegroundProbe for FakeProbe {
             ProbeReply::Err(e) => Err(e),
             ProbeReply::Panic => panic!("fake probe panicked"),
             ProbeReply::Hang => {
-                let (open, cv) = &*self.gate;
-                let released = open.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                drop(wait_released(released, cv, HOLD_LIMIT, |released| !*released));
+                self.wait_for_release();
                 Ok(None)
+            }
+            ProbeReply::HeldApp(app) => {
+                self.wait_for_release();
+                Ok(Some(app))
             }
         }
     }
@@ -1401,8 +1476,13 @@ pub struct FakeStreaming {
     hold: Option<(usize, Arc<Gate>)>,
     /// The model its sessions report ([`FakeStreaming::with_model`]); `None` by default.
     model: Option<String>,
+    /// Whether its sessions say the glossary went out ([`FakeStreaming::with_glossary_sent`]);
+    /// `None` by default.
+    glossary_sent: Option<bool>,
     /// Its sessions' flush fails ([`FakeStreaming::failing_finish`]).
     finish_fails: bool,
+    /// The language hint of every [`StreamingTranscriber::open`], in order.
+    languages: Mutex<Vec<Option<String>>>,
 }
 
 /// The words the default [`FakeStreaming::script`] session emits, one per 100 ms chunk.
@@ -1426,13 +1506,20 @@ impl FakeStreaming {
             fed: Arc::new(AtomicUsize::new(0)),
             hold: None,
             model: None,
+            glossary_sent: None,
             finish_fails: false,
+            languages: Mutex::new(Vec::new()),
         }
     }
 
     /// Its sessions report `model` as the model their text came from (docs/dictation.md §3.5).
     pub fn with_model(self, model: &str) -> Self {
         Self { model: Some(model.to_owned()), ..self }
+    }
+
+    /// Its sessions say whether their requests carried the glossary (docs/dictation.md §30.6).
+    pub fn with_glossary_sent(self, sent: bool) -> Self {
+        Self { glossary_sent: Some(sent), ..self }
     }
 
     /// Its sessions' flush fails (after their sentences were reported).
@@ -1472,6 +1559,11 @@ impl FakeStreaming {
         self.opens.load(Ordering::SeqCst)
     }
 
+    /// The language hint of every `open`, in order.
+    pub fn languages(&self) -> Vec<Option<String>> {
+        self.languages.lock().clone()
+    }
+
     /// `warm` calls so far.
     pub fn warms(&self) -> usize {
         self.warms.load(Ordering::SeqCst)
@@ -1494,8 +1586,9 @@ impl FakeStreaming {
 }
 
 impl StreamingTranscriber for FakeStreaming {
-    fn open(&self, _language: Option<&str>) -> Result<Box<dyn StreamingSession>, DictationError> {
+    fn open(&self, language: Option<&str>) -> Result<Box<dyn StreamingSession>, DictationError> {
         self.opens.fetch_add(1, Ordering::SeqCst);
+        self.languages.lock().push(language.map(str::to_owned));
         match &self.script {
             StreamScript::FailOpen(m) => Err(DictationError::Asr(m.clone())),
             StreamScript::Words { words, endpoint_every, error_after } => Ok(Box::new(FakeSession {
@@ -1513,6 +1606,7 @@ impl StreamingTranscriber for FakeStreaming {
                 fed: self.fed.clone(),
                 hold: self.hold.clone(),
                 model: self.model.clone(),
+                glossary_sent: self.glossary_sent,
                 finish_fails: self.finish_fails,
             })),
         }
@@ -1538,6 +1632,7 @@ struct FakeSession {
     fed: Arc<AtomicUsize>,
     hold: Option<(usize, Arc<Gate>)>,
     model: Option<String>,
+    glossary_sent: Option<bool>,
     finish_fails: bool,
 }
 
@@ -1585,6 +1680,10 @@ impl StreamingSession for FakeSession {
         self.model.clone()
     }
 
+    fn glossary_sent(&self) -> Option<bool> {
+        self.glossary_sent
+    }
+
     fn finish(mut self: Box<Self>) -> Result<StreamFinal, DictationError> {
         self.finishes.fetch_add(1, Ordering::SeqCst);
         if self.finish_fails {
@@ -1592,7 +1691,14 @@ impl StreamingSession for FakeSession {
         }
         let tail =
             if self.word.is_multiple_of(self.endpoint_every) { String::new() } else { self.words.get(self.word.wrapping_sub(1)).cloned().unwrap_or_default() };
-        Ok(StreamFinal { committed: std::mem::take(&mut self.committed), tail, model: self.model.clone(), provider: None, fallback: None })
+        Ok(StreamFinal {
+            committed: std::mem::take(&mut self.committed),
+            tail,
+            model: self.model.clone(),
+            provider: None,
+            fallback: None,
+            glossary_sent: self.glossary_sent,
+        })
     }
 }
 
@@ -1646,6 +1752,8 @@ pub fn history_entry(text: &str) -> crate::HistoryEntry {
         origin: None,
         processed: None,
         file: None,
+        timing: None,
+        glossary_sent: None,
     }
 }
 

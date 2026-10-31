@@ -180,7 +180,7 @@ impl From<&DictationError> for FailureCode {
             DictationError::NoSpeech => Self::NoSpeech,
             DictationError::Audio(_) => Self::Audio,
             DictationError::Asr(_) => Self::Asr,
-            DictationError::Refine(_) => Self::Refine,
+            DictationError::Refine(_) | DictationError::RefineTruncated { .. } => Self::Refine,
             DictationError::Inject(_) => Self::Inject,
             DictationError::NoSelection => Self::NoSelection,
             DictationError::SelectionTooLong(_) => Self::SelectionTooLong,
@@ -215,6 +215,9 @@ pub enum RefineFailure {
     TooLong,
     /// The service answered with nothing.
     Empty,
+    /// The answer stopped at the model's output limit (docs/dictation.md §3.12): incomplete, so
+    /// the raw text was kept.
+    Truncated,
     /// Anything else: network, timeout, credentials, a server error.
     Failed,
 }
@@ -225,6 +228,7 @@ impl RefineFailure {
         match error {
             DictationError::RateLimited { .. } | DictationError::Overloaded { .. } => Self::RateLimited,
             DictationError::QuotaExhausted { .. } => Self::Quota,
+            DictationError::RefineTruncated { .. } => Self::Truncated,
             _ => Self::Failed,
         }
     }
@@ -233,6 +237,12 @@ impl RefineFailure {
     /// what the built-in service's notice is about (§3.6).
     pub fn is_capacity(self) -> bool {
         matches!(self, Self::RateLimited | Self::Quota)
+    }
+
+    /// A request that failed carries the service's own words, which the history keeps; a clean-up
+    /// that never ran (unconfigured, too long) or came back empty has nothing to add to its kind.
+    pub fn has_service_words(self) -> bool {
+        matches!(self, Self::RateLimited | Self::Quota | Self::Truncated | Self::Failed)
     }
 }
 
@@ -324,6 +334,10 @@ pub enum DictationPhase {
         /// a reader) and from a core that did not send it.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         check: Option<InsertCheck>,
+        /// When each step of the take happened (docs/dictation.md §30.1); absent from a core that
+        /// did not send it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timing: Option<TakeTiming>,
     },
     /// The pipeline stopped short.
     Failed {
@@ -417,6 +431,45 @@ impl DictationStatus {
     }
 }
 
+/// When each step of a take happened (docs/dictation.md §30.1), in milliseconds from its start
+/// (`pressed_at`): where the time between the key press and the text went. `Done.timing` and the
+/// history entry carry it; the history's technical details draw it as a timeline. The durations are
+/// what the core waited for, from its own clock, not what a service reported (`Done.asr_ms`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TakeTiming {
+    /// The start (the key press, or a 重新识别), Unix milliseconds.
+    pub pressed_at: u64,
+    /// The device was open (`AudioSource::start` returned); absent without a capture.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_open_ms: Option<u64>,
+    /// The device delivered its first samples (`CaptureReady`); absent without a capture.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_audio_ms: Option<u64>,
+    /// The live preview had its first text; absent without a live preview.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_text_ms: Option<u64>,
+    /// The key was released (the stop was asked for, or the maximum length reached); absent
+    /// without a capture.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub released_ms: Option<u64>,
+    /// How long the microphone stayed open after the release (`Settings.extra_recording_ms`).
+    #[serde(default)]
+    pub tail_ms: u64,
+    /// Recognition: from the end of the recording until its text was there (a streaming take's
+    /// last sentence, a long take's last segments).
+    #[serde(default)]
+    pub asr_ms: u64,
+    /// The clean-up, when it ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refine_ms: Option<u64>,
+    /// Handing the text over: the paste or the copy, with the insert check after a paste.
+    #[serde(default)]
+    pub insert_ms: u64,
+    /// The result.
+    #[serde(default)]
+    pub done_ms: u64,
+}
+
 /// How far a long take's recognition got (docs/dictation.md §22): segments with text (or given up
 /// on) out of those cut so far.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -507,6 +560,7 @@ mod tests {
             live_error: None,
             clipboard_code: None,
             check: None,
+            timing: None,
         };
         assert!(done.is_terminal());
         let json = serde_json::to_string(&done).unwrap();
@@ -536,6 +590,7 @@ mod tests {
             live_error: Some("flush: asr: x".into()),
             clipboard_code: None,
             check: None,
+            timing: None,
         };
         let json = serde_json::to_string(&streamed).unwrap();
         assert!(json.contains(r#""mode":"streaming_final","segments":[{"text":"你好。","start_ms":0,"end_ms":900}],"live_error":"flush: asr: x""#), "{json}");
@@ -631,18 +686,23 @@ mod tests {
         );
         assert_eq!(RefineFailure::of(&DictationError::QuotaExhausted { service: Llm, detail: "x".into(), retry_at_ms: None }), RefineFailure::Quota);
         assert_eq!(RefineFailure::of(&DictationError::Refine("timed out".into())), RefineFailure::Failed);
+        // §3.12: an answer cut off at the output limit is its own kind.
+        assert_eq!(RefineFailure::of(&DictationError::RefineTruncated { detail: "cut off".into() }), RefineFailure::Truncated);
         let wire = [
             (RefineFailure::RateLimited, "rate_limited", true),
             (RefineFailure::Quota, "quota", true),
             (RefineFailure::Unconfigured, "unconfigured", false),
             (RefineFailure::TooLong, "too_long", false),
             (RefineFailure::Empty, "empty", false),
+            (RefineFailure::Truncated, "truncated", false),
             (RefineFailure::Failed, "failed", false),
         ];
         for (failure, name, capacity) in wire {
             assert_eq!(serde_json::to_string(&failure).unwrap(), format!("\"{name}\""));
             assert_eq!(failure.is_capacity(), capacity, "{name}");
         }
+        let words: Vec<RefineFailure> = wire.iter().map(|(failure, ..)| *failure).filter(|f| f.has_service_words()).collect();
+        assert_eq!(words, [RefineFailure::RateLimited, RefineFailure::Quota, RefineFailure::Truncated, RefineFailure::Failed]);
         let done: DictationPhase = serde_json::from_str(
             r#"{"phase":"done","text":"原文","raw_text":"原文","chars":2,"via":"paste","refined":false,"duration_ms":1,"asr_ms":1,"refine_error":"请求过于频繁：x","refine_failure":"rate_limited"}"#,
         )
@@ -680,6 +740,11 @@ mod tests {
             (DictationError::LocalFailed { failure: LocalFailure::Other, detail: "本地识别失败：x".into() }, "asr: 本地识别失败：x", false),
             (DictationError::Asr("ASR rejected the credentials".into()), "asr: ASR rejected the credentials", false),
             (DictationError::QuotaExhausted { service: Asr, detail: "x".into(), retry_at_ms: None }, "额度已用完：x", false),
+            (
+                DictationError::RefineTruncated { detail: "refine answer was cut off at the output limit".into() },
+                "refine: refine answer was cut off at the output limit",
+                false,
+            ),
         ];
         for (error, text, passes) in cases {
             assert_eq!((error.to_string().as_str(), error.is_outage()), (text, passes), "{error:?}");
@@ -696,6 +761,7 @@ mod tests {
             (DictationError::Audio("busy".into()), FailureCode::Audio, "audio"),
             (DictationError::Asr("401".into()), FailureCode::Asr, "asr"),
             (DictationError::Refine("429".into()), FailureCode::Refine, "refine"),
+            (DictationError::RefineTruncated { detail: "cut off".into() }, FailureCode::Refine, "refine"),
             (DictationError::Inject("denied".into()), FailureCode::Inject, "inject"),
             (DictationError::NoSelection, FailureCode::NoSelection, "no_selection"),
             (DictationError::SelectionTooLong(2400), FailureCode::SelectionTooLong, "selection_too_long"),

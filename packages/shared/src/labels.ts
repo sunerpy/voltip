@@ -267,8 +267,10 @@ export function formatCount(n: number): string {
 
 /** `paste` → `粘贴`, `clipboard` → `剪贴板`. */
 /** 「未润色 · 服务繁忙」: why a requested clean-up's text was not used (docs/dictation.md §3.6), as
- *  the history detail and the overlay say it. */
+ *  the history detail and the overlay say it. An answer cut off at the output limit (§3.12) says
+ *  in one sentence that the transcript was kept. */
 export function notRefinedText(failure: RefineFailure, locale: Locale = DEFAULT_LOCALE): string {
+  if (failure === "truncated") return translate(locale, "history.detail.refineTruncated");
   return translate(locale, "history.detail.notRefinedBecause", {
     reason: translate(locale, `dictation.refineFailure.${failure}`),
   });

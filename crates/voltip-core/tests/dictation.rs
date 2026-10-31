@@ -323,7 +323,13 @@ async fn the_recording_settings_reach_the_capture_and_persist() {
     ports.audio = audio.clone();
     let (handle, events) = AppCore::start_with(config(dir.path()), Arc::new(MemorySecretStore::new()), ports).unwrap();
     let mut node = Node { handle, events };
-    let recording = RecordingSettings { source: RecordingSource::Mixed, output_device: Some("fake:speakers".into()), max_minutes: 30, echo_cancel: false };
+    let recording = RecordingSettings {
+        source: RecordingSource::Mixed,
+        output_device: Some("fake:speakers".into()),
+        max_minutes: 30,
+        echo_cancel: false,
+        ready_sound: false,
+    };
     node.handle.send(CoreCommand::SetRecording(recording.clone())).await.unwrap();
     wait(&mut node, |e| matches!(e, CoreEvent::Settings(s) if s.recording == recording).then_some(())).await;
     assert_eq!(SettingsStore::new(dir.path()).load().unwrap().recording, recording);

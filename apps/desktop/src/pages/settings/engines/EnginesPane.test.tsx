@@ -239,6 +239,58 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     expect(modelsPage().textContent).not.toMatch(/计划中|尚未接入|示例/);
   });
 
+  it("docs/dictation.md section 30.6: under the recognition cards, whether the service in use receives the glossary", async () => {
+    const entry = {
+      id: "00000000-0000-4000-8000-0000000000d1",
+      term: "Voltip",
+      heard_as: [],
+      enabled: true,
+      source: { kind: "manual" as const },
+      created_at_ms: 1,
+      updated_at_ms: 1,
+    };
+    const cases: [Parameters<typeof renderApp>[0], string][] = [
+      // The built-in service takes it as its prompt.
+      [{ path: "/speech", mock: { dictionary: [entry] } }, "当前识别服务会收到术语表。"],
+      [
+        { path: "/speech", mock: { dictionary: [{ ...entry, enabled: false }] } },
+        "还没有启用的词条，暂时没有术语表发给识别服务。",
+      ],
+      [
+        {
+          path: "/speech",
+          mock: {
+            dictionary: [entry],
+            settings: { engines: { ...defaultEngineSettings(), asr_provider: "local" } },
+          },
+        },
+        "本机模型不接收术语表，词典只在识别之后纠正。",
+      ],
+      [
+        {
+          path: "/speech",
+          mock: {
+            dictionary: [entry],
+            providerKeys: [{ provider: "aliyun", kind: "asr" }],
+            settings: {
+              engines: {
+                ...defaultEngineSettings(),
+                asr_provider: "aliyun",
+                providers: { aliyun: { asr_model: "qwen3-asr-flash" } },
+              },
+            },
+          },
+        },
+        "当前识别服务不接收术语表，词典只在识别之后纠正。",
+      ],
+    ];
+    for (const [options, sentence] of cases) {
+      const { unmount } = renderApp(options);
+      expect(await screen.findByTestId("glossary-note")).toHaveTextContent(sentence);
+      unmount();
+    }
+  });
+
   it("regression: the built-in service's host is never shown, in the pane, the title bar or the state", async () => {
     const user = userEvent.setup();
     const { backend } = renderApp({ path: "/speech" });

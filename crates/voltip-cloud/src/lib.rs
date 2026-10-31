@@ -64,7 +64,15 @@ impl Transcriber for HttpTranscriber {
             None => Vec::new(),
         };
         let t = self.client.transcribe_with_headers(wav, language, prompt.as_deref(), &headers).await.map_err(asr_error)?;
-        Ok(Transcript { text: t.text, latency_ms: t.latency_ms, model: Some(t.model), backend_note: None, provider: None, fallback: None })
+        Ok(Transcript {
+            text: t.text,
+            latency_ms: t.latency_ms,
+            model: Some(t.model),
+            backend_note: None,
+            provider: None,
+            fallback: None,
+            glossary_sent: prompt.is_some(),
+        })
     }
 }
 
@@ -185,7 +193,8 @@ pub fn asr_error(error: voltip_asr::AsrError) -> DictationError {
 
 /// The core's error for a failed clean-up or edit: a used-up quota (docs/dictation.md §3.5), a
 /// rate limit and an overloaded service (§3.6), another server error, the network and a timeout
-/// (§3.14) keep their kind; anything else is `Refine` with the reason.
+/// (§3.14) and an answer cut off at the output limit (§3.12) keep their kind; anything else is
+/// `Refine` with the reason.
 pub fn refine_error(error: voltip_refine::RefineError) -> DictationError {
     use voltip_core::dictation::Outage;
     use voltip_refine::RefineError as R;
@@ -197,6 +206,7 @@ pub fn refine_error(error: voltip_refine::RefineError) -> DictationError {
         R::Server { status, .. } if status >= 500 => DictationError::Unreachable { service: ServiceKind::Llm, cause: Outage::Server(status), detail },
         R::Network(_) => DictationError::Unreachable { service: ServiceKind::Llm, cause: Outage::Network, detail },
         R::Timeout => DictationError::Unreachable { service: ServiceKind::Llm, cause: Outage::Timeout, detail },
+        R::Truncated => DictationError::RefineTruncated { detail },
         _ => DictationError::Refine(detail),
     }
 }
@@ -673,6 +683,60 @@ mod tests {
         assert_eq!((t.text.as_str(), t.model.as_deref()), ("你好", Some("whisper-1")));
     }
 
+    /// docs/dictation.md §30.6: every recognition client says whether its request carried the
+    /// glossary — an OpenAI-compatible endpoint's `prompt` when there is a term, Model Studio's hot
+    /// words where its model takes them — and the core's route for the same service agrees.
+    #[tokio::test]
+    async fn every_recognition_client_says_whether_the_glossary_went_out() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/audio/transcriptions"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"text":"你好"}"#))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/v1/services/aigc/multimodal-generation/generation"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "output": { "text": "你好" } })))
+            .mount(&server)
+            .await;
+        let wav = voltip_core::dictation::wav::encode_pcm16(&[1000; 1600], 16_000);
+        let terms = vec!["Voltip".to_owned()];
+        let remote = |url: String, model: &str| RemoteService { url, model: model.into(), key: Some("sk-test".into()), ..RemoteService::default() };
+        let openai = remote(server.uri(), "whisper-1");
+        let t = transcriber_for(AsrProtocol::OpenaiTranscriptions, &openai, &net()).transcribe(&wav, None, &terms).await.unwrap();
+        assert!(t.glossary_sent, "the prompt went out");
+        let body = String::from_utf8_lossy(&server.received_requests().await.unwrap()[0].body).into_owned();
+        assert!(body.contains("name=\"prompt\"") && body.contains("Voltip"), "{body}");
+        let t = transcriber_for(AsrProtocol::OpenaiTranscriptions, &openai, &net()).transcribe(&wav, None, &[]).await.unwrap();
+        assert!(!t.glossary_sent, "nothing to send");
+        // Model Studio's native protocol, at the mock's address: its hot words.
+        for (model, sent) in [("qwen-audio-3.1-asr-flash", true), ("fun-asr-flash-2026-06-15", false)] {
+            let studio = remote(format!("{}/compatible-mode/v1", server.uri()), model);
+            let t = transcriber_for(AsrProtocol::DashscopeMultimodal, &studio, &net()).transcribe(&wav, None, &terms).await.unwrap();
+            assert_eq!(t.glossary_sent, sent, "{model}");
+        }
+        // The status's route says the same for every model of the catalogue and a few more.
+        let studio = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+        let mut models: Vec<&str> =
+            voltip_core::PROVIDERS.iter().filter(|p| p.id == ProviderId::Aliyun).flat_map(|p| p.asr.map(|a| a.models.to_vec()).unwrap_or_default()).collect();
+        models.extend(["qwen-audio-3.1-asr-flash", "qwen-audio-3.1-asr-flash-message", "fun-asr-realtime", "paraformer-realtime-v2", "qwen3-asr-flash"]);
+        for model in models {
+            let protocol = AsrProtocol::of(studio, model);
+            let mode = match protocol {
+                AsrProtocol::DashscopeChat => DashscopeMode::Chat,
+                AsrProtocol::DashscopeMultimodal => DashscopeMode::Multimodal,
+                AsrProtocol::DashscopeDuplex => DashscopeMode::Duplex,
+                AsrProtocol::DashscopeUnsupported | AsrProtocol::OpenaiTranscriptions => continue,
+            };
+            let client = voltip_asr::DashscopeClient::new(AsrConfig::new(studio, model), mode).unwrap();
+            let route = voltip_core::GlossaryRoute::remote(studio, model);
+            assert_eq!(client.sends_glossary(&terms), route == voltip_core::GlossaryRoute::Hotwords, "{model}: {route:?}");
+        }
+        assert_eq!(voltip_core::GlossaryRoute::remote(&server.uri(), "whisper-1"), voltip_core::GlossaryRoute::Prompt);
+    }
+
     /// docs/dictation.md §3.14: every failure of the recognition and clean-up clients reaches the
     /// core with its kind — a timeout, the network, a server error, a busy or rate-limited service
     /// pass; a refused key, a refused request, an answer the client cannot read do not — and reads
@@ -737,7 +801,7 @@ mod tests {
             (R::Timeout, unreachable(ServiceKind::Llm, Outage::Timeout, "refine request timed out"), "refine: "),
             (R::BadResponse("x".into()), DictationError::Refine("refine service returned an unexpected response: x".into()), "refine: "),
             (R::EmptyAnswer, DictationError::Refine("refine service returned an empty answer".into()), "refine: "),
-            (R::Truncated, DictationError::Refine("refine answer was cut off at the output limit".into()), "refine: "),
+            (R::Truncated, DictationError::RefineTruncated { detail: "refine answer was cut off at the output limit".into() }, "refine: "),
         ];
         for (error, expected, prefix) in refine {
             let words = format!("{prefix}{error}");

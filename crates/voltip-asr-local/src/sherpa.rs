@@ -182,12 +182,17 @@ impl StreamingSession for OnlineSession {
         StreamEvent::Partial { current: text }
     }
 
+    /// An on-device model takes no glossary (docs/dictation.md §16.3, §30.6).
+    fn glossary_sent(&self) -> Option<bool> {
+        Some(false)
+    }
+
     fn finish(mut self: Box<Self>) -> Result<StreamFinal, DictationError> {
         self.stream.input_finished();
         self.decode_ready();
         let tail = self.text();
         // No receipt: the live-preview model's text keeps the configured model (docs/dictation.md §3.5).
-        Ok(StreamFinal { committed: std::mem::take(&mut self.committed), tail, model: None, provider: None, fallback: None })
+        Ok(StreamFinal { committed: std::mem::take(&mut self.committed), tail, model: None, provider: None, fallback: None, glossary_sent: Some(false) })
     }
 }
 

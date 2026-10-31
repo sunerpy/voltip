@@ -185,11 +185,15 @@ pub struct RecordingSettings {
     /// (docs/dictation.md §22.6). On by default; a settings file from before it has none and
     /// reads as on.
     pub echo_cancel: bool,
+    /// Play a short cue once the microphone delivers its first samples, so the user knows they
+    /// can speak (docs/dictation.md §30.3): a take that records the microphone alone, on this
+    /// computer. Off by default; a settings file from before it reads as off.
+    pub ready_sound: bool,
 }
 
 impl Default for RecordingSettings {
     fn default() -> Self {
-        Self { source: RecordingSource::Microphone, output_device: None, max_minutes: DEFAULT_MAX_MINUTES, echo_cancel: true }
+        Self { source: RecordingSource::Microphone, output_device: None, max_minutes: DEFAULT_MAX_MINUTES, echo_cancel: true, ready_sound: false }
     }
 }
 

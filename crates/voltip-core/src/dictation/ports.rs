@@ -54,6 +54,15 @@ pub enum DictationError {
     /// Text refinement failed (never fatal for the pipeline: the raw text is injected).
     #[error("refine: {0}")]
     Refine(String),
+    /// The clean-up's answer stopped at the model's output limit (docs/dictation.md §3.12): its
+    /// text is incomplete and is not used, the raw text goes on. Not an outage: the same request
+    /// would be cut off again. Reads as a clean-up's failure always did, `refine: ` and the
+    /// client's words.
+    #[error("refine: {detail}")]
+    RefineTruncated {
+        /// The adapter's explanation.
+        detail: String,
+    },
     /// The service said the model's quota is used up (docs/dictation.md §3.5): a fallback model
     /// list moves on to its next model; with none left the take fails with `FailureCode::Quota`
     /// (a refinement still injects the raw text).
@@ -291,13 +300,16 @@ pub struct Receipt {
     pub provider: Option<crate::providers::ProviderId>,
     /// Why a fallback model wrote it; `None` when the selected model did.
     pub fallback: Option<SwitchReason>,
+    /// Whether the request carried the glossary (docs/dictation.md §30.6); `None` when the client
+    /// cannot say.
+    pub glossary_sent: Option<bool>,
 }
 
 impl Receipt {
     /// What a streaming session says about the text it gave so far.
     pub fn of_session(session: &dyn StreamingSession) -> Self {
         let (provider, fallback) = session.served();
-        Self { model: session.model(), provider, fallback }
+        Self { model: session.model(), provider, fallback, glossary_sent: session.glossary_sent() }
     }
 }
 
@@ -347,23 +359,44 @@ pub struct CaptureOptions {
     pub output_device: Option<String>,
     /// `mixed`: cancel the microphone's echo of the computer's sound (docs/dictation.md §22.6).
     pub echo_cancel: bool,
+    /// Play the ready cue once the device delivers its first samples, and keep it out of the
+    /// recording (docs/dictation.md §30.3). The adapter does all of it; the core only asks, for a
+    /// take on this computer that records the microphone alone with `ready_sound` on. A phone's
+    /// capture and the local speech service never ask.
+    pub ready_cue: bool,
 }
 
 impl Default for CaptureOptions {
-    /// The microphone, no live tap, the whole-take cap ([`MAX_RECORDING`]).
+    /// The microphone, no live tap, the whole-take cap ([`MAX_RECORDING`]), no cue.
     fn default() -> Self {
-        Self { live: false, max_duration: MAX_RECORDING, long: false, source: RecordingSource::Microphone, output_device: None, echo_cancel: false }
+        Self {
+            live: false,
+            max_duration: MAX_RECORDING,
+            long: false,
+            source: RecordingSource::Microphone,
+            output_device: None,
+            echo_cancel: false,
+            ready_cue: false,
+        }
     }
 }
 
 impl CaptureOptions {
     /// The microphone with a live tap and the whole-take cap.
-    pub const LIVE: Self =
-        Self { live: true, max_duration: MAX_RECORDING, long: false, source: RecordingSource::Microphone, output_device: None, echo_cancel: false };
+    pub const LIVE: Self = Self {
+        live: true,
+        max_duration: MAX_RECORDING,
+        long: false,
+        source: RecordingSource::Microphone,
+        output_device: None,
+        echo_cancel: false,
+        ready_cue: false,
+    };
 
     /// A dictation take on this computer (docs/dictation.md §22): the settings' source, output
     /// device, length and echo cancellation (which only a `mixed` take has); `long` when the take
-    /// may run past [`MAX_RECORDING`].
+    /// may run past [`MAX_RECORDING`]; the ready cue (§30.3) when the take records the microphone
+    /// alone.
     pub fn dictation(recording: &RecordingSettings, live: bool) -> Self {
         let max_duration = recording.max_duration();
         Self {
@@ -373,6 +406,7 @@ impl CaptureOptions {
             source: recording.source,
             output_device: recording.output_device.clone(),
             echo_cancel: recording.echo_cancel && recording.source == RecordingSource::Mixed,
+            ready_cue: recording.ready_sound && recording.source == RecordingSource::Microphone,
         }
     }
 }
@@ -499,12 +533,16 @@ pub struct Transcript {
     /// Why a fallback model recognised it instead of the selected one; `None` when the selected
     /// model did (or no chain ran).
     pub fallback: Option<SwitchReason>,
+    /// The request carried the glossary (docs/dictation.md §16.3, §30.6): an OpenAI-compatible
+    /// service's `prompt`, Model Studio's hot words. A service that takes none, an on-device
+    /// model and an empty glossary send nothing.
+    pub glossary_sent: bool,
 }
 
 impl Transcript {
     /// Who recognised it.
     pub fn receipt(&self) -> Receipt {
-        Receipt { model: self.model.clone(), provider: self.provider, fallback: self.fallback }
+        Receipt { model: self.model.clone(), provider: self.provider, fallback: self.fallback, glossary_sent: Some(self.glossary_sent) }
     }
 }
 
@@ -598,12 +636,15 @@ pub struct StreamFinal {
     pub provider: Option<crate::providers::ProviderId>,
     /// Why a fallback model's stream gave it instead of the selected one's.
     pub fallback: Option<SwitchReason>,
+    /// Whether the session's requests carried the glossary (docs/dictation.md §30.6); `None` when
+    /// the session cannot say.
+    pub glossary_sent: Option<bool>,
 }
 
 impl StreamFinal {
     /// Who gave the flushed text.
     pub fn receipt(&self) -> Receipt {
-        Receipt { model: self.model.clone(), provider: self.provider, fallback: self.fallback }
+        Receipt { model: self.model.clone(), provider: self.provider, fallback: self.fallback, glossary_sent: self.glossary_sent }
     }
 }
 
@@ -642,6 +683,12 @@ pub trait StreamingSession: Send {
     /// §3.14), as a chain's session says; `(None, None)` (the default) for a client's own.
     fn served(&self) -> (Option<crate::providers::ProviderId>, Option<SwitchReason>) {
         (None, None)
+    }
+
+    /// Whether the session's requests carried the glossary (docs/dictation.md §30.6); `None` (the
+    /// default) when the session cannot say.
+    fn glossary_sent(&self) -> Option<bool> {
+        None
     }
 }
 
@@ -1095,7 +1142,10 @@ mod tests {
         assert!(json.contains(r#""rms_dbfs":-20.0"#) && json.contains(r#""seq":7"#), "{json}");
         let segment = Segment { text: "你好。".into(), refined: None, start_ms: 120, end_ms: 1480 };
         assert_eq!(serde_json::to_string(&segment).unwrap(), r#"{"text":"你好。","start_ms":120,"end_ms":1480}"#);
-        assert_eq!(StreamFinal::default(), StreamFinal { committed: Vec::new(), tail: String::new(), model: None, provider: None, fallback: None });
+        assert_eq!(
+            StreamFinal::default(),
+            StreamFinal { committed: Vec::new(), tail: String::new(), model: None, provider: None, fallback: None, glossary_sent: None }
+        );
         assert_eq!(PARTIAL_THROTTLE, Duration::from_millis(80));
         assert_eq!(LIVE_CHUNK_SAMPLES as u32 * 10, LIVE_SAMPLE_RATE_HZ, "one chunk is 100 ms");
     }
@@ -1154,6 +1204,7 @@ mod tests {
             source: RecordingSource::Microphone,
             output_device: None,
             echo_cancel: false,
+            ready_cue: false,
         };
         assert_eq!(CaptureOptions::default(), microphone);
         assert_eq!(CaptureOptions::LIVE, CaptureOptions { live: true, ..microphone });
@@ -1172,7 +1223,13 @@ mod tests {
         assert_eq!((short(1).max_duration, short(1).long), (Duration::from_secs(60), false));
         assert_eq!((short(2).max_duration, short(2).long), (MAX_RECORDING, false), "2 minutes is a short take, as before");
         assert_eq!((short(120).max_duration, short(120).long), (Duration::from_secs(7200), true));
-        let mixed = RecordingSettings { source: RecordingSource::Mixed, output_device: Some("wasapi:out".into()), max_minutes: 30, echo_cancel: true };
+        let mixed = RecordingSettings {
+            source: RecordingSource::Mixed,
+            output_device: Some("wasapi:out".into()),
+            max_minutes: 30,
+            echo_cancel: true,
+            ready_sound: false,
+        };
         let options = CaptureOptions::dictation(&mixed, false);
         assert_eq!((options.source, options.output_device.as_deref()), (RecordingSource::Mixed, Some("wasapi:out")));
         // docs/dictation.md §22.6: the echo is cancelled in a mixed take unless it is switched off,
@@ -1183,6 +1240,14 @@ mod tests {
             assert!(!CaptureOptions::dictation(&RecordingSettings { source, ..mixed.clone() }, false).echo_cancel, "{source:?}");
         }
         assert!(RecordingSettings::default().echo_cancel, "on by default");
+        // docs/dictation.md §30.3: the ready cue when the setting is on and the take records the
+        // microphone alone; the computer's sound would carry the cue into the take.
+        assert!(!RecordingSettings::default().ready_sound, "off by default");
+        assert!(!options.ready_cue);
+        for (source, cue) in [(RecordingSource::Microphone, true), (RecordingSource::System, false), (RecordingSource::Mixed, false)] {
+            let on = RecordingSettings { source, ready_sound: true, ..mixed.clone() };
+            assert_eq!(CaptureOptions::dictation(&on, false).ready_cue, cue, "{source:?}");
+        }
     }
 
     /// `Recording::slice_from_ms` keeps the audio after the cut (sample-exact), re-encodes a valid

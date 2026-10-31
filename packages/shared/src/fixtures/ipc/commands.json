@@ -107,6 +107,7 @@
         "echo_cancel": false,
         "max_minutes": 60,
         "output_device": "wasapi:{0.0.0.00000000}.{a1}",
+        "ready_sound": true,
         "source": "mixed"
       }
     },

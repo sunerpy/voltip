@@ -160,6 +160,7 @@ describe("Settings · 录音来源 (was 麦克风)", () => {
             output_device: "HDMI",
             max_minutes: 10,
             echo_cancel: true,
+            ready_sound: false,
           },
         },
       },

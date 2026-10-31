@@ -15,6 +15,7 @@ import {
   useUiState,
 } from "@voltip/ui";
 import { useState } from "react";
+import { GlossaryNote } from "../../../features/vocabulary/GlossaryNote";
 import { ChineseScript } from "./ChineseScript";
 import { type SpeechTab, SPEECH_TABS, languageOptions, providersFor } from "./helpers";
 import { LivePreview } from "./LivePreview";
@@ -122,6 +123,8 @@ function ProviderList({ kind, initialOpen }: { kind: ServiceKind; initialOpen?: 
           />
         )}
         <ServicePrivacy kind={kind} />
+        {/* docs/dictation.md §30.6: whether the dictionary's terms reach the recogniser. */}
+        {kind === "asr" && <GlossaryNote className="mono text-[11px] text-fg-subtle" />}
       </SettingsSection>
       {/* docs/dictation.md §3.14: the desktop moves on for failures too, if asked. */}
       <FallbackSection kind={kind} outage />

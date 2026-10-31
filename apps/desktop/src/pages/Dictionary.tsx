@@ -27,6 +27,7 @@ import {
 import { type KeyboardEvent, useCallback, useMemo, useState } from "react";
 import { usePageShortcuts, withCommand } from "../app/page-shortcuts";
 import { copyWithToast, useShell } from "../app/shell-context";
+import { GlossaryNote } from "../features/vocabulary/GlossaryNote";
 import { useHitTotals } from "../features/vocabulary/useHitTotals";
 import { useVocabularyPreview } from "../features/vocabulary/usePreview";
 import {
@@ -490,6 +491,7 @@ export function Dictionary() {
                   <div className="text-[12px] leading-5 text-fg-muted">
                     {t("dictionary.explain")}
                   </div>
+                  <GlossaryNote className="text-[12px] leading-5 text-fg-muted" />
                   <div className="mono mt-1 text-[11px] text-fg-subtle">
                     {t("dictionary.facts", { limit: MAX_DICTIONARY_ENTRIES, heard: MAX_HEARD_AS })}
                   </div>

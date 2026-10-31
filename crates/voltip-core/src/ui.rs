@@ -943,6 +943,8 @@ mod tests {
             origin: None,
             processed: None,
             file: None,
+            timing: None,
+            glossary_sent: None,
         };
         let ev = st.apply(CoreEvent::History { recent: vec![entry.clone()], total: 7 });
         assert_eq!((st.history_recent.clone(), st.history_total), (vec![entry], 7));

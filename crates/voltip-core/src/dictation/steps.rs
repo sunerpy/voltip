@@ -34,6 +34,8 @@ pub struct Recognised {
     pub provider: Option<ProviderId>,
     /// Why a fallback model recognised it.
     pub fallback: Option<SwitchReason>,
+    /// The request carried the glossary (docs/dictation.md §30.6).
+    pub glossary_sent: bool,
 }
 
 /// Recognise `wav` with the take's `language` hint and the vocabulary's `glossary`, and bring the
@@ -55,6 +57,7 @@ pub async fn recognize(
         note: t.backend_note,
         provider: t.provider,
         fallback: t.fallback,
+        glossary_sent: t.glossary_sent,
     })
 }
 
@@ -137,7 +140,7 @@ impl CleanUp {
             RefineFailure::Empty => REFINE_EMPTY,
             RefineFailure::Unconfigured => REFINE_UNCONFIGURED,
             // A failed request carries the service's own explanation (`run_refine`).
-            RefineFailure::RateLimited | RefineFailure::Quota | RefineFailure::Failed => REFINE_FAILED,
+            RefineFailure::RateLimited | RefineFailure::Quota | RefineFailure::Truncated | RefineFailure::Failed => REFINE_FAILED,
         };
         Self { text: text.to_owned(), refine_error: failure.map(|f| reason(f).to_owned()), refine_failure: failure, ..Self::default() }
     }
@@ -215,6 +218,9 @@ mod tests {
         assert!(busy.refine_error.as_deref().is_some_and(|e| e.starts_with("请求过于频繁")), "{busy:?}");
         let quota = run_refine(&FakeRefiner::quota(), "原文", &hints).await;
         assert_eq!(quota.refine_failure, Some(RefineFailure::Quota));
+        // §3.12: a cut-off answer is not used; the raw text goes on with its own kind.
+        let cut = run_refine(&FakeRefiner::truncated(), "原文", &hints).await;
+        assert_eq!((cut.text.as_str(), cut.refined, cut.refine_failure), ("原文", false, Some(RefineFailure::Truncated)));
         let skipped = CleanUp::skipped("原文", Some(RefineFailure::TooLong));
         assert_eq!((skipped.refine_error.as_deref(), skipped.refine_failure), (Some(long::REFINE_SKIPPED), Some(RefineFailure::TooLong)));
         let unconfigured = CleanUp::skipped("原文", Some(RefineFailure::Unconfigured));

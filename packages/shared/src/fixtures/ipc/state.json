@@ -107,7 +107,8 @@
       "source": "mixed",
       "output_device": "wasapi:{0.0.0.00000000}.{a1}",
       "max_minutes": 60,
-      "echo_cancel": false
+      "echo_cancel": false,
+      "ready_sound": true
     },
     "serve": {
       "enabled": true,
@@ -231,7 +232,19 @@
       "asr_ms": 640,
       "refine_ms": 2400,
       "mode": "whole_take",
-      "check": "written"
+      "check": "written",
+      "timing": {
+        "pressed_at": 1758700593000,
+        "device_open_ms": 38,
+        "first_audio_ms": 212,
+        "first_text_ms": 640,
+        "released_ms": 3412,
+        "tail_ms": 150,
+        "asr_ms": 655,
+        "refine_ms": 2410,
+        "insert_ms": 96,
+        "done_ms": 6731
+      }
     },
     "session": 7,
     "context": {
@@ -297,7 +310,20 @@
       "preset": {
         "id": "formal",
         "name": "书面语"
-      }
+      },
+      "timing": {
+        "pressed_at": 1758700593000,
+        "device_open_ms": 38,
+        "first_audio_ms": 212,
+        "first_text_ms": 640,
+        "released_ms": 3412,
+        "tail_ms": 150,
+        "asr_ms": 655,
+        "refine_ms": 2410,
+        "insert_ms": 96,
+        "done_ms": 6731
+      },
+      "glossary_sent": true
     },
     {
       "id": "1c2d3e4f-5a6b-4c8e-9f7a-0f3f1a1e8d4b",
@@ -1065,7 +1091,8 @@
           "issue": "key_missing"
         }
       ]
-    }
+    },
+    "glossary": "prompt"
   },
   "update": {
     "state": "available",

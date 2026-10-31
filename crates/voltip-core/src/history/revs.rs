@@ -288,6 +288,8 @@ fn shallow(entry: &HistoryEntry) -> HistoryEntry {
         origin: None,
         processed: None,
         file: None,
+        timing: entry.timing,
+        glossary_sent: entry.glossary_sent,
     }
 }
 

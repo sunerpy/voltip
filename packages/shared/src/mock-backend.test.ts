@@ -622,6 +622,26 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
     expect(entry?.preset).toBeUndefined();
   });
 
+  it("docs/dictation.md §3.12: an answer cut off at the output limit keeps the raw text and the service's words", async () => {
+    const backend = new MockBackend({ now: () => clock, history: [] });
+    backend.simulateRefineFailure("truncated");
+    await backend.invoke("dictation_start");
+    tick(MOCK_MIC_READY_MS + 3200);
+    await backend.invoke("dictation_stop");
+    tick(MOCK_ASR_MS + MOCK_REFINE_MS);
+    expect(backend.peek().dictation.phase).toMatchObject({
+      phase: "done",
+      text: MOCK_DICTATION_RAW,
+      refined: false,
+      refine_failure: "truncated",
+    });
+    expect(backend.peek().history_recent[0]).toMatchObject({
+      refined: false,
+      refine_failure: "truncated",
+      refine_error: MOCK_REFINE_FAILED,
+    });
+  });
+
   it("docs/dictation.md §14.3: another window in front copies the text, says so, and stays as long as a failure", async () => {
     // §28: with 识别结果卡片常驻 off the card leaves after its usual time.
     const backend = new MockBackend({
@@ -770,7 +790,13 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
       kind: "dictation",
     });
     await backend.invoke("settings_set_recording", {
-      recording: { source: "system", output_device: null, max_minutes: 60, echo_cancel: true },
+      recording: {
+        source: "system",
+        output_device: null,
+        max_minutes: 60,
+        echo_cancel: true,
+        ready_sound: false,
+      },
     });
     await backend.invoke("dictation_start");
     tick(MOCK_MIC_READY_MS);
@@ -1948,13 +1974,16 @@ describe("MockBackend locale, auto-update and updater (docs/frontend.md §7)", (
       output_device: null,
       max_minutes: DEFAULT_MAX_MINUTES,
       echo_cancel: true,
+      ready_sound: false,
     });
-    // Echo cancellation off (docs/dictation.md §22.6): kept as saved, like the rest.
+    // Echo cancellation off (docs/dictation.md §22.6) and the ready sound on (§30.3): kept as
+    // saved, like the rest.
     const mixed = {
       source: "mixed" as const,
       output_device: "fake:speakers",
       max_minutes: 60,
       echo_cancel: false,
+      ready_sound: true,
     };
     await backend.invoke("settings_set_recording", { recording: mixed });
     expect(backend.peek().settings.recording).toEqual(mixed);
@@ -2624,7 +2653,8 @@ describe("MockBackend personal dictionary and replacement rules (docs/dictation.
       updated_at_ms: T0,
     });
     expect(good.source).toEqual({ kind: "history", history_id: HISTORY_ID });
-    expect(events.map((e) => e.type)).toEqual(["dictionary", "dictionary"]);
+    // docs/dictation.md §30.6: the first enabled entry gives the recogniser a glossary.
+    expect(events.map((e) => e.type)).toEqual(["dictionary", "engines", "dictionary"]);
     // Wrong on its own: the call rejects and nothing is emitted.
     await expect(backend.invoke("dictionary_add", { entry: draft(" ", []) })).rejects.toThrow(
       "dictionary: 正确写法不能为空",
@@ -2635,7 +2665,7 @@ describe("MockBackend personal dictionary and replacement rules (docs/dictation.
     await expect(backend.invoke("dictionary_remove", { id: "nope" })).rejects.toThrow(
       "id must be a UUID",
     );
-    expect(events).toHaveLength(2);
+    expect(events).toHaveLength(3);
     // A clash with the list: an error event, the list unchanged.
     await backend.invoke("dictionary_add", { entry: draft("voltip", []) });
     await backend.invoke("dictionary_add", { entry: draft("World", ["谷歌IDR"]) });

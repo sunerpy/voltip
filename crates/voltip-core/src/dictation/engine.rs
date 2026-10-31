@@ -64,7 +64,8 @@ use super::ports::{
 };
 use super::redecode::RedecodeStreaming;
 use super::{
-    DictationPhase, DictationStatus, FailureCode, LiveText, OutputMode, ProcessingStage, RefineFailure, SegmentProgress, TakeKind, inject_separator, join_text,
+    DictationPhase, DictationStatus, FailureCode, LiveText, OutputMode, ProcessingStage, RefineFailure, SegmentProgress, TakeKind, TakeTiming,
+    inject_separator, join_text,
 };
 use super::{steps, wav};
 use crate::audio_cache::{KeptAudio, KeptStatus, NewRecording};
@@ -372,6 +373,9 @@ pub struct PipelineOutcome {
     pub asr_provider: Option<ProviderId>,
     /// Why a fallback model recognised it, with `asr_model`.
     pub asr_fallback: Option<SwitchReason>,
+    /// Whether the pipeline's own recognition carried the glossary (docs/dictation.md §30.6);
+    /// `None` when the pipeline recognised nothing itself.
+    pub asr_glossary_sent: Option<bool>,
     /// Refine latency.
     pub refine_ms: Option<u64>,
     /// Refine skip / failure reason.
@@ -479,6 +483,98 @@ impl std::fmt::Debug for Retake {
             .field("duration_ms", &self.duration_ms)
             .field("clients", &self.clients)
             .finish()
+    }
+}
+
+/// The foreground probe asked at a take's start, until it answers (docs/dictation.md §18.4, §30.2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProbeWait {
+    /// The device opens once it answered: a scene may change the output mode, or the take is a
+    /// voice edit.
+    First,
+    /// The device opened at the press; the answer applies the scene and starts the live preview.
+    Alongside,
+}
+
+/// When the steps of a take happened (docs/dictation.md §30.1), on the core's clock; made into a
+/// [`TakeTiming`] when the take ends.
+#[derive(Clone, Debug)]
+struct TimingMarks {
+    /// The start, on the core's clock and as Unix milliseconds.
+    pressed: tokio::time::Instant,
+    pressed_at: u64,
+    device_open: Option<tokio::time::Instant>,
+    first_audio: Option<tokio::time::Instant>,
+    first_text: Option<tokio::time::Instant>,
+    released: Option<tokio::time::Instant>,
+    /// When the device was asked to stop: the end of the recording.
+    stopped: Option<tokio::time::Instant>,
+    /// The processing stages in order, each with when it began.
+    stages: Vec<(ProcessingStage, tokio::time::Instant)>,
+}
+
+impl TimingMarks {
+    fn new() -> Self {
+        Self {
+            pressed: tokio::time::Instant::now(),
+            pressed_at: now_ms(),
+            device_open: None,
+            first_audio: None,
+            first_text: None,
+            released: None,
+            stopped: None,
+            stages: Vec::new(),
+        }
+    }
+
+    /// Mark `slot` now, once.
+    fn mark(slot: &mut Option<tokio::time::Instant>) {
+        if slot.is_none() {
+            *slot = Some(tokio::time::Instant::now());
+        }
+    }
+
+    /// A processing stage began.
+    fn stage(&mut self, stage: ProcessingStage) {
+        if self.stages.last().is_none_or(|(last, _)| *last != stage) {
+            self.stages.push((stage, tokio::time::Instant::now()));
+        }
+    }
+
+    fn ms(from: tokio::time::Instant, to: tokio::time::Instant) -> u64 {
+        u64::try_from(to.saturating_duration_since(from).as_millis()).unwrap_or(u64::MAX)
+    }
+
+    /// The timeline of a take that ends now: recognition is every stage up to the clean-up, the
+    /// clean-up its stage, the insert its stage until now.
+    fn finish(&self) -> TakeTiming {
+        let now = tokio::time::Instant::now();
+        let since = |at: Option<tokio::time::Instant>| at.map(|at| Self::ms(self.pressed, at));
+        let (mut asr_ms, mut refine_ms, mut insert_ms) = (0, None, 0);
+        for (i, (stage, began)) in self.stages.iter().enumerate() {
+            let ended = self.stages.get(i + 1).map_or(now, |(_, next)| *next);
+            let ms = Self::ms(*began, ended);
+            match stage {
+                ProcessingStage::Transcribing | ProcessingStage::Finalizing => asr_ms += ms,
+                ProcessingStage::Refining => *refine_ms.get_or_insert(0) += ms,
+                ProcessingStage::Inserting => insert_ms += ms,
+            }
+        }
+        TakeTiming {
+            pressed_at: self.pressed_at,
+            device_open_ms: since(self.device_open),
+            first_audio_ms: since(self.first_audio),
+            first_text_ms: since(self.first_text),
+            released_ms: since(self.released),
+            tail_ms: match (self.released, self.stopped) {
+                (Some(released), Some(stopped)) => Self::ms(released, stopped),
+                _ => 0,
+            },
+            asr_ms,
+            refine_ms,
+            insert_ms,
+            done_ms: Self::ms(self.pressed, now),
+        }
     }
 }
 
@@ -745,6 +841,14 @@ struct Take {
     /// The gate of the take's text while a pipeline delivers it (a whole take, a long take, a
     /// voice edit): a cancel decides there whether it still goes out.
     gate: Option<InsertGate>,
+    /// The foreground probe asked at the start, until it answered (docs/dictation.md §30.2).
+    probe: Option<ProbeWait>,
+    /// The capture's live tap while the live preview waits for the probe's answer (§30.2): the
+    /// preview runs with the take's scene, whose language and terms only the answer tells. A tap is
+    /// `Send` but not `Sync`, hence the mutex (never contended: only the core task touches it).
+    live_tap: Mutex<Option<Box<dyn LivePcm>>>,
+    /// When the take's steps happened (docs/dictation.md §30.1).
+    timing: TimingMarks,
 }
 
 impl Take {
@@ -790,6 +894,9 @@ impl Take {
             switched_window: SwitchedWindow::default(),
             inject_mode: InjectMode::default(),
             gate: None,
+            probe: None,
+            live_tap: Mutex::new(None),
+            timing: TimingMarks::new(),
         }
     }
 
@@ -994,6 +1101,15 @@ pub fn engine_clients(
         (refiner, _) => refiner,
     };
     (transcriber, refiner)
+}
+
+/// Whether a take of `kind` records the same whatever scene the application in front matches
+/// (docs/dictation.md §30.2), so its device may open while the foreground probe still runs: a
+/// dictation, while no enabled scene may change the output mode (which decides the capture of a
+/// phone's take and the streaming path of every take). A voice edit's device waits: a terminal in
+/// front refuses the take before anything is opened (§19.2).
+pub fn capture_independent_of_scene(scenes: &[Scene], kind: TakeKind) -> bool {
+    kind == TakeKind::Dictation && !scenes.iter().any(|scene| scene.enabled && scene.overrides.output_mode.is_some())
 }
 
 /// Stop a capture nobody wants any more (device release), off the core task.
@@ -1584,10 +1700,19 @@ impl DictationEngine {
         }
         self.warm_streaming();
         let listening = self.set_phase(DictationPhase::Listening { started_at: now_ms(), ready: false, live: None, locked: false });
-        // With a probe the device opens once it answered (`Internal::Context`), so the scene's
-        // overrides are known before the capture and the live worker start (docs/dictation.md §18.4).
+        // With a probe the scene is known once it answered (`Internal::Context`, docs/dictation.md
+        // §18.4). The device opens at once when no scene can change what the take records, and
+        // otherwise once the probe answered; the live worker starts after the answer either way
+        // (§30.2).
         match self.probe.clone() {
-            Some(probe) => self.spawn_probe(probe),
+            Some(probe) => {
+                let alongside = capture_independent_of_scene(&self.take.scenes, kind);
+                self.take.probe = Some(if alongside { ProbeWait::Alongside } else { ProbeWait::First });
+                self.spawn_probe(probe);
+                if alongside {
+                    self.open_capture();
+                }
+            }
             None => {
                 // No probe (the phone): the scene the user picked, chosen before the capture opens
                 // like a matched one (user decision 2026-10-01).
@@ -1635,7 +1760,8 @@ impl DictationEngine {
         let live = self.live_enabled();
         match (self.status.kind, self.take.source.is_some()) {
             (_, true) => CaptureOptions { live, max_duration: max_recording(self.take.mode), ..CaptureOptions::default() },
-            (TakeKind::Edit, false) => CaptureOptions { live, ..CaptureOptions::default() },
+            // §30.3: a voice edit's instruction is spoken into the microphone too.
+            (TakeKind::Edit, false) => CaptureOptions { live, ready_cue: self.recording.ready_sound, ..CaptureOptions::default() },
             (TakeKind::Dictation, false) => CaptureOptions::dictation(&self.recording, live),
         }
     }
@@ -1648,10 +1774,11 @@ impl DictationEngine {
         let on_level: Box<dyn Fn(LevelFrame) + Send> = Box::new(move |frame| {
             let _ = levels.send(frame);
         });
-        // From the audio thread: never block. A full queue only loses the `ready` mark.
-        let ready_tx = self.internal.clone();
+        // From the audio thread: a oneshot's send never blocks and never finds a full queue
+        // (docs/dictation.md §2, §30.4); the task below forwards the mark to the core.
+        let (ready_tx, mut ready_rx) = tokio::sync::oneshot::channel::<()>();
         let on_ready: Box<dyn FnOnce() + Send> = Box::new(move || {
-            let _ = ready_tx.try_send(Internal::CaptureReady { session });
+            let _ = ready_tx.send(());
         });
         let options = self.capture_options();
         let max_duration = options.max_duration;
@@ -1669,7 +1796,18 @@ impl DictationEngine {
                 Ok(result) => result,
                 Err(e) => Err(DictationError::Audio(format!("capture task failed: {e}"))),
             };
+            // A device that delivered while it opened is ready before it is open, as it always
+            // read; one that delivers later is forwarded once it does — or never, when its capture
+            // is dropped first.
+            let ready_now = ready_rx.try_recv().is_ok();
+            if ready_now {
+                let _ = tx.send(Internal::CaptureReady { session }).await;
+            }
+            let opened = result.is_ok();
             let _ = tx.send(Internal::CaptureStarted { session, result }).await;
+            if !ready_now && opened && ready_rx.await.is_ok() {
+                let _ = tx.send(Internal::CaptureReady { session }).await;
+            }
         });
         if matches!(self.status.phase, DictationPhase::Listening { .. }) {
             self.arm(max_duration, |session| Internal::AutoStop { session });
@@ -1677,10 +1815,22 @@ impl DictationEngine {
     }
 
     /// The probe's answer (docs/dictation.md §18.4). Still listening: match the scenes and apply
-    /// the scene to this take. Then the device opens — unless the take was cancelled meanwhile.
+    /// the scene to this take. Then the device opens — unless the take was cancelled meanwhile, or
+    /// it opened at the press (§30.2), when the live preview that waited for the answer starts.
     fn on_context(&mut self, session: u64, app: Option<ForegroundApp>) -> Vec<Effect> {
         if session != self.status.session {
             return Vec::new();
+        }
+        match self.take.probe.take() {
+            // Not waiting for a probe (a duplicate answer): nothing to do.
+            None => return Vec::new(),
+            Some(ProbeWait::Alongside) => {
+                // A stop that came before the answer runs without a scene, as below.
+                let mut effects = if matches!(self.status.phase, DictationPhase::Listening { .. }) { self.apply_context(app) } else { Vec::new() };
+                effects.extend(self.start_waiting_preview());
+                return effects;
+            }
+            Some(ProbeWait::First) => {}
         }
         let then = match &*self.mic.lock() {
             Mic::Opening { then } => *then,
@@ -1712,6 +1862,19 @@ impl DictationEngine {
             self.capture_selection();
         }
         effects
+    }
+
+    /// The live preview that waited for the probe's answer (docs/dictation.md §30.2) starts now,
+    /// with the take's scene as it stands: the answer's, or none when the take stopped first.
+    fn start_waiting_preview(&mut self) -> Vec<Effect> {
+        let Some(pcm) = self.take.live_tap.get_mut().take() else { return Vec::new() };
+        if !matches!(self.status.phase, DictationPhase::Listening { .. } | DictationPhase::Processing { .. }) {
+            return Vec::new();
+        }
+        if let Some(streaming) = self.live_port() {
+            self.spawn_live(self.status.session, pcm, streaming);
+        }
+        Vec::new()
     }
 
     /// Match `app` against the take's scenes and apply the first match to this take: the output
@@ -1862,6 +2025,15 @@ impl DictationEngine {
         }
     }
 
+    /// The key was released (docs/dictation.md §30.1): the runtime says so before it waits out
+    /// `Settings.extra_recording_ms`, so the take's timeline shows how long the microphone stayed
+    /// open after the release. Only while listening, once.
+    pub fn note_release(&mut self) {
+        if matches!(self.status.phase, DictationPhase::Listening { .. }) {
+            TimingMarks::mark(&mut self.take.timing.released);
+        }
+    }
+
     /// `DictationStop`: close the microphone and run the pipeline. Ignored (no-op) while
     /// processing or in a terminal state — the hotkey release always follows a press, and the
     /// press may already have failed.
@@ -1876,6 +2048,14 @@ impl DictationEngine {
         // closes (docs/dictation.md §19).
         self.capture_selection();
         self.disarm();
+        // docs/dictation.md §30.1: the release, when the runtime did not say first; the recording
+        // ends now.
+        TimingMarks::mark(&mut self.take.timing.released);
+        TimingMarks::mark(&mut self.take.timing.stopped);
+        // §30.2: a stop before the probe answered runs without a scene, its live preview too.
+        if self.take.live_tap.get_mut().is_some() {
+            self.start_waiting_preview();
+        }
         let mut mic = self.mic.lock();
         match std::mem::replace(&mut *mic, Mic::Stopping) {
             Mic::Open(capture) => {
@@ -1938,6 +2118,8 @@ impl DictationEngine {
             DictationPhase::Listening { .. } => {
                 // Before the tap closes: the live worker must see it when its loop ends.
                 self.take.live_cancelled.store(true, Ordering::SeqCst);
+                // A preview that waited for the probe's answer never starts (§30.2).
+                *self.take.live_tap.get_mut() = None;
                 let mut mic = self.mic.lock();
                 match std::mem::replace(&mut *mic, Mic::Closed) {
                     Mic::Open(capture) => release(capture),
@@ -2015,18 +2197,22 @@ impl DictationEngine {
             Internal::CaptureReady { session } => match &self.status.phase {
                 DictationPhase::Listening { ready: false, live, locked, .. } if session == self.status.session => {
                     let (live, locked) = (live.clone(), *locked);
+                    TimingMarks::mark(&mut self.take.timing.first_audio);
                     vec![self.set_phase(DictationPhase::Listening { started_at: now_ms(), ready: true, live, locked })]
                 }
                 _ => Vec::new(),
             },
-            Internal::Partial { session, current } => self.on_live(session, |live| {
-                if live.current == current {
-                    return false;
+            Internal::Partial { session, current } if session == self.status.session && !current.trim().is_empty() => {
+                TimingMarks::mark(&mut self.take.timing.first_text);
+                self.on_partial(session, current)
+            }
+            Internal::Partial { session, current } => self.on_partial(session, current),
+            Internal::Segment { session, segment } => {
+                if session == self.status.session && !segment.text.trim().is_empty() {
+                    TimingMarks::mark(&mut self.take.timing.first_text);
                 }
-                live.current = current;
-                true
-            }),
-            Internal::Segment { session, segment } => self.on_segment(session, segment),
+                self.on_segment(session, segment)
+            }
             Internal::StreamDegraded { session, reason, served } => self.on_stream_degraded(session, reason, served),
             Internal::StreamFinished { session, result, before } => self.on_stream_finished(session, result, before),
             Internal::LiveInjected { session, idx, result } => self.on_live_injected(session, idx, result),
@@ -2065,6 +2251,17 @@ impl DictationEngine {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// The streaming recogniser's current sentence changed: it replaces `Listening.live.current`.
+    fn on_partial(&mut self, session: u64, current: String) -> Vec<Effect> {
+        self.on_live(session, |live| {
+            if live.current == current {
+                return false;
+            }
+            live.current = current;
+            true
+        })
     }
 
     /// Fold a live-preview notification into `Listening.live` (created on the first one). `update`
@@ -2111,11 +2308,17 @@ impl DictationEngine {
     }
 
     /// The take's latest text came from `receipt` (docs/dictation.md §3.5); one without a model (a
-    /// client that cannot say) keeps the receipt it had.
+    /// client that cannot say) keeps the receipt it had. The glossary went out (§30.6) when any
+    /// request whose text the take used carried it.
     fn served_by(&mut self, receipt: Receipt) {
+        let glossary_sent = match (self.take.served_asr.glossary_sent, receipt.glossary_sent) {
+            (Some(before), Some(now)) => Some(before || now),
+            (before, now) => now.or(before),
+        };
         if receipt.model.is_some() {
             self.take.served_asr = receipt;
         }
+        self.take.served_asr.glossary_sent = glossary_sent;
     }
 
     /// The live worker gave up (docs/dictation.md §11 / §12). Whole take: the preview is marked
@@ -2207,7 +2410,7 @@ impl DictationEngine {
                 return self.degrade(format!("flush: {e}"));
             }
         };
-        let receipt = if fin.model.is_some() { fin.receipt() } else { before };
+        let receipt = if fin.model.is_some() { fin.receipt() } else { Receipt { glossary_sent: fin.glossary_sent.or(before.glossary_sent), ..before } };
         let has_text = !fin.tail.trim().is_empty() || fin.committed.iter().any(|s| !s.text.trim().is_empty());
         if self.take.mode.is_streaming() && has_text {
             // The flush is the take's text (or its last sentences): its model is the receipt.
@@ -2567,6 +2770,7 @@ impl DictationEngine {
             asr_note: None,
             asr_provider: None,
             asr_fallback: None,
+            asr_glossary_sent: None,
             refine_ms: None,
             refine_error: None,
             refine_failure: None,
@@ -2695,12 +2899,14 @@ impl DictationEngine {
             }
             Ok(mut capture) => match then {
                 None => {
+                    self.take.timing.device_open.get_or_insert_with(tokio::time::Instant::now);
                     let (mut worker, mut no_tap) = (None, false);
                     if self.live_enabled() {
-                        match (capture.live_pcm(), self.live_port()) {
-                            (Some(pcm), Some(streaming)) => worker = Some((pcm, streaming)),
-                            (None, _) => no_tap = true,
-                            (_, None) => {}
+                        match capture.live_pcm() {
+                            // §30.2: the scene's language and terms are known once the probe answered.
+                            Some(pcm) if self.take.probe == Some(ProbeWait::Alongside) => *self.take.live_tap.get_mut() = Some(pcm),
+                            Some(pcm) => worker = self.live_port().map(|streaming| (pcm, streaming)),
+                            None => no_tap = true,
                         }
                     }
                     let stream = if self.take.long_requested { capture.pcm_stream() } else { None };
@@ -2721,6 +2927,7 @@ impl DictationEngine {
                 Some(Then::Stop) => {
                     *mic = Mic::Stopping;
                     drop(mic);
+                    self.take.timing.device_open.get_or_insert_with(tokio::time::Instant::now);
                     self.begin_stop(capture);
                     // No worker was ever started for this take: nothing will flush.
                     self.degrade("the take ended while the device was opening".to_owned())
@@ -3000,12 +3207,13 @@ impl DictationEngine {
         }
         l.in_flight = None;
         let segment = &mut l.segments[idx];
+        let mut served = None;
         match result {
             Ok(t) => {
                 l.asr_ms += t.latency_ms;
                 self.take.served_asr_note = self.take.served_asr_note.max(t.backend_note);
-                if !t.text.trim().is_empty() && t.model.is_some() {
-                    self.take.served_asr = t.receipt();
+                if !t.text.trim().is_empty() {
+                    served = Some(t.receipt());
                 }
                 segment.text = SegmentText::Done(t.text);
             }
@@ -3018,6 +3226,9 @@ impl DictationEngine {
                 segment.text = if attempts >= long::SEGMENT_ATTEMPTS { SegmentText::Failed } else { SegmentText::Pending { attempts } };
                 l.last_error = Some(e);
             }
+        }
+        if let Some(receipt) = served {
+            self.served_by(receipt);
         }
         self.recognize_next()
     }
@@ -3256,6 +3467,7 @@ impl DictationEngine {
             asr_note,
             asr_provider,
             asr_fallback,
+            asr_glossary_sent,
             refine_ms,
             refine_error,
             refine_failure,
@@ -3276,16 +3488,33 @@ impl DictationEngine {
             if mode.is_streaming() { Some(std::mem::take(&mut self.take.inject.segments)) } else { self.take.long.as_ref().map(long_history_segments) };
         let live_error = if self.take.requested.is_streaming() { self.take.live_error.clone() } else { None };
         let ((take_asr_model, take_asr_provider), (take_refine_model, take_refine_provider)) = self.take_models();
+        // docs/dictation.md §30.6: whether the recognition the text came from got the glossary.
+        let glossary_sent = asr_glossary_sent.or(self.take.served_asr.glossary_sent);
         // docs/dictation.md §3.5, §3.14: who wrote the text, from one answer — the pipeline's own
         // recognition, else the stream's or the segments' receipt, else the take's selected model.
         let recognised = match asr_model {
-            Some(model) => Receipt { model: Some(model), provider: asr_provider, fallback: asr_fallback },
+            Some(model) => Receipt { model: Some(model), provider: asr_provider, fallback: asr_fallback, glossary_sent: asr_glossary_sent },
             None => self.take.served_asr.clone(),
         };
         let cleaned = match refine_model.filter(|m| !m.is_empty()) {
-            Some(model) => Receipt { model: Some(model), provider: refine_provider, fallback: refine_fallback },
+            Some(model) => Receipt { model: Some(model), provider: refine_provider, fallback: refine_fallback, glossary_sent: None },
             None => Receipt::default(),
         };
+        // docs/dictation.md §30.1: the timeline as the take ends, in one line of the log (no text).
+        let timing = self.take.timing.finish();
+        tracing::info!(
+            session = self.status.session,
+            device_open_ms = ?timing.device_open_ms,
+            first_audio_ms = ?timing.first_audio_ms,
+            first_text_ms = ?timing.first_text_ms,
+            released_ms = ?timing.released_ms,
+            tail_ms = timing.tail_ms,
+            asr_ms = timing.asr_ms,
+            refine_ms = ?timing.refine_ms,
+            insert_ms = timing.insert_ms,
+            done_ms = timing.done_ms,
+            "take timing"
+        );
         let mut entry = HistoryEntry {
             id: Uuid::new_v4(),
             at_ms: now_ms(),
@@ -3305,9 +3534,7 @@ impl DictationEngine {
             refine_failure,
             // The fixed sentences of a clean-up that never ran (unconfigured, too long) and of an
             // empty answer say no more than their kind; a failed request carries the service's words.
-            refine_error: refine_failure
-                .filter(|f| matches!(f, RefineFailure::RateLimited | RefineFailure::Quota | RefineFailure::Failed))
-                .and(refine_error.clone()),
+            refine_error: refine_failure.filter(|f| f.has_service_words()).and(refine_error.clone()),
             outcome: Outcome::Failed { reason: String::new() },
             starred: false,
             mode,
@@ -3323,6 +3550,8 @@ impl DictationEngine {
             origin: None,
             processed: None,
             file: None,
+            timing: Some(timing),
+            glossary_sent,
         };
         let linked = kept.map(|recording| Effect::Kept { recording, status: KeptStatus::Recognized { entry: entry.id } });
         match injection {
@@ -3356,6 +3585,7 @@ impl DictationEngine {
                     live_error,
                     clipboard_code,
                     check,
+                    timing: Some(timing),
                 };
                 let mut effects = self.terminal(phase, dwell);
                 effects.push(Effect::Record(Box::new(entry)));
@@ -3412,6 +3642,9 @@ impl DictationEngine {
             DictationPhase::Cancelled { .. } => "cancelled",
         };
         tracing::info!(session = self.status.session, phase = name, kind = self.status.kind.as_str(), "dictation phase");
+        if let DictationPhase::Processing { stage, .. } = &phase {
+            self.take.timing.stage(*stage);
+        }
         if phase == DictationPhase::Idle {
             // The take is over: its context and preset go with it (the next start probes afresh).
             self.status.context = None;
@@ -3628,6 +3861,7 @@ fn run_live(job: LiveJob) {
         model: fin.model,
         provider: fin.provider,
         fallback: fin.fallback,
+        glossary_sent: fin.glossary_sent,
     });
     let _ = tx.blocking_send(Internal::StreamFinished { session, result, before });
 }
@@ -3895,7 +4129,9 @@ async fn run_pipeline(job: PipelineJob) {
         // final text (`Text`) was normalised by the live worker already, and its model came with it.
         PipelineInput::Wav(wav) => {
             match steps::recognize(transcriber.as_ref(), &wav, language.as_deref(), glossary, script, &AsrCall::take(hints.origin.clone())).await {
-                Ok(r) => (r.text, r.asr_ms, Receipt { model: r.model, provider: r.provider, fallback: r.fallback }, r.note),
+                Ok(r) => {
+                    (r.text, r.asr_ms, Receipt { model: r.model, provider: r.provider, fallback: r.fallback, glossary_sent: Some(r.glossary_sent) }, r.note)
+                }
                 Err(e) => {
                     let _ = tx.send(Internal::Finished { session, result: Err(e) }).await;
                     return;
@@ -3958,6 +4194,7 @@ async fn run_pipeline(job: PipelineJob) {
         asr_note,
         asr_provider: recognised_by.provider,
         asr_fallback: recognised_by.fallback,
+        asr_glossary_sent: recognised_by.glossary_sent,
         refine_ms,
         refine_error,
         refine_failure,
@@ -4006,7 +4243,7 @@ async fn run_edit(job: EditJob) {
     let glossary = vocabulary.glossary();
     let call = AsrCall::take(hints.origin.clone());
     let (raw_text, asr_ms, recognised_by, asr_note) = match steps::recognize(transcriber.as_ref(), &wav, language.as_deref(), glossary, script, &call).await {
-        Ok(r) => (r.text, r.asr_ms, Receipt { model: r.model, provider: r.provider, fallback: r.fallback }, r.note),
+        Ok(r) => (r.text, r.asr_ms, Receipt { model: r.model, provider: r.provider, fallback: r.fallback, glossary_sent: Some(r.glossary_sent) }, r.note),
         Err(e) => return finish(Err(e)).await,
     };
     let corrected = steps::correct(&vocabulary, &raw_text);
@@ -4043,6 +4280,7 @@ async fn run_edit(job: EditJob) {
         asr_note,
         asr_provider: recognised_by.provider,
         asr_fallback: recognised_by.fallback,
+        asr_glossary_sent: recognised_by.glossary_sent,
         refine_ms: Some(out.latency_ms),
         refine_error: None,
         refine_failure: None,
@@ -4299,6 +4537,7 @@ mod tests {
                 live_error,
                 clipboard_code,
                 check: None,
+                timing: Some(_),
             } => {
                 assert_eq!(text, "你好，世界。");
                 assert_eq!(*clipboard_code, None, "a paste names no clipboard reason");
@@ -4479,6 +4718,7 @@ mod tests {
                 Some("refine: refine server error 404: no longer available"),
             ),
             (Some(FakeRefiner::quota()), Some(RefineFailure::Quota), Some("额度已用完：fake: the model's quota is used up")),
+            (Some(FakeRefiner::truncated()), Some(RefineFailure::Truncated), Some("refine: fake: the answer stopped at the output limit")),
             (Some(FakeRefiner::ok("  ")), Some(RefineFailure::Empty), None),
             (None, Some(RefineFailure::Unconfigured), None),
             (Some(FakeRefiner::ok("整理过。")), None, None),
@@ -4500,6 +4740,7 @@ mod tests {
             (Some(FakeRefiner::rate_limited()), true, Some(RefineFailure::RateLimited)),
             (Some(FakeRefiner::quota()), true, Some(RefineFailure::Quota)),
             (Some(FakeRefiner::err("down")), true, Some(RefineFailure::Failed)),
+            (Some(FakeRefiner::truncated()), true, Some(RefineFailure::Truncated)),
             (Some(FakeRefiner::ok("  ")), true, Some(RefineFailure::Empty)),
             (None, true, Some(RefineFailure::Unconfigured)),
             (Some(FakeRefiner::ok("b")), false, None),
@@ -4511,6 +4752,10 @@ mod tests {
             let fx = r.run_to_terminal().await;
             assert!(matches!(phase(&fx), DictationPhase::Done { refine_failure, .. } if *refine_failure == kind), "{kind:?}: {fx:?}");
             assert_eq!(record(&fx).unwrap().refine_failure, kind);
+            if kind.is_some() {
+                // §3.12 among them: the text the take delivered is the recognition's.
+                assert!(matches!(phase(&fx), DictationPhase::Done { text, refined: false, .. } if text == "原文"), "{kind:?}: {fx:?}");
+            }
         }
     }
 
@@ -4677,6 +4922,7 @@ mod tests {
                 injection: Ok(Injection { via: Via::Paste, note: None }),
                 check: None,
                 edit: None,
+                asr_glossary_sent: None,
             }),
         };
         assert!(format!("{stale:?}").contains("Finished"));
@@ -4689,7 +4935,15 @@ mod tests {
                 "{:?}",
                 Internal::Remainder {
                     session: 1,
-                    result: Ok(Transcript { text: "秘密".into(), latency_ms: 1, model: None, backend_note: None, provider: None, fallback: None })
+                    result: Ok(Transcript {
+                        text: "秘密".into(),
+                        latency_ms: 1,
+                        model: None,
+                        backend_note: None,
+                        provider: None,
+                        fallback: None,
+                        glossary_sent: false
+                    })
                 }
             )
             .contains("Ok(2)")
@@ -4786,7 +5040,13 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_take_records_from_the_settings_source_and_a_voice_edit_from_the_microphone() {
         let mut r = happy();
-        let system = RecordingSettings { source: RecordingSource::System, output_device: Some("wasapi:out".into()), max_minutes: 30, echo_cancel: true };
+        let system = RecordingSettings {
+            source: RecordingSource::System,
+            output_device: Some("wasapi:out".into()),
+            max_minutes: 30,
+            echo_cancel: true,
+            ready_sound: false,
+        };
         r.engine.set_recording(system);
         r.start_open().await;
         r.engine.stop().unwrap();
@@ -4801,10 +5061,17 @@ mod tests {
                 source: RecordingSource::System,
                 output_device: Some("wasapi:out".into()),
                 echo_cancel: false,
+                ready_cue: false,
             }
         );
         let mut edit = edit_rig(FakeInjector::paste().with_selection(SELECTION), Some(FakeRefiner::ok(REWRITE)));
-        edit.engine.set_recording(RecordingSettings { source: RecordingSource::Mixed, output_device: None, max_minutes: 120, echo_cancel: true });
+        edit.engine.set_recording(RecordingSettings {
+            source: RecordingSource::Mixed,
+            output_device: None,
+            max_minutes: 120,
+            echo_cancel: true,
+            ready_sound: false,
+        });
         edit.start_edit_open(Vec::new()).await;
         assert_eq!(edit.audio.options(), vec![CaptureOptions::default()], "the microphone, 120 s, no recording file");
     }
@@ -4939,6 +5206,103 @@ mod tests {
         r.wait_stops(1).await;
     }
 
+    /// Regression (docs/dictation.md §2, §30.4): the audio thread used to `try_send` the ready mark
+    /// into the internal queue, and a full queue lost it — the take never became ready and the
+    /// pill's timer counted the device's start-up. The mark now waits for room.
+    #[tokio::test(start_paused = true)]
+    async fn regression_capture_ready_survives_a_full_queue() {
+        let (audio, ready) = FakeAudio::speech().ready_by_hand();
+        let mut r = rig(audio, FakeTranscriber::ok(FAKE_TRANSCRIPT), None, FakeInjector::paste(), false);
+        let fx = r.engine.start().unwrap();
+        assert!(matches!(phase(&fx), DictationPhase::Listening { ready: false, .. }), "{fx:?}");
+        assert!(r.next().await.is_empty(), "the open reports nothing; the samples are still to come");
+        assert!(ready.is_waiting());
+        let tx = r.engine.internal.clone();
+        for _ in 0..INTERNAL_QUEUE {
+            tx.try_send(Internal::DwellOver { session: 0 }).expect("room in the queue");
+        }
+        assert!(ready.fire(), "the device delivers its first samples while the queue is full");
+        for _ in 0..INTERNAL_QUEUE {
+            assert!(r.next().await.is_empty(), "a stale notification changes nothing");
+        }
+        let marked = tokio::time::timeout(Duration::from_secs(5), r.rx.recv()).await.expect("the ready mark was lost in the full queue").expect("engine alive");
+        let fx = r.engine.on_internal(marked);
+        assert!(matches!(phase(&fx), DictationPhase::Listening { ready: true, .. }), "{fx:?}");
+        r.engine.cancel().unwrap();
+        r.wait_stops(1).await;
+    }
+
+    /// docs/dictation.md §30.3: 开始录音时播放提示音 asks the capture for the ready cue — a take on
+    /// this computer that records the microphone alone, a voice edit too; never a take of the
+    /// computer's sound (the cue would be in it) and never a phone's take.
+    #[tokio::test(start_paused = true)]
+    async fn the_ready_sound_setting_asks_the_capture_for_the_cue() {
+        let mut r = happy();
+        let on = RecordingSettings { ready_sound: true, ..RecordingSettings::default() };
+        for recording in [RecordingSettings::default(), on.clone(), RecordingSettings { source: RecordingSource::Mixed, ..on.clone() }] {
+            r.engine.set_recording(recording);
+            r.start_open().await;
+            r.engine.cancel().unwrap();
+            r.drain().await;
+        }
+        let cues: Vec<bool> = r.audio.options().iter().map(|o| o.ready_cue).collect();
+        assert_eq!(cues, [false, true, false], "off, on, on with the computer's sound mixed in");
+        // A phone's take records on the phone: no cue here, whatever the setting.
+        let phone = Arc::new(FakeAudio::speech());
+        r.engine.start_from(phone.clone()).unwrap();
+        r.next().await;
+        r.next().await;
+        r.engine.cancel().unwrap();
+        r.drain().await;
+        assert_eq!(phone.options().iter().map(|o| o.ready_cue).collect::<Vec<_>>(), [false]);
+        // A voice edit records its instruction from the microphone: the cue is asked for.
+        let mut r = edit_rig(FakeInjector::paste().with_selection(SELECTION), Some(FakeRefiner::ok(REWRITE)));
+        r.engine.set_recording(on);
+        r.start_edit_open(Vec::new()).await;
+        r.engine.cancel().unwrap();
+        r.drain().await;
+        assert_eq!(r.audio.options().iter().map(|o| o.ready_cue).collect::<Vec<_>>(), [true]);
+    }
+
+    /// docs/dictation.md §30.1: a take keeps when each step happened, in milliseconds from the
+    /// press — the device open and its first samples, the release and the extra recording after it,
+    /// recognition, the clean-up and the paste — in order, on `Done` and in the history.
+    #[tokio::test(start_paused = true)]
+    async fn a_take_keeps_when_each_step_happened() {
+        let mut r = rig(
+            FakeAudio::speech(),
+            FakeTranscriber::slow(FAKE_TRANSCRIPT, Duration::from_millis(300)),
+            Some(FakeRefiner::slow("你好，世界。", Duration::from_millis(200))),
+            FakeInjector::paste(),
+            true,
+        );
+        r.start_open().await;
+        tokio::time::sleep(Duration::from_millis(1_000)).await;
+        r.engine.note_release();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        let DictationPhase::Done { timing: Some(t), .. } = phase(&fx).clone() else { panic!("{fx:?}") };
+        assert_eq!(record(&fx).expect("history").timing, Some(t), "the history keeps the same timeline");
+        let released = t.released_ms.expect("released");
+        assert!(t.device_open_ms.is_some_and(|ms| ms <= released) && t.first_audio_ms.is_some_and(|ms| ms <= released), "{t:?}");
+        assert!((1_000..1_050).contains(&released), "{t:?}");
+        assert!((150..200).contains(&t.tail_ms), "{t:?}");
+        assert!(t.asr_ms >= 300 && t.refine_ms.is_some_and(|ms| ms >= 200), "{t:?}");
+        assert!(released + t.tail_ms + t.asr_ms + t.refine_ms.unwrap_or(0) + t.insert_ms <= t.done_ms, "{t:?}");
+        assert_eq!(t.first_text_ms, None, "no live preview");
+        assert!(t.pressed_at > 0);
+        // Without a release noted first, the stop is the release and nothing was recorded after it.
+        tokio::time::advance(DWELL).await;
+        r.next().await;
+        r.start_open().await;
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        let DictationPhase::Done { timing: Some(t), .. } = phase(&fx).clone() else { panic!("{fx:?}") };
+        assert_eq!(t.tail_ms, 0, "{t:?}");
+        assert!(t.released_ms.is_some(), "{t:?}");
+    }
+
     /// The live preview (docs/dictation.md §11) end to end on the fakes: the tap is requested,
     /// the streaming session opened and warmed, partials land in `Listening.live` (throttled: the
     /// scripted words arrive within one throttle window, so not every one is shown), an endpoint
@@ -5050,6 +5414,37 @@ mod tests {
         assert!(matches!(phase(&fx), DictationPhase::Done { text, mode: OutputMode::StreamingFinal, .. } if text == FAKE_TRANSCRIPT), "{fx:?}");
         // The preview, then the flush of the whole sentence, which is the text.
         assert_eq!(r.transcriber.durations_ms(), [1000, 1500]);
+    }
+
+    /// docs/dictation.md §30.6: a take whose text is the preview's flush says whether those requests
+    /// carried the glossary.
+    #[tokio::test(start_paused = true)]
+    async fn a_streamed_take_says_whether_its_requests_carried_the_glossary() {
+        const PREVIEWING: BuiltIn = BuiltIn { asr_live_preview: true, ..TEST_BUILT_IN };
+        let settings = EngineSettings { refine_enabled: false, output_mode: OutputMode::StreamingFinal, ..EngineSettings::default() };
+        let engines = ResolvedEngines::resolve(&settings, &UserSecrets::default(), &PREVIEWING);
+        let (audio, transcriber, injector) = (Arc::new(FakeAudio::speech()), Arc::new(FakeTranscriber::ok(FAKE_TRANSCRIPT)), Arc::new(FakeInjector::paste()));
+        let (levels_tx, levels) = broadcast::channel(64);
+        let (engine, rx) = DictationEngine::new(ports_with(audio.clone(), transcriber.clone(), None, injector.clone()), &engines, levels_tx);
+        let mut r = Rig { engine, rx, audio, transcriber, refiner: None, injector, levels };
+        r.engine.set_vocabulary(Arc::new(Vocabulary::compile(&[dict_entry("Voltip", &[])], &[])));
+        r.start_open().await;
+        r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if l.current == FAKE_TRANSCRIPT)).await;
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { mode: OutputMode::StreamingFinal, .. }), "{fx:?}");
+        assert_eq!(record(&fx).unwrap().glossary_sent, Some(true));
+
+        // A realtime model's own session says so too.
+        for sent in [true, false] {
+            let stream = Arc::new(FakeStreaming::script().with_glossary_sent(sent));
+            let mut r = rig_stream(FakeTranscriber::ok("整段").with_stream(stream), true, OutputMode::StreamingFinal);
+            r.start_open().await;
+            r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if l.current == "今天")).await;
+            r.engine.stop().unwrap();
+            let fx = r.run_to_terminal().await;
+            assert_eq!(record(&fx).unwrap().glossary_sent, Some(sent), "{fx:?}");
+        }
     }
 
     /// A configuration on a Model Studio realtime model (docs/dictation.md §11.9); the fakes stand
@@ -5232,6 +5627,7 @@ mod tests {
             model: None,
             provider: None,
             fallback: None,
+            glossary_sent: None,
         };
         let fx = r.engine.on_internal(Internal::StreamFinished { session: 1, result: Ok(fin.clone()), before: Receipt::default() });
         assert!(matches!(phase(&fx), DictationPhase::Processing { preview: Some(p), .. } if p == "迟到的"), "a good flush fills an empty preview: {fx:?}");
@@ -6014,6 +6410,27 @@ mod tests {
         ResolvedEngines::resolve(&settings, &UserSecrets::default(), &TEST_BUILT_IN)
     }
 
+    /// docs/dictation.md §30.6: the history says whether the take's recognition got the glossary:
+    /// a service that takes it, with enabled terms in the dictionary, does; one that ignores it and
+    /// an empty dictionary do not.
+    #[tokio::test(start_paused = true)]
+    async fn the_history_says_whether_the_glossary_went_to_the_recogniser() {
+        for (transcriber, terms, sent) in [
+            (FakeTranscriber::ok("原文"), true, true),
+            (FakeTranscriber::ok("原文").ignoring_glossary(), true, false),
+            (FakeTranscriber::ok("原文"), false, false),
+        ] {
+            let mut r = rig(FakeAudio::speech(), transcriber, None, FakeInjector::paste(), false);
+            if terms {
+                r.engine.set_vocabulary(Arc::new(Vocabulary::compile(&[dict_entry("Voltip", &[])], &[])));
+            }
+            r.start_open().await;
+            r.engine.stop().unwrap();
+            let fx = r.run_to_terminal().await;
+            assert_eq!(record(&fx).unwrap().glossary_sent, Some(sent), "terms {terms}: {fx:?}");
+        }
+    }
+
     /// docs/dictation.md §16.3, whole take: the recogniser gets the glossary, the dictionary corrects
     /// the transcript before the refiner (which also gets the glossary), the rules rewrite the
     /// refined text, `raw_text` stays the recogniser's, and the history records what fired.
@@ -6726,19 +7143,33 @@ mod tests {
 
     impl Rig {
         /// `start()` with a probe: `Listening` at once without a context, then the probe's answer
-        /// (returned: a status with the context when it named an app, nothing otherwise), then the
-        /// device (`ready`, then the silent open).
+        /// (returned: a status with the context when it named an app, nothing otherwise) and the
+        /// device (`ready`, then the silent open) in whichever order they come — the device opens
+        /// while the probe runs unless a scene may change the output mode (docs/dictation.md §30.2;
+        /// the order itself is pinned by the tests of §30.2).
         async fn start_probed(&mut self) -> Vec<Effect> {
-            let opened = self.audio.starts();
             let fx = self.engine.start().unwrap();
             assert!(matches!(phase(&fx), DictationPhase::Listening { ready: false, .. }), "{fx:?}");
             assert!(status_of(&fx).context.is_none(), "no context before the probe answered");
-            assert_eq!(self.audio.starts(), opened, "the device waits for the probe");
-            let context = self.next().await;
-            let ready = self.next().await;
-            assert!(matches!(phase(&ready), DictationPhase::Listening { ready: true, .. }), "{ready:?}");
-            assert!(self.next().await.is_empty(), "a successful open reports no new status");
-            context
+            let (mut context, mut ready, mut opened) = (None, false, false);
+            while context.is_none() || !ready || !opened {
+                let ev =
+                    tokio::time::timeout(Duration::from_secs(30), self.rx.recv()).await.expect("internal event within 30 s (virtual)").expect("engine alive");
+                match ev {
+                    Internal::Context { .. } => context = Some(self.engine.on_internal(ev)),
+                    Internal::CaptureReady { .. } => {
+                        let fx = self.engine.on_internal(ev);
+                        assert!(matches!(phase(&fx), DictationPhase::Listening { ready: true, .. }), "{fx:?}");
+                        ready = true;
+                    }
+                    Internal::CaptureStarted { .. } => {
+                        assert!(self.engine.on_internal(ev).is_empty(), "a successful open reports no new status");
+                        opened = true;
+                    }
+                    other => panic!("unexpected notification while starting: {other:?}"),
+                }
+            }
+            context.unwrap_or_default()
         }
     }
 
@@ -7079,10 +7510,12 @@ mod tests {
             assert!(r.refiner.as_ref().unwrap().hints()[0].context.is_empty(), "nothing about an app reaches the refiner");
             assert_eq!(probe.calls(), 1);
         }
-        // A hung window system: the device opens once the deadline passed, without a scene.
+        // A hung window system while a scene may change the output mode (§30.2): the device opens
+        // once the deadline passed, without a scene.
         let probe = Arc::new(FakeProbe::hanging());
         let mut r = rig_probed(probe.clone(), FakeTranscriber::ok(FAKE_TRANSCRIPT), None, None, &resolved(false, None));
-        r.engine.set_scenes(Arc::new(vec![scene_with("全部", &["slack"], &[], every)]));
+        let live = crate::scenes::SceneOverrides { output_mode: Some(OutputMode::LiveInject), ..Default::default() };
+        r.engine.set_scenes(Arc::new(vec![scene_with("全部", &["slack"], &[], every.clone()), scene_with("实时", &["code"], &[], live)]));
         r.engine.start().unwrap();
         wait_until(|| probe.calls() == 1).await;
         r.settle().await;
@@ -7099,16 +7532,34 @@ mod tests {
         assert!(matches!(phase(&fx), DictationPhase::Done { .. }), "{fx:?}");
         assert_eq!(record(&fx).unwrap().app, None);
         assert!(format!("{:?}", Internal::Context { session: 1, app: None }).contains("Context"));
+        // Without such a scene the device opens at once; the deadline still means no scene.
+        let probe = Arc::new(FakeProbe::hanging());
+        let mut r = rig_probed(probe.clone(), FakeTranscriber::ok(FAKE_TRANSCRIPT), None, None, &resolved(false, None));
+        r.engine.set_scenes(Arc::new(vec![scene_with("全部", &["slack"], &[], every)]));
+        r.engine.start().unwrap();
+        wait_until(|| r.audio.starts() == 1).await;
+        assert!(matches!(phase(&r.next().await), DictationPhase::Listening { ready: true, .. }));
+        assert!(r.next().await.is_empty(), "the open");
+        tokio::time::advance(PROBE_DEADLINE).await;
+        assert!(r.next().await.is_empty(), "the deadline answers `no app`");
+        probe.release();
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { .. }), "{fx:?}");
+        assert_eq!((record(&fx).unwrap().app.clone(), r.audio.starts()), (None, 1));
     }
 
-    /// §18.4: a take cancelled before the probe answered never opens the device; one stopped before
-    /// it answered (a tap quicker than the probe) runs without a scene.
+    /// §18.4: a take cancelled before the probe answered never opens the device when it waits for
+    /// the answer (a scene may change the output mode, §30.2), and releases the one it opened at the
+    /// press otherwise — nothing is recorded or sent either way; one stopped before the answer (a
+    /// tap quicker than the probe) runs without a scene.
     #[tokio::test(start_paused = true)]
     async fn cancel_or_stop_before_the_probe_answered() {
         let probe = Arc::new(FakeProbe::app("slack", "Slack", None));
         let quiet = crate::scenes::SceneOverrides { refine_enabled: Some(false), ..Default::default() };
+        let live = crate::scenes::SceneOverrides { output_mode: Some(OutputMode::LiveInject), ..Default::default() };
         let mut r = rig_probed(probe.clone(), FakeTranscriber::ok(FAKE_TRANSCRIPT), Some(FakeRefiner::ok("润色")), None, &resolved(true, None));
-        r.engine.set_scenes(Arc::new(vec![scene_with("聊天", &["slack"], &[], quiet)]));
+        r.engine.set_scenes(Arc::new(vec![scene_with("聊天", &["slack"], &[], quiet.clone()), scene_with("实时", &["code"], &[], live)]));
         r.engine.start().unwrap();
         assert_eq!(phase(&r.engine.cancel().unwrap()), &DictationPhase::CANCELLED);
         assert!(r.next().await.is_empty(), "the late answer changes nothing");
@@ -7116,6 +7567,16 @@ mod tests {
         assert!(r.nothing_pending());
         assert_eq!(r.audio.starts(), 0, "the device never opened");
         assert!(format!("{:?}", r.engine).contains("mic: \"closed\""));
+        // Without a scene that may change the mode the device opened at the press: the cancel
+        // releases it, and the answer that comes after changes nothing.
+        r.engine.set_scenes(Arc::new(vec![scene_with("聊天", &["slack"], &[], quiet)]));
+        r.engine.start().unwrap();
+        assert_eq!(phase(&r.engine.cancel().unwrap()), &DictationPhase::CANCELLED);
+        for _ in 0..3 {
+            assert!(r.next().await.is_empty(), "the device's notifications and the late answer change nothing");
+        }
+        r.wait_stops(1).await;
+        assert_eq!((r.audio.starts(), r.transcriber.calls()), (1, 0), "opened, released, nothing sent");
         // Stop first, answer second: the take runs, without the scene (it would have switched refine off).
         r.engine.start().unwrap();
         let fx = r.engine.stop().unwrap();
@@ -7124,7 +7585,146 @@ mod tests {
         assert!(matches!(phase(&fx), DictationPhase::Done { refined: true, .. }), "{fx:?}");
         let entry = record(&fx).unwrap();
         assert_eq!((entry.app.clone(), entry.scene.clone()), (None, None));
+        assert_eq!(r.audio.starts(), 2, "the cancelled take's and this one's");
+    }
+
+    /// docs/dictation.md §30.2: what a take records depends on its scene only when an enabled scene
+    /// may change the output mode; a voice edit must hear about a terminal before the device opens.
+    #[test]
+    fn the_capture_waits_for_the_probe_only_when_a_scene_may_change_the_mode() {
+        use crate::scenes::SceneOverrides;
+        let mode = SceneOverrides { output_mode: Some(OutputMode::LiveInject), ..Default::default() };
+        let rest =
+            SceneOverrides { language: Some("en".into()), refine_enabled: Some(false), chinese_script: Some(ChineseScript::Traditional), ..Default::default() };
+        let mut off = scene_with("关", &["slack"], &[], mode.clone());
+        off.enabled = false;
+        let english = scene_with("英文", &["slack"], &[], rest);
+        let live = scene_with("实时", &["code"], &[], mode);
+        let cases = [
+            ("no scenes", Vec::new(), TakeKind::Dictation, true),
+            ("a scene that leaves the mode alone", vec![english.clone()], TakeKind::Dictation, true),
+            ("a switched-off scene with a mode", vec![off], TakeKind::Dictation, true),
+            ("a scene with a mode", vec![live.clone()], TakeKind::Dictation, false),
+            ("one of several", vec![english, live], TakeKind::Dictation, false),
+            ("a voice edit", Vec::new(), TakeKind::Edit, false),
+        ];
+        for (case, scenes, kind, independent) in cases {
+            assert_eq!(capture_independent_of_scene(&scenes, kind), independent, "{case}");
+        }
+    }
+
+    /// docs/dictation.md §30.2: without a scene that may change the output mode the device opens at
+    /// the press while the probe asks which application is in front; its answer still applies the
+    /// scene to the take (here its language and its clean-up switch).
+    #[tokio::test(start_paused = true)]
+    async fn without_a_scene_that_changes_the_mode_the_device_opens_while_the_probe_runs() {
+        let probe = Arc::new(FakeProbe::app_when_released("slack", "Slack"));
+        let mut r = rig_probed(probe.clone(), FakeTranscriber::ok("hi"), Some(FakeRefiner::ok("润色")), None, &resolved(true, None));
+        let english = crate::scenes::SceneOverrides { language: Some("en".into()), refine_enabled: Some(false), ..Default::default() };
+        r.engine.set_scenes(Arc::new(vec![scene_with("英文", &["slack"], &[], english)]));
+        r.engine.start().unwrap();
+        wait_until(|| r.audio.starts() == 1).await;
+        assert_eq!(r.audio.starts(), 1, "the device opened before the probe answered");
+        assert_eq!(probe.calls(), 1, "the probe is still asking");
+        assert!(matches!(phase(&r.next().await), DictationPhase::Listening { ready: true, .. }));
+        assert!(r.next().await.is_empty(), "the open reports nothing");
+        assert!(r.engine.status().context.is_none(), "no context before the answer");
+        probe.release();
+        let fx = r.next().await;
+        assert_eq!(status_of(&fx).context.as_ref().map(|c| c.app.id.as_str()), Some("slack"), "{fx:?}");
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { refined: false, .. }), "the scene switched the clean-up off: {fx:?}");
+        assert_eq!(r.transcriber.languages(), vec![Some("en".to_owned())], "the scene's language");
+        assert_eq!(record(&fx).unwrap().scene.as_ref().map(|s| s.name.as_str()), Some("英文"));
         assert_eq!(r.audio.starts(), 1);
+    }
+
+    /// docs/dictation.md §30.2: a scene that may change the output mode, or a voice edit, keeps the
+    /// order of §18.4 — the device opens once the probe answered.
+    #[tokio::test(start_paused = true)]
+    async fn a_scene_that_may_change_the_mode_or_a_voice_edit_waits_for_the_probe() {
+        let probe = Arc::new(FakeProbe::app_when_released("code", "Code"));
+        let mut r = rig_probed(probe.clone(), FakeTranscriber::ok(FAKE_TRANSCRIPT), None, None, &resolved(false, None));
+        let live = crate::scenes::SceneOverrides { output_mode: Some(OutputMode::LiveInject), ..Default::default() };
+        r.engine.set_scenes(Arc::new(vec![scene_with("实时", &["slack"], &[], live)]));
+        r.engine.start().unwrap();
+        wait_until(|| probe.calls() == 1).await;
+        r.settle().await;
+        assert!(r.nothing_pending(), "nothing before the answer");
+        assert_eq!(r.audio.starts(), 0, "the device waits for the answer");
+        probe.release();
+        let context = r.next().await;
+        assert_eq!(status_of(&context).context.as_ref().map(|c| c.app.id.as_str()), Some("code"));
+        assert!(matches!(phase(&r.next().await), DictationPhase::Listening { ready: true, .. }));
+        assert!(r.next().await.is_empty());
+        assert_eq!(r.audio.starts(), 1);
+        r.engine.cancel().unwrap();
+        r.wait_stops(1).await;
+        // A voice edit, without any scene: the same.
+        let probe = Arc::new(FakeProbe::app_when_released("code", "Code"));
+        let mut r = rig_probed_with(
+            probe.clone(),
+            FakeTranscriber::ok(INSTRUCTION),
+            Some(FakeRefiner::ok(REWRITE)),
+            None,
+            &resolved(true, None),
+            FakeInjector::paste().with_selection(SELECTION),
+        );
+        r.engine.start_edit(Vec::new()).unwrap();
+        wait_until(|| probe.calls() == 1).await;
+        r.settle().await;
+        assert_eq!(r.audio.starts(), 0, "a voice edit's device waits for the answer");
+        probe.release();
+        r.next().await;
+        wait_until(|| r.audio.starts() == 1).await;
+        assert_eq!(r.audio.starts(), 1, "the answer opens the device");
+        r.engine.cancel().unwrap();
+        r.drain().await;
+    }
+
+    /// docs/dictation.md §30.2: the live preview starts once the probe answered, so the scene's
+    /// language reaches it although the device opened before the answer; a stop before the answer
+    /// starts it with the global settings, like the rest of that take.
+    #[tokio::test(start_paused = true)]
+    async fn the_live_preview_waits_for_the_answer_while_the_device_opens_at_once() {
+        let english = crate::scenes::SceneOverrides { language: Some("en".into()), ..Default::default() };
+        let probe = Arc::new(FakeProbe::app_when_released("slack", "Slack"));
+        let streaming = Arc::new(FakeStreaming::script());
+        let mut r = rig_probed(probe.clone(), FakeTranscriber::ok(FAKE_TRANSCRIPT), None, Some(streaming.clone()), &resolved_live(true));
+        r.engine.set_scenes(Arc::new(vec![scene_with("英文", &["slack"], &[], english.clone())]));
+        r.engine.start().unwrap();
+        wait_until(|| r.audio.starts() == 1).await;
+        assert_eq!(r.audio.starts(), 1, "the device opened before the probe answered");
+        assert!(matches!(phase(&r.next().await), DictationPhase::Listening { ready: true, .. }));
+        assert!(r.next().await.is_empty(), "the open reports nothing");
+        r.settle().await;
+        assert_eq!(streaming.opens(), 0, "the preview waits for the answer");
+        probe.release();
+        r.next().await;
+        wait_until(|| streaming.opens() == 1).await;
+        assert_eq!(streaming.languages(), vec![Some("en".to_owned())], "the scene's language reaches the preview");
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { .. }), "{fx:?}");
+        r.drain().await;
+        // Stopped before the answer: the preview runs with the globals and the take ends as usual.
+        let probe = Arc::new(FakeProbe::app_when_released("slack", "Slack"));
+        let streaming = Arc::new(FakeStreaming::script());
+        let mut r = rig_probed(probe.clone(), FakeTranscriber::ok(FAKE_TRANSCRIPT), None, Some(streaming.clone()), &resolved_live(true));
+        r.engine.set_scenes(Arc::new(vec![scene_with("英文", &["slack"], &[], english)]));
+        r.engine.start().unwrap();
+        wait_until(|| r.audio.starts() == 1).await;
+        r.next().await;
+        r.next().await;
+        r.engine.stop().unwrap();
+        wait_until(|| streaming.opens() == 1).await;
+        assert_eq!(streaming.languages(), vec![None], "the globals' language");
+        probe.release();
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { .. }), "{fx:?}");
+        assert_eq!(record(&fx).unwrap().scene, None, "a stop before the answer runs without a scene");
+        assert_eq!(r.transcriber.languages(), vec![None]);
     }
 
     /// §18.4: a scene asking for a streaming mode while the live preview is not ready runs the take
@@ -8159,9 +8759,17 @@ mod tests {
         assert!(matches!(r.engine.status().phase, DictationPhase::Processing { stage: ProcessingStage::Inserting, .. }));
         r.injector.release_deliveries(1);
         let fx = r.run_to_terminal().await;
-        assert_eq!(phase(&fx), &done);
+        // The same result; when its steps happened is this take's own (§30.1), like its time.
+        let untimed = |phase: &DictationPhase| {
+            let mut phase = phase.clone();
+            if let DictationPhase::Done { timing, .. } = &mut phase {
+                *timing = None;
+            }
+            phase
+        };
+        assert_eq!(untimed(phase(&fx)), untimed(&done));
         let got = record(&fx).expect("the take is history like any other");
-        assert_eq!(HistoryEntry { id: entry.id, at_ms: entry.at_ms, ..got.clone() }, entry);
+        assert_eq!(HistoryEntry { id: entry.id, at_ms: entry.at_ms, timing: entry.timing, ..got.clone() }, entry);
         assert_eq!(r.injector.events(), [InsertEvent::Begin, InsertEvent::Piece("你好，世界。".into()), InsertEvent::Finish]);
     }
 

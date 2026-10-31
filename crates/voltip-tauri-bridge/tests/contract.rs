@@ -379,12 +379,13 @@ fn settings() -> Settings {
         pairing_always_on: true,
         microphone: Some("wasapi:{0.0.1.00000000}.{c2}".into()),
         // docs/dictation.md §22: the microphone and the computer's sound, an hour at most, with the
-        // echo cancellation (§22.6) away from its default.
+        // echo cancellation (§22.6) and the ready cue (§30.3) away from their defaults.
         recording: voltip_core::RecordingSettings {
             source: voltip_core::RecordingSource::Mixed,
             output_device: Some("wasapi:{0.0.0.00000000}.{a1}".into()),
             max_minutes: 60,
             echo_cancel: false,
+            ready_sound: true,
         },
         // docs/dictation.md §23.6: the local speech service on, with a preset and a scene.
         serve: voltip_core::ServeSettings {
@@ -475,6 +476,24 @@ fn take_context() -> TakeContext {
     }
 }
 
+/// When the steps of the sample take happened (docs/dictation.md §30.1): the device opened before
+/// its first samples, the key came up at 3.4 s, 150 ms of extra recording, then recognition, the
+/// clean-up and the paste.
+fn take_timing() -> voltip_core::dictation::TakeTiming {
+    voltip_core::dictation::TakeTiming {
+        pressed_at: AT_MS - 7_000,
+        device_open_ms: Some(38),
+        first_audio_ms: Some(212),
+        first_text_ms: Some(640),
+        released_ms: Some(3_412),
+        tail_ms: 150,
+        asr_ms: 655,
+        refine_ms: Some(2_410),
+        insert_ms: 96,
+        done_ms: 6_731,
+    }
+}
+
 fn done_phase() -> DictationPhase {
     DictationPhase::Done {
         text: REFINED_TEXT.into(),
@@ -493,6 +512,7 @@ fn done_phase() -> DictationPhase {
         clipboard_code: None,
         // docs/dictation.md §28: the insert check saw the text at the caret.
         check: Some(InsertCheck::Written),
+        timing: Some(take_timing()),
     }
 }
 
@@ -515,6 +535,7 @@ fn streamed_done_phase() -> DictationPhase {
         live_error: None,
         clipboard_code: None,
         check: None,
+        timing: None,
     }
 }
 
@@ -539,6 +560,7 @@ fn fallen_back_done_phase() -> DictationPhase {
                 live_error: Some("open: asr: 实时识别模型未下载：实时预览".into()),
                 clipboard_code: None,
                 check: None,
+                timing: None,
             }
         }
         other => other,
@@ -599,6 +621,9 @@ fn history_entries() -> Vec<HistoryEntry> {
             origin: None,
             processed: None,
             file: None,
+            // docs/dictation.md §30.1, §30.5: the take's timeline; its recognition got the glossary.
+            timing: Some(take_timing()),
+            glossary_sent: Some(true),
         },
         HistoryEntry {
             id: uuid(HISTORY_ID_2),
@@ -636,6 +661,8 @@ fn history_entries() -> Vec<HistoryEntry> {
             origin: None,
             processed: None,
             file: None,
+            timing: None,
+            glossary_sent: None,
         },
         // docs/dictation.md §19: the instruction is the raw text, the rewrite the text.
         HistoryEntry {
@@ -672,6 +699,8 @@ fn history_entries() -> Vec<HistoryEntry> {
             origin: None,
             processed: None,
             file: None,
+            timing: None,
+            glossary_sent: None,
         },
         // docs/dictation.md §20.6: text a phone sent, inserted as it was.
         HistoryEntry {
@@ -706,6 +735,8 @@ fn history_entries() -> Vec<HistoryEntry> {
             origin: Some(EntryOrigin { device: "Pixel 8".into(), kind: OriginKind::Typed }),
             processed: None,
             file: None,
+            timing: None,
+            glossary_sent: None,
         },
     ]
 }
@@ -748,6 +779,8 @@ fn imported_history_entry() -> HistoryEntry {
         origin: None,
         processed: None,
         file: Some(ImportedFile { name: "季度会议.mp4".into(), duration_ms: 9_500 }),
+        timing: None,
+        glossary_sent: Some(false),
     }
 }
 
@@ -1845,6 +1878,7 @@ fn all_events() -> Vec<UiEvent> {
                 // docs/dictation.md §14.3: another window came to the front, so the text was copied.
                 clipboard_code: Some(ClipboardCode::TargetChanged),
                 check: None,
+                timing: None,
             },
             session: 8,
             context: None,
@@ -1874,6 +1908,7 @@ fn all_events() -> Vec<UiEvent> {
                 live_error: None,
                 clipboard_code: None,
                 check: Some(InsertCheck::NotWritten),
+                timing: None,
             },
             session: 9,
             context: None,
@@ -2198,6 +2233,7 @@ fn all_events() -> Vec<UiEvent> {
                 live_error: None,
                 clipboard_code: None,
                 check: None,
+                timing: None,
             },
             session: 20,
             context: Some(TakeContext { app: AppRef { id: "slack".into(), name: "Slack".into() }, scene: None }),
@@ -2488,11 +2524,13 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         // docs/dictation.md §13.1: the lone-key trigger (`null` switches it off).
         ("settings_set_solo_key", json!({ "key": "mouse_back" }), "SettingsSetSoloKey"),
         ("settings_set_microphone", json!({ "device": "wasapi:{0.0.1.00000000}.{c2}" }), "SettingsSetMicrophone"),
-        // docs/dictation.md §22: the source, the output device, the longest length of a take and the
-        // echo cancellation of a mixed one (§22.6).
+        // docs/dictation.md §22: the source, the output device, the longest length of a take, the
+        // echo cancellation of a mixed one (§22.6) and the ready sound (§30.3).
         (
             "settings_set_recording",
-            json!({ "recording": { "source": "mixed", "output_device": "wasapi:{0.0.0.00000000}.{a1}", "max_minutes": 60, "echo_cancel": false } }),
+            json!({
+                "recording": { "source": "mixed", "output_device": "wasapi:{0.0.0.00000000}.{a1}", "max_minutes": 60, "echo_cancel": false, "ready_sound": true }
+            }),
             "SettingsSetRecording",
         ),
         ("settings_set_locale", json!({ "locale": "en" }), "SettingsSetLocale"),

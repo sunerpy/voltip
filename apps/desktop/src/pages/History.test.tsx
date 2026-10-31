@@ -292,6 +292,58 @@ describe("History page", () => {
     expect(await screen.findByText("未润色 · 服务繁忙")).toBeInTheDocument();
   });
 
+  it("docs/dictation.md section 30.6: the technical details say whether the glossary went to the recogniser", async () => {
+    const user = userEvent.setup();
+    const now = Date.now();
+    const base = new MockBackend({ now: () => now }).peek().history_recent[0];
+    if (!base) throw new Error("fixture");
+    const sent: HistoryEntry = {
+      ...base,
+      id: "00000000-0000-4000-8000-0000000000b5",
+      at_ms: now - 1_000,
+      raw_text: "发给了识别服务",
+      text: "发给了识别服务",
+      glossary_sent: true,
+    };
+    const kept: HistoryEntry = {
+      ...sent,
+      id: "00000000-0000-4000-8000-0000000000b6",
+      at_ms: now - 2_000,
+      raw_text: "没有发出去",
+      text: "没有发出去",
+      glossary_sent: false,
+    };
+    renderApp({ path: "/history", mock: { now: () => now, history: [sent, kept] } });
+    await user.click(await screen.findByText(/发给了识别服务/, { selector: "li *" }));
+    expect(await screen.findByTestId("history-glossary")).toHaveTextContent("已发给识别服务");
+    await user.click(screen.getByText(/没有发出去/, { selector: "li *" }));
+    expect(await screen.findByTestId("history-glossary")).toHaveTextContent("没有发给识别服务");
+  });
+
+  it("docs/dictation.md section 3.12: an entry whose polished text was cut off says the transcript was kept", async () => {
+    const user = userEvent.setup();
+    const now = Date.now();
+    const base = new MockBackend({ now: () => now }).peek().history_recent[0];
+    if (!base) throw new Error("fixture");
+    const cut: HistoryEntry = {
+      ...base,
+      id: "00000000-0000-4000-8000-0000000000b4",
+      at_ms: now - 1_000,
+      raw_text: "这一段很长的会议记录",
+      text: "这一段很长的会议记录",
+      refined: false,
+      refine_model: undefined,
+      refine_ms: undefined,
+      refine_failure: "truncated",
+      refine_error: "refine: refine answer was cut off at the output limit",
+      preset: undefined,
+    };
+    renderApp({ path: "/history", mock: { now: () => now, history: [cut] } });
+    await user.click(await screen.findByText(/这一段很长的会议记录/, { selector: "li *" }));
+    expect(await screen.findByText("润色结果不完整，已保留识别原文")).toBeInTheDocument();
+    expect(screen.getByText("润色 — · 结果不完整")).toBeInTheDocument();
+  });
+
   it("regression: section 3.6 a clean-up the service turned down says so in the timings and keeps the service's words", async () => {
     // 2026-10-24, Google AI Studio: the model answered 503 "high demand"; the timing row said
     // 「润色 — · 未启用」 and nothing showed why.

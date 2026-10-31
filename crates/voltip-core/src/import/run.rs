@@ -71,6 +71,8 @@ pub struct Recognized {
     /// How the on-device model got this text when it was not the usual way (docs/dictation.md
     /// §29.5: the graphics card failed and the CPU did it).
     pub note: Option<AsrNote>,
+    /// The request carried the glossary (docs/dictation.md §30.6).
+    pub glossary_sent: bool,
 }
 
 /// What earlier tries of a job got done. A failed job keeps it, so 重试 goes on from the first
@@ -168,7 +170,7 @@ pub async fn run(job: Job, mut partial: Partial, report: Report) -> Outcome {
             };
             match answer {
                 Ok(t) => {
-                    recognized = Some(Recognized { text: t.text, asr_ms: t.latency_ms, model: t.model, note: t.backend_note });
+                    recognized = Some(Recognized { text: t.text, asr_ms: t.latency_ms, model: t.model, note: t.backend_note, glossary_sent: t.glossary_sent });
                     break;
                 }
                 Err(e) => {
@@ -260,8 +262,7 @@ pub async fn run(job: Job, mut partial: Partial, report: Report) -> Outcome {
     // Like a take's clean-up that did not run: the kind, and the service's words for a refusal.
     let unpolished = !refined && polish.failed > 0;
     let refine_failure = polish.failure.filter(|_| unpolished);
-    let refine_error =
-        polish.error.filter(|_| unpolished && matches!(refine_failure, Some(RefineFailure::RateLimited | RefineFailure::Quota | RefineFailure::Failed)));
+    let refine_error = polish.error.filter(|_| unpolished && refine_failure.is_some_and(RefineFailure::has_service_words));
     let entry = HistoryEntry {
         id: Uuid::new_v4(),
         at_ms: now_ms(),
@@ -297,6 +298,9 @@ pub async fn run(job: Job, mut partial: Partial, report: Report) -> Outcome {
         origin: None,
         processed: None,
         file: Some(ImportedFile { name, duration_ms }),
+        timing: None,
+        // docs/dictation.md §30.6: as a long take's, when any segment's request carried it.
+        glossary_sent: Some(partial.recognized.iter().any(|r| r.glossary_sent)),
     };
     Outcome::Done { entry: Box::new(entry), polish_failed: polish.failed }
 }
@@ -416,13 +420,19 @@ mod tests {
     /// Polishes `text` as 「<text>（润色）」, failing the calls numbered in `fail` (1-based).
     struct Polish {
         fail: Vec<usize>,
+        /// A failing call's answer stopped at the output limit (docs/dictation.md §3.12).
+        cut_off: bool,
         calls: AtomicUsize,
         hints: Mutex<Vec<RefineHints>>,
     }
 
     impl Polish {
         fn failing(fail: &[usize]) -> Arc<Self> {
-            Arc::new(Self { fail: fail.to_vec(), calls: AtomicUsize::new(0), hints: Mutex::new(Vec::new()) })
+            Arc::new(Self { fail: fail.to_vec(), cut_off: false, calls: AtomicUsize::new(0), hints: Mutex::new(Vec::new()) })
+        }
+
+        fn cut_off(fail: &[usize]) -> Arc<Self> {
+            Arc::new(Self { fail: fail.to_vec(), cut_off: true, calls: AtomicUsize::new(0), hints: Mutex::new(Vec::new()) })
         }
     }
 
@@ -431,6 +441,9 @@ mod tests {
         async fn refine(&self, text: &str, hints: &RefineHints) -> Result<Refined, DictationError> {
             let n = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
             self.hints.lock().push(hints.clone());
+            if self.fail.contains(&n) && self.cut_off {
+                return Err(DictationError::RefineTruncated { detail: format!("polish {n} was cut off") });
+            }
             if self.fail.contains(&n) {
                 return Err(DictationError::Refine(format!("polish {n} failed")));
             }
@@ -568,6 +581,32 @@ mod tests {
         assert_eq!(entry.asr_note, None);
     }
 
+    /// docs/dictation.md §30.6: an imported file's entry says whether its segments' requests carried
+    /// the glossary, as a take's does.
+    #[tokio::test]
+    async fn an_imported_entry_says_whether_the_glossary_went_out() {
+        let entry = crate::vocabulary::DictionaryEntry {
+            id: Uuid::new_v4(),
+            term: "Voltip".into(),
+            heard_as: Vec::new(),
+            enabled: true,
+            source: EntrySource::Manual,
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        };
+        let terms = Arc::new(Vocabulary::compile(&[entry], &[]));
+        for (transcriber, vocabulary, sent) in [
+            (FakeTranscriber::ok("一段话"), terms.clone(), true),
+            (FakeTranscriber::ok("一段话").ignoring_glossary(), terms.clone(), false),
+            (FakeTranscriber::ok("一段话"), Arc::new(Vocabulary::default()), false),
+        ] {
+            let mut setup = Setup::new(25, transcriber);
+            setup.vocabulary = vocabulary;
+            let (entry, _) = done(run_collecting(setup.job(), Partial::default()).await.0);
+            assert_eq!(entry.glossary_sent, Some(sent));
+        }
+    }
+
     /// docs/dictation.md §31 (D6): the polish runs segment by segment with the 校对 preset, for an
     /// import; a segment whose polish fails keeps its recognised text and is counted.
     #[tokio::test]
@@ -599,6 +638,15 @@ mod tests {
         assert_eq!((polish_failed, entry.refined, entry.text.as_str()), (3, false, "第1段。第2段。第3段。"));
         assert_eq!(entry.refine_failure, Some(crate::dictation::RefineFailure::Failed));
         assert!(entry.refine_error.as_deref().is_some_and(|e| e.contains("polish 3 failed")), "{entry:?}");
+
+        // docs/dictation.md §3.12: every answer cut off at the output limit, and the entry says so
+        // with the service's words.
+        let mut setup = Setup::new(25, FakeTranscriber::numbered(0, &[], Duration::ZERO));
+        setup.polish = Some(Polish::cut_off(&[1, 2, 3]));
+        let (entry, polish_failed) = done(run_collecting(setup.job(), Partial::default()).await.0);
+        assert_eq!((polish_failed, entry.refined, entry.text.as_str()), (3, false, "第1段。第2段。第3段。"));
+        assert_eq!(entry.refine_failure, Some(crate::dictation::RefineFailure::Truncated));
+        assert!(entry.refine_error.as_deref().is_some_and(|e| e.contains("was cut off")), "{entry:?}");
     }
 
     /// A job told not to polish never asks the refiner it was handed.

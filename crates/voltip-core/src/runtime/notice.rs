@@ -92,6 +92,7 @@ mod tests {
             live_error: None,
             clipboard_code: None,
             check: None,
+            timing: None,
         }
     }
 

@@ -245,6 +245,7 @@ export const zhCN = {
       unconfigured: "未配置 AI 服务",
       too_long: "全文超过 2000 字",
       empty: "返回了空结果",
+      truncated: "结果不完整",
       failed: "请求失败",
     },
     failed: "失败 · {reason}",
@@ -1032,7 +1033,8 @@ export const zhCN = {
         viewEntry: "查看词条",
         computing: "正在计算影响范围…",
         view: "查看",
-        dictionaryNote: "识别完成后立即纠正；正确写法还会作为术语发送给云端识别和 AI 润色。",
+        dictionaryNote:
+          "识别完成后立即纠正；正确写法还会作为术语发给 AI 润色，以及支持术语表的识别服务。",
         ruleNote: "替换规则在 AI 润色之后执行，按规则列表的顺序改写最终文本。新规则排在列表末尾。",
         polishOnly: "这段文字由 AI 润色产生，原文中没有，因此建议使用替换规则。",
         find: "查找",
@@ -1111,6 +1113,10 @@ export const zhCN = {
       preset: "AI 预设",
       notRefined: "未润色",
       notRefinedBecause: "未润色 · {reason}",
+      /** docs/dictation.md §30.6: whether the recognition's requests carried the glossary. */
+      glossary: { label: "术语表", sent: "已发给识别服务", notSent: "没有发给识别服务" },
+      /** docs/dictation.md §3.12: the polished answer stopped at the model's output limit. */
+      refineTruncated: "润色结果不完整，已保留识别原文",
       outcome: "插入结果",
       duration: "音频时长",
       chars: "字数",
@@ -1167,7 +1173,15 @@ export const zhCN = {
     newEntry: "新建词条",
     explainTitle: "识别之后立即纠正",
     explain:
-      "每段识别结果先把「曾听成」的写法改成正确写法，再交给润色和替换规则；启用词条的正确写法同时作为术语表发给云端识别和 AI 润色。本地识别模型不接收术语表。",
+      "每段识别结果先把「曾听成」的写法改成正确写法，再交给润色和替换规则；启用词条的正确写法还会作为术语表发给 AI 润色，以及支持术语表的识别服务。",
+    /** docs/dictation.md §30.6: what the recognition service in use does with the glossary
+     *  (`EngineStatus.glossary`); the dictionary page and the recognition settings say it. */
+    glossary: {
+      receives: "当前识别服务会收到术语表。",
+      notSupported: "当前识别服务不接收术语表，词典只在识别之后纠正。",
+      local: "本机模型不接收术语表，词典只在识别之后纠正。",
+      empty: "还没有启用的词条，暂时没有术语表发给识别服务。",
+    },
     facts: "最多 {limit} 条 · 每条最多 {heard} 个曾听成",
     hitsTitle: "历史记录里的命中",
     list: "词条",

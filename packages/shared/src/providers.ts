@@ -9,6 +9,7 @@ import type {
   EngineStatus,
   FallbackModelStatus,
   FallbackStatus,
+  GlossaryRoute,
   KeyPolicy,
   ModelState,
   ProviderId,
@@ -235,6 +236,16 @@ export function asrStreams(url: string, model: string): boolean {
   if (m.startsWith("qwen-audio") && m.includes("-asr"))
     return realtime || m.includes("-streaming") || m.includes("-message");
   return (m.startsWith("fun-asr") || m.startsWith("paraformer")) && realtime;
+}
+
+/** `GlossaryRoute::remote(url, model)` (docs/dictation.md §30.6): the `prompt` of an
+ *  OpenAI-compatible endpoint, hot words for Model Studio's `qwen-audio` recognition models on its
+ *  native and realtime protocols, nowhere for its other models. */
+export function glossaryRoute(url: string, model: string): GlossaryRoute {
+  if (!isDashscope(url)) return "prompt";
+  const m = model.trim().toLowerCase();
+  if (m.includes("filetrans")) return "not_supported";
+  return m.startsWith("qwen-audio") && m.includes("-asr") ? "hotwords" : "not_supported";
 }
 
 /** The secret-store entry of the user's key (`voltip_core::providers::key_entry`): a vendor's two
@@ -637,5 +648,11 @@ export function resolveEngineStatus(input: EngineResolveInput): EngineStatus {
         : undefined,
       false,
     ).status,
+    // `ResolvedEngines::glossary_route`: nowhere on-device, unknown without a service that runs.
+    ...(asrProvider === "local"
+      ? { glossary: "not_supported" as const }
+      : asrTarget === undefined
+        ? {}
+        : { glossary: glossaryRoute(asrTarget.url, asrTarget.model) }),
   };
 }

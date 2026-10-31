@@ -343,6 +343,36 @@ impl AsrProtocol {
     }
 }
 
+/// Where the dictionary's terms go in a recognition request (docs/dictation.md §16.3, §30.6), as
+/// the settings and the dictionary page say it (`EngineStatus.glossary`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GlossaryRoute {
+    /// As the request's `prompt` (an OpenAI-compatible endpoint, the built-in service).
+    Prompt,
+    /// As Model Studio's hot words (its `qwen-audio` models).
+    Hotwords,
+    /// The service in use takes none: an on-device model (the dictionary corrects its text
+    /// afterwards), Model Studio's other models.
+    NotSupported,
+    /// The service would take it, and the dictionary has no enabled entry to send.
+    Empty,
+}
+
+impl GlossaryRoute {
+    /// How a recognition request to `model` at `url` carries the glossary: its protocol's way
+    /// (`voltip-asr` sends the same, `voltip-cloud` checks that the two agree).
+    pub fn remote(url: &str, model: &str) -> Self {
+        match AsrProtocol::of(url, model) {
+            AsrProtocol::OpenaiTranscriptions => Self::Prompt,
+            AsrProtocol::DashscopeMultimodal | AsrProtocol::DashscopeDuplex if model.trim().to_ascii_lowercase().starts_with("qwen-audio") => Self::Hotwords,
+            AsrProtocol::DashscopeMultimodal | AsrProtocol::DashscopeDuplex | AsrProtocol::DashscopeChat | AsrProtocol::DashscopeUnsupported => {
+                Self::NotSupported
+            }
+        }
+    }
+}
+
 /// Whether `url` is an Alibaba Cloud Model Studio address (a host under `aliyuncs.com`).
 pub fn is_dashscope(url: &str) -> bool {
     url::Url::parse(url.trim()).ok().and_then(|u| u.host_str().map(str::to_ascii_lowercase)).is_some_and(|host| host.ends_with(".aliyuncs.com"))

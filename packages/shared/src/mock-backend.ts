@@ -4431,7 +4431,16 @@ export class MockBackend implements Backend {
         status[key] = { ...chain, selected_retry_reason: "outage" };
       }
     }
+    // docs/dictation.md §30.6: as the core, a service that would take the glossary gets none.
+    if ((status.glossary === "prompt" || status.glossary === "hotwords") && !this.hasGlossary()) {
+      status.glossary = "empty";
+    }
     return { ...status, ...this.engineOverrides };
+  }
+
+  /** The dictionary has an enabled entry to send as the glossary (`vocabulary::has_glossary`). */
+  private hasGlossary(): boolean {
+    return this.state.dictionary.some((entry) => entry.enabled);
   }
 
   private emitPhase(phase: DictationPhase, session = this.state.dictation.session) {
@@ -4977,6 +4986,7 @@ export class MockBackend implements Backend {
         ...(refineFailure === undefined ? {} : { refine_failure: refineFailure }),
         ...(refineFailure === "rate_limited" ||
         refineFailure === "quota" ||
+        refineFailure === "truncated" ||
         refineFailure === "failed"
           ? { refine_error: MOCK_REFINE_FAILED }
           : {}),
@@ -5502,6 +5512,7 @@ export class MockBackend implements Backend {
         // As the core: a failed request keeps the service's words (§3.6).
         ...(refineFailure === "rate_limited" ||
         refineFailure === "quota" ||
+        refineFailure === "truncated" ||
         refineFailure === "failed"
           ? { refine_error: MOCK_REFINE_FAILED }
           : {}),
@@ -5998,9 +6009,14 @@ export class MockBackend implements Backend {
   }
 
   private emit(event: UiEvent) {
+    const hadGlossary = event.type === "dictionary" && this.hasGlossary();
     this.state = applyEvent(this.state, event);
     this.log.push(event);
     for (const listener of this.listeners) listener(event);
+    // docs/dictation.md §30.6: the status follows the first enabled entry and the last, as the core's.
+    if (event.type === "dictionary" && hadGlossary !== this.hasGlossary()) {
+      this.emit({ type: "engines", ...this.resolveEngines(this.state.settings.engines) });
+    }
   }
 }
 

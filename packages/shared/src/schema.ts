@@ -547,6 +547,9 @@ export const recordingSettingsSchema = z.object({
   /** `mixed`: the microphone's echo of the computer's sound is removed before the two are summed
    *  (docs/dictation.md §22.6); on by default. */
   echo_cancel: z.boolean().default(true),
+  /** A short tone when the microphone is ready, kept out of the recording (docs/dictation.md
+   *  §30.3); off by default, microphone takes only. */
+  ready_sound: z.boolean().default(false),
 });
 export type RecordingSettings = z.infer<typeof recordingSettingsSchema>;
 export function defaultRecordingSettings(): RecordingSettings {
@@ -555,6 +558,7 @@ export function defaultRecordingSettings(): RecordingSettings {
     output_device: null,
     max_minutes: DEFAULT_MAX_MINUTES,
     echo_cancel: true,
+    ready_sound: false,
   };
 }
 
@@ -866,13 +870,15 @@ export type DictationFailureCode = z.infer<typeof dictationFailureCodeSchema>;
 /** Why a requested clean-up's text was not used (`voltip_core::RefineFailure`, docs/dictation.md
  *  §3.6): `rate_limited` the service had too many requests, `quota` its quota is used up (no
  *  fallback model had any left), `unconfigured` no service is set up, `too_long` a long take past
- *  2000 characters, `empty` the service answered with nothing, `failed` anything else. */
+ *  2000 characters, `empty` the service answered with nothing, `truncated` the answer stopped at
+ *  the model's output limit (§3.12), `failed` anything else. */
 export const REFINE_FAILURES = [
   "rate_limited",
   "quota",
   "unconfigured",
   "too_long",
   "empty",
+  "truncated",
   "failed",
 ] as const;
 export const refineFailureSchema = z.enum(REFINE_FAILURES);
@@ -1020,6 +1026,24 @@ export const INSERT_CHECKS = ["written", "not_written", "unconfirmed"] as const;
 export const insertCheckSchema = z.enum(INSERT_CHECKS);
 export type InsertCheck = z.infer<typeof insertCheckSchema>;
 
+/** When each step of a take happened (`voltip_core::TakeTiming`, docs/dictation.md §30.1), in
+ *  milliseconds from `pressed_at` (Unix ms): the device open, its first audio, the live preview's
+ *  first text, the release, then how long the microphone stayed open (`tail_ms`) and the
+ *  recognition, the clean-up and the hand-over took, and when the result was there (`done_ms`). */
+export const takeTimingSchema = z.object({
+  pressed_at: z.number().nonnegative(),
+  device_open_ms: z.number().nonnegative().optional(),
+  first_audio_ms: z.number().nonnegative().optional(),
+  first_text_ms: z.number().nonnegative().optional(),
+  released_ms: z.number().nonnegative().optional(),
+  tail_ms: z.number().nonnegative().default(0),
+  asr_ms: z.number().nonnegative().default(0),
+  refine_ms: z.number().nonnegative().optional(),
+  insert_ms: z.number().nonnegative().default(0),
+  done_ms: z.number().nonnegative().default(0),
+});
+export type TakeTiming = z.infer<typeof takeTimingSchema>;
+
 /** `voltip_core::dictation::DictationPhase` (`#[serde(tag = "phase")]`). `listening.ready` and
  *  `listening.locked` are `#[serde(default)]` (false = the device has not delivered samples yet /
  *  the take is not locked) and always on the wire; `live` and `processing.preview` are skip-if-none,
@@ -1071,6 +1095,8 @@ export const dictationPhaseSchema = z.discriminatedUnion("phase", [
     clipboard_code: clipboardCodeSchema.optional(),
     /** The insert check (§28); absent when no check ran (a copy, a fallback, `live_inject`, off). */
     check: insertCheckSchema.optional(),
+    /** How long each step of the take took (§30.1); absent from a core that did not send it. */
+    timing: takeTimingSchema.optional(),
   }),
   z.object({
     phase: z.literal("failed"),
@@ -1827,6 +1853,12 @@ export const historyEntrySchema = z.object({
   processed: processedTextSchema.optional(),
   /** The audio or video file it was transcribed from (docs/dictation.md §31); absent for takes. */
   file: importedFileSchema.optional(),
+  /** How long each step of the take took (docs/dictation.md §30.1); absent for imports, phone
+   *  texts and entries written before it. */
+  timing: takeTimingSchema.optional(),
+  /** Whether the recognition's requests carried the glossary (§30.6); absent when unknown (a
+   *  phone's text, entries written before it). */
+  glossary_sent: z.boolean().optional(),
 });
 export type HistoryEntry = z.infer<typeof historyEntrySchema>;
 
@@ -2203,6 +2235,13 @@ export const fallbackStatusSchema = z.object({
 });
 export type FallbackStatus = z.infer<typeof fallbackStatusSchema>;
 
+/** Where the dictionary's terms go in a recognition request (`voltip_core::GlossaryRoute`,
+ *  docs/dictation.md §30.6): the OpenAI-compatible `prompt`, Model Studio's hot words, nowhere (an
+ *  on-device model, Model Studio's other models), or nothing to send (no enabled entry). */
+export const GLOSSARY_ROUTES = ["prompt", "hotwords", "not_supported", "empty"] as const;
+export const glossaryRouteSchema = z.enum(GLOSSARY_ROUTES);
+export type GlossaryRoute = z.infer<typeof glossaryRouteSchema>;
+
 /** `voltip_core::engines::EngineStatus` (`UiState.engines`): the resolved configuration. Provider
  *  ids, models, the hosts of endpoints the user chose and key presence — never a key, and never
  *  the built-in service's host (`asr_host` / `refine_host` are `""` for it and on-device). */
@@ -2242,6 +2281,9 @@ export const engineStatusSchema = z.object({
   asr_fallback: fallbackStatusSchema.optional(),
   /** The clean-up fallback models. */
   llm_fallback: fallbackStatusSchema.optional(),
+  /** Where the glossary goes in the recognition requests (docs/dictation.md §30.6); absent while
+   *  recognition has no service that can run. */
+  glossary: glossaryRouteSchema.optional(),
 });
 export type EngineStatus = z.infer<typeof engineStatusSchema>;
 

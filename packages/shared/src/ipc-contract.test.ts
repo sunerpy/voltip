@@ -656,6 +656,7 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
         output_device: "wasapi:{0.0.0.00000000}.{a1}",
         max_minutes: 60,
         echo_cancel: false,
+        ready_sound: true,
       },
       serve: {
         enabled: true,

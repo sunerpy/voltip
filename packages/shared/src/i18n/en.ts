@@ -234,6 +234,7 @@ export const en: Messages = {
       unconfigured: "no AI service set up",
       too_long: "over 2,000 characters",
       empty: "empty answer",
+      truncated: "answer cut off",
       failed: "request failed",
     },
     failed: "Failed · {reason}",
@@ -1016,7 +1017,7 @@ export const en: Messages = {
         computing: "Checking the effect…",
         view: "Show",
         dictionaryNote:
-          "Corrected right after recognition; the right spelling is also sent as a term to cloud recognition and AI polish.",
+          "Corrected right after recognition; the right spelling is also sent as a term to AI polish and to recognition services that take a glossary.",
         ruleNote:
           "Rules run after AI polish, in list order, on the final text. A new rule goes to the end of the list.",
         polishOnly:
@@ -1095,6 +1096,12 @@ export const en: Messages = {
       preset: "AI preset",
       notRefined: "Not polished",
       notRefinedBecause: "Not polished · {reason}",
+      glossary: {
+        label: "Glossary",
+        sent: "Sent to recognition",
+        notSent: "Not sent to recognition",
+      },
+      refineTruncated: "The polished text was incomplete; the transcript was kept",
       outcome: "Result",
       duration: "Audio length",
       chars: "Characters",
@@ -1151,7 +1158,14 @@ export const en: Messages = {
     newEntry: "New entry",
     explainTitle: "Corrected right after transcription",
     explain:
-      "Each recognition result has its misheard forms replaced by the right spelling before polishing and the replacement rules; the right spellings of enabled entries also go to cloud recognition and AI polishing as a glossary. Local recognition models take no glossary.",
+      "Each recognition result has its misheard forms replaced by the right spelling before polishing and the replacement rules; the right spellings of enabled entries also go to AI polishing as a glossary, and to recognition services that take one.",
+    glossary: {
+      receives: "The recognition service in use receives the glossary.",
+      notSupported:
+        "The recognition service in use takes no glossary; the dictionary corrects its text afterwards.",
+      local: "On-device models take no glossary; the dictionary corrects their text afterwards.",
+      empty: "No entry is enabled yet, so no glossary goes to recognition.",
+    },
     facts: "Up to {limit} entries · up to {heard} misheard forms each",
     hitsTitle: "Hits in history",
     list: "Entries",

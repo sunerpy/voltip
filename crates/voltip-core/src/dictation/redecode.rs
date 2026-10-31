@@ -353,6 +353,11 @@ impl StreamingSession for RedecodeSession {
         (self.receipt.provider, self.receipt.fallback)
     }
 
+    /// Whether their requests carried the glossary (docs/dictation.md §30.6).
+    fn glossary_sent(&self) -> Option<bool> {
+        self.receipt.glossary_sent
+    }
+
     fn poll(&mut self) -> StreamEvent {
         if let Some(running) = &self.running {
             match running.answer.try_recv() {
@@ -382,6 +387,7 @@ impl StreamingSession for RedecodeSession {
                 model: receipt.model,
                 provider: receipt.provider,
                 fallback: receipt.fallback,
+                glossary_sent: receipt.glossary_sent,
             });
         }
         self.close_current(true);
@@ -415,6 +421,7 @@ impl StreamingSession for RedecodeSession {
             model: receipt.model,
             provider: receipt.provider,
             fallback: receipt.fallback,
+            glossary_sent: receipt.glossary_sent,
         })
     }
 }
@@ -549,7 +556,9 @@ mod tests {
                 tail: "第5段。".into(),
                 model: None,
                 provider: None,
-                fallback: None
+                fallback: None,
+                // docs/dictation.md §30.6: the session's glossary went with its requests.
+                glossary_sent: Some(true),
             }
         );
         // The previews grew by a second from the pre-roll on; the close carried the sentence with
@@ -665,7 +674,7 @@ mod tests {
             Box::new(s).finish().unwrap()
         })
         .await;
-        assert_eq!(fin, StreamFinal { committed: Vec::new(), tail: "第1段。".into(), model: None, provider: None, fallback: None });
+        assert_eq!(fin, StreamFinal { committed: Vec::new(), tail: "第1段。".into(), model: None, provider: None, fallback: None, glossary_sent: Some(false) });
         assert_eq!(transcriber.durations_ms(), [1000], "the preview only");
     }
 

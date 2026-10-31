@@ -635,6 +635,7 @@ mod tests {
             output_device: output.map(str::to_owned),
             // The mixed take below runs through the echo canceller's mixing thread (§22.6).
             echo_cancel: true,
+            ready_cue: false,
         };
         let mut capture = source.start(None, Box::new(|_| {}), Box::new(|| {}), options(RecordingSource::System, Some(FAKE_SPEAKERS_ID), true)).unwrap();
         let mut stream = capture.pcm_stream().expect("a long take streams");

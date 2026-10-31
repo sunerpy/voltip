@@ -497,6 +497,7 @@ describe("Settings · 听写 · 最长录音时长 (docs/dictation.md section 22
         output_device: null,
         max_minutes: 60,
         echo_cancel: true,
+        ready_sound: false,
       });
     });
     expect(menu).toHaveValue("60");

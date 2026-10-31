@@ -666,6 +666,22 @@ export function HistoryDetail({
             size="sm"
           />
         )}
+        {entry.glossary_sent !== undefined && (
+          // docs/dictation.md §30.6: whether the recognition's requests carried the glossary.
+          <Readout
+            label={t("history.detail.glossary.label")}
+            value={
+              <span data-testid="history-glossary">
+                {t(
+                  entry.glossary_sent
+                    ? "history.detail.glossary.sent"
+                    : "history.detail.glossary.notSent",
+                )}
+              </span>
+            }
+            size="sm"
+          />
+        )}
         {entry.asr_note !== undefined && (
           // docs/dictation.md §29: the local engine's GPU failed and the CPU did the take.
           <Readout
