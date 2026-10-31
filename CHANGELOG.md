@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.3.0](https://github.com/sunerpy/voltip/compare/v0.2.1...v0.3.0) (2026-10-31)
+
+
+### Features
+
+* 电脑端单键触发被系统移除或断开后自动恢复，本机识别出错或取消后不再卡住 ([#207](https://github.com/sunerpy/voltip/issues/207)) ([b3a97fa](https://github.com/sunerpy/voltip/commit/b3a97fa8d2296685f13b799ef647869bb36acd9b))
+* 电脑端导入音频或视频文件，排队转写进历史，可导出字幕与文本 ([#206](https://github.com/sunerpy/voltip/issues/206)) ([1dc345e](https://github.com/sunerpy/voltip/commit/1dc345e182329e3a92f2651655185f90a9e2530e))
+* 电脑端新增自动备份，每周、更新安装前和替换导入前各备份一份，每台电脑保留自己最近 5 份 ([#209](https://github.com/sunerpy/voltip/issues/209)) ([fd31c75](https://github.com/sunerpy/voltip/commit/fd31c75e2fdc2fd2d454de5f54a19e7ad5531b6d))
+* 电脑端服务出错时可改用候补模型，本机模型可作候补，历史记录写明实际服务商 ([#210](https://github.com/sunerpy/voltip/issues/210)) ([90537f0](https://github.com/sunerpy/voltip/commit/90537f0912881bbfd497c4b9eeba435f46c7c292))
+* 电脑端粘贴后确认文字是否写入，没写进去或识别失败时结果卡片常驻 ([#205](https://github.com/sunerpy/voltip/issues/205)) ([1cfaa40](https://github.com/sunerpy/voltip/commit/1cfaa4059096705c8f3da04b8942510ad3c3f046))
+* 电脑端词典新增学习建议，一键把 AI 润色改正的写法加入词典或忽略，规则页提示有问题的规则 ([#208](https://github.com/sunerpy/voltip/issues/208)) ([d3b727d](https://github.com/sunerpy/voltip/commit/d3b727d2d90fd8f428168366a9354b85a1bd913c))
+
+
+### Bug Fixes
+
+* 电脑端取消听写后原本为空的剪贴板重新清空，仅复制到剪贴板时不再提示窗口已切换 ([#202](https://github.com/sunerpy/voltip/issues/202)) ([385c3bf](https://github.com/sunerpy/voltip/commit/385c3bf64f42bd4c90cf155a48712d99b3b92584))
+
 ## [0.2.1](https://github.com/sunerpy/voltip/compare/v0.2.0...v0.2.1) (2026-10-29)
 
 
