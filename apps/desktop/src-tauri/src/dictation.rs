@@ -96,6 +96,8 @@ impl AudioSource for RecorderAudioSource {
             max_duration: if options.long { options.max_duration.min(MAX_RECORDING) } else { options.max_duration },
             source,
             pcm_stream: options.long.then(PcmStreamConfig::default),
+            // docs/dictation.md §30.3: the core asks for it on a microphone take with the setting on.
+            ready_cue: options.ready_cue,
             ..RecorderConfig::default()
         };
         // Take the microphone from the level meter first; the hub fans our frames out from now on.
@@ -125,6 +127,7 @@ impl AudioSource for RecorderAudioSource {
             live,
             long = options.long,
             max_duration = ?options.max_duration,
+            ready_cue = options.ready_cue,
             "dictation capture started"
         );
         Ok(Box::new(RecorderCapture { recorder, hub: self.hub.clone() }))
@@ -621,6 +624,22 @@ mod tests {
         assert_eq!(connected_or_default(&backend, None), None);
         assert_eq!(connected_or_default(&backend, Some(voltip_audio::FAKE_USB_ID)).as_deref(), Some(voltip_audio::FAKE_USB_ID));
         assert_eq!(connected_or_default(&backend, Some("fake:unplugged")), None);
+    }
+
+    /// docs/dictation.md §30.3: the core's `ready_cue` reaches the recorder: a microphone take with
+    /// it opens the cue's output once, one without it opens none.
+    #[test]
+    fn the_ready_cue_option_opens_the_cue_output() {
+        let backend = Arc::new(voltip_audio::FakeBackend::new());
+        let source = RecorderAudioSource::with_backend(backend.clone(), Arc::new(AudioHub::default()));
+        let options = |ready_cue| CaptureOptions { ready_cue, ..CaptureOptions::default() };
+        let capture = source.start(None, Box::new(|_| {}), Box::new(|| {}), options(false)).unwrap();
+        drop(capture);
+        assert!(backend.cue_outputs_opened().is_empty());
+        let capture = source.start(None, Box::new(|_| {}), Box::new(|| {}), options(true)).unwrap();
+        assert_eq!(backend.cue_outputs_opened(), vec![false]);
+        drop(capture);
+        assert!(!backend.is_running(), "the cue's output closes with the capture");
     }
 
     /// docs/dictation.md §22: the capture options choose the recorder's source; a long take

@@ -27,6 +27,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 mod backend;
+pub mod cue;
 pub mod dsp;
 pub mod echo;
 #[cfg(any(test, feature = "test-support"))]
@@ -38,7 +39,7 @@ pub mod pcm;
 mod recorder;
 pub mod recording;
 
-pub use backend::{AudioDevice, Backend, CpalBackend, SampleCallback, StreamHandle, SystemAudio};
+pub use backend::{AudioDevice, Backend, ChunkTime, CpalBackend, SampleCallback, StreamHandle, SystemAudio, TimedSampleCallback};
 pub use dsp::SampleChunk;
 pub use echo::EchoCanceller;
 #[cfg(any(test, feature = "test-support"))]

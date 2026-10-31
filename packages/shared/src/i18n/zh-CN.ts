@@ -2464,6 +2464,11 @@ export const zhCN = {
       echoCancel: "消除扬声器回声",
       echoCancelHelp:
         "电脑声音从扬声器播放时，从麦克风的录音中去掉这部分声音，避免同一段声音录入两次。",
+      /** docs/dictation.md §30.3: `settings.recording.ready_sound`. */
+      readySound: "「可以说话」提示音",
+      readySoundHelp:
+        "麦克风开始录音时播放一声约 0.1 秒的短音，表示可以开始说话。提示音不会被识别，提示音响着时说的话也会被静音。使用蓝牙耳机时，系统可能因此切换到通话模式。",
+      readySoundMicOnly: "只在录音来源为「麦克风」时播放。",
       output: "输出设备",
       outputHelp: "录制这个设备播放的声音。",
       outputDefault: "跟随系统默认（{name}）",

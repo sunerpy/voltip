@@ -13,11 +13,15 @@
 //! included). The microphone stays on ALSA there: with cpal's PulseAudio host compiled in, the
 //! platform default would move to it and change every saved device id.
 
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{ErrorKind, SampleFormat, StreamConfig};
 use serde::{Deserialize, Serialize};
 
 use crate::AudioError;
+use crate::cue::{CueShared, CueWriter};
 use crate::dsp::SampleChunk;
 
 /// A capture device as the UI lists it.
@@ -79,6 +83,20 @@ pub trait StreamHandle: Send + Sync {}
 /// interleaved channel count. Must not allocate or block.
 pub type SampleCallback = Box<dyn FnMut(SampleChunk<'_>, u32, u16) + Send>;
 
+/// When a captured chunk arrived (docs/dictation.md §30.3: the ready cue is kept out of the take by
+/// these times).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChunkTime {
+    /// When its callback ran, on this process's monotonic clock.
+    pub at: Instant,
+    /// How long before that its first frame was captured (`callback − capture` of the stream's own
+    /// timestamps); `None` when the host does not say.
+    pub input_latency: Option<Duration>,
+}
+
+/// [`SampleCallback`] with each chunk's [`ChunkTime`].
+pub type TimedSampleCallback = Box<dyn FnMut(SampleChunk<'_>, u32, u16, ChunkTime) + Send>;
+
 /// What the meter needs from a sound system.
 pub trait Backend {
     /// Input devices the meter can open, default device first. An empty list is not an error.
@@ -110,6 +128,19 @@ pub trait Backend {
     fn open_output_capture(&self, id: Option<&str>, on_samples: SampleCallback) -> Result<Box<dyn StreamHandle>, AudioError> {
         let _ = (id, on_samples);
         Err(AudioError::SystemAudioUnavailable(self.system_audio().describe()))
+    }
+
+    /// [`Backend::open_input`] with each chunk's [`ChunkTime`]; a backend that has no timestamps
+    /// gives the moment the callback ran and no latency.
+    fn open_input_timed(&self, id: Option<&str>, mut on_samples: TimedSampleCallback) -> Result<Box<dyn StreamHandle>, AudioError> {
+        self.open_input(id, Box::new(move |chunk, rate, channels| on_samples(chunk, rate, channels, ChunkTime { at: Instant::now(), input_latency: None })))
+    }
+
+    /// Start an output stream on the default output device for the ready cue (docs/dictation.md
+    /// §30.3): silence until `shared` is armed, the tone once, silence until the handle is dropped.
+    fn open_cue_output(&self, shared: Arc<CueShared>) -> Result<Box<dyn StreamHandle>, AudioError> {
+        let _ = shared;
+        Err(AudioError::NoDevice)
     }
 }
 
@@ -182,6 +213,28 @@ impl Backend for CpalBackend {
         let label = id.map(str::to_string).unwrap_or_else(|| device.to_string());
         let supported = device.default_input_config().map_err(|e| map_cpal(&e, &label))?;
         let stream = build_input(&device, supported, &label, &mut on_samples)?;
+        Ok(Box::new(CpalStreams { _streams: vec![stream] }))
+    }
+
+    fn open_input_timed(&self, id: Option<&str>, on_samples: TimedSampleCallback) -> Result<Box<dyn StreamHandle>, AudioError> {
+        let device = match id {
+            Some(id) => self.find_input(id)?,
+            None => self.host.default_input_device().ok_or(AudioError::NoDevice)?,
+        };
+        let label = id.map(str::to_string).unwrap_or_else(|| device.to_string());
+        let supported = device.default_input_config().map_err(|e| map_cpal(&e, &label))?;
+        let stream = build_timed_input(&device, supported, &label, on_samples)?;
+        Ok(Box::new(CpalStreams { _streams: vec![stream] }))
+    }
+
+    fn open_cue_output(&self, shared: Arc<CueShared>) -> Result<Box<dyn StreamHandle>, AudioError> {
+        // Where the computer's sound plays (PulseAudio on Linux when it runs), else the
+        // microphone's host.
+        let host = self.output.as_ref().unwrap_or(&self.host);
+        let device = host.default_output_device().ok_or(AudioError::NoDevice)?;
+        let label = device.to_string();
+        let stream = cue_output(&device, &label, shared)?;
+        tracing::debug!(device = %label, "ready cue output started");
         Ok(Box::new(CpalStreams { _streams: vec![stream] }))
     }
 
@@ -275,6 +328,109 @@ fn build_input(
     let stream = built.map_err(|e| map_cpal(&e, label))?;
     stream.play().map_err(|e| map_cpal(&e, label))?;
     Ok(stream)
+}
+
+/// [`build_input`] whose callback also gets each chunk's [`ChunkTime`] from the stream's own
+/// timestamps.
+fn build_timed_input(
+    device: &cpal::Device,
+    supported: cpal::SupportedStreamConfig,
+    label: &str,
+    mut on_samples: TimedSampleCallback,
+) -> Result<cpal::Stream, AudioError> {
+    let format = supported.sample_format();
+    let config: StreamConfig = supported.config();
+    let rate = config.sample_rate;
+    let channels = config.channels;
+    tracing::debug!(device = %label, rate, channels, ?format, "opening timed input stream");
+    let on_error = move |e: cpal::Error| tracing::warn!(error = %e, kind = ?e.kind(), "input stream error");
+    let time = |info: &cpal::InputCallbackInfo| {
+        let ts = info.timestamp();
+        ChunkTime { at: Instant::now(), input_latency: ts.callback.checked_duration_since(ts.capture).filter(|d| !d.is_zero()) }
+    };
+    let built = match format {
+        SampleFormat::F32 => {
+            device.build_input_stream::<f32, _, _>(config, move |data, info| on_samples(SampleChunk::F32(data), rate, channels, time(info)), on_error, None)
+        }
+        SampleFormat::I16 => {
+            device.build_input_stream::<i16, _, _>(config, move |data, info| on_samples(SampleChunk::I16(data), rate, channels, time(info)), on_error, None)
+        }
+        SampleFormat::U16 => {
+            device.build_input_stream::<u16, _, _>(config, move |data, info| on_samples(SampleChunk::U16(data), rate, channels, time(info)), on_error, None)
+        }
+        SampleFormat::I32 => {
+            device.build_input_stream::<i32, _, _>(config, move |data, info| on_samples(SampleChunk::I32(data), rate, channels, time(info)), on_error, None)
+        }
+        other => return Err(AudioError::UnsupportedFormat(format!("{other:?} on {label}"))),
+    };
+    let stream = built.map_err(|e| map_cpal(&e, label))?;
+    stream.play().map_err(|e| map_cpal(&e, label))?;
+    Ok(stream)
+}
+
+/// How long a buffer the ready cue's stream asks for: the cue should sound right after the first
+/// samples, and a host's default playback buffer can be seconds long (PulseAudio's two seconds).
+const CUE_BUFFER: Duration = Duration::from_millis(10);
+
+/// The ready cue's stream on `output` (docs/dictation.md §30.3), started: each callback hands the
+/// writer its time and latency (`playback − callback`), then the tone or silence. It asks for a
+/// [`CUE_BUFFER`] of audio per callback and takes the host's default where that is refused.
+fn cue_output(output: &cpal::Device, label: &str, shared: Arc<CueShared>) -> Result<cpal::Stream, AudioError> {
+    let supported = output.default_output_config().map_err(|e| map_cpal(&e, label))?;
+    let format = supported.sample_format();
+    let config: StreamConfig = supported.config();
+    let short = u32::try_from(CUE_BUFFER.as_millis() * u128::from(config.sample_rate) / 1000).unwrap_or(u32::MAX);
+    let fixed = match supported.buffer_size() {
+        cpal::SupportedBufferSize::Range { min, max } => Some(short.clamp(*min, (*max).max(*min))),
+        cpal::SupportedBufferSize::Unknown => Some(short),
+    };
+    let built = match fixed {
+        Some(frames) => {
+            let mut short_config = config;
+            short_config.buffer_size = cpal::BufferSize::Fixed(frames);
+            build_cue(output, short_config, format, Arc::clone(&shared), label).or_else(|e| {
+                tracing::debug!(error = %e, frames, "the ready cue's short buffer was refused; using the default");
+                build_cue(output, config, format, Arc::clone(&shared), label)
+            })
+        }
+        None => build_cue(output, config, format, Arc::clone(&shared), label),
+    }?;
+    built.play().map_err(|e| map_cpal(&e, label))?;
+    Ok(built)
+}
+
+/// Build (not start) the ready cue's stream in `config`.
+fn build_cue(output: &cpal::Device, config: StreamConfig, format: SampleFormat, shared: Arc<CueShared>, label: &str) -> Result<cpal::Stream, AudioError> {
+    let channels = usize::from(config.channels.max(1));
+    let mut writer = CueWriter::new(shared, config.sample_rate);
+    let on_error = move |e: cpal::Error| tracing::warn!(error = %e, kind = ?e.kind(), "ready cue output stream error");
+    let latency = |info: &cpal::OutputCallbackInfo| {
+        let ts = info.timestamp();
+        ts.playback.checked_duration_since(ts.callback).filter(|d| !d.is_zero())
+    };
+    macro_rules! stream {
+        ($t:ty, $convert:expr) => {
+            output.build_output_stream::<$t, _, _>(
+                config,
+                move |data: &mut [$t], info| {
+                    writer.begin(Instant::now(), latency(info));
+                    for frame in data.chunks_mut(channels) {
+                        frame.fill($convert(writer.next_frame()));
+                    }
+                },
+                on_error,
+                None,
+            )
+        };
+    }
+    let built = match format {
+        SampleFormat::F32 => stream!(f32, |v: f32| v),
+        SampleFormat::I16 => stream!(i16, |v: f32| (v * 32_767.0) as i16),
+        SampleFormat::U16 => stream!(u16, |v: f32| ((v + 1.0) * 32_767.5) as u16),
+        SampleFormat::I32 => stream!(i32, |v: f32| (f64::from(v) * 2_147_483_647.0) as i32),
+        other => return Err(AudioError::UnsupportedFormat(format!("{other:?} on {label}"))),
+    };
+    built.map_err(|e| map_cpal(&e, label))
 }
 
 /// The output device `id` among `host`'s.

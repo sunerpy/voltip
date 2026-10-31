@@ -13,12 +13,13 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
 use crate::AudioError;
-use crate::backend::{AudioDevice, Backend, CpalBackend, SampleCallback, StreamHandle};
+use crate::backend::{AudioDevice, Backend, ChunkTime, CpalBackend, SampleCallback, StreamHandle};
+use crate::cue::{CUE_MAX_INPUT_LATENCY, CueShared, zero_range};
 use crate::dsp::{FrameAccumulator, SampleChunk};
 use crate::live::{LiveConsumer, LiveProducer, LiveTapConfig, StreamResampler, live_tap};
 use crate::meter::{DEFAULT_FRAMES_PER_SECOND, DEFAULT_PEAK_HOLD_MS, LevelFrame};
@@ -99,6 +100,11 @@ pub struct RecorderConfig {
     /// may run past `max_duration`); `None` = no stream.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pcm_stream: Option<PcmStreamConfig>,
+    /// Play the 「可以说话」 cue on the default output once the microphone delivers its first
+    /// samples, and keep it out of the take (docs/dictation.md §30.3). The microphone source only:
+    /// the computer's sound would record the cue itself.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ready_cue: bool,
 }
 
 impl Default for RecorderConfig {
@@ -111,6 +117,7 @@ impl Default for RecorderConfig {
             live_tap: None,
             source: CaptureSource::Microphone,
             pcm_stream: None,
+            ready_cue: false,
         }
     }
 }
@@ -149,6 +156,8 @@ pub struct Recorder {
     /// An echo-cancelled `mixed` take's mixing thread; after `streams`, so a drop stops the
     /// callbacks before the thread finishes.
     mixing: Option<MixThread>,
+    /// The ready cue's shared state, when the take plays one (docs/dictation.md §30.3).
+    cue: Option<Arc<CueShared>>,
 }
 
 /// The mixing thread of an echo-cancelled `mixed` take (docs/dictation.md §22.6): it owns the
@@ -244,20 +253,49 @@ struct Sink {
     pcm: Option<(PcmProducer, u32, u32)>,
     /// The current chunk as mono.
     mono: Vec<f32>,
+    /// The ready cue's shared state (docs/dictation.md §30.3), when the take plays one.
+    cue: Option<Arc<CueShared>>,
 }
 
 impl Sink {
     fn process(&mut self, chunk: SampleChunk<'_>, rate: u32, channels: u16) {
+        self.process_at(chunk, rate, channels, None);
+    }
+
+    /// A chunk with its [`ChunkTime`]: the samples the ready cue's window covers are zeroed before
+    /// the take, the tap and the stream see them (the level meter still shows them).
+    fn process_timed(&mut self, chunk: SampleChunk<'_>, rate: u32, channels: u16, time: ChunkTime) {
+        // A latency the host cannot mean is no latency (`CUE_MAX_INPUT_LATENCY`).
+        let time = ChunkTime { input_latency: time.input_latency.filter(|l| *l <= CUE_MAX_INPUT_LATENCY), ..time };
+        if let Some(cue) = &self.cue {
+            cue.set_input_latency(time.input_latency);
+        }
+        self.process_at(chunk, rate, channels, Some(time));
+    }
+
+    fn process_at(&mut self, chunk: SampleChunk<'_>, rate: u32, channels: u16, time: Option<ChunkTime>) {
         if chunk_len(chunk) > 0
             && let Some(ready) = self.on_ready.take()
         {
             ready();
+            // The output may start the cue now (after `on_ready`, as the core hears of it first).
+            if let Some(cue) = &self.cue {
+                cue.arm();
+            }
         }
         let acc = self.accumulator.get_or_insert_with(|| FrameAccumulator::new(rate, channels, self.frames_per_second, DEFAULT_PEAK_HOLD_MS));
         acc.push(chunk, &*self.on_level);
         let channels = channels.max(1);
         self.mono.clear();
         downmix_chunk(chunk, channels, &mut self.mono);
+        if let (Some(cue), Some(time)) = (&self.cue, time)
+            && let Some(window) = cue.window()
+        {
+            let callback = cue.at(time.at);
+            let capture = time.input_latency.map(|latency| callback.saturating_sub(i64::try_from(latency.as_nanos()).unwrap_or(i64::MAX)));
+            let range = zero_range(window, capture, callback, self.mono.len(), rate);
+            self.mono[range].fill(0.0);
+        }
         let mut capture = self.capture.lock().unwrap_or_else(PoisonError::into_inner);
         if capture.rate == 0 {
             capture.rate = rate;
@@ -428,6 +466,8 @@ impl Recorder {
             }
             None => (None, None),
         };
+        // docs/dictation.md §30.3: the microphone alone; the computer's sound would record the cue.
+        let cue = (config.ready_cue && config.source == CaptureSource::Microphone).then(|| Arc::new(CueShared::new()));
         let mut sink = Sink {
             on_level: Box::new(on_level),
             on_ready: Some(Box::new(on_ready)),
@@ -438,6 +478,7 @@ impl Recorder {
             tap,
             pcm,
             mono: Vec::with_capacity(SCRATCH_FRAMES),
+            cue: cue.clone(),
         };
         let mut streams = Vec::with_capacity(2);
         let mut mixing = None;
@@ -486,9 +527,24 @@ impl Recorder {
                 };
                 streams.push(backend.open_input(config.device_id.as_deref(), on_microphone)?);
             }
-            (Some(_), None) => {
-                streams.push(backend.open_input(config.device_id.as_deref(), Box::new(move |chunk, rate, channels| sink.process(chunk, rate, channels)))?);
-            }
+            (Some(_), None) => match &cue {
+                Some(shared) => {
+                    streams.push(backend.open_input_timed(
+                        config.device_id.as_deref(),
+                        Box::new(move |chunk, rate, channels, time| sink.process_timed(chunk, rate, channels, time)),
+                    )?);
+                    // The output is built and started here, outside the callbacks, after the
+                    // input: it plays silence until the first samples arm it. A take without a
+                    // speaker records without the cue.
+                    match backend.open_cue_output(Arc::clone(shared)) {
+                        Ok(output) => streams.push(output),
+                        Err(e) => tracing::warn!(error = %e, "the ready cue has no output device; recording without it"),
+                    }
+                }
+                None => {
+                    streams.push(backend.open_input(config.device_id.as_deref(), Box::new(move |chunk, rate, channels| sink.process(chunk, rate, channels)))?);
+                }
+            },
             (None, Some(out)) => {
                 streams.push(backend.open_output_capture(Some(out.id.as_str()), Box::new(move |chunk, rate, channels| sink.process(chunk, rate, channels)))?);
             }
@@ -504,9 +560,20 @@ impl Recorder {
             live = config.live_tap.is_some(),
             stream = config.pcm_stream.is_some(),
             echo_cancel,
+            ready_cue = cue.is_some(),
             "recorder started"
         );
-        Ok(Self { device, output, streams, capture, target_rate_hz: config.target_rate_hz, live: Mutex::new(live), pcm: Mutex::new(pcm_out), mixing })
+        Ok(Self { device, output, streams, capture, target_rate_hz: config.target_rate_hz, live: Mutex::new(live), pcm: Mutex::new(pcm_out), mixing, cue })
+    }
+
+    /// The span the ready cue was kept out of the take for, once its output started the tone
+    /// (docs/dictation.md §30.3): `None` without a cue, before the first samples, and while the
+    /// output has not started it. By capture time when the host reported both latencies, else by
+    /// the input callbacks' times ([`crate::cue::WindowClock`]).
+    pub fn ready_cue_window(&self) -> Option<(Instant, Instant, crate::cue::WindowClock)> {
+        let cue = self.cue.as_ref()?;
+        let window = cue.window()?;
+        Some((cue.instant(window.start_ns), cue.instant(window.end_ns), window.clock))
     }
 
     /// The consumer end of the live tap requested with `RecorderConfig::live_tap`: `Some` exactly
@@ -611,6 +678,8 @@ mod tests {
     use crate::backend::SystemAudio;
     use crate::dsp::DBFS_FLOOR;
     use crate::fake::{FAKE_DEFAULT_ID, FAKE_SPEAKERS_ID, FakeBackend, FakeFormat, Signal};
+    use crate::live::live_tap;
+    use crate::pcm::pcm_stream;
 
     const WAIT: Duration = Duration::from_secs(10);
 
@@ -641,8 +710,12 @@ mod tests {
                 live_tap: None,
                 source: CaptureSource::Microphone,
                 pcm_stream: None,
+                ready_cue: false,
             }
         );
+        assert!(!serde_json::to_string(&config).unwrap().contains("ready_cue"), "off is omitted");
+        let cue: RecorderConfig = serde_json::from_str(r#"{"ready_cue":true}"#).unwrap();
+        assert!(cue.ready_cue);
         assert!(!serde_json::to_string(&config).unwrap().contains("pcm_stream"), "None is omitted");
         let mixed: RecorderConfig = serde_json::from_str(r#"{"source":{"kind":"mixed","output_id":"fake:speakers"},"pcm_stream":{}}"#).unwrap();
         assert_eq!(
@@ -881,6 +954,183 @@ mod tests {
         let no_default = FakeBackend::new().without_default();
         let recorder = Recorder::start_with(&no_default, RecorderConfig::default(), |_| {}).unwrap();
         assert_eq!(recorder.device().id, "fake:default");
+    }
+
+    fn cue_config() -> RecorderConfig {
+        RecorderConfig { ready_cue: true, live_tap: Some(LiveTapConfig::default()), pcm_stream: Some(PcmStreamConfig::default()), ..RecorderConfig::default() }
+    }
+
+    /// The non-zero stretch of what the cue output played: where the tone is.
+    fn tone_span(played: &[f32]) -> Option<std::ops::Range<usize>> {
+        let first = played.iter().position(|v| *v != 0.0)?;
+        let last = played.iter().rposition(|v| *v != 0.0)?;
+        Some(first..last + 1)
+    }
+
+    /// docs/dictation.md §30.3: the output is built when the take starts, after the input and never
+    /// inside an input callback; it stays silent until the first samples, plays the tone once,
+    /// publishes the window, and both streams close with `stop`.
+    #[test]
+    fn the_ready_cue_plays_once_after_the_first_samples() {
+        let backend = FakeBackend::new();
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let recorder = Recorder::start_with_ready(
+            &backend,
+            cue_config(),
+            |_| {},
+            move || {
+                let _ = ready_tx.send(Instant::now());
+            },
+        )
+        .unwrap();
+        assert_eq!(backend.cue_outputs_opened(), vec![false], "one output, opened outside the input callbacks");
+        let tone = crate::cue::cue_tone(backend.cue_rate());
+        wait_until(|| tone_span(&backend.cue_played()).is_some_and(|span| span.len() >= tone.len() - 2) && backend.cue_played().len() > tone.len() * 2);
+        ready_rx.recv_timeout(WAIT).expect("the first samples arrived");
+        let played = backend.cue_played();
+        let span = tone_span(&played).unwrap();
+        assert!(span.start > 0 || played[0] == tone[0], "silence first, then the tone");
+        assert_eq!(played.iter().filter(|v| **v != 0.0).count(), tone.iter().filter(|v| **v != 0.0).count(), "the tone once");
+        assert!(backend.cue_window().is_some(), "published with the first block of the tone");
+        // The fake delivers faster than real time: past the window, the take has sound again.
+        wait_until(|| recorder.elapsed() >= Duration::from_secs(4));
+        let recording = recorder.stop().unwrap();
+        assert!(!recording.is_silent());
+        assert!(!backend.is_running(), "stop closes the input and the cue's output");
+    }
+
+    /// An output that is ready only after the microphone's first samples still plays the tone, and
+    /// publishes its window from the moment it starts.
+    #[test]
+    fn the_cue_plays_when_its_output_is_ready_after_the_first_samples() {
+        let backend = FakeBackend::new().with_cue_output_held();
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let recorder = Recorder::start_with_ready(
+            &backend,
+            cue_config(),
+            |_| {},
+            move || {
+                let _ = ready_tx.send(());
+            },
+        )
+        .unwrap();
+        ready_rx.recv_timeout(WAIT).expect("the first samples arrived");
+        assert!(backend.cue_played().is_empty() && backend.cue_window().is_none());
+        let released = Instant::now();
+        backend.release_cue_output();
+        let tone = crate::cue::cue_tone(backend.cue_rate());
+        wait_until(|| tone_span(&backend.cue_played()).is_some_and(|span| span.len() >= tone.len() - 2));
+        let window = backend.cue_window().expect("published");
+        assert_eq!(window.clock, crate::cue::WindowClock::Capture);
+        // The tone starts with the output's first buffer: its window opens after the release, by
+        // the output latency (20 ms) less `pre` (10 ms).
+        let base_at_release = window.start_ns - 10_000_000;
+        assert!(base_at_release >= 0, "{window:?}");
+        drop(recorder);
+        assert!(!backend.is_running());
+        assert!(released.elapsed() < WAIT);
+    }
+
+    /// No first samples: no tone, and `stop` and a drop both close the two streams at once.
+    #[test]
+    fn without_first_samples_the_cue_stays_silent_and_both_streams_close() {
+        let backend = FakeBackend::new().without_samples();
+        let recorder = Recorder::start_with(&backend, cue_config(), |_| {}).unwrap();
+        wait_until(|| backend.cue_played().len() > 10_000);
+        assert!(backend.cue_played().iter().all(|v| *v == 0.0), "silence only");
+        assert_eq!(backend.cue_window(), None);
+        let recording = recorder.stop().unwrap();
+        assert!(recording.samples.is_empty());
+        assert!(!backend.is_running());
+        let backend = FakeBackend::new().without_samples();
+        drop(Recorder::start_with(&backend, cue_config(), |_| {}).unwrap());
+        assert!(!backend.is_running(), "a drop closes both too");
+    }
+
+    /// A take stopped while the tone plays closes the output at once, mid-tone.
+    #[test]
+    fn stopping_mid_cue_closes_the_output_at_once() {
+        // 1 ms of audio every 50 ms: the tone would take six seconds to write.
+        let backend = FakeBackend::new().with_cue_output(44, Duration::from_millis(50), Some(Duration::from_millis(20)));
+        let recorder = Recorder::start_with(&backend, cue_config(), |_| {}).unwrap();
+        wait_until(|| tone_span(&backend.cue_played()).is_some());
+        let started = Instant::now();
+        recorder.stop().unwrap();
+        assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
+        assert!(!backend.is_running());
+        let written = backend.cue_played().iter().filter(|v| **v != 0.0).count();
+        assert!(written < crate::cue::cue_tone(backend.cue_rate()).len() / 2, "{written}");
+    }
+
+    /// No speaker: the take records without the cue. The computer's sound (and the mix) never
+    /// plays it: it would record the cue itself.
+    #[test]
+    fn the_cue_needs_a_speaker_and_the_microphone_source() {
+        let backend = FakeBackend::new().without_cue_output();
+        let recorder = Recorder::start_with(&backend, cue_config(), |_| {}).unwrap();
+        wait_until(|| recorder.elapsed() >= Duration::from_millis(500));
+        assert!(!recorder.stop().unwrap().is_silent());
+        assert_eq!(backend.cue_outputs_opened(), vec![false]);
+        for source in [CaptureSource::System { output_id: None }, CaptureSource::Mixed { output_id: None, echo_cancel: false }] {
+            let backend = FakeBackend::new();
+            let recorder = Recorder::start_with(&backend, RecorderConfig { source, ..cue_config() }, |_| {}).unwrap();
+            wait_until(|| recorder.elapsed() >= Duration::from_millis(100));
+            recorder.stop().unwrap();
+            assert!(backend.cue_outputs_opened().is_empty(), "no cue output");
+        }
+    }
+
+    /// The window's samples are zeroed before the take, the live tap and the long take's stream
+    /// see them; the first chunk arms the output after `on_ready`.
+    #[test]
+    fn the_cue_window_zeroes_the_take_the_tap_and_the_stream() {
+        const MS: i64 = 1_000_000;
+        let base = Instant::now();
+        let cue = Arc::new(CueShared::with_base(base));
+        let capture = Arc::new(Mutex::new(Capture::default()));
+        let (tap, mut live) = live_tap(&LiveTapConfig::default(), 16_000).unwrap();
+        let (pcm, mut stream) = pcm_stream(&PcmStreamConfig::default(), Some(16_000)).unwrap();
+        let readied = Arc::new(AtomicBool::new(false));
+        let seen = Arc::clone(&readied);
+        let mut sink = Sink {
+            on_level: Box::new(|_| {}),
+            on_ready: Some(Box::new(move || seen.store(true, Ordering::SeqCst))),
+            accumulator: None,
+            frames_per_second: 30,
+            capture: Arc::clone(&capture),
+            max_duration: Duration::from_secs(10),
+            tap: Some((tap, 16_000, 16_000)),
+            pcm: Some((pcm, 16_000, 16_000)),
+            mono: Vec::with_capacity(SCRATCH_FRAMES),
+            cue: Some(Arc::clone(&cue)),
+        };
+        let latency = Duration::from_millis(5);
+        let chunk = [0.5_f32; 160];
+        // Ten-millisecond chunks captured at 0, 10, … 390 ms, each delivered 5 ms later.
+        let feed = |sink: &mut Sink, from: usize, to: usize| {
+            for n in from..to {
+                let at = base + Duration::from_millis(10 * n as u64) + latency;
+                sink.process_timed(SampleChunk::F32(&chunk), 16_000, 1, ChunkTime { at, input_latency: Some(latency) });
+            }
+        };
+        feed(&mut sink, 0, 1);
+        assert!(readied.load(Ordering::SeqCst) && cue.is_armed(), "the first chunk arms the cue after on_ready");
+        feed(&mut sink, 1, 10);
+        // The output publishes 100..=225 ms (capture times), as its first tone block would.
+        cue.publish(crate::cue::CueWindow { start_ns: 100 * MS, end_ns: 225 * MS, clock: crate::cue::WindowClock::Capture });
+        feed(&mut sink, 10, 40);
+        let take = std::mem::take(&mut capture.lock().unwrap().mono);
+        let mut tapped = vec![0.0_f32; take.len() + 64];
+        let n = live.read(&mut tapped);
+        tapped.truncate(n);
+        let mut streamed = vec![0.0_f32; take.len() + 64];
+        let n = stream.read(&mut streamed);
+        streamed.truncate(n);
+        // Frame i is at i / 16 ms: 1 600..=3 600 are inside.
+        let expected: Vec<f32> = (0..6_400).map(|i| if (1_600..=3_600).contains(&i) { 0.0 } else { 0.5 }).collect();
+        assert_eq!(take, expected, "the take");
+        assert_eq!(tapped, expected, "the live tap");
+        assert_eq!(streamed, expected, "the long take's stream");
     }
 
     /// A backend whose stream never delivers a sample.

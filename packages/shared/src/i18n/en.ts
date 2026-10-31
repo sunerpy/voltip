@@ -2478,6 +2478,10 @@ export const en: Messages = {
       echoCancel: "Cancel speaker echo",
       echoCancelHelp:
         "When the computer's sound plays through the speakers, it is removed from what the microphone records, so it is not recorded twice.",
+      readySound: "“Ready to speak” sound",
+      readySoundHelp:
+        "Plays a short sound of about 0.1 seconds when the microphone starts recording, so you know you can speak. The sound is not transcribed, and words said while it plays are silenced too. With Bluetooth headphones the system may switch to call mode.",
+      readySoundMicOnly: "Plays only when the recording source is the microphone.",
       output: "Output device",
       outputHelp: "The sound this device plays is recorded.",
       outputDefault: "System default ({name})",

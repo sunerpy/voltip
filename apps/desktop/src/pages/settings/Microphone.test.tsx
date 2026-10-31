@@ -150,6 +150,41 @@ describe("Settings · 录音来源 (was 麦克风)", () => {
     });
   });
 
+  it("docs/dictation.md section 30.3: the ready sound is off by default, turns on for a microphone take, and says it needs the microphone source", async () => {
+    const user = userEvent.setup();
+    const first = renderApp({ path: "/settings/microphone" });
+    const backend = first.backend;
+    const dialog = await screen.findByRole("dialog", { name: "设置" });
+    const pane = await within(dialog).findByTestId("microphone-pane");
+    const toggle = within(pane).getByRole("switch", { name: "「可以说话」提示音" });
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(pane).toHaveTextContent("提示音不会被识别");
+    await user.click(toggle);
+    await waitFor(() => {
+      expect(backend.peek().settings.recording.ready_sound).toBe(true);
+    });
+    // The rest of the recording settings stay as they were.
+    expect(backend.peek().settings.recording.source).toBe("microphone");
+    first.unmount();
+    renderApp({
+      path: "/settings/microphone",
+      mock: {
+        settings: {
+          recording: {
+            source: "mixed",
+            output_device: null,
+            max_minutes: 10,
+            echo_cancel: true,
+            ready_sound: true,
+          },
+        },
+      },
+    });
+    const mixed = await screen.findByTestId("microphone-pane");
+    expect(within(mixed).getByRole("switch", { name: "「可以说话」提示音" })).toBeDisabled();
+    expect(mixed).toHaveTextContent("只在录音来源为「麦克风」时播放");
+  });
+
   it("an unplugged output stays chosen and is named as such; where the computer's sound cannot be recorded the pane says why", async () => {
     renderApp({
       path: "/settings/microphone",
