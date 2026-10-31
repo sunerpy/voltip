@@ -636,7 +636,9 @@ export function HistoryDetail({
               }}>
               {retakes.running === kept.id
                 ? t("history.recordings.retaking")
-                : t("history.recordings.retake")}
+                : retakeModels.keepsSilence
+                  ? t("history.recordings.retakeUntrimmed")
+                  : t("history.recordings.retake")}
             </Button>
           </div>
         </div>

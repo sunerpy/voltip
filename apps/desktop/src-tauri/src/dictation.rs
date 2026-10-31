@@ -540,9 +540,13 @@ pub fn hardware_status(machine: &voltip_asr_local::HardwareInfo) -> voltip_core:
 /// [`LocalTranscriber`] (with its loaded recogniser) to every local-mode configuration, and — with
 /// a `store` — tells the model library whether the VAD is wanted (`vad_trim`, docs/dictation.md
 /// §12): it then rides along with the next model download, or is fetched right away in the
-/// background when the setting turns on later.
+/// background when the setting turns on later. A configuration for one take only
+/// (`for_one_take`, §30.4) gets its clients and changes neither.
 pub fn engine_factory(prefs: Arc<Mutex<InsertPrefs>>, local: LocalTranscriber, store: Option<ModelStore>, network: Arc<voltip_net::Network>) -> EngineFactory {
     Arc::new(move |engines: &ResolvedEngines| {
+        if engines.for_one_take {
+            return build_clients(engines, &local, &network);
+        }
         *prefs.lock() = InsertPrefs { mode: engines.inject, clipboard_after: engines.clipboard_after };
         if let Some(store) = &store {
             store.set_auxiliary_wanted(engines.vad_trim);

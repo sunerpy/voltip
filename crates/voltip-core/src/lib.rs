@@ -32,6 +32,7 @@ pub mod script;
 pub mod serve;
 mod settings;
 pub mod sync;
+pub mod trial;
 pub mod ui;
 pub mod usage;
 mod view;

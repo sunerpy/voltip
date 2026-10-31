@@ -842,6 +842,8 @@ export const zhCN = {
       },
       retake: "重新识别",
       retaking: "正在识别…",
+      /** docs/dictation.md §30.4: the retake keeps the silence the settings trim. */
+      retakeUntrimmed: "不裁剪静音重新识别",
       delete: "删除录音",
       deleted: "已删除录音",
       done: "已重新识别，文字已复制到剪贴板",
@@ -855,6 +857,11 @@ export const zhCN = {
         polish: "AI 润色",
         polishTrigger: "重新识别使用的 AI 润色：{name}",
         noPolish: "不润色",
+        /** docs/dictation.md §30.4: an on-device retake while the settings trim the silence. */
+        silence: "首尾静音",
+        trim: "裁剪首尾静音",
+        keepSilence: "不裁剪静音",
+        untrimmed: "{name} · 不裁剪静音",
       },
       /** The home page's short list (user request 2026-10-26). */
       viewAll: "查看全部 {n} 条",
@@ -1180,7 +1187,7 @@ export const zhCN = {
       receives: "当前识别服务会收到术语表。",
       notSupported: "当前识别服务不接收术语表，词典只在识别之后纠正。",
       local: "本机模型不接收术语表，词典只在识别之后纠正。",
-      empty: "还没有启用的词条，暂时没有术语表发给识别服务。",
+      empty: "没有启用的词条，目前不会向识别服务发送术语表。",
     },
     facts: "最多 {limit} 条 · 每条最多 {heard} 个曾听成",
     hitsTitle: "历史记录里的命中",
@@ -1491,6 +1498,23 @@ export const zhCN = {
     asrSection: {
       title: "语音识别服务商",
       note: "选一家服务商把录音转成文字；打开卡片选择模型、填写密钥。",
+    },
+    /** 试识别 (docs/dictation.md §30.5): the newest kept recording, recognised with the settings. */
+    trial: {
+      title: "试识别",
+      help: "用录音缓存中最近的一条录音，按当前设置识别一次。结果只显示在这里，不会粘贴或复制，也不写入听写历史。",
+      run: "用最近一条录音试识别",
+      running: "正在识别…",
+      historyOff: "需要先在「隐私与历史」中开启「保存听写历史」和「在本机保留录音」。",
+      cacheOff: "需要先在「隐私与历史」中开启「在本机保留录音」。",
+      noRecording: "录音缓存中没有可用的录音。完成一次 2 分钟以内的听写后即可试识别。",
+      recording: "录音时长 {length}",
+      provider: "识别服务",
+      asrTime: "识别耗时",
+      glossary: "术语表",
+      refine: "AI 润色",
+      refineOff: "未开启",
+      total: "总耗时",
     },
     llmSection: {
       title: "AI 润色服务商",

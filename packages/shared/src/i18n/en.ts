@@ -824,6 +824,7 @@ export const en: Messages = {
       },
       retake: "Recognise again",
       retaking: "Recognising…",
+      retakeUntrimmed: "Recognise again without trimming silence",
       delete: "Delete recording",
       deleted: "Recording deleted",
       done: "Recognised again; the text is on the clipboard",
@@ -837,6 +838,10 @@ export const en: Messages = {
         polish: "AI polish",
         polishTrigger: "AI polish for recognising again: {name}",
         noPolish: "No polish",
+        silence: "Silence at either end",
+        trim: "Trim the silence",
+        keepSilence: "Keep the silence",
+        untrimmed: "{name} · silence kept",
       },
       /** The home page's short list (user request 2026-10-26). */
       viewAll: "View all {n}",
@@ -1479,6 +1484,24 @@ export const en: Messages = {
     asrSection: {
       title: "Speech recognition provider",
       note: "Pick the provider that turns your recording into text; open a card to choose a model and enter a key.",
+    },
+    trial: {
+      title: "Test recognition",
+      help: "Recognises the newest recording in the recording cache once, with the current settings. The result is shown here only: nothing is pasted or copied, and nothing goes into the dictation history.",
+      run: "Test with the newest recording",
+      running: "Recognising…",
+      historyOff:
+        "Turn on Keep dictation history and Keep recordings on this computer under Privacy and history first.",
+      cacheOff: "Turn on Keep recordings on this computer under Privacy and history first.",
+      noRecording:
+        "The recording cache has no recording to test with. Dictate once, for two minutes at most, and try again.",
+      recording: "Recording length {length}",
+      provider: "Recognition service",
+      asrTime: "Recognition time",
+      glossary: "Glossary",
+      refine: "AI polish",
+      refineOff: "Off",
+      total: "Total time",
     },
     llmSection: {
       title: "AI polish provider",

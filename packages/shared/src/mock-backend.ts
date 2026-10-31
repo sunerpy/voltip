@@ -822,6 +822,8 @@ export const MOCK_DICTATION_BUSY = "已有听写正在进行";
 export const MOCK_RECORDING_GONE = "这段录音已不在录音缓存中";
 /** A 重新识别 on models that cannot run (no key, not installed): the core names the issue. */
 export const MOCK_RETAKE_NOT_READY = "服务商缺少 API 密钥（在「语音模型」或「AI 模型」页填写）";
+/** Why a 试识别 is refused: the last one has not ended (`voltip_core::trial::TRIAL_BUSY`). */
+export const MOCK_TRIAL_BUSY = "上一次试识别还没有结束";
 /** A kept recording's size per second: the core's 16 kHz mono 16-bit WAV. */
 export const MOCK_WAV_BYTES_PER_SECOND = 32_000;
 /** A kept long take's size per second: the core's Ogg Opus parts, about 21.5 kbit/s
@@ -1361,6 +1363,8 @@ export class MockBackend implements Backend {
               notice: null,
               ...options.autoBackup,
             },
+      // docs/dictation.md §30.5: no 试识别 yet.
+      recognition_trial: null,
       dictionary: [...(options.dictionary ?? [])],
       rules: [...(options.rules ?? [])],
       vocabulary_ignored: [...(options.vocabularyIgnored ?? [])],
@@ -2643,11 +2647,15 @@ export class MockBackend implements Backend {
       if (this.state.auto_backup.notice !== null) this.emitAutoBackup({ notice: null });
     },
     audio_retake: (args) => {
-      const { id, asr, refine } = required(args);
+      const { id, asr, refine, vadTrim } = required(args);
       this.retake(id, {
         ...(asr === undefined ? {} : { asr }),
         ...(refine === undefined ? {} : { refine }),
+        ...(vadTrim === undefined ? {} : { vadTrim }),
       });
+    },
+    recognition_trial: () => {
+      this.recognitionTrial();
     },
     import_add: (args) => {
       this.importAdd(required(args));
@@ -4914,7 +4922,8 @@ export class MockBackend implements Backend {
       this.emit({ type: "error", message: MOCK_DICTATION_BUSY });
       return;
     }
-    const chosen = models.asr !== undefined || models.refine !== undefined;
+    const chosen =
+      models.asr !== undefined || models.refine !== undefined || models.vadTrim !== undefined;
     const engines = chosen
       ? this.resolveEngines(applyRetakeModels(this.state.settings.engines, models))
       : this.state.engines;
@@ -5034,6 +5043,82 @@ export class MockBackend implements Backend {
         stage_started_at: this.now(),
       });
       this.laterDictation(MOCK_REFINE_MS, finish);
+    });
+  }
+
+  /** 用最近一条录音试一下 (docs/dictation.md §30.5), as the core runs it: the newest kept WAV on the
+   *  settings' models, its scene matched against the application it was recorded in; nothing is
+   *  pasted, copied or written to the history, and the take's state is left alone. */
+  private recognitionTrial() {
+    if (this.state.recognition_trial?.state === "running") {
+      this.emit({ type: "error", message: MOCK_TRIAL_BUSY });
+      return;
+    }
+    const recording = this.state.audio_cache.recordings.find((r) => r.format !== "opus");
+    if (recording === undefined) {
+      this.emit({
+        type: "recognition_trial",
+        trial: { state: "failed", failure: { kind: "no_recording" } },
+      });
+      return;
+    }
+    const engines = this.state.engines;
+    if (!engines.asr_ready) {
+      this.emit({
+        type: "recognition_trial",
+        trial: {
+          state: "failed",
+          recording: recording.id,
+          failure: { kind: "failed", code: "asr", message: `asr: ${MOCK_RETAKE_NOT_READY}` },
+        },
+      });
+      return;
+    }
+    const settings = this.state.settings.engines;
+    const scene =
+      recording.app === undefined ? undefined : matchScene(this.state.scenes, recording.app);
+    const refine = scene?.overrides.refine_enabled ?? settings.refine_enabled;
+    const refineFailure = !refine
+      ? undefined
+      : engines.refine_ready
+        ? this.refineFailure
+        : ("unconfigured" as const);
+    const polished = refine && refineFailure === undefined;
+    const startedAt = this.now();
+    this.emit({
+      type: "recognition_trial",
+      trial: { state: "running", recording: recording.id, started_at: startedAt },
+    });
+    const refineMs = refine && engines.refine_ready ? MOCK_REFINE_MS : 0;
+    this.later(MOCK_ASR_MS + refineMs, () => {
+      const vocabulary = Vocabulary.compile(this.state.dictionary, this.state.rules);
+      const corrected = vocabulary.correct(MOCK_DICTATION_RAW).text;
+      const refined = polished ? vocabulary.correct(MOCK_DICTATION_TEXT).text : corrected;
+      this.emit({
+        type: "recognition_trial",
+        trial: {
+          state: "done",
+          recording: recording.id,
+          recorded_at_ms: recording.at_ms,
+          duration_ms: recording.duration_ms,
+          text: vocabulary.applyRules(refined).text,
+          raw_text: MOCK_DICTATION_RAW,
+          asr_provider: settings.asr_provider,
+          asr_model: engines.asr_model,
+          asr_ms: MOCK_ASR_MS,
+          glossary_sent: engines.glossary === "prompt" || engines.glossary === "hotwords",
+          refined: polished,
+          ...(polished
+            ? {
+                refine_provider: settings.llm_provider,
+                refine_model: engines.refine_model,
+                refine_ms: MOCK_REFINE_MS,
+              }
+            : {}),
+          ...(refineFailure === undefined ? {} : { refine_failure: refineFailure }),
+          elapsed_ms: this.now() - startedAt,
+        },
+      });
     });
   }
 

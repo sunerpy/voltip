@@ -76,6 +76,8 @@ export function recordingOfEntry(
 export interface RetakeModels {
   asr?: RecognitionChoice;
   refine?: PolishChoice;
+  /** `false`: the on-device recognition keeps the silence (不裁剪静音重新识别, §30.4). */
+  vadTrim?: boolean;
 }
 
 /** `engines` with these choices made, as switching to them in the settings would; the endpoint a
@@ -98,6 +100,7 @@ export function applyRetakeModels(engines: EngineSettings, models: RetakeModels)
     next.llm_provider = refine.provider;
     providers[refine.provider] = { ...providers[refine.provider], llm_model: refine.model };
   }
+  if (models.vadTrim !== undefined) next.vad_trim = models.vadTrim;
   return next;
 }
 

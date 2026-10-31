@@ -6,8 +6,11 @@ import {
   providerStatus,
 } from "@voltip/shared";
 import {
+  MOCK_ASR_MS,
+  MOCK_DICTATION_TEXT,
   MOCK_ENGINE_BUILTIN,
   MOCK_MODEL_FILE,
+  MOCK_REFINE_MS,
   MOCK_MODEL_TICK_MS,
   MOCK_MODEL_TICKS,
   MOCK_MODELS_ROOT,
@@ -239,6 +242,97 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     expect(modelsPage().textContent).not.toMatch(/计划中|尚未接入|示例/);
   });
 
+  it("docs/dictation.md section 30.5: 试识别 recognises the newest kept recording and shows what a take would get, delivering nothing", async () => {
+    const user = userEvent.setup();
+    const recording = {
+      id: "r1",
+      at_ms: 1_758_699_000_000,
+      duration_ms: 4200,
+      bytes: 134_444,
+      status: { kind: "cancelled" as const },
+    };
+    const { backend } = renderApp({
+      path: "/speech",
+      mock: { history: [], audioCache: [recording] },
+    });
+    const trial = await screen.findByTestId("recognition-trial");
+    expect(trial).toHaveTextContent("录音时长 4.2 s");
+    await user.click(within(trial).getByRole("button", { name: "用最近一条录音试识别" }));
+    expect(within(trial).getByRole("button", { name: "正在识别…" })).toBeDisabled();
+    const result = await within(trial).findByTestId(
+      "recognition-trial-result",
+      {},
+      { timeout: (MOCK_ASR_MS + MOCK_REFINE_MS) * 4 },
+    );
+    expect(within(result).getByText(MOCK_DICTATION_TEXT)).toHaveAttribute("data-user-text");
+    expect(result).toHaveTextContent(`识别服务内置服务 · ${backend.peek().engines.asr_model}`);
+    expect(result).toHaveTextContent(`识别耗时${MOCK_ASR_MS} ms`);
+    // The dictionary is empty: no glossary went out.
+    expect(result).toHaveTextContent("术语表没有发给识别服务");
+    expect(result).toHaveTextContent(`AI 润色内置服务 · ${backend.peek().engines.refine_model}`);
+    expect(within(trial).getByRole("button", { name: "用最近一条录音试识别" })).toBeEnabled();
+    // Shown here only: no entry, and the take's state was left alone.
+    expect(backend.peek().history_recent).toEqual([]);
+    expect(backend.peek().dictation.phase.phase).toBe("idle");
+  });
+
+  it("docs/dictation.md section 30.5: 试识别 is off, and says why, while no recording can be tried; a failure says why too", async () => {
+    const recording = {
+      id: "r1",
+      at_ms: 1_758_699_000_000,
+      duration_ms: 4200,
+      bytes: 134_444,
+      status: { kind: "cancelled" as const },
+    };
+    const long = { ...recording, id: "long", duration_ms: 300_000, format: "opus" as const };
+    const cases: [Parameters<typeof renderApp>[0], string][] = [
+      [{ path: "/speech", mock: { history: [], audioCache: [] } }, "录音缓存中没有可用的录音"],
+      // A long take is not tried.
+      [{ path: "/speech", mock: { history: [], audioCache: [long] } }, "录音缓存中没有可用的录音"],
+      [
+        {
+          path: "/speech",
+          mock: {
+            history: [],
+            settings: { audio_cache: { enabled: false, keep: 20, max_mb: 200 } },
+          },
+        },
+        "开启「在本机保留录音」",
+      ],
+      [
+        {
+          path: "/speech",
+          mock: {
+            history: [],
+            audioCache: [recording],
+            settings: { history: { enabled: false, keep: 200 } },
+          },
+        },
+        "开启「保存听写历史」和「在本机保留录音」",
+      ],
+    ];
+    for (const [options, why] of cases) {
+      const view = renderApp(options);
+      const trial = await screen.findByTestId("recognition-trial");
+      expect(within(trial).getByRole("button", { name: "用最近一条录音试识别" })).toBeDisabled();
+      expect(trial).toHaveTextContent(why);
+      view.unmount();
+    }
+    // A recogniser that cannot run: the failure says why, in place.
+    const user = userEvent.setup();
+    renderApp({
+      path: "/speech",
+      mock: {
+        history: [],
+        audioCache: [recording],
+        settings: { engines: { ...defaultEngineSettings(), asr_provider: "groq" } },
+      },
+    });
+    const trial = await screen.findByTestId("recognition-trial");
+    await user.click(within(trial).getByRole("button", { name: "用最近一条录音试识别" }));
+    expect(await within(trial).findByRole("alert")).toHaveTextContent("识别服务出错：");
+  });
+
   it("docs/dictation.md section 30.6: under the recognition cards, whether the service in use receives the glossary", async () => {
     const entry = {
       id: "00000000-0000-4000-8000-0000000000d1",
@@ -254,7 +348,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
       [{ path: "/speech", mock: { dictionary: [entry] } }, "当前识别服务会收到术语表。"],
       [
         { path: "/speech", mock: { dictionary: [{ ...entry, enabled: false }] } },
-        "还没有启用的词条，暂时没有术语表发给识别服务。",
+        "没有启用的词条，目前不会向识别服务发送术语表。",
       ],
       [
         {

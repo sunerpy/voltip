@@ -266,7 +266,7 @@ describe("纠正识别错误 on the phone", () => {
       within(within(sheet).getByTestId("fix-term-from")).getByText("来自润色结果"),
     ).toBeOnTheScreen();
     expect(within(sheet).getByTestId("fix-note")).toHaveTextContent(
-      "识别完成后立即纠正；正确写法还会作为术语发送给云端识别和 AI 润色。",
+      "识别完成后立即纠正；正确写法还会作为术语发给 AI 润色，以及支持术语表的识别服务。",
     );
     // The effect on the recent takes, and the one that kept the words.
     await waitFor(() => {

@@ -23,6 +23,7 @@ import {
   MOCK_AUDIO_DEVICES,
   MOCK_TAKEN_PORTS,
   MOCK_TEXT_MS,
+  MOCK_TRIAL_BUSY,
   PHONE_TEXT_UNAVAILABLE,
   MOCK_AVAILABLE_VERSION,
   MOCK_CURRENT_VERSION,
@@ -4315,6 +4316,82 @@ describe("MockBackend audio cache (docs/dictation.md §26)", () => {
     expect(entry?.refine_model).toBeUndefined();
     expect(backend.peek().settings.engines).toEqual(engines);
     expect(backend.peek().engines.asr_provider).toBe("builtin");
+  });
+
+  it("试识别 recognises the newest kept WAV with the settings and delivers nothing (§30.5)", async () => {
+    const backend = new MockBackend({
+      now: () => clock,
+      history: [],
+      audioCache: [
+        {
+          id: "long",
+          at_ms: T0,
+          duration_ms: 300_000,
+          bytes: 2_000_000,
+          status: { kind: "cancelled" },
+          format: "opus",
+        },
+        {
+          id: "r1",
+          at_ms: T0 - 1,
+          duration_ms: 3000,
+          bytes: 96_044,
+          status: { kind: "cancelled" },
+        },
+      ],
+    });
+    const events = collect(backend);
+    await backend.invoke("recognition_trial");
+    expect(backend.peek().recognition_trial).toEqual({
+      state: "running",
+      recording: "r1",
+      started_at: T0,
+    });
+    await backend.invoke("recognition_trial");
+    expect(events).toContainEqual({ type: "error", message: MOCK_TRIAL_BUSY });
+    tick(MOCK_ASR_MS + MOCK_REFINE_MS);
+    expect(backend.peek().recognition_trial).toMatchObject({
+      state: "done",
+      recording: "r1",
+      recorded_at_ms: T0 - 1,
+      duration_ms: 3000,
+      raw_text: MOCK_DICTATION_RAW,
+      text: MOCK_DICTATION_TEXT,
+      refined: true,
+      asr_provider: "builtin",
+      glossary_sent: false,
+      elapsed_ms: MOCK_ASR_MS + MOCK_REFINE_MS,
+    });
+    expect(backend.peek().history_recent).toEqual([]);
+    expect(backend.peek().dictation.phase.phase).toBe("idle");
+    expect(backend.peek().audio_cache.recordings.map((r) => r.status.kind)).toEqual([
+      "cancelled",
+      "cancelled",
+    ]);
+  });
+
+  it("试识别 says when there is no recording, or no recogniser, to try", async () => {
+    const backend = new MockBackend({ now: () => clock, history: [], audioCache: [] });
+    await backend.invoke("recognition_trial");
+    expect(backend.peek().recognition_trial).toEqual({
+      state: "failed",
+      failure: { kind: "no_recording" },
+    });
+    const engines = { ...defaultEngineSettings(), asr_provider: "groq" as const };
+    const unready = new MockBackend({
+      now: () => clock,
+      history: [],
+      settings: { engines },
+      audioCache: [
+        { id: "r1", at_ms: T0, duration_ms: 3000, bytes: 96_044, status: { kind: "cancelled" } },
+      ],
+    });
+    await unready.invoke("recognition_trial");
+    expect(unready.peek().recognition_trial).toEqual({
+      state: "failed",
+      recording: "r1",
+      failure: { kind: "failed", code: "asr", message: `asr: ${MOCK_RETAKE_NOT_READY}` },
+    });
   });
 
   it("keeps nothing with the history off or on a phone", async () => {

@@ -1330,6 +1330,56 @@ export const emptyAudioCache = (): AudioCacheView => ({
   bytes: 0,
 });
 
+/** What a 试识别 gave (`voltip_core::trial::TrialResult`, docs/dictation.md §30.5): the text a take
+ *  would deliver, who recognised and cleaned it up, how long each took and whether the glossary
+ *  went out. Nothing of it was pasted, copied or written to the history. */
+export const trialResultSchema = z.object({
+  recording: z.string(),
+  recorded_at_ms: z.number().nonnegative(),
+  duration_ms: z.number().nonnegative(),
+  text: z.string(),
+  raw_text: z.string(),
+  asr_provider: providerIdSchema,
+  asr_model: z.string(),
+  /** Why a fallback model recognised it; absent when the selected one did. */
+  asr_fallback: switchReasonSchema.optional(),
+  asr_ms: z.number().nonnegative(),
+  glossary_sent: z.boolean(),
+  refined: z.boolean(),
+  refine_provider: providerIdSchema.optional(),
+  refine_model: z.string().optional(),
+  refine_ms: z.number().nonnegative().optional(),
+  /** Why a clean-up the settings ask for was not used (§3.6). */
+  refine_failure: refineFailureSchema.optional(),
+  elapsed_ms: z.number().nonnegative(),
+});
+export type TrialResult = z.infer<typeof trialResultSchema>;
+
+/** Why a 试识别 gave no text (`TrialFailure`): no kept recording to try (the cache is off, empty
+ *  or holds long takes only), or the recognition failed as a take's would. */
+export const trialFailureSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("no_recording") }),
+  z.object({ kind: z.literal("failed"), code: dictationFailureCodeSchema, message: z.string() }),
+]);
+export type TrialFailure = z.infer<typeof trialFailureSchema>;
+
+/** `UiState.recognition_trial` (`voltip_core::trial::TrialView`): the last 试识别 since the app
+ *  started, or the one running. */
+export const trialViewSchema = z.discriminatedUnion("state", [
+  z.object({
+    state: z.literal("running"),
+    recording: z.string(),
+    started_at: z.number().nonnegative(),
+  }),
+  trialResultSchema.extend({ state: z.literal("done") }),
+  z.object({
+    state: z.literal("failed"),
+    recording: z.string().optional(),
+    failure: trialFailureSchema,
+  }),
+]);
+export type TrialView = z.infer<typeof trialViewSchema>;
+
 // ---- Imported audio and video files (docs/dictation.md §31) ----
 
 /** The polish of an import (`voltip_core::import::PolishModel`): a provider's model, a cloud
@@ -3157,6 +3207,8 @@ export const uiStateSchema = z.object({
   models_location: modelsLocationViewSchema.default(emptyModelsLocation),
   /** The automatic backups (§4.6.1); not available on the phone. */
   auto_backup: autoBackupViewSchema.default(emptyAutoBackup),
+  /** The last 试识别 (§30.5); `null` before the first. */
+  recognition_trial: trialViewSchema.nullable().default(null),
   /** The personal dictionary and the replacement rules (§16), in order; `[]` on the phone. */
   dictionary: z.array(dictionaryEntrySchema).default(() => []),
   rules: z.array(replacementRuleSchema).default(() => []),
@@ -3269,6 +3321,8 @@ export const uiEventSchema = z.discriminatedUnion("type", [
   importsViewSchema.extend({ type: z.literal("imports") }),
   /** The automatic backups, whole: the folder, a backup written or failed, the notice (§4.6.1). */
   autoBackupViewSchema.extend({ type: z.literal("auto_backup") }),
+  /** Where the last 试识别 is (§30.5): running, its result, or why it gave none. */
+  z.object({ type: z.literal("recognition_trial"), trial: trialViewSchema }),
   /** The phone's take to a desktop moved (§20); `null` before the first. */
   z.object({
     type: z.literal("phone_take"),
@@ -3580,7 +3634,11 @@ export interface CommandArgs {
   /** 重新识别 (§26): the take follows as `dictation` events (`retake`, `recording`); its text goes
    *  to the clipboard and into the history. Refused (an `error` event) while a take runs. */
   /** §26.4: `asr` / `refine` other models than the settings', for this take only. */
-  audio_retake: { id: string; asr?: RecognitionChoice; refine?: PolishChoice };
+  audio_retake: { id: string; asr?: RecognitionChoice; refine?: PolishChoice; vadTrim?: boolean };
+  /** 用最近一条录音试一下 (§30.5): the newest kept recording recognised with the saved settings;
+   *  `recognition_trial` events follow. Nothing is pasted, copied or written to the history;
+   *  refused (an `error` event) while a trial runs. */
+  recognition_trial: undefined;
   /** 导入音频或视频 (§31): the files join the import queue with these models and language; the
    *  queue follows as `imports` events, each entry as `history`. Refused (an `error` event) with
    *  the built-in service, with the history off, and on the phone. */
@@ -3968,6 +4026,8 @@ export function applyEvent(state: UiState, event: UiEvent): UiState {
       const { type: _type, ...imports } = event;
       return { ...state, imports };
     }
+    case "recognition_trial":
+      return { ...state, recognition_trial: event.trial };
     case "engines": {
       const { type: _type, ...engines } = event;
       return { ...state, engines };

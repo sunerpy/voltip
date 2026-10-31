@@ -27,6 +27,7 @@ use voltip_core::paste::{CopyReason, PasteFailure, PasteOutcome};
 use voltip_core::phone::{PhoneTakeFailure, PhoneTakeState, PhoneTakeView};
 use voltip_core::phone::{PhoneTextSource, SentText, SentTextFailure, SentTextState};
 use voltip_core::presets::{BuiltinPreset, CustomPreset, PresetDraft, PresetId, PresetRef, PresetTryOutcome};
+use voltip_core::trial::{TrialFailure, TrialResult, TrialView};
 use voltip_core::ui::{
     GpuDevice, HardwareStatus, HotkeyCapabilities, HotkeyStatus, NetworkStatus, RefineNotice, ServePhase, ServeStatus, UiEvent, UiState, UpdateStatus,
 };
@@ -1238,6 +1239,28 @@ fn models_location() -> ModelsLocationView {
 /// The automatic backups (docs/dictation.md §4.6.1): a folder of the user's with this computer's
 /// weekly backup in it (its tag in the name, user decision D23), the failure of the one before an
 /// update, and its notice on home.
+/// A 试识别 that recognised and cleaned up the newest kept recording (docs/dictation.md §30.5).
+fn trial_result() -> TrialResult {
+    TrialResult {
+        recording: uuid(RECORDING_ID),
+        recorded_at_ms: AT_MS - 120_000,
+        duration_ms: 4_200,
+        text: "Voltip 的试识别。".into(),
+        raw_text: "沃提普的试识别".into(),
+        asr_provider: ProviderId::Custom,
+        asr_model: "whisper-1".into(),
+        asr_fallback: None,
+        asr_ms: 640,
+        glossary_sent: true,
+        refined: true,
+        refine_provider: Some(ProviderId::Custom),
+        refine_model: Some("gpt-4o-mini".into()),
+        refine_ms: Some(820),
+        refine_failure: None,
+        elapsed_ms: 1_530,
+    }
+}
+
 fn auto_backup() -> AutoBackupView {
     let failure = AutoBackupFailure { kind: AutoKind::Update, at_ms: AT_MS - 60_000, detail: "Access is denied. (os error 5)".into() };
     let device = voltip_core::backup::auto::device_tag(&DESKTOP_KEY);
@@ -1304,6 +1327,7 @@ fn full_state() -> UiState {
         audio_cache: audio_cache(),
         imports: imports_view(),
         auto_backup: auto_backup(),
+        recognition_trial: Some(TrialView::Done(Box::new(trial_result()))),
         // More entries than the recent ones: the rest are read through the queries.
         history_total: 312,
         engines: engine_status(),
@@ -1428,6 +1452,7 @@ fn event_tag(event: &UiEvent) -> &'static str {
         UiEvent::AudioCache(_) => "audio_cache",
         UiEvent::Imports(_) => "imports",
         UiEvent::AutoBackup(_) => "auto_backup",
+        UiEvent::RecognitionTrial { .. } => "recognition_trial",
         UiEvent::ProviderProbe(_) => "provider_probe",
         UiEvent::PhoneTake { .. } => "phone_take",
         UiEvent::SentTexts { .. } => "sent_texts",
@@ -1444,7 +1469,7 @@ fn event_tag(event: &UiEvent) -> &'static str {
     }
 }
 
-const ALL_EVENT_TAGS: [&str; 33] = [
+const ALL_EVENT_TAGS: [&str; 34] = [
     "state",
     "identity",
     "settings",
@@ -1478,6 +1503,7 @@ const ALL_EVENT_TAGS: [&str; 33] = [
     "usage",
     "imports",
     "auto_backup",
+    "recognition_trial",
 ];
 
 /// The computer's settings as a phone shows them (docs/dictation.md §20.8): every `Option` set.
@@ -2361,6 +2387,30 @@ fn all_events() -> Vec<UiEvent> {
         UiEvent::AutoBackup(auto_backup()),
         UiEvent::AutoBackup(AutoBackupView { folder: auto_backup().default_folder, custom: false, last: None, failure: None, notice: None, ..auto_backup() }),
         UiEvent::AutoBackup(AutoBackupView::default()),
+        // docs/dictation.md §30.5: a 试识别 running, its result, a failed one, and none to try.
+        UiEvent::RecognitionTrial { trial: TrialView::Running { recording: uuid(RECORDING_ID), started_at: AT_MS } },
+        UiEvent::RecognitionTrial { trial: TrialView::Done(Box::new(trial_result())) },
+        UiEvent::RecognitionTrial {
+            trial: TrialView::Done(Box::new(TrialResult {
+                asr_provider: ProviderId::Builtin,
+                asr_model: "Qwen/Qwen3-ASR-1.7B".into(),
+                asr_fallback: Some(voltip_core::dictation::SwitchReason::Quota),
+                glossary_sent: false,
+                refined: false,
+                refine_provider: None,
+                refine_model: None,
+                refine_ms: Some(1_200),
+                refine_failure: Some(RefineFailure::Truncated),
+                ..trial_result()
+            })),
+        },
+        UiEvent::RecognitionTrial {
+            trial: TrialView::Failed {
+                recording: Some(uuid(RECORDING_ID)),
+                failure: TrialFailure::Failed { code: FailureCode::Asr, message: "asr: 503 service unavailable".into() },
+            },
+        },
+        UiEvent::RecognitionTrial { trial: TrialView::Failed { recording: None, failure: TrialFailure::NoRecording } },
         // docs/dictation.md §10.9: a move halfway, every way one ends, and the phone (no library).
         UiEvent::ModelsLocation(models_location()),
         UiEvent::ModelsLocation(ModelsLocationView { moving: None, last: Some(ModelsMoveOutcome::Cancelled), ..models_location() }),
@@ -2424,6 +2474,7 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::AudioCacheClear => "AudioCacheClear",
         UiCommand::AudioCacheDelete { .. } => "AudioCacheDelete",
         UiCommand::AudioRetake { .. } => "AudioRetake",
+        UiCommand::RecognitionTrial => "RecognitionTrial",
         UiCommand::SettingsSetOverlay { .. } => "SettingsSetOverlay",
         UiCommand::PhoneTakeStart { .. } => "PhoneTakeStart",
         UiCommand::PhoneTakeStop => "PhoneTakeStop",
@@ -2540,6 +2591,8 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         ("settings_set_audio_cache", json!({ "enabled": true, "keep": 50, "maxMb": 500 }), "SettingsSetAudioCache"),
         ("audio_cache_clear", Value::Null, "AudioCacheClear"),
         ("audio_cache_delete", json!({ "id": RECORDING_ID_2 }), "AudioCacheDelete"),
+        // docs/dictation.md §30.5: 用最近一条录音试一下.
+        ("recognition_trial", Value::Null, "RecognitionTrial"),
         // docs/dictation.md §4.6.1: the weekly backup, the default folder again, home's notice closed.
         ("settings_set_backup", json!({ "weekly": false }), "SettingsSetBackup"),
         ("backup_folder_reset", Value::Null, "BackupFolderReset"),
@@ -2547,7 +2600,8 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         // §26.4: on other models than the settings', for that take only.
         (
             "audio_retake",
-            json!({ "id": RECORDING_ID_2, "asr": { "kind": "remote", "provider": "custom", "model": "whisper-2" }, "refine": { "kind": "off" } }),
+            // docs/dictation.md §30.4: 不裁剪静音重新识别 keeps the silence for that take.
+            json!({ "id": RECORDING_ID_2, "asr": { "kind": "remote", "provider": "custom", "model": "whisper-2" }, "refine": { "kind": "off" }, "vadTrim": false }),
             "AudioRetake",
         ),
         ("settings_set_overlay", json!({ "placement": "top" }), "SettingsSetOverlay"),

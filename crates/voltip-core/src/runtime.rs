@@ -506,6 +506,11 @@ pub enum CoreCommand {
         /// Other models than the settings', if any.
         models: crate::audio_cache::RetakeModels,
     },
+    /// 用最近一条录音试一下 (docs/dictation.md §30.5): the newest kept recording recognised with the
+    /// clients the next take uses and the saved settings; the answer is
+    /// [`CoreEvent::RecognitionTrial`]. Nothing is pasted, copied or written to the history; refused
+    /// while a trial runs.
+    RecognitionTrial,
     /// Fetch and verify a local model (catalogue id); progress arrives as `Models` events.
     ModelDownload(String),
     /// Stop a running download (`.part` files stay for a resume).
@@ -809,6 +814,8 @@ pub enum CoreEvent {
     /// The recordings the audio cache holds (docs/dictation.md §26); on `Ready` and after every
     /// change.
     AudioCache(crate::audio_cache::AudioCacheView),
+    /// Where the last 试识别 is (docs/dictation.md §30.5): running, its result, or why it gave none.
+    RecognitionTrial(crate::trial::TrialView),
     /// Where the automatic backups go, the newest one and the last failure (docs/dictation.md
     /// §4.6.1); on `Ready` and after every change.
     AutoBackup(crate::backup::auto::AutoBackupView),
@@ -1029,6 +1036,7 @@ impl AppCore {
             audio,
             recovery: Recovery { leftovers, stop: Arc::new(std::sync::atomic::AtomicBool::new(false)), tx: recover_tx },
             glossary_empty: !crate::vocabulary::has_glossary(dictionary.entries()),
+            trial_busy: Arc::default(),
             dictionary,
             rules,
             ignored,
@@ -1271,6 +1279,8 @@ struct Runtime {
     /// The dictionary has no enabled entry to send as the glossary (docs/dictation.md §30.6), as
     /// `UiState.engines` last said.
     glossary_empty: bool,
+    /// A 试识别 runs (docs/dictation.md §30.5): set by its command, cleared by its task.
+    trial_busy: Arc<std::sync::atomic::AtomicBool>,
     /// `rules.json` (docs/dictation.md §16).
     rules: RuleStore,
     /// The pairs the learning suggestions leave out (docs/dictation.md §16.10).
@@ -1695,6 +1705,7 @@ impl Runtime {
             CoreCommand::AudioCacheClear => self.audio_cache_clear(),
             CoreCommand::AudioCacheDelete(id) => self.audio_cache_delete(id),
             CoreCommand::AudioRetake { id, models } => self.audio_retake(id, models),
+            CoreCommand::RecognitionTrial => self.recognition_trial(),
             CoreCommand::HistoryProcess { request_id, id, preset } => {
                 self.process_entry(request_id, id, preset);
                 Ok(())

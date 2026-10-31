@@ -72,6 +72,7 @@ function loadFixture(name: string): unknown {
 /** Every event tag the Rust enum has (the `Record` makes a new `UiEventType` a compile error). */
 const EVENT_TYPE_SET: Record<UiEventType, null> = {
   state: null,
+  recognition_trial: null,
   serve: null,
   network: null,
   mcp: null,
@@ -165,6 +166,7 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   audio_cache_clear: null,
   audio_cache_delete: null,
   audio_retake: null,
+  recognition_trial: null,
   import_add: null,
   import_cancel: null,
   import_retry: null,
@@ -311,6 +313,7 @@ const argSchemas = {
       id: z.string(),
       asr: recognitionChoiceSchema.optional(),
       refine: polishChoiceSchema.optional(),
+      vadTrim: z.boolean().optional(),
     })
     .strict(),
   import_add: z
@@ -427,6 +430,7 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
     case "dictation_cancel":
     case "history_clear":
     case "audio_cache_clear":
+    case "recognition_trial":
     case "backup_folder_reset":
     case "backup_notice_dismiss":
     case "models_location_reset":

@@ -126,6 +126,11 @@ pub enum UiEvent {
     },
     /// The recordings the audio cache holds (docs/dictation.md §26), full replacement.
     AudioCache(crate::audio_cache::AudioCacheView),
+    /// Where the last 试识别 is (docs/dictation.md §30.5).
+    RecognitionTrial {
+        /// Running, its result, or why it gave none.
+        trial: crate::trial::TrialView,
+    },
     /// The import queue (docs/dictation.md §31), full replacement.
     Imports(crate::import::ImportsView),
     /// Where the automatic backups go, the newest one and the last failure (docs/dictation.md
@@ -516,6 +521,9 @@ pub struct UiState {
     /// none (the phone).
     #[serde(default)]
     pub auto_backup: crate::backup::auto::AutoBackupView,
+    /// The last 试识别 since the app started (docs/dictation.md §30.5); `None` before the first.
+    #[serde(default)]
+    pub recognition_trial: Option<crate::trial::TrialView>,
     /// Resolved ASR / refine / inject configuration.
     #[serde(default)]
     pub engines: EngineStatus,
@@ -619,6 +627,7 @@ impl Default for UiState {
             audio_cache: crate::audio_cache::AudioCacheView::default(),
             imports: crate::import::ImportsView::default(),
             auto_backup: crate::backup::auto::AutoBackupView::default(),
+            recognition_trial: None,
             engines: EngineStatus::default(),
             update: UpdateStatus::default(),
             models: Vec::new(),
@@ -756,6 +765,10 @@ impl UiState {
             CoreEvent::AutoBackup(view) => {
                 self.auto_backup = view.clone();
                 UiEvent::AutoBackup(view)
+            }
+            CoreEvent::RecognitionTrial(trial) => {
+                self.recognition_trial = Some(trial.clone());
+                UiEvent::RecognitionTrial { trial }
             }
             CoreEvent::ProviderProbe(report) => UiEvent::ProviderProbe(report),
             CoreEvent::Connectivity(status) => {

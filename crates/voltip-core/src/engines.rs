@@ -685,6 +685,10 @@ pub struct ResolvedEngines {
     /// `engine_clients` for the client factory, whose built-in clients send its headers; `None`
     /// when nothing is metered. Equal meterings name the same device and client.
     pub metering: Option<crate::usage::Metering>,
+    /// Resolved for one take only (a 重新识别 on other choices, a 试识别; docs/dictation.md §26.4,
+    /// §30.4): the factory makes this take's clients and changes nothing a shell keeps for the
+    /// settings (the VAD download, the injection preferences).
+    pub for_one_take: bool,
     providers: Vec<ProviderStatus>,
 }
 
@@ -1007,6 +1011,7 @@ impl ResolvedEngines {
             asr_fallback,
             refine_fallback,
             metering: None,
+            for_one_take: false,
             providers,
         }
     }

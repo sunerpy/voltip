@@ -12,13 +12,19 @@ use uuid::Uuid;
 
 use super::{CoreConfig, CoreEvent, Runtime, now_ms};
 use crate::CoreError;
-use crate::audio_cache::{self, AudioCache, CACHE_UNAVAILABLE, KeptAudio, KeptRead, KeptStatus, Limits, NewRecording, RECORDING_GONE, RetakeModels};
+use crate::audio_cache::{
+    self, AudioCache, CACHE_UNAVAILABLE, KeptAudio, KeptFormat, KeptRead, KeptStatus, Limits, NewRecording, RECORDING_GONE, RetakeModels,
+};
 use crate::dictation::archive::{self, ArchiveReport, Leftover};
 use crate::dictation::long;
-use crate::dictation::{Retake, RetakeAudio, TakeClients};
+use crate::dictation::{FailureCode, Retake, RetakeAudio, TakeClients};
 use crate::engines::{ResolvedEngines, ServiceKind};
 use crate::history::HistoryStore;
+use crate::serve::{Catalog, Defaults, Profile, resolve_recipe};
 use crate::settings::{AudioCacheSettings, Settings};
+use crate::trial::{self, TRIAL_BUSY, TrialFailure, TrialJob, TrialView};
+use crate::usage::UsageOrigin;
+use crate::vocabulary::Vocabulary;
 
 /// Whether the takes keep their recordings: this app keeps some, the cache is on, and so is the
 /// history (a recording is reached from it).
@@ -143,12 +149,77 @@ impl Runtime {
         Ok(())
     }
 
+    /// `RecognitionTrial` (docs/dictation.md §30.5): the newest kept WAV recognised on a task with
+    /// the clients the next take uses and the saved settings, its scene matched against the
+    /// application it was recorded in as a 重新识别's is; each step goes out as
+    /// [`CoreEvent::RecognitionTrial`]. Nothing is pasted, copied, kept or written to the history.
+    pub(super) fn recognition_trial(&mut self) -> Result<(), CoreError> {
+        if self.trial_busy.load(Ordering::SeqCst) {
+            return Err(CoreError::Invalid(TRIAL_BUSY.to_owned()));
+        }
+        let newest = self.audio.recordings().iter().find(|r| r.format == KeptFormat::Wav).map(|r| r.id);
+        let read = match newest {
+            Some(id) => self.audio.read(id)?,
+            None => None,
+        };
+        let Some((recording, KeptRead::Wav(wav))) = read else {
+            if newest.is_some() {
+                // Reading it found its file gone and forgot it.
+                self.emit_audio_cache();
+            }
+            self.emit(CoreEvent::RecognitionTrial(TrialView::Failed { recording: None, failure: TrialFailure::NoRecording }));
+            return Ok(());
+        };
+        let resolved = self.resolved_engines();
+        if let Err(CoreError::Dictation(e)) = Self::check_recognition(&resolved) {
+            let failure = TrialFailure::Failed { code: FailureCode::from(&e), message: e.to_string() };
+            self.emit(CoreEvent::RecognitionTrial(TrialView::Failed { recording: Some(recording.id), failure }));
+            return Ok(());
+        }
+        let vocabulary = Arc::new(Vocabulary::compile(self.dictionary.entries(), self.rules.rules()));
+        let defaults = Defaults { app: recording.app.as_ref().map(|app| app.id.clone()), ..Defaults::default() };
+        let catalog = Catalog { settings: &self.settings, presets: self.presets.presets(), scenes: self.scenes.scenes(), vocabulary: &vocabulary };
+        let mut recipe = resolve_recipe(&defaults, &Profile::Default, None, catalog).map_err(|e| CoreError::Invalid(e.to_string()))?;
+        // A take names the application in front, not its id; the usage record, a 重新识别.
+        recipe.hints.context.app_name = recording.app.as_ref().filter(|_| self.settings.context_sharing.app_name).map(|app| app.name.clone());
+        recipe.hints.origin = Some(UsageOrigin::Retake);
+        let job = TrialJob {
+            recording: recording.id,
+            recorded_at_ms: recording.at_ms,
+            duration_ms: recording.duration_ms,
+            wav,
+            transcriber: self.dictation.transcriber(),
+            refiner: self.dictation.refiner(),
+            refine: recipe.refine,
+            language: recipe.language,
+            script: recipe.script,
+            vocabulary: recipe.vocabulary,
+            hints: recipe.hints,
+            asr_provider: resolved.asr_provider,
+            asr_model: resolved.asr_model.clone(),
+            refine_provider: resolved.llm_provider,
+        };
+        self.trial_busy.store(true, Ordering::SeqCst);
+        self.emit(CoreEvent::RecognitionTrial(TrialView::Running { recording: recording.id, started_at: now_ms() }));
+        let (busy, evt) = (self.trial_busy.clone(), self.evt.clone());
+        tokio::spawn(async move {
+            let view = trial::run(job).await;
+            // Free before the answer: a trial asked for once it is shown is not refused.
+            busy.store(false, Ordering::SeqCst);
+            if evt.send(CoreEvent::RecognitionTrial(view)).await.is_err() {
+                tracing::debug!("the recognition trial ended after the UI went away");
+            }
+        });
+        Ok(())
+    }
+
     /// The clients a 重新识别 on `models` runs with: the settings with those choices made, checked
     /// as a saved change would be and resolved, but neither saved nor applied to other takes.
     fn retake_clients(&self, models: &RetakeModels) -> Result<TakeClients, CoreError> {
         let engines = models.apply(&self.settings.engines);
         self.check_engines(&engines)?;
-        let resolved = ResolvedEngines::resolve_with_models(&engines, &self.user_secrets, &self.built_in, &self.library);
+        let mut resolved = ResolvedEngines::resolve_with_models(&engines, &self.user_secrets, &self.built_in, &self.library);
+        resolved.for_one_take = true;
         Self::check_recognition(&resolved)?;
         if models.refine() == Some(true)
             && let Some(issue) = resolved.refine_issue

@@ -219,7 +219,15 @@ pub enum UiCommand {
         /// The clean-up, when not the settings'.
         #[serde(default)]
         refine: Option<voltip_core::audio_cache::PolishChoice>,
+        /// `false`: the on-device recognition keeps the silence (不裁剪静音重新识别, docs/dictation.md
+        /// §30.4); absent: as the settings say.
+        #[serde(default)]
+        vad_trim: Option<bool>,
     },
+    /// 用最近一条录音试一下 (docs/dictation.md §30.5): the newest kept recording recognised with the
+    /// saved settings; `recognition_trial` events follow. Nothing is pasted, copied or written to
+    /// the history.
+    RecognitionTrial,
     /// Where the dictation pill appears; persisted, the desktop shell follows `settings`.
     SettingsSetOverlay {
         /// `bottom` / `top` / `off`.
@@ -663,9 +671,10 @@ impl UiCommand {
             Self::BackupNoticeDismiss => CoreCommand::BackupNoticeDismiss,
             Self::AudioCacheClear => CoreCommand::AudioCacheClear,
             Self::AudioCacheDelete { id } => CoreCommand::AudioCacheDelete(parse_id(&id)?),
-            Self::AudioRetake { id, asr, refine } => {
-                CoreCommand::AudioRetake { id: parse_id(&id)?, models: voltip_core::audio_cache::RetakeModels { asr, refine } }
+            Self::AudioRetake { id, asr, refine, vad_trim } => {
+                CoreCommand::AudioRetake { id: parse_id(&id)?, models: voltip_core::audio_cache::RetakeModels { asr, refine, vad_trim } }
             }
+            Self::RecognitionTrial => CoreCommand::RecognitionTrial,
             Self::ImportAdd { paths, asr, refine, language } => CoreCommand::ImportAdd(
                 paths
                     .into_iter()
