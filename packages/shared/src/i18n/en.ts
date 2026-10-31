@@ -1126,6 +1126,18 @@ export const en: Messages = {
       /** A clean-up was asked for and its text was not used: why, as `dictation.refineFailure`. */
       refineFailed: "Polish — · {reason}",
       total: "Total {n} ms",
+      timeline: "Timeline · from the shortcut press to the result",
+      timelineNoCapture: "Timeline · from the start of recognition to the result",
+      step: {
+        open: "Microphone open {n} ms",
+        wait: "Waiting for sound {n} ms",
+        record: "Recording {n} ms",
+        tail: "Extra recording {n} ms",
+        asr: "Recognition {n} ms",
+        refine: "Polish {n} ms",
+        insert: "Insert {n} ms",
+      },
+      firstText: "First live preview text {n} ms",
     },
     confirm: {
       deleteTitle: "Delete this entry?",

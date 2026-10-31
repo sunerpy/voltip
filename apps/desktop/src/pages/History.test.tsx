@@ -320,6 +320,72 @@ describe("History page", () => {
     expect(await screen.findByTestId("history-glossary")).toHaveTextContent("没有发给识别服务");
   });
 
+  it("docs/dictation.md section 30.1: an entry with its timing shows the take's timeline from the press to the result", async () => {
+    const user = userEvent.setup();
+    const now = Date.now();
+    const base = new MockBackend({ now: () => now }).peek().history_recent[0];
+    if (!base) throw new Error("fixture");
+    const take: HistoryEntry = {
+      ...base,
+      id: "00000000-0000-4000-8000-0000000000c1",
+      at_ms: now - 1_000,
+      raw_text: "一条带时间线的听写",
+      text: "一条带时间线的听写",
+      refined: true,
+      asr_ms: 640,
+      refine_ms: 820,
+      timing: {
+        pressed_at: now - 9_000,
+        device_open_ms: 120,
+        first_audio_ms: 210,
+        first_text_ms: 900,
+        released_ms: 4_410,
+        tail_ms: 150,
+        asr_ms: 640,
+        refine_ms: 820,
+        insert_ms: 45,
+        done_ms: 6_100,
+      },
+    };
+    const { refine_ms: _polished, ...unpolished } = take;
+    const retake: HistoryEntry = {
+      ...unpolished,
+      id: "00000000-0000-4000-8000-0000000000c2",
+      at_ms: now - 2_000,
+      raw_text: "一条重新识别",
+      text: "一条重新识别",
+      refined: false,
+      timing: { pressed_at: now - 8_000, tail_ms: 0, asr_ms: 500, insert_ms: 12, done_ms: 530 },
+    };
+    renderApp({ path: "/history", mock: { now: () => now, history: [take, retake] } });
+    await user.click(await screen.findByText(/一条带时间线的听写/, { selector: "li *" }));
+    const timeline = await screen.findByTestId("history-timeline");
+    expect(timeline).toHaveTextContent("时间线 · 从按下快捷键到出结果");
+    for (const step of [
+      "打开麦克风 120 ms",
+      "等待声音 90 ms",
+      "录音 4,200 ms",
+      "延录 150 ms",
+      "识别 640 ms",
+      "润色 820 ms",
+      "插入 45 ms",
+      "总计 6,100 ms",
+    ]) {
+      expect(timeline).toHaveTextContent(step);
+    }
+    // The live preview's first text, from the press.
+    expect(timeline).toHaveTextContent("实时预览首字 900 ms");
+    expect(within(timeline).getByRole("img", { name: "耗时拆解" })).toBeInTheDocument();
+    // Without a capture (重新识别): what there is, from the start.
+    await user.click(screen.getByText(/一条重新识别/, { selector: "li *" }));
+    const again = await screen.findByTestId("history-timeline");
+    expect(again).toHaveTextContent("时间线 · 从开始识别到出结果");
+    expect(again).toHaveTextContent("识别 500 ms");
+    expect(again).toHaveTextContent("总计 530 ms");
+    expect(again).not.toHaveTextContent("打开麦克风");
+    expect(again).not.toHaveTextContent("润色 ");
+  });
+
   it("docs/dictation.md section 3.12: an entry whose polished text was cut off says the transcript was kept", async () => {
     const user = userEvent.setup();
     const now = Date.now();

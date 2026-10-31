@@ -117,6 +117,7 @@ import {
   type Settings,
   type Snapshot,
   type TakeKind,
+  type TakeTiming,
   type TrustedDevice,
   type UiEvent,
   type UiState,
@@ -1111,6 +1112,10 @@ export class MockBackend implements Backend {
    *  `extra_recording_ms` stop. */
   private pressedAt: number | undefined;
   private extraStop: ReturnType<typeof setTimeout> | undefined;
+  /** When the running take started (the press) and when its stop was asked for, before its extra
+   *  recording (§30.1); `listening.started_at` moves to the first samples. */
+  private takeStartedAt = 0;
+  private releasedAt: number | undefined;
   /** The output mode the current take runs (decided at start, like the core, §12) and how many
    *  characters `live_inject` has pasted so far (what a cancel reports). */
   private takeMode: OutputMode = "whole_take";
@@ -5223,6 +5228,8 @@ export class MockBackend implements Backend {
     this.pinned = undefined;
     this.clearLiveTimers();
     this.clearExtraStop();
+    this.takeStartedAt = this.now();
+    this.releasedAt = undefined;
     const session = this.state.dictation.session + 1;
     this.takeKind = kind;
     this.copiedSelection = undefined;
@@ -5451,6 +5458,7 @@ export class MockBackend implements Backend {
   private stopDictation() {
     if (this.state.dictation.phase.phase !== "listening") return;
     const extra = this.state.settings.extra_recording_ms;
+    this.releasedAt ??= this.now();
     if (this.extraStop !== undefined) {
       this.clearExtraStop();
       this.finishTake();
@@ -5488,6 +5496,8 @@ export class MockBackend implements Backend {
     const session = this.state.dictation.session;
     const engines = this.state.engines;
     const stoppedAt = this.now();
+    const releasedAt = this.releasedAt ?? stoppedAt;
+    this.releasedAt = undefined;
     // The preview follows the take into processing until the final text replaces it (§11).
     const live = current.live;
     const preview = live === undefined ? "" : livePreviewText(live);
@@ -5563,10 +5573,25 @@ export class MockBackend implements Backend {
           : undefined;
       const checked = check === undefined ? {} : { check };
       const failedOver = liveError ?? modeError;
+      // docs/dictation.md §30.1: as the core times the take, from the press (the mock's device
+      // opens at once and delivers after MOCK_MIC_READY_MS).
+      const pressedAt = this.takeStartedAt;
+      const timing: TakeTiming = {
+        pressed_at: pressedAt,
+        device_open_ms: 0,
+        first_audio_ms: Math.max(0, startedAt - pressedAt),
+        released_ms: Math.max(0, releasedAt - pressedAt),
+        tail_ms: Math.max(0, stoppedAt - releasedAt),
+        asr_ms: asrMs,
+        ...(polished ? { refine_ms: MOCK_REFINE_MS } : {}),
+        insert_ms: 0,
+        done_ms: Math.max(0, this.now() - pressedAt),
+      };
       const extra = {
         ...(polished ? { refine_ms: MOCK_REFINE_MS } : {}),
         ...(segments === undefined ? {} : { segments }),
         ...(failedOver === undefined ? {} : { live_error: failedOver }),
+        timing,
       };
       const done: DictationPhase = {
         phase: "done",

@@ -754,7 +754,23 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
       asr_ms: MOCK_ASR_MS,
       refine_ms: MOCK_REFINE_MS,
       mode: "whole_take",
+      // docs/dictation.md §30.1: from the press; the device opens at once, delivers after
+      // MOCK_MIC_READY_MS, and the stop comes 3.2 s later with no extra recording.
+      timing: {
+        pressed_at: T0,
+        device_open_ms: 0,
+        first_audio_ms: MOCK_MIC_READY_MS,
+        released_ms: MOCK_MIC_READY_MS + 3200,
+        tail_ms: 0,
+        asr_ms: MOCK_ASR_MS,
+        refine_ms: MOCK_REFINE_MS,
+        insert_ms: 0,
+        done_ms: MOCK_MIC_READY_MS + 3200 + MOCK_ASR_MS + MOCK_REFINE_MS,
+      },
     });
+    expect(backend.peek().history_recent[0]?.timing).toEqual(
+      done.phase === "done" ? done.timing : undefined,
+    );
     // The history row lands before the done phase so a UI reading both sees them together.
     const history = backend.peek().history_recent;
     expect(history).toHaveLength(1);
@@ -961,11 +977,16 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
       duration_ms: 1000,
       asr_ms: MOCK_ASR_MS,
       mode: "whole_take",
+      timing: expect.objectContaining({
+        released_ms: MOCK_MIC_READY_MS + 1000,
+        asr_ms: MOCK_ASR_MS,
+      }),
     });
     expect(backend.peek().history_recent[0]).toMatchObject({
       refined: false,
       outcome: { kind: "inserted", via: "clipboard" },
     });
+    expect(backend.peek().history_recent[0]?.timing?.refine_ms).toBeUndefined();
     expect(backend.peek().history_recent[0]?.refine_model).toBeUndefined();
     backend.destroy();
   });
@@ -2463,6 +2484,7 @@ describe("MockBackend output modes (docs/dictation.md §12)", () => {
       refine_ms: MOCK_REFINE_MS,
       mode: "streaming_final",
       segments: [committed, { text: last.current, start_ms: committed.end_ms, end_ms: duration }],
+      timing: expect.objectContaining({ asr_ms: MOCK_FINALIZE_MS, refine_ms: MOCK_REFINE_MS }),
     });
     expect(backend.peek().history_recent[0]).toMatchObject({
       mode: "streaming_final",

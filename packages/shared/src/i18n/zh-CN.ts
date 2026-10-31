@@ -1143,6 +1143,19 @@ export const zhCN = {
       /** A clean-up was asked for and its text was not used: why, as `dictation.refineFailure`. */
       refineFailed: "润色 — · {reason}",
       total: "总计 {n} ms",
+      /** docs/dictation.md §30.1: a take's timeline, from the key press (or a 重新识别's start). */
+      timeline: "时间线 · 从按下快捷键到出结果",
+      timelineNoCapture: "时间线 · 从开始识别到出结果",
+      step: {
+        open: "打开麦克风 {n} ms",
+        wait: "等待声音 {n} ms",
+        record: "录音 {n} ms",
+        tail: "延录 {n} ms",
+        asr: "识别 {n} ms",
+        refine: "润色 {n} ms",
+        insert: "插入 {n} ms",
+      },
+      firstText: "实时预览首字 {n} ms",
     },
     confirm: {
       deleteTitle: "删除这条记录？",
