@@ -143,7 +143,7 @@ On the computer, the fallback list on the Speech models and AI models pages also
 
 An invalid key or a malformed request does not switch models and is reported as before.
 
-- Each recognition or polish tries at most 3 models. After about 150 seconds for recognition or about 60 seconds for polish, Voltip stops trying and reports a timeout.
+- A recognition or polish stops after 3 models fail; a model whose quota is used up does not count. After about 150 seconds for recognition or about 60 seconds for polish, Voltip stops trying and reports a timeout.
 - A model that failed is skipped for about a minute (or as long as the provider asked), and the list shows **Failed, skipped for now** with the time it is tried again. **Check again** starts over with the selected model at once.
 - A realtime model that fails while you speak is not replaced by another model's live recognition, and the text already inserted stays; after you release the shortcut, the rest is recognised by a fallback model. Each part of a long recording switches on its own.
 - The speech recognition list can include downloaded local models. While the selected model is a local model, a failure only moves on to local models in the list, and no recording is uploaded.

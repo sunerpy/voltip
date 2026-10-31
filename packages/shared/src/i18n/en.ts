@@ -2351,7 +2351,7 @@ export const en: Messages = {
    *  chain, and whose model wrote a history entry's text. */
   fallbackOutage: {
     toggle: "Also switch when a service fails",
-    help: "When on, a request that times out, a network error, a server error or a busy server, and too many requests also move to the models below, in order; recognition on this computer moves on when its graphics card, memory or model fails. An invalid key or a malformed request never switches. Each request tries at most 3 models, and a model that failed is skipped for about a minute.",
+    help: "When on, a request that times out, a network error, a server error or a busy server, and too many requests also move to the models below, in order; recognition on this computer moves on when its graphics card, memory or model fails. An invalid key or a malformed request never switches. A request stops after 3 models fail, and a model that failed is skipped for about a minute.",
     /** The section's description while the switch is on. */
     description: {
       asr: "When the selected model's quota is used up or its service fails, the models below recognise speech instead, in order. An invalid key or a malformed request does not switch models.",
