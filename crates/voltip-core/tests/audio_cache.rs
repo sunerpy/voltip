@@ -493,8 +493,7 @@ async fn regression_a_trial_in_live_inject_runs_no_clean_up() {
     // A whole take in Slack, cleaned up, keeps its recording and the application: the stop waits for
     // the probe's answer (one that came after the release would apply no context, §30.2).
     node.handle.send(CoreCommand::DictationStart).await.unwrap();
-    wait(&mut node, |e| matches!(e, CoreEvent::Dictation(s) if matches!(s.phase, DictationPhase::Listening { .. }) && s.context.is_some()).then_some(()))
-        .await;
+    wait(&mut node, |e| matches!(e, CoreEvent::Dictation(s) if matches!(s.phase, DictationPhase::Listening { .. }) && s.context.is_some()).then_some(())).await;
     node.handle.send(CoreCommand::DictationStop).await.unwrap();
     let done = wait(&mut node, |e| match e {
         CoreEvent::Dictation(s) if s.phase.is_terminal() => Some(s.phase.clone()),

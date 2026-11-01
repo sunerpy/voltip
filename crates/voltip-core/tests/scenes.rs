@@ -287,10 +287,10 @@ async fn regression_a_probe_answering_during_the_extra_recording_applies_no_scen
 async fn glossary(node: &mut Node, route: voltip_core::GlossaryRoute) {
     let found = tokio::time::timeout(STEP, async {
         loop {
-            if let CoreEvent::Engines(s) = node.events.recv().await.expect("core alive") {
-                if s.glossary == Some(route) {
-                    return;
-                }
+            if let CoreEvent::Engines(s) = node.events.recv().await.expect("core alive")
+                && s.glossary == Some(route)
+            {
+                return;
             }
         }
     })
