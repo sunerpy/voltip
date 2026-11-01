@@ -120,7 +120,7 @@ rtrb = "=0.4.0"
 rubato = "=5.0.0"
 # The history database (docs/dictation.md §4): `bundled` compiles SQLite itself from C for every
 # target (the Windows cross-build, Android), so no system library is needed anywhere.
-rusqlite = { version = "=0.40.2", features = ["bundled"] }
+rusqlite = { version = "=0.41.1", features = ["bundled"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_bytes = "=0.11.19"
 serde_json = "=1.0.151"
@@ -147,7 +147,7 @@ subtle = "=2.6.1"
 # MPL-2.0. The containers (MP4/MOV/M4A, Matroska/WebM, Ogg, WAV) and codecs (AAC, ALAC, FLAC, MP3,
 # PCM, Vorbis) the import accepts; Opus is decoded by `opus-rs`. No default features: ADPCM is not
 # offered.
-symphonia = { version = "=0.5.5", default-features = false, features = ["aac", "alac", "flac", "isomp4", "mkv", "mp3", "ogg", "pcm", "vorbis", "wav"] }
+symphonia = { version = "=0.6.1", default-features = false, features = ["aac", "alac", "flac", "isomp4", "mkv", "mp3", "ogg", "pcm", "vorbis", "wav"] }
 tempfile = "=3.27.0"
 thiserror = "=2.0.21"
 tokio = { version = "=1.53.1", features = [
