@@ -87,10 +87,14 @@ pub struct FakeBackend {
     no_samples: bool,
     /// What the timed input reports as its latency ([`FakeBackend::with_input_latency`]).
     input_latency: Option<Duration>,
-    /// An input callback is running (set around every call by the generator threads).
-    in_callback: Arc<AtomicBool>,
     /// The ready cue's output (docs/dictation.md §30.3).
     cue: CueOutput,
+}
+
+thread_local! {
+    /// Set on a generator thread while it runs an input callback: an output opened from inside one
+    /// reads it, one opened on another thread at the same moment does not.
+    static IN_INPUT_CALLBACK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// The fake ready-cue output: what it was asked for, what it played, and how it plays.
@@ -173,7 +177,6 @@ impl FakeBackend {
             opened_outputs: Mutex::new(Vec::new()),
             no_samples: false,
             input_latency: Some(Duration::from_millis(5)),
-            in_callback: Arc::default(),
             cue: CueOutput::default(),
         }
     }
@@ -220,7 +223,8 @@ impl FakeBackend {
         }
     }
 
-    /// Every cue output opened, in order: whether an input callback was running at that moment.
+    /// Every cue output opened, in order: whether it was opened from inside an input callback, on
+    /// the callback's own thread.
     pub fn cue_outputs_opened(&self) -> Vec<bool> {
         self.cue.opened.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
@@ -385,7 +389,7 @@ impl Backend for FakeBackend {
     }
 
     fn open_cue_output(&self, shared: Arc<CueShared>) -> Result<Box<dyn StreamHandle>, AudioError> {
-        self.cue.opened.lock().unwrap_or_else(PoisonError::into_inner).push(self.in_callback.load(Ordering::SeqCst));
+        self.cue.opened.lock().unwrap_or_else(PoisonError::into_inner).push(IN_INPUT_CALLBACK.get());
         if self.cue.missing {
             return Err(AudioError::NoDevice);
         }
@@ -430,7 +434,7 @@ impl FakeBackend {
         // not a wait for anything.
         let pace = Duration::from_millis(1);
         let thread_stop = Arc::clone(&stop);
-        let (no_samples, in_callback) = (self.no_samples, Arc::clone(&self.in_callback));
+        let no_samples = self.no_samples;
         let thread = std::thread::spawn(move || {
             let mut index: u64 = 0;
             let mut f32_buf = vec![0.0_f32; samples_per_chunk];
@@ -447,7 +451,7 @@ impl FakeBackend {
                     frame.fill(v);
                     index += 1;
                 }
-                in_callback.store(true, Ordering::SeqCst);
+                IN_INPUT_CALLBACK.set(true);
                 match format {
                     FakeFormat::F32 => on_samples(SampleChunk::F32(&f32_buf), rate, channels),
                     FakeFormat::I16 => {
@@ -469,7 +473,7 @@ impl FakeBackend {
                         on_samples(SampleChunk::I32(&i32_buf), rate, channels);
                     }
                 }
-                in_callback.store(false, Ordering::SeqCst);
+                IN_INPUT_CALLBACK.set(false);
                 std::thread::sleep(pace);
             }
             active.fetch_sub(1, Ordering::SeqCst);
@@ -523,6 +527,45 @@ mod tests {
         assert!(FakeBackend::new().without_devices().input_devices().unwrap().is_empty());
         let broken = FakeBackend::new().failing_enumeration(AudioError::Backend("boom".into()));
         assert_eq!(broken.input_devices().unwrap_err(), AudioError::Backend("boom".into()));
+    }
+
+    /// regression (the load runs of 2026-11-01): `cue_outputs_opened` says whether the output was
+    /// opened from inside an input callback, on the callback's own thread. The recorder opens it on
+    /// the thread that starts the take while the microphone already delivers, and a callback that
+    /// happened to be running elsewhere at that moment made the fake report "inside".
+    #[test]
+    fn regression_an_output_opened_beside_a_running_callback_is_not_opened_inside_it() {
+        let wait = Duration::from_secs(10);
+        let backend = Arc::new(FakeBackend::new());
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let inside = Arc::clone(&backend);
+        let mut calls = 0;
+        let input = backend
+            .open_input(
+                None,
+                Box::new(move |_, _, _| {
+                    calls += 1;
+                    if calls == 1 {
+                        let _ = entered_tx.send(());
+                        let _ = release_rx.recv_timeout(wait);
+                    } else if calls == 2 {
+                        drop(inside.open_cue_output(Arc::new(CueShared::new())));
+                    }
+                }),
+            )
+            .unwrap();
+        entered_rx.recv_timeout(wait).expect("the first callback runs");
+        let beside = backend.open_cue_output(Arc::new(CueShared::new())).unwrap();
+        release_tx.send(()).unwrap();
+        let started = Instant::now();
+        while backend.cue_outputs_opened().len() < 2 && started.elapsed() < wait {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(backend.cue_outputs_opened(), vec![false, true], "beside a running callback, then inside one");
+        drop(beside);
+        drop(input);
+        assert!(!backend.is_running());
     }
 
     #[test]
