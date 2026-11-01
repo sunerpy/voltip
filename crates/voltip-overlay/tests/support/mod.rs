@@ -18,9 +18,10 @@ use windows_sys::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, 
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEINPUT, SendInput};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, EnumWindows, GWL_EXSTYLE, GetClassNameW, GetForegroundWindow, GetMessageW,
-    GetSystemMetrics, GetWindowLongW, GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindowVisible, MSG, PostThreadMessageW, RegisterClassW, SM_CXSCREEN,
-    SM_CYSCREEN, SPI_GETWORKAREA, SW_HIDE, SW_SHOWNOACTIVATE, SetCursorPos, ShowWindow, SystemParametersInfoW, TranslateMessage, WM_QUIT, WNDCLASSW,
-    WS_CLIPSIBLINGS, WS_EX_ACCEPTFILES, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOPMOST, WS_EX_WINDOWEDGE, WS_OVERLAPPEDWINDOW, WS_POPUP,
+    GetSystemMetrics, GetWindowLongW, GetWindowRect, GetWindowThreadProcessId, HWND_TOPMOST, IsIconic, IsWindowVisible, MSG, PostThreadMessageW,
+    RegisterClassW, SM_CXSCREEN, SM_CYSCREEN, SPI_GETWORKAREA, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetCursorPos, SetWindowPos,
+    ShowWindow, SystemParametersInfoW, TranslateMessage, WM_QUIT, WNDCLASSW, WS_CLIPSIBLINGS, WS_EX_ACCEPTFILES, WS_EX_APPWINDOW, WS_EX_NOACTIVATE,
+    WS_EX_TOPMOST, WS_EX_WINDOWEDGE, WS_OVERLAPPEDWINDOW, WS_POPUP,
 };
 
 /// How long a window may take to come up, to the front or on top.
@@ -86,27 +87,44 @@ pub struct Spec {
     pub color: u32,
     /// Shown (without activation) as soon as it exists.
     pub shown: bool,
+    /// The window that owns it (a program's popup over its own window), or 0.
+    pub owner: isize,
 }
 
 impl Spec {
     /// A window like Voltip's pill, hidden.
     pub fn pill() -> Self {
-        Self { title: "voltip-overlay-pill", ex_style: PILL_EX_STYLE, style: WS_POPUP | WS_CLIPSIBLINGS, rect: pill_rect(), color: PILL_COLOR, shown: false }
+        Self {
+            title: "voltip-overlay-pill",
+            ex_style: PILL_EX_STYLE,
+            style: WS_POPUP | WS_CLIPSIBLINGS,
+            rect: pill_rect(),
+            color: PILL_COLOR,
+            shown: false,
+            owner: 0,
+        }
     }
 
     /// An ordinary application window over the whole work area.
     pub fn ordinary() -> Self {
-        Self { title: "voltip-overlay-ordinary", ex_style: 0, style: WS_OVERLAPPEDWINDOW, rect: work_area(), color: COVER_COLOR, shown: true }
+        Self { title: "voltip-overlay-ordinary", ex_style: 0, style: WS_OVERLAPPEDWINDOW, rect: work_area(), color: COVER_COLOR, shown: true, owner: 0 }
     }
 
     /// A borderless window over the whole monitor, what a browser or a player in full screen is.
     pub fn full_screen() -> Self {
-        Self { title: "voltip-overlay-full-screen", ex_style: 0, style: WS_POPUP, rect: screen(), color: COVER_COLOR, shown: true }
+        Self { title: "voltip-overlay-full-screen", ex_style: 0, style: WS_POPUP, rect: screen(), color: COVER_COLOR, shown: true, owner: 0 }
     }
 
     /// The same window, also on top of the others (a game, a player's "always on top").
     pub fn topmost(self) -> Self {
         Self { ex_style: self.ex_style | WS_EX_TOPMOST, ..self }
+    }
+
+    /// A popup of `owner`'s over the pill's place, topmost (a program's dropdown or menu).
+    pub fn popup_of(owner: &TestWindow) -> Self {
+        let pill = pill_rect();
+        let rect = RECT { left: pill.left - 40, top: pill.top - 40, right: pill.right + 40, bottom: pill.bottom + 40 };
+        Self { title: "voltip-overlay-popup", ex_style: WS_EX_TOPMOST, style: WS_POPUP, rect, color: COVER_COLOR, shown: true, owner: owner.hwnd }
     }
 }
 
@@ -144,7 +162,7 @@ impl TestWindow {
                     top,
                     right - left,
                     bottom - top,
-                    std::ptr::null_mut(),
+                    spec.owner as HWND,
                     std::ptr::null_mut(),
                     instance,
                     std::ptr::null(),
@@ -176,6 +194,14 @@ impl TestWindow {
     pub fn hide(&self) {
         // SAFETY: a live window handle of this test.
         unsafe { ShowWindow(self.hwnd as HWND, SW_HIDE) };
+    }
+
+    /// Pin it on top where it is, without activating it, as a player's "always on top" button or
+    /// PowerToys' Always On Top does to the window in front, and wait until it is topmost.
+    pub fn pin(&self) {
+        // SAFETY: a live window handle of this test.
+        unsafe { SetWindowPos(self.hwnd as HWND, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) };
+        assert!(wait_until(WAIT, || is_topmost(self.hwnd)), "the window could not be pinned on top");
     }
 
     pub fn rect(&self) -> RECT {

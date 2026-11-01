@@ -19,15 +19,25 @@ expect_used = "warn"
 [dependencies]
 tracing.workspace = true
 
-# SetWindowPos, the foreground WinEvent hook and its message loop: the version tokio / mio already
-# pull.
+# SetWindowPos, the keeper's WinEvent hooks and their message loop, and what it reads of the windows
+# above the pill (stacking, rectangles, DWM cloaking): the version tokio / mio already pull.
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "=0.61.2", features = [
     "Win32_Foundation",
+    "Win32_Graphics_Dwm",
     "Win32_System_Threading",
     "Win32_UI_Accessibility",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+# The pill's window level, collection behaviour and order: the version the desktop shell already
+# pulls.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSResponder", "NSWindow"] }
+
+# The stacking order of the pill's X11 window: the version enigo already pulls.
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = "=0.14.0"
 
 # tests/stacking_windows.rs: windows of the test's own (a pill made the way tao makes Voltip's, and
 # the windows that cover it), a message loop, clicks, the Z order and the screen's pixels.
@@ -43,3 +53,28 @@ windows-sys = { version = "=0.61.2", features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+# tests/stacking_macos.rs: AppKit on the main thread (the pill, and another process's window in
+# front of it); the versions the desktop shell already pulls.
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+block2 = "=0.6.2"
+objc2 = "=0.6.4"
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = [
+    "std",
+    "libc",
+    "NSApplication",
+    "NSColor",
+    "NSGraphics",
+    "NSResponder",
+    "NSRunningApplication",
+    "NSScreen",
+    "NSWindow",
+    "NSWorkspace",
+] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "block2", "NSGeometry", "NSOperation"] }
+
+# AppKit wants the main thread, which the test harness keeps for itself: the macOS test has its
+# own main (and does nothing on the other platforms).
+[[test]]
+name = "stacking_macos"
+harness = false

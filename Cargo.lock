@@ -7997,8 +7997,13 @@ dependencies = [
 name = "voltip-overlay"
 version = "0.0.0"
 dependencies = [
+ "block2",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
  "tracing",
  "windows-sys 0.61.2",
+ "x11rb 0.14.0",
 ]
 
 [[package]]

@@ -945,6 +945,13 @@ jobs:
         timeout-minutes: 10
         run: scripts/focus-check-linux.sh
 
+      # The pill's stacking on a real X server (docs/dictation.md §32): a window mapped over the
+      # pill's place while it was hidden stays over it when it is mapped again, until the shell
+      # restacks it on top.
+      - name: Real pill stacking under Xvfb (cargo test -p voltip-overlay --test stacking_x11 -- --ignored)
+        timeout-minutes: 10
+        run: xvfb-run -a cargo test -p voltip-overlay --test stacking_x11 -- --ignored --test-threads=1 --nocapture
+
       - name: make smoke-desktop (build, start under Xvfb, hotkey → overlay → outcome, screenshots)
         run: make smoke-desktop
 
@@ -1310,6 +1317,13 @@ jobs:
             sudo sqlite3 "$db" "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, indirect_object_identifier, flags, last_modified) VALUES ('$service', '$bin', 1, 2, 4, 1, 'UNUSED', 0, $(date +%s));"
           done
           "$bin" --ignored
+
+      # The pill's stacking (docs/dictation.md §32): shown over a floating window of another
+      # application and over an application in full screen, the pill is the window a click at its
+      # centre reaches, and the other application stays active. The test has its own main.
+      - name: Real pill stacking (cargo test -p voltip-overlay --test stacking_macos -- --ignored)
+        timeout-minutes: 15
+        run: cargo test -p voltip-overlay --test stacking_macos -- --ignored
 
       # On demand (`insert_probe`): 50 pastes each into TextEdit and into a Safari textarea and
       # contenteditable, the readings timed (crates/voltip-focus/examples/insert_confirm_probe.rs).

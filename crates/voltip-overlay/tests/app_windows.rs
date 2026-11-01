@@ -3,8 +3,9 @@
 //! with `voltip-desktop --toggle`, and the pill must be what the screen shows at its centre, by the
 //! Z order and by the pixels, while the window in front stays in front. The windows are a topmost
 //! one (a pinned window or a player), a topmost one over the whole monitor (a game or a player in
-//! full screen), the same activated while the pill shows, and an ordinary one and an ordinary
-//! full-screen one (a browser after F11).
+//! full screen), the same activated while the pill shows, the window in front pinned on top and a
+//! topmost window coming up while the pill shows, and an ordinary one and an ordinary full-screen
+//! one (a browser after F11).
 //!
 //! A runner has no microphone: the take fails at once and its pill shows for the 2.5 s dwell,
 //! which every check fits into.
@@ -19,6 +20,7 @@
 
 mod support;
 
+use std::io::Write as _;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -77,11 +79,12 @@ struct App {
 }
 
 impl App {
-    fn start() -> Self {
+    fn start(name: &str) -> Self {
         dpi_aware();
         let exe = PathBuf::from(std::env::var_os("VOLTIP_DESKTOP_EXE").expect("VOLTIP_DESKTOP_EXE: the voltip-desktop.exe to drive"));
         let log = std::env::var_os("VOLTIP_OVERLAY_APP_LOG").map_or_else(|| std::env::temp_dir().join("voltip-overlay-app.log"), PathBuf::from);
-        let log = std::fs::File::create(log).expect("the app's log file");
+        let mut log = std::fs::OpenOptions::new().create(true).append(true).open(log).expect("the app's log file");
+        let _ = writeln!(log, "=== {name}");
         let child = Command::new(&exe)
             .arg("--start-hidden")
             .env("RUST_LOG", "voltip=info")
@@ -99,8 +102,17 @@ impl App {
             }),
             "the app made no pill window"
         );
-        // One take with nothing in front: the pill's page has drawn once before any check.
-        app.take();
+        // One take with nothing in front, so that the pill's page has drawn once before any check.
+        // The pill window comes up before the core does, and a `--toggle` that arrives before it
+        // is dropped ("remote control before the core is up"): ask again until a take shows.
+        let until = Instant::now() + START;
+        loop {
+            app.remote("--toggle");
+            if wait_until(Duration::from_secs(3), || visible(app.pill)) {
+                break;
+            }
+            assert!(Instant::now() < until, "no take showed a pill");
+        }
         app.end();
         app
     }
@@ -163,7 +175,7 @@ fn take_in_front_of(app: &App, cover: &TestWindow, what: &str) {
 #[test]
 #[ignore = "starts the app and clicks windows: CI's windows-2025 desktop only"]
 fn regression_the_real_pill_shows_above_a_topmost_window_in_front() {
-    let app = App::start();
+    let app = App::start("regression_the_real_pill_shows_above_a_topmost_window_in_front");
     let cover = TestWindow::open(Spec::ordinary().topmost());
     take_in_front_of(&app, &cover, "a topmost window in front");
 }
@@ -171,7 +183,7 @@ fn regression_the_real_pill_shows_above_a_topmost_window_in_front() {
 #[test]
 #[ignore = "starts the app and clicks windows: CI's windows-2025 desktop only"]
 fn regression_the_real_pill_shows_above_a_topmost_full_screen_window_in_front() {
-    let app = App::start();
+    let app = App::start("regression_the_real_pill_shows_above_a_topmost_full_screen_window_in_front");
     let cover = TestWindow::open(Spec::full_screen().topmost());
     take_in_front_of(&app, &cover, "a topmost full-screen window in front");
 }
@@ -179,7 +191,7 @@ fn regression_the_real_pill_shows_above_a_topmost_full_screen_window_in_front() 
 #[test]
 #[ignore = "starts the app and clicks windows: CI's windows-2025 desktop only"]
 fn regression_the_real_pill_goes_back_above_a_topmost_window_activated_while_it_shows() {
-    let app = App::start();
+    let app = App::start("regression_the_real_pill_goes_back_above_a_topmost_window_activated_while_it_shows");
     let first = TestWindow::open(Spec::ordinary());
     first.activate("an ordinary window in front");
     // Made now and shown later, so that bringing it up fits in the pill's dwell.
@@ -195,8 +207,31 @@ fn regression_the_real_pill_goes_back_above_a_topmost_window_activated_while_it_
 
 #[test]
 #[ignore = "starts the app and clicks windows: CI's windows-2025 desktop only"]
+fn regression_the_real_pill_goes_back_above_windows_pinned_or_shown_while_it_shows() {
+    let app = App::start("regression_the_real_pill_goes_back_above_windows_pinned_or_shown_while_it_shows");
+    let front = TestWindow::open(Spec::ordinary());
+    front.activate("an ordinary window in front");
+    app.take();
+    app.assert_on_top("before the window in front was pinned on top");
+    // No window comes to the front: the one in front is pinned on top where it is.
+    front.pin();
+    app.assert_on_top("the window in front pinned on top while the pill shows");
+    assert_eq!(foreground(), front.hwnd, "the pill took the window in front's place");
+    app.end();
+    app.take();
+    app.assert_on_top("before a topmost window came up");
+    // A topmost window that comes up without being activated.
+    let shown = TestWindow::open(Spec { rect: work_area(), ..Spec::full_screen().topmost() });
+    app.assert_on_top("a topmost window shown while the pill shows");
+    assert_eq!(foreground(), front.hwnd, "the pill took the window in front's place");
+    app.end();
+    drop(shown);
+}
+
+#[test]
+#[ignore = "starts the app and clicks windows: CI's windows-2025 desktop only"]
 fn the_real_pill_shows_above_ordinary_and_full_screen_windows_in_front() {
-    let app = App::start();
+    let app = App::start("the_real_pill_shows_above_ordinary_and_full_screen_windows_in_front");
     let ordinary = TestWindow::open(Spec::ordinary());
     take_in_front_of(&app, &ordinary, "an ordinary window in front");
     drop(ordinary);
