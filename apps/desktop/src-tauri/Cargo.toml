@@ -89,6 +89,8 @@ voltip-platform = { path = "../../../crates/voltip-platform" }
 voltip-hooks = { path = "../../../crates/voltip-hooks" }
 # The insert check's readers of the focused control (docs/dictation.md §28).
 voltip-focus = { path = "../../../crates/voltip-focus" }
+# The pill window kept above the other windows without the focus (docs/dictation.md §32).
+voltip-overlay = { path = "../../../crates/voltip-overlay" }
 voltip-refine.workspace = true
 # The local speech service's HTTP layer (docs/dictation.md §23.6).
 voltip-serve.workspace = true
@@ -141,6 +143,9 @@ tempfile.workspace = true
 # the version enigo already pulls.
 [target.'cfg(target_os = "linux")'.dependencies]
 x11rb = { version = "=0.14.0", features = ["xinput"] }
+# The pill's X11 window id for its restacking (src/overlay.rs, docs/dictation.md §32): the trait
+# tauri implements its window handles with, at the version it pulls.
+raw-window-handle = "=0.6.2"
 # `_exit` (src/exit.rs); the version the graph already has.
 libc = "=0.2.189"
 

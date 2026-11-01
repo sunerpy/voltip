@@ -8,13 +8,14 @@
 //!   (`SetWindowPos(HWND_TOPMOST)` without activating it) on every show and phase, and
 //!   [`windows::Keeper`] does it again while the pill shows, whenever another window comes to the
 //!   front and whenever a window that covers it appears or is put on top (WinEvent hooks; no
-//!   polling).
+//!   polling). When it raises the pill over a covering window is [`contest`]'s rule.
 //! - macOS (`macos.rs`): the status window level, full-screen Spaces and `orderFrontRegardless`.
 //! - Linux (`x11.rs`): the X11 stacking order; a Wayland compositor stacks windows itself.
 //!
 //! The `#[ignore]`d tests open real windows: CI runs them on a Windows Server desktop, a macOS
 //! session and Xvfb, never on a computer someone is using.
 
+pub mod contest;
 #[cfg(target_os = "macos")]
 pub mod macos;
 #[cfg(target_os = "windows")]

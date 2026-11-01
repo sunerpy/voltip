@@ -1057,7 +1057,7 @@ Wayland 剪贴板：arboard `wayland-data-control`（wl-clipboard-rs；KDE 与 w
 
 - 激活策略 `activation_policy_plan(start_hidden, tray_available)`：只有 `--start-hidden` 且有托盘时设 `Accessory`，时机在 `Builder::build` 之后、`App::run` 之前（`platform::before_run`），其余三格保持 `Regular`。`--start-hidden` 下托盘安装失败时恢复 `Regular` 并显示主窗。`RunEvent::Reopen` 显示主窗，托盘缺失时重装（`platform::on_run_event`）。
 - Cmd+V 键码 `cmd_v_keycode(translated, layout_id)`：优先用 `UCKeyTranslate` 反查结果（> 127 视为失败）；失败时 `com.apple.keylayout.Dvorak` → 47，其余 → ANSI V = 9。修饰键在 V 之后保持 `PASTE_HOLD_MS = 100` ms。注意：enigo 0.6.1 的 `Key::Unicode('v')` 在布局里找不到产出 `v` 的键时回落键码 0（`kVK_ANSI_A`），即发出 Cmd+A。
-- 悬浮窗：`focusable(false)` 与 `visible_on_all_workspaces(true)`；`tauri-nspanel` 仍推后。
+- 悬浮窗：`focusable(false)` 与 `visible_on_all_workspaces(true)`；每次显示后提到 `NSStatusWindowLevel` 并加入全屏 Space（§32）；`tauri-nspanel` 仍推后。
 
 ### 15.3 Windows 注入前预检
 
@@ -2955,3 +2955,41 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 - 队列不持久化：退出应用即清空（原文件不受影响）。
 - 手机端不导入文件。
 - 没有解码器的编码（AC-3、DTS 等）报错写明编码名，不调用外部工具转码。
+
+## 32. 悬浮窗的层级（2026-11-01）
+
+**问题**（用户 2026-11-01 在 0.3.0 候选版上报告，Windows Server 2025）：开着很多窗口、点了其中一个之后，或者开着一个全屏程序时，整次听写都看不到悬浮窗，用户以为听写失败；把上面的窗口移开，才看到悬浮窗压在下面。录音中、处理中和结果卡片（§28.4）都受影响。
+
+### 32.1 原因
+
+- **Windows**：悬浮窗建窗时就是置顶、不激活的窗口（`always_on_top(true)`、`focusable(false)`，tao 给出 `WS_EX_TOPMOST | WS_EX_NOACTIVATE`）。置顶窗口之间按最后到前台的先后叠放；隐藏的窗口由 tao 的 `show()`（`ShowWindow(SW_SHOWNOACTIVATE)`）显示时留在原来的层级位置；tao 的 `set_always_on_top(true)` 只在置顶标志变化时才调用 `SetWindowPos`，悬浮窗早已置顶，壳每次显示后的那一句什么也不做。所以悬浮窗上次隐藏之后到过前台的置顶窗口（钉在最上面的播放器或便签、置顶的全屏程序、游戏）整次听写都压在它上面，显示期间也没有任何地方再抬起它。在托管的 windows-2025 桌面上复现：`8f2adf2d` 的测试里仿制的悬浮窗和真实的便携版都被盖住（CI 41313709532）。普通窗口和全屏的普通窗口（浏览器按 F11）在那里盖不住置顶的悬浮窗。
+- **macOS**：tao 的置顶是 `NSFloatingWindowLevel`，与其他应用的浮动窗口同一级，后到前面的盖住悬浮窗；tao 用 `makeKeyAndOrderFront` 显示窗口，Voltip 不是活动应用时排不到活动应用的窗口前面；`visible_on_all_workspaces(true)` 只给 `CanJoinAllSpaces`，悬浮窗进不了其他应用的全屏 Space。
+- **Linux（X11）**：重新映射（显示）的窗口保持原来的叠放位置。没有窗口管理器时（Xvfb、部分精简桌面）叠放顺序就是全部，悬浮窗隐藏期间映射的窗口一直在它上面。
+- **竞态**：隐藏先画空白、一帧（`HIDE_AFTER_BLANK`）之后才隐藏窗口；在这一帧里开始的下一次听写，它的悬浮窗会被这次隐藏藏掉，直到它的下一个阶段才再出现。
+
+### 32.2 修复（`crates/voltip-overlay`、`apps/desktop/src-tauri/src/overlay.rs`）
+
+- 每次显示和每个阶段（`show_live`、`show_fixed`：录音中、处理中、结果卡片、「已复制上一条结果」）之后，`keep_on_top` 把悬浮窗放回最上层。都不激活悬浮窗、不改变前台窗口，结果卡片的「粘贴」仍粘贴到前台窗口（§28.4）。失败只记日志，悬浮窗照常显示。
+  - **Windows**：`windows::raise`，即 `SetWindowPos(HWND_TOPMOST, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS)`：放到置顶窗口的最上面；被别的程序拿掉置顶的悬浮窗（`HWND_NOTOPMOST`，或排到普通窗口后面）也重新置顶。
+  - **macOS**：`macos::raise`（主线程，经 `run_on_main_thread`）：窗口级别提到 `NSStatusWindowLevel`（浮动窗口和 Dock 之上，菜单之下）；集合行为加上 `CanJoinAllSpaces | FullScreenAuxiliary | Stationary | IgnoresCycle`，去掉与之冲突的 `FullScreenPrimary`、`MoveToActiveSpace`；再 `orderFrontRegardless`（不激活 Voltip）。
+  - **Linux**：重发 tao 的保持在上（`set_always_on_top(true)`，`_NET_WM_STATE_ABOVE`）；X11 下再经自己的一条连接发 `ConfigureWindow(stack_mode = Above)`（`x11::Stacker`；连接出错时丢弃，下次重新连接）。没有 `$DISPLAY` 或窗口不是 X11 窗口（纯 Wayland）时什么也不做。
+- **Windows 显示期间**还有 `windows::Keeper`：一个线程，两个进程外 WinEvent 钩子和一个消息循环，没有轮询，事件之间不运行；悬浮窗隐藏时结束，钩子随之移除。
+  - 别的窗口到前台（`EVENT_SYSTEM_FOREGROUND`）：抬起悬浮窗。前台是任务栏（`Shell_TrayWnd`、`Shell_SecondaryTrayWnd`）时不抬，用户正在操作任务栏（自动隐藏的任务栏会滑到悬浮窗的位置），下一个窗口到前台时再抬。
+  - 有窗口出现（`EVENT_OBJECT_SHOW`，窗口本身）或叠放顺序变化（`EVENT_OBJECT_REORDER`），而此时有窗口盖住悬浮窗：抬起。盖住指：在悬浮窗之上，可见，没有最小化，没有被 DWM 隐藏（另一个虚拟桌面上的窗口），与悬浮窗相交，没有所有者窗口，并且不是菜单（`#32768`）、提示（`tooltips_class32`）或任务栏。有所有者的窗口是程序在自己窗口上弹出的下拉框、菜单和对话框，用户正在操作它们：悬浮窗留在它们下面，直到下一个窗口到前台或听写的下一个阶段。
+  - 不争抢（`contest.rs`）：在下一个窗口到前台之前，悬浮窗只被抬到同一个窗口之上一次。抬起后它又在上面，说明它在外壳更高的层带（开始菜单、通知中心），或者是会自己抢回最上层的程序。两次窗口到前台之间，这样的抬起至多 `MAX_RAISES` = 32 次。
+- 隐藏前取一张显示次数的票（`OverlaySlot::hide_ticket`），一帧之后只在期间没有再显示时才隐藏（`may_hide`）。
+
+### 32.3 限制
+
+- **Windows**：以旧式 Direct3D 独占全屏方式运行的程序（部分游戏）期间桌面不再合成，任何其他窗口都显示不出来。开始菜单、搜索、通知中心、Alt+Tab 等外壳界面在更高的层带，悬浮窗在它们下面。
+- **macOS**：其他应用在 `NSStatusWindowLevel` 或更高级别的窗口（屏幕保护程序、部分辅助工具、菜单栏图标弹出的面板）仍会盖住悬浮窗；显示期间不另外监视，低于这一级别的窗口不论哪个应用到前台都在悬浮窗下面。点结果卡片可能激活 Voltip（§28.4）。
+- **Linux**：有窗口管理器时由它在自己的层内决定。EWMH 规定获得焦点的全屏窗口在「保持在上」的窗口之上，全屏程序在前台时悬浮窗在它下面；GNOME（Mutter）不理会不在前台的应用发来的叠放请求；显示期间另一个「保持在上」的窗口到前台时，悬浮窗要到下一个阶段才回到上面。纯 Wayland 会话里应用无法决定叠放（xdg-shell 没有置顶），由合成器决定。
+
+### 32.4 门禁
+
+- `crates/voltip-overlay/tests/stacking_windows.rs`（CI `hooks-windows`，windows-2025 的真实桌面，`#[ignore]`）：仿制的悬浮窗（tao 的扩展样式 `0x08040118`，`SW_SHOWNOACTIVATE` 显示，再 `raise`）。隐藏期间到前台的置顶窗口、置顶的全屏窗口、被拿掉置顶后在上面的普通窗口（`regression_…`），以及多个普通窗口、普通全屏窗口：悬浮窗都在最上面。显示期间（有 `Keeper`）置顶窗口到前台、前台窗口被钉在最上面、置顶窗口不激活地出现（`regression_…`）：悬浮窗回到最上面。每次都按 z-order 和屏幕像素检查，并检查前台窗口不变。没有 `Keeper` 时这三种都会盖住悬浮窗（`without_a_keeper_windows_activated_pinned_or_shown_cover_the_pill`）；前台窗口自己弹出的窗口留在悬浮窗上面（`a_popup_the_window_in_front_opens_over_the_pill_stays_over_it`）；`Keeper` 结束后不再抬起。
+- `crates/voltip-overlay/tests/app_windows.rs`（CI `windows-native`，便携版 exe，`#[ignore]`）：真实应用，用 `--toggle` 开始听写：置顶窗口、置顶全屏窗口在前面，显示期间置顶窗口到前台、前台窗口被钉在最上面、置顶窗口出现，以及普通窗口和普通全屏窗口：悬浮窗都在最上面并且画了出来，前台窗口不变。
+- `crates/voltip-overlay/tests/stacking_x11.rs`（CI `smoke-desktop`，Xvfb）：悬浮窗隐藏期间映射的全屏窗口，在悬浮窗重新映射并 `Stacker::raise_on` 之后在它下面（`QueryTree` 的叠放顺序和 `GetImage` 的像素）。
+- `crates/voltip-overlay/tests/stacking_macos.rs`（CI 两台 Mac，自带 `main`）：另一个进程的浮动窗口、全屏窗口在前面时，悬浮窗显示后是点在它中心会落到的窗口，另一个应用仍是活动应用。
+- 单元测试：`contest.rs`（只抬一次、到前台后重新计数、互相争抢有上限），`x11.rs`（没有显示服务器、连接不上），`overlay.rs` 的 `regression_a_show_after_a_hide_began_keeps_the_pill`。
+- 修复前（`8f2adf2d`，CI 41313709532）`hooks-windows` 与 `windows-native` 失败：悬浮窗在置顶窗口和置顶全屏窗口下面；X11 测试在 Xvfb 上同样失败（`8f2adf2d` 的 `Stacker` 什么也不做）。
