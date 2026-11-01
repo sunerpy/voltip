@@ -27,7 +27,8 @@ use crate::dictation::activation::{Activation, ActivationConfig, ActivationMachi
 use crate::dictation::engine::{Effect, Internal};
 use crate::dictation::{DictationEngine, DictationError, DictationPhase, DictationPorts, DictationStatus, LevelFrame, RefineHints, SelectionTiming, TakeKind};
 use crate::engines::{
-    BuiltIn, EngineSettings, EngineStatus, FallbackSettings, MAX_FALLBACK_MODELS, MAX_LOCAL_THREADS, ProviderId, ResolvedEngines, ServiceKind, UserSecrets,
+    BuiltIn, EngineSettings, EngineStatus, FallbackSettings, GlossaryRoute, MAX_FALLBACK_MODELS, MAX_LOCAL_THREADS, ProviderId, ResolvedEngines, ServiceKind,
+    UserSecrets,
 };
 use crate::history::{HistoryEntry, HistoryStore};
 use crate::models::{CancelToken, DEFAULT_LOCAL_MODEL_ID, ModelInstallState, ModelManager, ModelState};
@@ -505,6 +506,11 @@ pub enum CoreCommand {
         /// Other models than the settings', if any.
         models: crate::audio_cache::RetakeModels,
     },
+    /// 用最近一条录音试一下 (docs/dictation.md §30.5): the newest kept recording recognised with the
+    /// clients the next take uses and the saved settings; the answer is
+    /// [`CoreEvent::RecognitionTrial`]. Nothing is pasted, copied or written to the history; refused
+    /// while a trial runs.
+    RecognitionTrial,
     /// Fetch and verify a local model (catalogue id); progress arrives as `Models` events.
     ModelDownload(String),
     /// Stop a running download (`.part` files stay for a resume).
@@ -808,6 +814,8 @@ pub enum CoreEvent {
     /// The recordings the audio cache holds (docs/dictation.md §26); on `Ready` and after every
     /// change.
     AudioCache(crate::audio_cache::AudioCacheView),
+    /// Where the last 试识别 is (docs/dictation.md §30.5): running, its result, or why it gave none.
+    RecognitionTrial(crate::trial::TrialView),
     /// Where the automatic backups go, the newest one and the last failure (docs/dictation.md
     /// §4.6.1); on `Ready` and after every change.
     AutoBackup(crate::backup::auto::AutoBackupView),
@@ -1027,6 +1035,8 @@ impl AppCore {
             history,
             audio,
             recovery: Recovery { leftovers, stop: Arc::new(std::sync::atomic::AtomicBool::new(false)), tx: recover_tx },
+            glossary_empty: no_glossary(dictionary.entries(), scenes.scenes()),
+            trial_busy: Arc::default(),
             dictionary,
             rules,
             ignored,
@@ -1137,6 +1147,13 @@ fn check_fallback_models(kind: ServiceKind, fallback: &FallbackSettings, library
         }
     }
     Ok(())
+}
+
+/// Nothing can go out as the glossary (docs/dictation.md §30.6): no enabled dictionary entry, and
+/// no enabled built-in scene whose term pack joins a take's glossary when it matches (§18.10).
+fn no_glossary(dictionary: &[crate::vocabulary::DictionaryEntry], scenes: &[crate::scenes::Scene]) -> bool {
+    !crate::vocabulary::has_glossary(dictionary)
+        && !scenes.iter().any(|scene| scene.enabled && scene.builtin.is_some_and(|category| !crate::vocabulary::packs::terms(category).is_empty()))
 }
 
 fn kind_name(kind: ServiceKind) -> &'static str {
@@ -1266,6 +1283,11 @@ struct Runtime {
     recovery: Recovery,
     /// `dictionary.json` (docs/dictation.md §16).
     dictionary: DictionaryStore,
+    /// Nothing can go out as the glossary: the dictionary has no enabled entry and no enabled
+    /// built-in scene adds a term pack (docs/dictation.md §30.6), as `UiState.engines` last said.
+    glossary_empty: bool,
+    /// A 试识别 runs (docs/dictation.md §30.5): set by its command, cleared by its task.
+    trial_busy: Arc<std::sync::atomic::AtomicBool>,
     /// `rules.json` (docs/dictation.md §16).
     rules: RuleStore,
     /// The pairs the learning suggestions leave out (docs/dictation.md §16.10).
@@ -1690,6 +1712,7 @@ impl Runtime {
             CoreCommand::AudioCacheClear => self.audio_cache_clear(),
             CoreCommand::AudioCacheDelete(id) => self.audio_cache_delete(id),
             CoreCommand::AudioRetake { id, models } => self.audio_retake(id, models),
+            CoreCommand::RecognitionTrial => self.recognition_trial(),
             CoreCommand::HistoryProcess { request_id, id, preset } => {
                 self.process_entry(request_id, id, preset);
                 Ok(())
@@ -1880,6 +1903,10 @@ impl Runtime {
     fn engine_status_of(&self, resolved: &ResolvedEngines) -> EngineStatus {
         let mut status = resolved.status_with(self.dictation.quota());
         self.model_lists.fill(&mut status);
+        // docs/dictation.md §30.6: a service that would take the glossary gets none.
+        if self.glossary_empty && matches!(status.glossary, Some(GlossaryRoute::Prompt | GlossaryRoute::Hotwords)) {
+            status.glossary = Some(GlossaryRoute::Empty);
+        }
         status
     }
 
@@ -2001,6 +2028,8 @@ impl Runtime {
         if extra == 0 || !matches!(self.dictation.status().phase, DictationPhase::Listening { .. }) {
             return self.stop_now();
         }
+        // The take's timeline counts the window from here (docs/dictation.md §30.1).
+        self.dictation.note_release();
         let session = self.dictation.status().session;
         let cancel = Arc::new(AtomicBool::new(false));
         let flag = cancel.clone();
@@ -2540,11 +2569,23 @@ impl Runtime {
 
     // ---------------- dictionary and rules (docs/dictation.md §16) ----------------
 
-    /// The engine's next runs take the new lists; the running one keeps its snapshot.
+    /// The engine's next runs take the new lists; the running one keeps its snapshot. The status
+    /// says it when the glossary appears or goes (docs/dictation.md §30.6).
     fn recompile_vocabulary(&mut self) {
         let vocabulary = Vocabulary::compile(self.dictionary.entries(), self.rules.rules());
         tracing::debug!(?vocabulary, "vocabulary recompiled");
         self.dictation.set_vocabulary(Arc::new(vocabulary));
+        self.refresh_glossary_empty();
+    }
+
+    /// Whether anything can go out as the glossary, from the dictionary and the scenes; the status
+    /// says it when that changes (docs/dictation.md §30.6).
+    fn refresh_glossary_empty(&mut self) {
+        let empty = no_glossary(self.dictionary.entries(), self.scenes.scenes());
+        if empty != self.glossary_empty {
+            self.glossary_empty = empty;
+            self.emit(CoreEvent::Engines(self.engine_status()));
+        }
     }
 
     /// After a dictionary command: on success tell the UI and recompile; a refusal changed nothing.
@@ -2606,6 +2647,8 @@ impl Runtime {
         let scenes = self.scenes.scenes().to_vec();
         self.dictation.set_scenes(Arc::new(scenes.clone()));
         self.emit(CoreEvent::Scenes(scenes));
+        // §30.6: a built-in scene switched on or off may bring its term pack or take it away.
+        self.refresh_glossary_empty();
         Ok(())
     }
 

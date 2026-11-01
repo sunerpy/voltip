@@ -86,6 +86,33 @@ describe("retakeMenus", () => {
     expect(off.models).toEqual({ refine: { kind: "off" } });
   });
 
+  it("docs/dictation.md §30.4: an on-device retake while the settings trim the silence offers to keep it, and sends that", async () => {
+    const trimming: EngineSettings = { ...custom, asr_provider: "local", vad_trim: true };
+    const s = await state(trimming);
+    const menus = retakeMenus(s.engines, s.models, {}, zh.t, "zh-CN", true);
+    expect(radios(menus.speech).slice(-2)).toEqual(["✓ 裁剪首尾静音", "不裁剪静音"]);
+    expect(menus.models).toEqual({});
+    const kept = retakeMenus(s.engines, s.models, { vadTrim: false }, zh.t, "zh-CN", true);
+    expect(radios(kept.speech).slice(-2)).toEqual(["裁剪首尾静音", "✓ 不裁剪静音"]);
+    expect(kept.models).toEqual({ vadTrim: false });
+    // A recognition by a service, or settings that do not trim: there is no silence to keep.
+    const remote = retakeMenus(
+      s.engines,
+      s.models,
+      { asr: { kind: "remote", provider: "custom", model: "whisper-1" }, vadTrim: false },
+      zh.t,
+      "zh-CN",
+      true,
+    );
+    expect(radios(remote.speech)).not.toContain("不裁剪静音");
+    expect(remote.models).toEqual({
+      asr: { kind: "remote", provider: "custom", model: "whisper-1" },
+    });
+    const untrimmed = retakeMenus(s.engines, s.models, { vadTrim: false }, zh.t, "zh-CN", false);
+    expect(radios(untrimmed.speech)).not.toContain("不裁剪静音");
+    expect(untrimmed.models).toEqual({});
+  });
+
   it("a choice its menu no longer offers is the settings' again", async () => {
     // Chosen while the custom endpoint was set up; it is gone now.
     const s = await state(defaultEngineSettings());

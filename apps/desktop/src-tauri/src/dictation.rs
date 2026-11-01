@@ -96,6 +96,8 @@ impl AudioSource for RecorderAudioSource {
             max_duration: if options.long { options.max_duration.min(MAX_RECORDING) } else { options.max_duration },
             source,
             pcm_stream: options.long.then(PcmStreamConfig::default),
+            // docs/dictation.md §30.3: the core asks for it on a microphone take with the setting on.
+            ready_cue: options.ready_cue,
             ..RecorderConfig::default()
         };
         // Take the microphone from the level meter first; the hub fans our frames out from now on.
@@ -125,6 +127,7 @@ impl AudioSource for RecorderAudioSource {
             live,
             long = options.long,
             max_duration = ?options.max_duration,
+            ready_cue = options.ready_cue,
             "dictation capture started"
         );
         Ok(Box::new(RecorderCapture { recorder, hub: self.hub.clone() }))
@@ -540,9 +543,13 @@ pub fn hardware_status(machine: &voltip_asr_local::HardwareInfo) -> voltip_core:
 /// [`LocalTranscriber`] (with its loaded recogniser) to every local-mode configuration, and — with
 /// a `store` — tells the model library whether the VAD is wanted (`vad_trim`, docs/dictation.md
 /// §12): it then rides along with the next model download, or is fetched right away in the
-/// background when the setting turns on later.
+/// background when the setting turns on later. A configuration for one take only
+/// (`for_one_take`, §30.4) gets its clients and changes neither.
 pub fn engine_factory(prefs: Arc<Mutex<InsertPrefs>>, local: LocalTranscriber, store: Option<ModelStore>, network: Arc<voltip_net::Network>) -> EngineFactory {
     Arc::new(move |engines: &ResolvedEngines| {
+        if engines.for_one_take {
+            return build_clients(engines, &local, &network);
+        }
         *prefs.lock() = InsertPrefs { mode: engines.inject, clipboard_after: engines.clipboard_after };
         if let Some(store) = &store {
             store.set_auxiliary_wanted(engines.vad_trim);
@@ -619,6 +626,22 @@ mod tests {
         assert_eq!(connected_or_default(&backend, Some("fake:unplugged")), None);
     }
 
+    /// docs/dictation.md §30.3: the core's `ready_cue` reaches the recorder: a microphone take with
+    /// it opens the cue's output once, one without it opens none.
+    #[test]
+    fn the_ready_cue_option_opens_the_cue_output() {
+        let backend = Arc::new(voltip_audio::FakeBackend::new());
+        let source = RecorderAudioSource::with_backend(backend.clone(), Arc::new(AudioHub::default()));
+        let options = |ready_cue| CaptureOptions { ready_cue, ..CaptureOptions::default() };
+        let capture = source.start(None, Box::new(|_| {}), Box::new(|| {}), options(false)).unwrap();
+        drop(capture);
+        assert!(backend.cue_outputs_opened().is_empty());
+        let capture = source.start(None, Box::new(|_| {}), Box::new(|| {}), options(true)).unwrap();
+        assert_eq!(backend.cue_outputs_opened(), vec![false]);
+        drop(capture);
+        assert!(!backend.is_running(), "the cue's output closes with the capture");
+    }
+
     /// docs/dictation.md §22: the capture options choose the recorder's source; a long take
     /// streams the whole take to the core; an output device that is gone falls back to the default
     /// output, as a microphone does.
@@ -635,6 +658,7 @@ mod tests {
             output_device: output.map(str::to_owned),
             // The mixed take below runs through the echo canceller's mixing thread (§22.6).
             echo_cancel: true,
+            ready_cue: false,
         };
         let mut capture = source.start(None, Box::new(|_| {}), Box::new(|| {}), options(RecordingSource::System, Some(FAKE_SPEAKERS_ID), true)).unwrap();
         let mut stream = capture.pcm_stream().expect("a long take streams");

@@ -820,5 +820,10 @@ describe("refineModelText", () => {
       "Not polished · over 2,000 characters",
     );
     expect(notRefinedText("empty")).toBe("未润色 · 返回了空结果");
+    // §3.12: an answer cut off at the model's output limit says what was kept, in one sentence.
+    expect(notRefinedText("truncated")).toBe("润色结果不完整，已保留识别原文");
+    expect(refineModelText({ refined: false, refine_failure: "truncated" }, "en")).toBe(
+      "The polished text was incomplete; the transcript was kept",
+    );
   });
 });

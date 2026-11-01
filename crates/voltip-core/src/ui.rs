@@ -126,6 +126,11 @@ pub enum UiEvent {
     },
     /// The recordings the audio cache holds (docs/dictation.md §26), full replacement.
     AudioCache(crate::audio_cache::AudioCacheView),
+    /// Where the last 试识别 is (docs/dictation.md §30.5).
+    RecognitionTrial {
+        /// Running, its result, or why it gave none.
+        trial: crate::trial::TrialView,
+    },
     /// The import queue (docs/dictation.md §31), full replacement.
     Imports(crate::import::ImportsView),
     /// Where the automatic backups go, the newest one and the last failure (docs/dictation.md
@@ -516,6 +521,9 @@ pub struct UiState {
     /// none (the phone).
     #[serde(default)]
     pub auto_backup: crate::backup::auto::AutoBackupView,
+    /// The last 试识别 since the app started (docs/dictation.md §30.5); `None` before the first.
+    #[serde(default)]
+    pub recognition_trial: Option<crate::trial::TrialView>,
     /// Resolved ASR / refine / inject configuration.
     #[serde(default)]
     pub engines: EngineStatus,
@@ -619,6 +627,7 @@ impl Default for UiState {
             audio_cache: crate::audio_cache::AudioCacheView::default(),
             imports: crate::import::ImportsView::default(),
             auto_backup: crate::backup::auto::AutoBackupView::default(),
+            recognition_trial: None,
             engines: EngineStatus::default(),
             update: UpdateStatus::default(),
             models: Vec::new(),
@@ -756,6 +765,10 @@ impl UiState {
             CoreEvent::AutoBackup(view) => {
                 self.auto_backup = view.clone();
                 UiEvent::AutoBackup(view)
+            }
+            CoreEvent::RecognitionTrial(trial) => {
+                self.recognition_trial = Some(trial.clone());
+                UiEvent::RecognitionTrial { trial }
             }
             CoreEvent::ProviderProbe(report) => UiEvent::ProviderProbe(report),
             CoreEvent::Connectivity(status) => {
@@ -943,6 +956,8 @@ mod tests {
             origin: None,
             processed: None,
             file: None,
+            timing: None,
+            glossary_sent: None,
         };
         let ev = st.apply(CoreEvent::History { recent: vec![entry.clone()], total: 7 });
         assert_eq!((st.history_recent.clone(), st.history_total), (vec![entry], 7));
@@ -984,8 +999,9 @@ mod tests {
         // A state serialized before the dictation fields existed still parses.
         let legacy = r#"{"identity":null,"settings":{"schema":1,"theme":"light","follow_system_theme":false,"relay_enabled":true},"secret_backend":"","relay":{"state":"disconnected","attempts":0},"pairing":{"state":{"state":"idle"},"local_confirmed":false,"peer_confirmed":false},"devices":[]}"#;
         let back: UiState = serde_json::from_str(legacy).unwrap();
-        // The stored theme stays (new installs start on 澄空, 0.1.1); everything else defaults.
-        let settings = Settings { theme: crate::ThemeId::Light, ..Settings::default() };
+        // The stored theme stays (new installs start on 澄空, 0.1.1); everything else defaults, but
+        // the extra recording a file did not have reads as 0 (new installs start at 150, §30.4).
+        let settings = Settings { theme: crate::ThemeId::Light, extra_recording_ms: 0, ..Settings::default() };
         assert_eq!(back, UiState { settings, ..UiState::default() });
     }
 

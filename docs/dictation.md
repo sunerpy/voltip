@@ -91,6 +91,7 @@ Idle ──DictationStart──▶ Listening{started_at, ready, live} ──Dict
 - `Done` / `Failed` / `Cancelled` 停留 2.5 s 后核心自动回 `Idle`（`Failed` 带 `text` 时停留 6 s，因窗口切换只复制了文字的 `Done` 也是 6 s，§14.3）。再次 `DictationStart` 立即打断停留。桌面上四种结果卡片（确定没写进去的 `Done`、窗口已切换的 `Done`、有文字的 `Failed`、录音已保留的无文字 `Failed`）默认不计时，停到 `DictationDismiss` 或下一次听写；设置「识别结果卡片常驻」关闭时按上面的时长（§28.4）。
 - `Processing` 中的 `DictationCancel` 与送出文字由这次的 `InsertGate` 决定（§14.3）：取消先到，什么都不送出，`Cancelled`；送出已经开始，取消不起作用，这次照常以同样的 `Done` 和历史结束。
 - 每次到达 `Done` 或带文本的 `Failed` 都追加一条 `HistoryEntry`。
+- `Listening.ready` 在设备送来第一批样本时变真（`CaptureReady`）。标记从音频线程经一个 oneshot 送出（`DictationEngine::open_capture`）：发送从不阻塞，也不会遇到满的队列。打开设备的任务在上报 `CaptureStarted` 之前转交已经到达的标记，否则由一个等待的任务稍后转交，转交用 `send().await`，从不 `try_send`。此前音频线程直接对核心的有界内部队列 `try_send`，队列满时标记丢失：这一次一直不就绪，悬浮窗的计时把设备的启动也算了进去（`regression_capture_ready_survives_a_full_queue`，2026-11-01，§30）。
 
 ```rust
 #[serde(tag = "phase", rename_all = "snake_case")]
@@ -318,6 +319,7 @@ Kimi（`api.moonshot.cn` / `api.moonshot.ai`）和智谱 GLM（智谱开放平�
 - **测试连接**：`ProbeError.detail` / `ProbeOutcome::Failed.detail`（可省略）：服务返回的话，或连接错误（主机已在 `map_reqwest` 去掉）。界面写「密钥被拒绝：Incorrect API key provided (invalid_api_key)」（`engines.probeResult.withDetail`）。
 - **界面**：识别、润色、改写失败的标签带原因（`dictation.failureCode.asr`、`refine`、`dictation.edit.refineFailed` 的 `{reason}`）：悬浮窗、首页的结果行和历史记录都显示。悬浮窗里较长的原因截断显示（最宽 380 px），完整内容在提示里；润色失败的记录详情显示「原因：…」（§3.6）。原因里客户端自己的英文说法（`ASR rejected the credentials`、`refine service overloaded (HTTP 503)` 等，即两个 `error.rs` 的 `Display`）由 `serviceReasonText`（`packages/shared/src/labels.ts`）换成界面语言（「密钥被拒绝」「服务繁忙」），核心加在前面的「请求过于频繁：」「服务繁忙：」「额度已用完：」一并去掉，服务的原话照原样跟在后面：「识别服务出错：密钥被拒绝：Incorrect API key provided (invalid_api_key)」。其他形式的原因只去掉机器前缀、原样显示。改 `Display` 时同步改这张表（2026-10-25：同步文档站时发现界面把「ASR rejected the credentials」夹在中文里）。
 - **测试**：`voltip-reply` 的单元测试（各服务商的错误体、HTML、遮盖 `regression_keys_tokens_and_accounts_are_masked`、截断），`voltip-asr` / `voltip-refine` 的错误映射测试改为断言服务的原话，`voltip-core` 的 `probe_reports_are_flat_and_tagged`，`engine-drafts.test.ts` 的 "a failed probe says what the service said"，`labels.test.ts`，`Pill.test.tsx` 的 "a failure with the service's words is cut in the pill"。
+- **润色被截断**（2026-11-01，§30）：润色的回答停在模型的输出上限（`RefineError::Truncated`，§3.10）时文字不完整，不使用。它映射为 `DictationError::RefineTruncated { detail }`，显示文字仍是「refine: 」加客户端的说明，失败码仍是 `refine`；润色失败的种类记为 `RefineFailure::Truncated`（wire 上 `truncated`），`Done.text` 与历史的文字是识别原文。它不是服务故障：同样的请求还会被截断。界面：悬浮窗与历史详情写「润色结果不完整，已保留识别原文」，耗时一行写「未润色 · 结果不完整」；导入的文件（§31）同样记录。测试：`voltip-cloud` 的错误映射，`dictation/mod.rs` 的 `RefineFailure::of`，`steps.rs` 的截断用例，`engine.rs` 里 `FakeRefiner::truncated()` 的两组表测试，`import/run.rs`，`labels.test.ts`，`History.test.tsx`。
 
 ### 3.13 国内服务商与 OpenRouter（2026-10-25）
 
@@ -551,7 +553,7 @@ pub struct HistoryEntry {
 | `EngineStatus` | `effective_output_mode` | 本次 `DictationStart` 真正会走的模式（§12） |
 | `HistoryEntry` | `mode`、`segments?`、`live_error?` | 与 `done` 相同语义；旧 `history.json` 读作 `whole_take`（§12） |
 | `DictationPhase::listening` | `locked: bool`（总是序列化；缺省 `false`） | `hold_or_toggle` 短按锁定（§13），胶囊显示锁标 |
-| `Settings` | `activation: "hold" \| "toggle" \| "hold_or_toggle"`（默认 `hold`）；`hold_threshold_ms: number`（默认 300）；`extra_recording_ms: number`（默认 0） | 激活方式（§13）；旧 `settings.json` 缺省可解析 |
+| `Settings` | `activation: "hold" \| "toggle" \| "hold_or_toggle"`（默认 `hold`）；`hold_threshold_ms: number`（默认 300）；`extra_recording_ms: number`（新安装 150，§30.4；缺省时 0） | 激活方式（§13）；旧 `settings.json` 缺省可解析 |
 | `UiState` | `dictionary: DictionaryEntry[]`、`rules: ReplacementRule[]`（缺省 `[]`） | 个人词典与替换规则（§16） |
 | `HistoryEntry` | `vocabulary?: { corrections: [{ id, count }], rules: [{ id, count }] }` | 本次触发的纠正与规则（§16.3）；都没触发时不上 wire |
 | `EngineSettings` | `chinese_script: "simplified" \| "traditional" \| "as_is"`（默认 `simplified`，总是序列化） | 识别结果的中文字形（§17） |
@@ -838,7 +840,7 @@ Internal::LiveInjected { session, idx, result: Result<Injection, DictationError>
 
 ## 13. 激活方式与 CLI 远控（2026-09-26）
 
-`Settings.activation: Activation`（`#[serde(default)]`，wire `"hold"`（默认）| `"toggle"` | `"hold_or_toggle"`）、`Settings.hold_threshold_ms: u32 = 300`、`Settings.extra_recording_ms: u32 = 0`（三者 `#[serde(default)]`，旧文件缺省可解析）。`CoreCommand::SetActivation { activation, hold_threshold_ms, extra_recording_ms }` 持久化、回发 `Settings` 并即时换机器配置；两个毫秒值 > `MAX_ACTIVATION_MS`（5000）以 `CoreError::Invalid` 拒绝。
+`Settings.activation: Activation`（`#[serde(default)]`，wire `"hold"`（默认）| `"toggle"` | `"hold_or_toggle"`）、`Settings.hold_threshold_ms: u32 = 300`、`Settings.extra_recording_ms: u32`（三者 `#[serde(default)]`，旧文件缺省可解析；`extra_recording_ms` 缺省时为 0，新安装为 `DEFAULT_EXTRA_RECORDING_MS` 150，2026-11-01 按 §30.4 的测量改，此前新安装也是 0）。`CoreCommand::SetActivation { activation, hold_threshold_ms, extra_recording_ms }` 持久化、回发 `Settings` 并即时换机器配置；两个毫秒值 > `MAX_ACTIVATION_MS`（5000）以 `CoreError::Invalid` 拒绝。
 
 壳层不再直接把热键边沿映射成 `DictationStart/Stop`，而是发 `CoreCommand::HotkeyEdge { pressed: bool, at_ms: u64, source: EdgeSource /* "hotkey" | "cli" | "ui" */ }`（`at_ms` 用 `voltip_core::now_ms()`，Unix 毫秒；机器只看差值）。核心 `voltip_core::dictation::activation::ActivationMachine` 是纯状态机（无 IO、无时钟；表驱动单测），由运行时持有：
 
@@ -1184,7 +1186,7 @@ live_inject     ：每个 committed 句子 / tail / 补齐的 remainder：句子
 - 规则跨不了 `live_inject` 的句子边界（每句单独处理）。
 - 纠正与规则让非空文本变成空白：不注入，按 `no_speech` 结束（`live_inject` 里该句直接跳过）。
 - **词表**（glossary）= 启用词条的 `term`，按词典顺序、去重，受 16.1 上限约束；误识别写法**永远不**进词表（否则把识别往错误写法上引）。
-  - **云端 ASR**：非空时作为 OpenAI 兼容 multipart 的可选 `prompt` 字段发送，值为 `", "` 连接的词表；为空时不发该字段。vLLM 的 Qwen3-ASR 把 `prompt` 清洗后放进 system 轮作为上下文（vLLM `qwen3_asr.py` `get_generation_prompt`），这正是 Qwen3-ASR 的上下文偏置用法；Whisper 类端点把它当作前文提示。
+  - **云端 ASR**：OpenAI 兼容的转写接口（内置服务、OpenAI、Groq、自建与自定义接口）在词表非空时把它作为 multipart 的可选 `prompt` 字段发送，值为 `", "` 连接的词表；为空时不发该字段。vLLM 的 Qwen3-ASR 把 `prompt` 清洗后放进 system 轮作为上下文（vLLM `qwen3_asr.py` `get_generation_prompt`），这正是 Qwen3-ASR 的上下文偏置用法；Whisper 类端点把它当作前文提示。阿里云百炼只有 `qwen-audio-…-asr` 模型以热词接收，Qwen3-ASR、Fun-ASR、Paraformer 等不接收（2026-11-01 更正：此前文档、设置页和词典页都写成「发给云端识别」）。哪种服务收到什么、界面怎么说、每条历史怎么记，见 §30.6。
   - **LLM 润色**：`voltip_refine::system_prompt(style, language, glossary)` 在词表非空时追加一段「用户词典」块（每行一个词，要求逐字保留写法、明显指向某词的同音误识别改成词典写法、不确定就保留）；为空时提示词与之前逐字相同。
   - **本地引擎**：不下发。transcribe.cpp 0.2.3 的 Qwen3-ASR 用空 system 轮拼 chat 提示（`transcribe-cpp-sys-0.2.3/src/arch/qwen3_asr/model.cpp` `build_prompt_tokens`）；0.4.1（§29）起它声明 `Feature::Vocabulary` 与 `Feature::ContextPrompt`，词表和上下文提示都放进这个 system 轮，Voltip 升级时没有接上（不改变用户可见的行为），把个人词典交给本机模型要另行评估。两个版本都不声明 `Feature::InitialPrompt`，Whisper 运行扩展会被拒绝——实测见 16.8；SenseVoice / Paraformer 在 sherpa-onnx 里没有热词；流式 Zipformer 的热词实测见 16.8，结论是**不开**。本地引擎因此只有识别后的词典纠正。
 - 端口：`Transcriber::transcribe(wav, language, glossary: &[String])`、`Refiner::refine(text, hints: &RefineHints)`（词表在 `hints.glossary`；同一结构还带本次的语言、风格与场景上下文，§18.5）；引擎持有编译好的 `Arc<Vocabulary>` 快照（词典 / 规则每次变更由运行时替换），每次运行在开始时取用当时的快照。
@@ -1441,11 +1443,12 @@ DictationStart ─▶ Listening（立即上报，胶囊跟手）
     ├─ 有探针：spawn_blocking(foreground)，限时 PROBE_DEADLINE ─▶ Internal::Context { session, app? }
     │      ─▶ 仍在 Listening：匹配场景 → 本次覆盖 → 上报带 context 的 Listening
     │      ─▶ 打开设备（CaptureOptions.max_duration 按覆盖后的输出方式）并开始 max_recording 计时
+    │         （§30.2：一次听写、且没有启用的场景改输出方式时，设备在按下时就与探针同时打开）
     └─ 无探针（手机、fakes::ports()）：立即打开设备（与之前完全相同）
 松开 ─▶ 识别(语言=本次) → 字形(本次) → 词典 → 润色(开关 / 风格 / 语言=本次，上下文块) → 规则 → 注入 → 历史(app, scene)
 ```
 
-- 探针先于设备打开：`Internal::Context` 总在该 session 的 `CaptureStarted` 之前到达，所以解码线程（§11 的 `open(language)` 与字形）和录音上限都用覆盖后的值。代价是设备晚开探针那点时间（Windows / macOS 微秒级、本机 X11 约 1 ms、最坏 100 ms）；胶囊的 `Listening` 不等探针。
+- 探针先于设备打开：`Internal::Context` 总在该 session 的 `CaptureStarted` 之前到达，所以解码线程（§11 的 `open(language)` 与字形）和录音上限都用覆盖后的值。代价是设备晚开探针那点时间（Windows / macOS 微秒级、本机 X11 约 1 ms、最坏 100 ms）；胶囊的 `Listening` 不等探针。2026-11-01 起（§30.2）这只用于语音编辑和有场景可能改输出方式的时候；其余听写的设备在按下时就打开，录音上限按全局的输出方式（场景改不了它），解码线程等探针回答后再开始，之前的声音留在 live tap 里。
 - 探针超时、报错、panic 或返回 `None`：没有 context，没有场景，按全局设置。探针返回前就松开（比探针还快的点按）：这一次没有场景（Context 到达时已不在 `Listening`；设备照旧打开再立即关闭，与今天的快速点按相同）。探针返回前取消：设备不再打开。
 - 覆盖只作用于这一次，从不写进设置；下一次重新探测。每次运行在 `start` 时取场景列表与隐私开关的快照（与 §16 词典快照相同），运行中的修改从下一次起生效。
 - 覆盖的解析：`refine_enabled` / `refine_preset`（§21）/ `language`（`auto` = 不给提示）/ `chinese_script` 直接替换全局值；`output_mode` 与全局设置同一套规则——流式两种要 `live_preview_ready`，否则本次按 `whole_take` 运行，并在 `Done.live_error` 与历史里写明原因（全局设置的同类回落不写 `live_error`，因为设置页一直显示「当前生效」；场景的回落没有别处可看）；运行中的降级照 §12。`live_inject` 永不润色（§12）。
@@ -2725,6 +2728,148 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 - **门禁**：`catalogue.rs@only_the_streaming_model_comes_as_a_release_package`、`store.rs@sources_build_the_documented_urls_in_order`；`tests/package.rs`（只监听 127.0.0.1 的假服务）：经 302 跳转正常解包、镜像失败后改用发布包且不问 Hugging Face、包损坏三种、缺文件、哈希与大小不符、下载中取消后续传、解包时取消后不再下载、`.part` 已是整包时 416 后直接解包、空间不够时不写入、手动导入、命令行下载，以及 `#[ignore]` 的真包测试 `real_the_streaming_model_installs_from_its_release_package`；这 11 个非忽略的测试先对着没有发布包来源的实现失败（「没有可用的下载源」，导入报文件缺少）。核心 `tests/models.rs@a_package_that_cannot_be_used_reaches_the_card_as_its_problem`，壳 `Bridge::model_link` 的 `the_manual_download_of_a_packaged_model_opens_the_package_address`，前端 `ipc-contract.test.ts`、`EnginesPane.test.tsx`（中英文各一）与 `Settings.test.tsx` 的关于页。
 - **实测**（2026-10-30，Linux）：本机假服务只监听 127.0.0.1，`/mirror/` 一律 404，发布包路径 302 到 `/release-assets/`，后者按 4 MB/s 提供上面下载的真实发布包，支持 `Range`。开发版（`pnpm tauri dev -- --bin voltip-desktop`，构建时 `VOLTIP_MODEL_BASE_URL` 指向 `/mirror`、`VOLTIP_MODEL_RELEASE_BASE_URL` 指向这个服务，不读 `.env.build`）在 Xvfb 下经 AT-SPI 操作「实时预览」卡片：点「下载」后先向镜像要 `encoder.int8.onnx`（404），再要发布包（302、200），进度显示包名和 133.9 MB；下载到 25% 时取消，卡片回到「未安装」，留下 34078720 字节的 `.part`；再点「下载」，请求带 `Range: bytes=34078720-`，得到 206，安装完成，五个文件的 SHA-256 与目录一致，文件夹里只剩五个文件和 `manifest.json`。另一次在包已下载完、正在解包时取消，留下完整的包和已通过校验的两个文件；再次下载只向镜像发了一个请求，直接解包装好。同一个开发版的 `--download-model zipformer-stream-zh-en` 走同样的请求，退出码 0，标准输出是安装结果一行。开发版（未优化）解包和校验约 23 s；release 构建的真包测试从本机服务安装完共 9.3 s。
 - **限制**：续传前后上游换了同名的包时，拼出的包在解包时校验不过，按 `Broken` 或 `Mismatched` 删除，下一次重新下载；没有用 `ETag`/`If-Range` 防住这种情况。`make desktop-dev` 在本分支的基线上就不能启动（`cargo run` 在 `voltip-desktop` 与 `keychain_preinstall` 两个二进制之间选不出，`Cargo.toml` 没有 `default-run`），实测改用上面的等价命令。
+
+## 30. 首尾音、计时与生效状态（2026-11-01）
+
+**目标**（R05 余项、R07 的状态部分）：记录一次听写从按键到结果的各段耗时；能并行时设备打开不再等前台探测；`CaptureReady` 不再可能丢失（§2）；可选的「可以说话」提示音；「不裁剪静音重新识别」；润色被截断有独立的失败类型（§3.12）；用固定语料测过之后再定 VAD 与「松开后继续录音」的默认值。术语表是否发给识别服务，在设置、词典页与每条历史里如实显示，并更正帮助文字；用最近一条录音按已保存的配置试识别一次。
+
+### 30.1 一次听写的时间线（`TakeTiming`）
+
+`Done.timing` 与 `HistoryEntry.timing`：`pressed_at` 是开始的 Unix 毫秒（按下快捷键、CLI 的开始，或一次重新识别的开始），其余字段都是从它起算的毫秒数。字段都带 `#[serde(default)]`，旧记录没有 `timing`，照常读取。
+
+| 字段 | 记下的时刻或时长 |
+|---|---|
+| `device_open_ms` | `AudioSource::start` 返回，设备已打开；不晚于 `first_audio_ms` |
+| `first_audio_ms` | 设备送来第一批样本（`CaptureReady`）；打开期间就送来的，记作打开返回的时刻 |
+| `first_text_ms` | 实时预览的第一个字；没有实时预览时省略 |
+| `released_ms` | 松开：要求停止的时刻。按住说话时是 50 ms 的松开宽限（`release_grace_ms`，§13）过去之后；达到最长录音时长也算 |
+| `tail_ms` | 松开后麦克风又开了多久（`Settings.extra_recording_ms`，§13） |
+| `asr_ms` | 从录音结束到识别文字齐全：整段的识别、流式的最后一句（`Finalizing`）、长录音的最后几段 |
+| `refine_ms` | 润色；没有润色时省略 |
+| `insert_ms` | 交出文字：粘贴或复制，粘贴后的插入确认（§28）也算在内 |
+| `done_ms` | 出结果 |
+
+- 没有录音的一次（重新识别）省略 `device_open_ms`、`first_audio_ms`、`released_ms`。
+- 时钟是核心的 `tokio::time::Instant`（`TimingMarks`），记的是核心实际等了多久，不是服务报的耗时。设备打开与第一批样本按发生的时刻记，不按引擎从内部队列取到消息的时刻：打开设备的任务在 `start` 返回时取时刻，打开期间就送来的第一批样本也记作这个时刻（音频线程上取不到核心的时钟）；之后才到的，由等它的任务在标记到达时取时刻。两个时刻随消息带给引擎（`Internal::CaptureStarted.at`、`Internal::CaptureReady.at`），内部队列满时排队的时间不会算成「等待声音」。
+- 处理阶段（`ProcessingStage`）按开始的先后切分，`Transcribing` 与 `Finalizing` 计入 `asr_ms`，`Refining` 计入 `refine_ms`，`Inserting` 计入 `insert_ms`。
+- 松开后有延录时，运行时在开始等 `extra_recording_ms` 之前告诉引擎（`DictationEngine::note_release`），所以 `released_ms` 与录音结束之间的 `tail_ms` 就是延录；没有延录时两者相同。
+- 日志：每次结束写一行 `take timing`（各字段）。
+- 界面：历史详情「技术细节」的「时间线 · 从按下快捷键到出结果」（`DetailParts.tsx` 的 `Timeline`）：打开麦克风、等待声音、录音、延录、识别、润色、插入，按时长画成一条；每段从上一段的结束算到自己的时刻（`timelineSteps`），首尾相接、不重叠：首批样本先于设备打开时「等待声音」为 0，松开早于首批样本时「录音」为 0。下面写「实时预览首字 n ms」和总耗时；重新识别的记录写「时间线 · 从开始识别到出结果」，没有前面几段。没有 `timing` 的旧记录照旧显示识别与润色两段耗时。
+
+### 30.2 设备打开与前台探测并行
+
+- **之前**：按下后先问前台探测（§18.4）这次匹配哪个场景，回答之后才打开设备；探测最多等 `PROBE_DEADLINE`（100 ms），这段时间说的话录不进去。
+- **现在**：`capture_independent_of_scene(scenes, kind)` 为真时，设备在按下时就开始打开，与探测同时进行（`ProbeWait::Alongside`）；条件是这是一次听写，且没有启用的场景改输出模式（输出模式决定手机录音的来源和每次的流式路径）。其他情况照旧等回答再打开（`ProbeWait::First`）：语音编辑（终端在前台时，在打开任何东西之前就拒绝，§19.2），以及有场景可能改输出模式时。
+- 探测回答之后再套用场景，并启动等着它的实时预览：实时预览的语言、字形、术语包和断句都跟场景走（§18.5），开始之前的声音留在 live tap 里，不会丢。探测回答之前就松开或取消：这次不套用场景，实时预览也一样。松开后继续录音的那段时间里引擎仍在「录音中」，但松开已经记下（`released_ms`），这时到的回答同样不套用（`DictationEngine::scene_still_open`）。
+- **测试**：`without_a_scene_that_changes_the_mode_the_device_opens_while_the_probe_runs`、`a_scene_that_may_change_the_mode_or_a_voice_edit_waits_for_the_probe`、`the_live_preview_waits_for_the_answer_while_the_device_opens_at_once`、`cancel_or_stop_before_the_probe_answered`（假探针一直不回答，等状态，不等事件）；`the_capture_waits_for_the_probe_only_when_a_scene_may_change_the_mode`；松开之后才到的回答：`regression_an_answer_after_the_release_applies_no_scene_where_the_device_waited`（先等探针的路径），`tests/scenes.rs@regression_a_probe_answering_during_the_extra_recording_applies_no_scene`（经运行时的延录）。
+- **实测**见 §30.4 的首字测量：Xvfb 里没有窗口管理器，探测立即回答，并行没有可省的时间；改动前后按下到设备打开都约 15 ms，首字都没有丢。
+
+### 30.3 「可以说话」提示音
+
+- **设置**：`settings.recording.ready_sound`，默认关；「设置 → 录音来源」的「「可以说话」提示音」，只在录音来源为「麦克风」时可开（「混合」时置灰并说明：电脑声音会把提示音录进去）。开着时核心的 `CaptureOptions.ready_cue` 为真，壳把它交给录音器（`RecorderConfig.ready_cue`）。语音编辑也播放：它的指令同样是对着麦克风说的。
+- **声音**（`voltip_audio::cue`）：120 ms（`CUE_DURATION`），880 Hz 与 1320 Hz 两个音（`CUE_TONES_HZ`）各占一半，幅度 0.2，首尾各 5 ms 淡入淡出；在录音开始前合成好。录音器在打开麦克风之后打开默认输出上的一条流（`Backend::open_cue_output`），每次回调要 10 ms（`CUE_BUFFER`）：PulseAudio 默认的播放缓冲约 2 s，用它时提示音晚 2 s 才响。麦克风送来第一批样本（`on_ready` 之后）时，输出流开始播放，只播一次；之后输出静音，录音结束时关闭。输出流打不开时只记一条 `warn`，录音照常。
+- **不让它进入识别**：麦克风多半会录到提示音。录音器在把每一块样本交给录音、实时预览（live tap）和 PCM 流之前（转成单声道之后），把提示音时间窗里的样本置零；电平表照常显示它。时间窗由纯函数 `window_for` 与 `zero_range` 计算，只用同一条流自己的时间戳之差（cpal 0.18 的 `callback` 与 `capture` / `playback`）：
+  - 输出与输入的延迟都知道时：窗口按采集时间，从「回调时刻 + 输出延迟」前 min(10 ms, 两个延迟之和) 到它之后 150 ms（`CUE_DURATION` + `CUE_TAIL` 30 ms）。
+  - 有一个不知道时：窗口按回调时间，从提示音开始播放起 250 ms（`CUE_FALLBACK_WINDOW`）。
+  - 输入延迟超过 100 ms（`CUE_MAX_INPUT_LATENCY`）的按不知道处理：ALSA 的 PulseAudio 插件在流刚开始时报 686 ms，1.3 s 内降到约 10 ms，而样本是实时送达的。
+  - 两条回调之间只共享原子量（`CueShared`）：输入回调读窗口、置零，不建流、不加锁等待。
+- 提示音响着时说的话也被置零。帮助文字写明了这一点，以及蓝牙耳机可能因此切换到通话模式。
+- **测试**：`cue.rs` 的表测试（`the_window_covers_the_tone_from_both_latencies_or_falls_back`、`the_frames_to_zero_follow_their_capture_times`、`a_fallback_window_takes_chunks_whole_by_their_callback_time` 等）；`recorder.rs` 用假后端（`the_ready_cue_plays_once_after_the_first_samples`、`the_cue_plays_when_its_output_is_ready_after_the_first_samples`、`without_first_samples_the_cue_stays_silent_and_both_streams_close`、`stopping_mid_cue_closes_the_output_at_once`、`the_cue_needs_a_speaker_and_the_microphone_source`、`the_cue_window_zeroes_the_take_the_tap_and_the_stream`）；壳 `the_ready_cue_option_opens_the_cue_output`；核心 `the_ready_sound_setting_asks_the_capture_for_the_cue`。
+- **真设备**（`crates/voltip-audio/tests/ready_cue.rs`，`#[ignore]`，Linux，私有 PulseAudio，见文件头）：null sink 的 monitor 当麦克风，提示音也播到这个 sink，所以一定被录到。背景是 -40 dBFS 的白噪声；`parec` 同时录 monitor 作对照。断言：送识别的录音在两个频率上的能量不超过背景 + 6 dB，monitor 的录音至少高出背景 20 dB。3 次都通过；去掉置零后失败（-21 dB，背景 -62 dB）。首字对照见 §30.4。
+
+### 30.4 首尾音：不裁剪静音重新识别，与默认值的测量
+
+- **不裁剪静音重新识别**：`RetakeModels.vad_trim: Option<bool>`（§26.4），`apply` 时覆盖 `EngineSettings.vad_trim`，`is_empty` 与 IPC 参数一并更新。重新识别会用本地模型整段识别、且设置开着「静音裁剪」时，「语音模型」菜单最后多「裁剪首尾静音」和「不裁剪静音」两项，录音列表的菜单多「不裁剪静音重新识别」。这一次的客户端由 `ResolvedEngines::for_one_take` 建，不改设置，也不触发 VAD 模型的下载（`a_one_take_configuration_changes_nothing_but_its_clients`）。测试：`a_recording_is_recognised_again_without_trimming_its_silence`、`RetakeModels.test.ts`。
+- **`CaptureReady`** 的送达见 §2。
+
+#### 测量
+
+- **语料**：PR-4 的 `scripts/measure/make-corpus.py` 取 FLEURS `cmn_hans_cn` 测试集的 20 条 3–8 s 句子：10 条中文（`plain-s00`–`s09`）、10 条中英混说（`mixed-s00`–`s09`）。`tail-loss.py prepare` 把每条切到语音开始前 50 ms，并定出语音结束的位置：20 ms 一帧，比这条录音的底噪（最安静的五分之一帧的平均）高 20 dB 的帧是语音，最后一个这样的帧的末尾即语音结束。
+- **链路**（`scripts/measure/tail-loss.sh`）：Xvfb（空闲的显示号）、私有 PulseAudio（`scripts/measure/private-pulse.sh`，null sink 的 monitor 是麦克风，经 ALSA 的 PulseAudio 插件进入 Voltip，与用户电脑上的路径相同）、私有会话总线（`dbus-run-session`），在其中运行调试构建，本地模型 Paraformer 识别，不开润色，插入方式为「仅复制到剪贴板」，结果从历史读出。整个运行期间 null sink 上挂着一路 10 ms 的静音流：空闲的 null sink 一次预先渲染 2 s，之后接入的录音和播放都排在这 2 s 后面（首块样本晚 1.9 s 才到，停止时丢掉最后 1.9 s）；挂上之后首块样本 25–30 ms 内到达，与声卡一样。
+- **方法**（计划原文）：`voltip-desktop --toggle` 开始，录音开始后播放一句，在语音结束前 `d` 毫秒再 `--toggle` 停止（`d` ∈ {0, 100, 200}，模拟提前松手），`extra_recording_ms` ∈ {0, 150, 300}，每组 20 句 × 3 遍。首字：先开始播放，随即 `--toggle` 开始（计划的「播放开始后 0 ms 才按下」），语音结束 800 ms 后停止，改动前（B，`90537f09`）与改动后各 3 遍。`--toggle` 由第二个进程经单实例插件的 D-Bus 转交（§13），实测开始约 40 ms、停止 39–54 ms 到达。同样的组合再用全局快捷键（XTEST 按下与松开，即用户的操作，松开要过 50 ms 宽限）测了一遍作对照。
+- **打分**（`scripts/measure/edge-loss.py`，单测 `test_edge_loss.py`）：参考文本与识别结果都取汉字、字母和数字（小写，不计标点），按字做编辑距离对齐；参考的首字（末字）在对齐中被删掉才算丢失，替换不算（那是识别错误，声音在）。同一模型识别整条录音（`piece_quality --lengths all`）也认不出的首末字不算：FLEURS 的参考里有朗读者没读的注释（「露娜 (Luna)」）。
+- **VAD**：同样 20 句经 `piece_quality` 示例程序（`--lengths all`，`--vad-root` 先按 `vad_trim` 的做法裁剪）识别，开与关各一次。
+
+#### 结果
+
+2026-11-01，Linux（32 核服务器 CPU），调试构建（改动后为 `a0962e7a`，改动前为 B `90537f09`），Paraformer，每格 20 句 × 3 遍 = 60 次。
+
+- **末字**（计划的方法，`--toggle`；停止在计划时刻之后 38–52 ms 到达，中位 41 ms）：末字丢失次数 / 60，括号里是 CER。
+
+  | 延录 | `d` = 0 | `d` = 100 | `d` = 200 |
+  |---|---|---|---|
+  | 0 ms | 0（21.53%） | 3（21.80%） | 9（22.02%） |
+  | 150 ms | 0（21.03%） | 0（21.03%） | 0（21.09%） |
+  | 300 ms | 0（21.31%） | 0（21.31%） | 0（20.98%） |
+
+  `d` = 100 的 3 次都是 mixed-s03（3 遍都丢）；`d` = 200 的 9 次分在 mixed-s03、mixed-s04、mixed-s05 和 plain-s06。
+- **对照：快捷键**（XTEST 按下与松开，松开要过 50 ms 宽限）：延录 0 时 `d` = 0 / 100 / 200 丢 2 / 0 / 7 次，150 ms 与 300 ms 都是 0；CER 20.98–22.24%。`d` = 0 的 2 次都在第 3 遍里机器卡顿的时候：一次设备打开用了 4301 ms，一次停止晚到 1.37 s、中间的话也没录到。快捷键的停止比 `--toggle` 晚约 10–15 ms（宽限），mixed-s03 的末字正在这段时间里：`--toggle` 每遍都丢，快捷键都不丢。
+- **首字**：改动前后都没有丢首字（`--toggle` 与快捷键都是 0 / 60）。`--toggle` 的开始在播放开始后 37–44 ms 到达；按下到设备打开，改动后 14–18 ms（`--toggle`）与 14 / 15 / 20 ms（快捷键，最小 / 中位 / 最大），B 为 14.5 / 17.3 / 43.6 ms（快捷键，从日志的 `listening` 到 `dictation capture started`）。CER：`--toggle` B 22.30%、改动后 22.24%，快捷键 B 21.64%、改动后 21.47%。
+- **VAD**（整条录音，20 句）：
+
+  | 模型 | `vad_trim` 关 | `vad_trim` 开 | 首字 / 末字丢失（开） |
+  |---|---|---|---|
+  | Paraformer | 21.25% | 22.24% | 0 / 0 |
+  | Qwen3-ASR 0.6B | 19.28% | 19.28% | 0 / 0 |
+
+  不按基准时，开与关都各有 1 次「丢末字」（mixed-s07 参考里没读的「(Luna)」）。
+- **提示音与首字**（`scripts/measure/cue-words.sh`，句子在提示音的时间窗结束 150 ms 后开始播放，开与关各一次，20 句）：开与关都没有丢首字（0 / 20）；每句前 5 个字的 CER，开 12.00%（12/100）、关 13.00%（13/100）。整句 CER 开 21.09%、关 20.59%，差别在 mixed-s01 句中的英文人名（「pamela a ferson 教教授」与「pamela ferguson 教授」），不在句首。
+
+#### 默认值的决定
+
+- **松开后继续录音**：按计划的规则（`--toggle`，`d` = 100，末字丢失率 ≤ 2% 的最小值），0 ms 是 5%，150 ms 是 0%，新安装的默认值改为 150 ms（`DEFAULT_EXTRA_RECORDING_MS`）。设置文件里已经写着值的保持原值（0 的仍是 0），缺这个键的旧文件读作 0；发布说明里写明，并提示现有用户可以在「设置 → 快捷键」里自己调整。快捷键的对照中 0 ms 也满足规则；两种方式的差别就是 50 ms 的松开宽限，决定按计划写定的方法。代价是每次听写在松开后多录 150 ms，结果晚 150 ms 出来。
+- **`vad_trim`**：开启后 Paraformer 的 CER 升高（21.25% → 22.24%），按规则保持默认关。
+
+#### 与计划的差别
+
+- 计划只写了 `--toggle`；快捷键是用户实际的操作，所以两种都测了，规则按 `--toggle` 的结果。`--toggle` 要经单实例插件的 D-Bus 转交：测量所在机器的 `DBUS_SESSION_BUS_ADDRESS` 指向一个已经不存在的总线，第二个进程找不到第一个，自己起了一个界面，所以脚本给应用一条私有的会话总线（`dbus-run-session`）。
+- 首字测量按计划先开始播放、随即开始听写；并行打开的收益在这里测不出来，见 §30.2。
+
+### 30.5 试识别
+
+- 「语音模型」页识别服务下方的「试识别」：「用最近一条录音试识别」按当前保存的设置把录音缓存（§26）里最近的一条录音识别一次，结果只显示在这里：文字、识别服务与模型、识别耗时、术语表是否发出、AI 润色（服务、模型、耗时或失败原因）、总耗时。不粘贴、不复制，不写历史记录。
+- 命令 `RecognitionTrial`（不带参数），事件 `CoreEvent::RecognitionTrial(TrialView)` → `UiEvent::RecognitionTrial`，`UiState.recognition_trial: Option<TrialView>`。`TrialView` 是 `Running { recording, started_at }`、`Done(TrialResult)` 或 `Failed { recording?, failure }`；`TrialFailure` 是 `NoRecording` 或 `Failed { code, message }`。
+- 它是单独的命令，不是 `deliver: false` 的重新识别：重新识别会改听写的阶段、悬浮窗和历史。试识别用引擎当前的客户端（即下一次听写会用的），场景按录音当时的应用匹配（`serve::resolve_recipe`，与重新识别相同），用量来源记为 `Retake`（计入额度，没有历史记录，所以不计节省的时间）。
+- 润色与下一次听写一致：输出方式按录音的场景（它的输出方式能用时）或当前生效的输出方式（`DictationEngine::take_output_mode`），是「边说边输入」时不润色（§12），结果的 `live_inject` 为真，界面写「「边说边输入」模式下不进行润色」。
+- 只取最近一条 WAV（长录音的 Opus 不算）；同一时间只运行一个，第二次请求返回「上一次试识别还没有结束」（`TRIAL_BUSY`）。按钮在历史记录关闭、录音缓存关闭或没有可用录音时不可用，并写明原因。
+- 测试：核心 `trial.rs` 的单测，`tests/audio_cache.rs` 的 `a_trial_recognises_the_newest_recording_and_delivers_nothing`、`a_trial_cleans_up_as_the_settings_say_and_one_runs_at_a_time`、`a_failed_trial_says_why`、`regression_a_trial_in_live_inject_runs_no_clean_up`；契约夹具；`EnginesPane.test.tsx` 的三种状态；`mock-backend.test.ts`。手机上没有录音缓存，两个手机壳把 `recognition_trial` 列为仅电脑的命令（`apps/mobile/src-tauri/tests/ipc.rs`、`apps/mobile-rn/rust/tests/shell.rs` 的 `DESKTOP_ONLY`）。用用户自己的密钥对百炼和一个 OpenAI 兼容服务各试一次，在用户的电脑上做。
+
+### 30.6 术语表的去向
+
+词典里启用词条的正确写法组成术语表（§16.3）。它是否进入识别请求，由识别服务和协议决定（`GlossaryRoute::remote`，`voltip-asr` 发送的与它一致，`voltip-cloud` 的测试核对两者）：
+
+| 识别服务 | 术语表 | `GlossaryRoute` |
+|---|---|---|
+| OpenAI 兼容的转写接口（OpenAI、Groq、SiliconFlow、自建与自定义接口、内置服务） | multipart 的 `prompt` 字段 | `prompt` |
+| 阿里云百炼的 `qwen-audio-…-asr` 模型 | 任务参数里的热词 | `hotwords` |
+| 阿里云百炼的其他识别模型（Qwen3-ASR、Fun-ASR、Paraformer 等） | 不发送 | `not_supported` |
+| 本地模型 | 不发送，词典只在识别之后纠正 | `not_supported` |
+| 以上会发送、但没有启用的词条，也没有启用的带术语包的内置场景 | 不发送 | `empty` |
+
+- 候补模型顶替所选模型时（额度用完，或服务出错且开着「服务出错时也改用候补」，§3.5、§3.14），状态按顶替的模型（`FallbackTarget::glossary_route`），与实际收到请求的客户端一致；预览的 `resolveEngineStatus` 同样按 `quotaOut` 选出的候补。
+- 启用的内置场景在它的应用里把术语包加进术语表（§18.10，聊天没有术语包）。所以词典为空、但有这样的场景时状态不是 `empty`（`runtime::no_glossary`，场景或词典变化时重算）。
+- `EngineStatus.glossary`：设置的识别服务下方与词典页顶部各一句，「当前识别服务会收到术语表。」（词典没有启用的词条时是「词典没有启用的词条；在已启用的内置场景里，当前识别服务会收到该场景的术语表。」）「当前识别服务不接收术语表，词典只在识别之后纠正。」「本地模型不接收术语表，词典只在识别之后纠正。」「没有启用的词条，目前不会向识别服务发送术语表。」；核心还说不清（没有能运行的识别服务）时不显示。
+- `HistoryEntry.glossary_sent`（`#[serde(default)]`）：这一次用到其文字的识别请求里，是否至少有一个带了术语表：整段、流式的终稿与重新解码、长录音的各段、候补链上实际给出文字的那一个。每个识别客户端都报告自己的请求带没带（`Transcript.glossary_sent`，流式会话的 `StreamFinal.glossary_sent`）。历史详情的「术语表」一行写「已发给识别服务」或「没有发给识别服务」；旧记录没有这个字段，不显示这一行。
+- **帮助文字更正**：此前设置页与词典页写「正确写法同时作为术语表发给云端识别和 AI 润色」，但百炼的大部分识别模型不接收；现在写「还会作为术语表发给 AI 润色，以及支持术语表的识别服务」，并由上面这句说明当前的服务。
+- 测试：`the_status_says_where_the_glossary_goes`、`the_status_says_when_the_dictionary_has_no_glossary_to_send`、`the_history_says_whether_the_glossary_went_to_the_recogniser`、`every_recognition_client_says_whether_the_glossary_went_out`、`the_glossary_goes_out_as_hot_words_only_where_the_model_takes_them`、`a_streamed_take_says_whether_its_requests_carried_the_glossary`、`an_imported_entry_says_whether_the_glossary_went_out`、`regression_the_glossary_route_follows_the_model_standing_in`、`tests/scenes.rs@regression_an_enabled_builtin_scene_sends_its_terms_with_an_empty_dictionary`（状态、一次听写的历史与试识别）；前端 `Dictionary.test.tsx`、`HistoryDetail.test.tsx`、`EnginesPane.test.tsx`、`fallback.test.ts`（候补顶替时）、`mock-backend.test.ts`（内置场景的术语包）。
+
+### 30.7 门禁与未做
+
+- **Rust**：核心 `dictation::engine` 中 §30.1–§30.3 与 §30.6 列出的测试，以及截断的润色（§3.12）：`regression_the_history_keeps_why_the_clean_up_failed`、`the_kind_of_a_failed_clean_up_reaches_the_phase_and_the_history`、`dictation::steps@a_failed_or_empty_clean_up_keeps_the_text`、`dictation::tests@refine_failures_sort_the_error_and_serialize_snake_case`、`voltip-cloud@every_client_failure_reaches_the_core_with_its_kind_and_its_words`；`history/tests.rs@the_timeline_and_the_glossary_mark_round_trip_and_older_entries_read_without`；`settings.rs@a_new_install_keeps_recording_150_ms_after_the_stop_and_an_existing_one_keeps_its_value`；`tests/activation.rs@the_timeline_shows_the_extra_recording_after_the_release`；`tests/audio_cache.rs` 与 `trial.rs`（§30.4、§30.5）；`tests/scenes.rs` 的延录中的探测与内置场景的术语包（§30.2、§30.6）；`engines.rs@regression_the_glossary_route_follows_the_model_standing_in`；`voltip-audio` 的 `cue.rs` 与 `recorder.rs`（§30.3）；桌面 `the_ready_cue_option_opens_the_cue_output`、`tests/dictation.rs@a_one_take_configuration_changes_nothing_but_its_clients` 与 `tests/ipc.rs`；IPC 契约夹具。
+- **TS**：`History.test.tsx`（时间线及其分段、术语表一行、润色被截断）、`HistoryDetail.test.tsx`、`Recordings.test.tsx` 与 `RetakeModels.test.ts`（不裁剪静音）、`Microphone.test.tsx`（提示音开关）、`EnginesPane.test.tsx`（试识别及其在边说边输入时、术语表的一句及只有内置场景时）、`Dictionary.test.tsx`、`mock-backend.test.ts`、`fallback.test.ts`（候补顶替时的术语表）、`ipc-contract.test.ts`。页面测试的 mock 后端默认 `extra_recording_ms` 为 0（`apps/{desktop,mobile}/src/test/mock.ts`），停止后立即结束；新安装的 150 ms 由 `mock-backend.test.ts` 与 Rust 的设置测试检查。
+- **真设备与测量**：`crates/voltip-audio/tests/ready_cue.rs`（§30.3）；测量脚本的 Python 单测（`test_tail_loss.py`、`test_edge_loss.py`）在 `make verify` 的 `measure-helpers` 里。
+- **满载**（每个逻辑 CPU 一个空转循环）各跑 200 次：核心 `dictation::engine` 与 `trial.rs` 的全部测试（含计时、并行打开、`CaptureReady`、提示音选项与术语表）、`import::run`、历史与设置的新测试，`tests/activation.rs`、`tests/audio_cache.rs`、`tests/vocabulary.rs` 的全部测试，桌面 `tests/dictation.rs` 与 `dictation::` 的单测，`voltip-cloud` 与 `voltip-asr` 的百炼和术语表测试，都没有失败。`voltip-audio` 的 `cue::` 与 `recorder::` 第一轮有 4 次失败：假后端用一个全局标志判断提示音输出是否「在输入回调里」打开，别的线程上恰好在运行的回调也被算了进去；改为线程局部的标志后（`fake.rs@regression_an_output_opened_beside_a_running_callback_is_not_opened_inside_it`，先对着旧实现失败），连同 `fake::` 再跑 200 次，没有失败。完成评审第一轮之后的修复（延录中的探测、计时的时刻、术语表的状态、边说边输入时的试识别）之后，核心 `dictation::engine::` 与 `trial::` 的单测、`tests/scenes.rs`、`tests/audio_cache.rs`、`tests/activation.rs`、`tests/vocabulary.rs` 在满载下又各跑 200 次，都没有失败。
+- **真入口**（`pnpm tauri dev -- --bin voltip-desktop`，Xvfb、辅助功能总线、私有 PulseAudio，只监听 127.0.0.1 的假服务）：新安装的「松开后继续录音」是 150，缺这一项的设置文件是 0；按快捷键听写后历史详情显示时间线与「术语表：没有发给识别服务」（本地模型）；试识别出结果，剪贴板与历史都没有变化；「不裁剪静音重新识别」这一次没有调用 VAD；提示音开着时 monitor 录到了提示音，保存的录音里提示音的时间窗（这里是 250 ms 的后备窗口）全为零；假服务收到的识别请求带着 `prompt`（词典的正确写法），润色在输出上限处被截断时历史写「润色结果不完整，已保留识别原文」。
+- **其他平台**：Windows 构建机的 `gate test` 与 `gate clippy`，托管 CI 的两台 Mac、`hooks-windows`、`windows-cross`、`windows-native`、`android` 与 `smoke-desktop`；本机 `make smoke-desktop`。
+- **失败原因的确认**：新测试先对着桩实现或 B 的实现失败：设备在探测回答之前没有打开（0 次，应为 1 次）；提示音选项三种情形都是 false；`regression_capture_ready_survives_a_full_queue` 等不到 `CaptureReady`（满队列上的 `try_send` 丢了它）；历史与 `Done` 里没有时间线和 `glossary_sent`；被截断的润色仍是普通的 `Refine` 错误；`qwen-audio` 模型的请求里没有热词；状态里没有术语表的去向，空词典也报 `prompt`；一次重新识别的客户端照旧裁剪静音（`(true, false)`，应为 `(false, true)`）；新安装的延录是 0（应为 150）。试识别的测试与实现一同写成，用两处临时改动（不检查是否已在运行、不套用词典）确认对应的测试以预期的原因失败；提示音的真设备测试在去掉置零后失败（§30.3）。完成评审第一轮之后补的测试同样先失败：延录期间才回答的探针仍套用了场景（场景关掉的润色没有运行）；满队列后到的首批样本被记作 700 ms（取出消息的时刻），首批样本先到时设备打开记作 100 ms、晚于首批样本的 50 ms，界面的分段因此重叠；百炼 qwen3-asr-flash 顶替时状态仍报 `Prompt`；只开着内置场景时状态停在 `Empty`；边说边输入时试识别得到润色后的「你好。」。场景改输出方式的那一半与内置场景的那一个，用临时去掉对应判断的方式确认失败（`left: (true, false)`；「no status with the glossary route Prompt within 10 s」）。
+
+#### 未做与限制
+
+- **提示音的真设备**：Linux 上只在私有 PulseAudio 的 null sink 上测过（§30.3）。Windows（WASAPI）与 macOS 上的播放、置零，以及蓝牙与有线耳机上的效果，要在用户的电脑上检查：Windows 构建机是用户自己在用的电脑，不在那里播放声音。
+- **并行打开的收益**：Xvfb 里探测立即回答，测不出省下的时间（§30.2），由一直不回答的假探针在单测里检查。
+- **测量的范围**：末字与首字只用本地 Paraformer 测过，没有测其他本地模型和云端服务；FLEURS 是朗读的句子，句尾比随口说话清楚。
+- **`--toggle` 的转交**：测量中约 1300 次转交里有 1 次，转交进程 30 s 没有退出；那一遍的日志因数据目录被复用而丢失，原因没有查明，重跑一遍没有再出现。脚本此后每遍用新的数据目录。
+- **试识别**：用用户自己的密钥对百炼和一个 OpenAI 兼容服务各试一次，要在用户的电脑上做；开发中只用只监听 127.0.0.1 的假服务。
 
 ## 31. 音视频文件导入与字幕（2026-10-30）
 

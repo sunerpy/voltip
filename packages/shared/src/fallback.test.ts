@@ -390,3 +390,25 @@ describe("fallback models (docs/dictation.md §3.5)", () => {
     stop();
   });
 });
+
+describe("the glossary route of the model in use (docs/dictation.md §30.6)", () => {
+  it("regression: follows the model standing in while the selected one is out of quota", () => {
+    const keys = ["provider-key.openai", "provider-key.aliyun", "provider-key.groq"];
+    const whisper = (fallback: FallbackModel): EngineSettings => ({
+      ...defaultEngineSettings(),
+      asr_provider: "openai",
+      providers: { openai: { asr_model: "whisper-1" } },
+      asr_fallback: { enabled: true, models: [fallback] },
+    });
+    const qwen3 = whisper(entry("aliyun", "qwen3-asr-flash"));
+    expect(resolve(qwen3, keys).glossary).toBe("prompt");
+    expect(resolve(qwen3, keys, { asr: 1_000 }).glossary).toBe("not_supported");
+    expect(
+      resolve(whisper(entry("groq", "whisper-large-v3-turbo")), keys, { asr: 1_000 }).glossary,
+    ).toBe("prompt");
+    const library = [libraryModel("qwen3-asr-0.6b", true)];
+    expect(
+      resolve(whisper(entry("local", "qwen3-asr-0.6b")), keys, { asr: 1_000 }, library).glossary,
+    ).toBe("not_supported");
+  });
+});

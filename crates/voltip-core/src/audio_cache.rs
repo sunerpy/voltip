@@ -100,12 +100,16 @@ pub struct RetakeModels {
     /// The clean-up, when it is not the settings'.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refine: Option<PolishChoice>,
+    /// Whether the on-device recognition trims the silence first (`EngineSettings.vad_trim`), when
+    /// it is not the settings': 不裁剪静音重新识别 (docs/dictation.md §30.4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vad_trim: Option<bool>,
 }
 
 impl RetakeModels {
     /// Nothing chosen: the settings' models.
     pub fn is_empty(&self) -> bool {
-        self.asr.is_none() && self.refine.is_none()
+        self.asr.is_none() && self.refine.is_none() && self.vad_trim.is_none()
     }
 
     /// `engines` with these choices made, as switching to them in the settings would (the endpoint
@@ -131,6 +135,9 @@ impl RetakeModels {
                 next.providers.entry(*provider).or_default().llm_model = Some(model.clone());
             }
             None => {}
+        }
+        if let Some(on) = self.vad_trim {
+            next.vad_trim = on;
         }
         next
     }
@@ -975,6 +982,7 @@ mod tests {
         let models = RetakeModels {
             asr: Some(RecognitionChoice::Remote { provider: ProviderId::Custom, model: "whisper-2".into() }),
             refine: Some(PolishChoice::Remote { provider: ProviderId::Groq, model: "openai/gpt-oss-120b".into() }),
+            vad_trim: None,
         };
         let next = models.apply(&engines);
         assert_eq!(next.asr_provider, ProviderId::Custom);
@@ -984,7 +992,7 @@ mod tests {
         assert_eq!(next.providers[&ProviderId::Groq].llm_model.as_deref(), Some("openai/gpt-oss-120b"));
         assert_eq!(models.refine(), Some(true));
         assert!(!engines.providers.contains_key(&ProviderId::Groq), "the settings themselves are not touched");
-        let local = RetakeModels { asr: Some(RecognitionChoice::Local { id: "sense-voice-small".into() }), refine: Some(PolishChoice::Off) };
+        let local = RetakeModels { asr: Some(RecognitionChoice::Local { id: "sense-voice-small".into() }), refine: Some(PolishChoice::Off), vad_trim: None };
         let next = local.apply(&EngineSettings::default());
         assert_eq!((next.asr_provider, next.local_model.as_deref(), next.refine_enabled), (ProviderId::Local, Some("sense-voice-small"), false));
         assert_eq!(local.refine(), Some(false));
@@ -992,6 +1000,13 @@ mod tests {
         assert_eq!(wire["asr"], serde_json::json!({ "kind": "remote", "provider": "custom", "model": "whisper-2" }));
         assert_eq!(serde_json::to_value(&local).unwrap()["refine"], serde_json::json!({ "kind": "off" }));
         assert_eq!(serde_json::to_value(RetakeModels::default()).unwrap(), serde_json::json!({}));
+        // docs/dictation.md §30.4: 不裁剪静音重新识别 keeps the silence for that take only.
+        let untrimmed = RetakeModels { vad_trim: Some(false), ..RetakeModels::default() };
+        assert!(!untrimmed.is_empty());
+        let trimming = EngineSettings { vad_trim: true, ..EngineSettings::default() };
+        assert!(!untrimmed.apply(&trimming).vad_trim);
+        assert!(trimming.vad_trim, "the settings themselves are not touched");
+        assert_eq!(serde_json::to_value(&untrimmed).unwrap(), serde_json::json!({ "vad_trim": false }));
     }
 
     #[test]

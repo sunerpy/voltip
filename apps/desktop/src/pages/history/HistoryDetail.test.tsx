@@ -251,8 +251,9 @@ describe("History detail · quick fix (docs/dictation.md section 16.9)", () => {
     expect(examples).toHaveTextContent("维他命的安装包发给我");
     await user.click(within(dialog).getByRole("button", { name: "收起" }));
     expect(within(dialog).queryByTestId("fix-examples")).toBeNull();
+    // docs/dictation.md §30.6: only the recognition services that take a glossary get it.
     expect(within(dialog).getByTestId("fix-note")).toHaveTextContent(
-      "识别完成后立即纠正；正确写法还会作为术语发送给云端识别和 AI 润色。",
+      "识别完成后立即纠正；正确写法还会作为术语发给 AI 润色，以及支持术语表的识别服务。",
     );
     await user.click(within(dialog).getByRole("button", { name: "加入词典" }));
     await waitFor(() => {

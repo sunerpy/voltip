@@ -337,6 +337,9 @@ export type Activation = z.infer<typeof activationSchema>;
 /** `voltip_core::dictation::activation::DEFAULT_HOLD_THRESHOLD_MS`: a `hold_or_toggle` release
  *  before this many milliseconds locks the take instead of stopping it. */
 export const DEFAULT_HOLD_THRESHOLD_MS = 300;
+/** `extra_recording_ms` of a new install (`voltip_core::DEFAULT_EXTRA_RECORDING_MS`, docs/dictation.md
+ *  §30.4); a settings file without the key reads as 0. */
+export const DEFAULT_EXTRA_RECORDING_MS = 150;
 /** `voltip_core::MAX_ACTIVATION_MS`: the core refuses larger threshold / extra-recording values. */
 export const MAX_ACTIVATION_MS = 5000;
 
@@ -547,6 +550,9 @@ export const recordingSettingsSchema = z.object({
   /** `mixed`: the microphone's echo of the computer's sound is removed before the two are summed
    *  (docs/dictation.md §22.6); on by default. */
   echo_cancel: z.boolean().default(true),
+  /** A short tone when the microphone is ready, kept out of the recording (docs/dictation.md
+   *  §30.3); off by default, microphone takes only. */
+  ready_sound: z.boolean().default(false),
 });
 export type RecordingSettings = z.infer<typeof recordingSettingsSchema>;
 export function defaultRecordingSettings(): RecordingSettings {
@@ -555,6 +561,7 @@ export function defaultRecordingSettings(): RecordingSettings {
     output_device: null,
     max_minutes: DEFAULT_MAX_MINUTES,
     echo_cancel: true,
+    ready_sound: false,
   };
 }
 
@@ -866,13 +873,15 @@ export type DictationFailureCode = z.infer<typeof dictationFailureCodeSchema>;
 /** Why a requested clean-up's text was not used (`voltip_core::RefineFailure`, docs/dictation.md
  *  §3.6): `rate_limited` the service had too many requests, `quota` its quota is used up (no
  *  fallback model had any left), `unconfigured` no service is set up, `too_long` a long take past
- *  2000 characters, `empty` the service answered with nothing, `failed` anything else. */
+ *  2000 characters, `empty` the service answered with nothing, `truncated` the answer stopped at
+ *  the model's output limit (§3.12), `failed` anything else. */
 export const REFINE_FAILURES = [
   "rate_limited",
   "quota",
   "unconfigured",
   "too_long",
   "empty",
+  "truncated",
   "failed",
 ] as const;
 export const refineFailureSchema = z.enum(REFINE_FAILURES);
@@ -1020,6 +1029,24 @@ export const INSERT_CHECKS = ["written", "not_written", "unconfirmed"] as const;
 export const insertCheckSchema = z.enum(INSERT_CHECKS);
 export type InsertCheck = z.infer<typeof insertCheckSchema>;
 
+/** When each step of a take happened (`voltip_core::TakeTiming`, docs/dictation.md §30.1), in
+ *  milliseconds from `pressed_at` (Unix ms): the device open, its first audio, the live preview's
+ *  first text, the release, then how long the microphone stayed open (`tail_ms`) and the
+ *  recognition, the clean-up and the hand-over took, and when the result was there (`done_ms`). */
+export const takeTimingSchema = z.object({
+  pressed_at: z.number().nonnegative(),
+  device_open_ms: z.number().nonnegative().optional(),
+  first_audio_ms: z.number().nonnegative().optional(),
+  first_text_ms: z.number().nonnegative().optional(),
+  released_ms: z.number().nonnegative().optional(),
+  tail_ms: z.number().nonnegative().default(0),
+  asr_ms: z.number().nonnegative().default(0),
+  refine_ms: z.number().nonnegative().optional(),
+  insert_ms: z.number().nonnegative().default(0),
+  done_ms: z.number().nonnegative().default(0),
+});
+export type TakeTiming = z.infer<typeof takeTimingSchema>;
+
 /** `voltip_core::dictation::DictationPhase` (`#[serde(tag = "phase")]`). `listening.ready` and
  *  `listening.locked` are `#[serde(default)]` (false = the device has not delivered samples yet /
  *  the take is not locked) and always on the wire; `live` and `processing.preview` are skip-if-none,
@@ -1071,6 +1098,8 @@ export const dictationPhaseSchema = z.discriminatedUnion("phase", [
     clipboard_code: clipboardCodeSchema.optional(),
     /** The insert check (§28); absent when no check ran (a copy, a fallback, `live_inject`, off). */
     check: insertCheckSchema.optional(),
+    /** How long each step of the take took (§30.1); absent from a core that did not send it. */
+    timing: takeTimingSchema.optional(),
   }),
   z.object({
     phase: z.literal("failed"),
@@ -1303,6 +1332,58 @@ export const emptyAudioCache = (): AudioCacheView => ({
   recordings: [],
   bytes: 0,
 });
+
+/** What a 试识别 gave (`voltip_core::trial::TrialResult`, docs/dictation.md §30.5): the text a take
+ *  would deliver, who recognised and cleaned it up, how long each took and whether the glossary
+ *  went out. Nothing of it was pasted, copied or written to the history. */
+export const trialResultSchema = z.object({
+  recording: z.string(),
+  recorded_at_ms: z.number().nonnegative(),
+  duration_ms: z.number().nonnegative(),
+  text: z.string(),
+  raw_text: z.string(),
+  asr_provider: providerIdSchema,
+  asr_model: z.string(),
+  /** Why a fallback model recognised it; absent when the selected one did. */
+  asr_fallback: switchReasonSchema.optional(),
+  asr_ms: z.number().nonnegative(),
+  glossary_sent: z.boolean(),
+  refined: z.boolean(),
+  refine_provider: providerIdSchema.optional(),
+  refine_model: z.string().optional(),
+  refine_ms: z.number().nonnegative().optional(),
+  /** Why a clean-up the settings ask for was not used (§3.6). */
+  refine_failure: refineFailureSchema.optional(),
+  /** The settings ask for a clean-up, but the take's mode is 边说边输入, where none runs (§12). */
+  live_inject: z.boolean().optional(),
+  elapsed_ms: z.number().nonnegative(),
+});
+export type TrialResult = z.infer<typeof trialResultSchema>;
+
+/** Why a 试识别 gave no text (`TrialFailure`): no kept recording to try (the cache is off, empty
+ *  or holds long takes only), or the recognition failed as a take's would. */
+export const trialFailureSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("no_recording") }),
+  z.object({ kind: z.literal("failed"), code: dictationFailureCodeSchema, message: z.string() }),
+]);
+export type TrialFailure = z.infer<typeof trialFailureSchema>;
+
+/** `UiState.recognition_trial` (`voltip_core::trial::TrialView`): the last 试识别 since the app
+ *  started, or the one running. */
+export const trialViewSchema = z.discriminatedUnion("state", [
+  z.object({
+    state: z.literal("running"),
+    recording: z.string(),
+    started_at: z.number().nonnegative(),
+  }),
+  trialResultSchema.extend({ state: z.literal("done") }),
+  z.object({
+    state: z.literal("failed"),
+    recording: z.string().optional(),
+    failure: trialFailureSchema,
+  }),
+]);
+export type TrialView = z.infer<typeof trialViewSchema>;
 
 // ---- Imported audio and video files (docs/dictation.md §31) ----
 
@@ -1827,6 +1908,12 @@ export const historyEntrySchema = z.object({
   processed: processedTextSchema.optional(),
   /** The audio or video file it was transcribed from (docs/dictation.md §31); absent for takes. */
   file: importedFileSchema.optional(),
+  /** How long each step of the take took (docs/dictation.md §30.1); absent for imports, phone
+   *  texts and entries written before it. */
+  timing: takeTimingSchema.optional(),
+  /** Whether the recognition's requests carried the glossary (§30.6); absent when unknown (a
+   *  phone's text, entries written before it). */
+  glossary_sent: z.boolean().optional(),
 });
 export type HistoryEntry = z.infer<typeof historyEntrySchema>;
 
@@ -2203,6 +2290,13 @@ export const fallbackStatusSchema = z.object({
 });
 export type FallbackStatus = z.infer<typeof fallbackStatusSchema>;
 
+/** Where the dictionary's terms go in a recognition request (`voltip_core::GlossaryRoute`,
+ *  docs/dictation.md §30.6): the OpenAI-compatible `prompt`, Model Studio's hot words, nowhere (an
+ *  on-device model, Model Studio's other models), or nothing to send (no enabled entry). */
+export const GLOSSARY_ROUTES = ["prompt", "hotwords", "not_supported", "empty"] as const;
+export const glossaryRouteSchema = z.enum(GLOSSARY_ROUTES);
+export type GlossaryRoute = z.infer<typeof glossaryRouteSchema>;
+
 /** `voltip_core::engines::EngineStatus` (`UiState.engines`): the resolved configuration. Provider
  *  ids, models, the hosts of endpoints the user chose and key presence — never a key, and never
  *  the built-in service's host (`asr_host` / `refine_host` are `""` for it and on-device). */
@@ -2242,6 +2336,9 @@ export const engineStatusSchema = z.object({
   asr_fallback: fallbackStatusSchema.optional(),
   /** The clean-up fallback models. */
   llm_fallback: fallbackStatusSchema.optional(),
+  /** Where the glossary goes in the recognition requests (docs/dictation.md §30.6); absent while
+   *  recognition has no service that can run. */
+  glossary: glossaryRouteSchema.optional(),
 });
 export type EngineStatus = z.infer<typeof engineStatusSchema>;
 
@@ -3115,6 +3212,8 @@ export const uiStateSchema = z.object({
   models_location: modelsLocationViewSchema.default(emptyModelsLocation),
   /** The automatic backups (§4.6.1); not available on the phone. */
   auto_backup: autoBackupViewSchema.default(emptyAutoBackup),
+  /** The last 试识别 (§30.5); `null` before the first. */
+  recognition_trial: trialViewSchema.nullable().default(null),
   /** The personal dictionary and the replacement rules (§16), in order; `[]` on the phone. */
   dictionary: z.array(dictionaryEntrySchema).default(() => []),
   rules: z.array(replacementRuleSchema).default(() => []),
@@ -3227,6 +3326,8 @@ export const uiEventSchema = z.discriminatedUnion("type", [
   importsViewSchema.extend({ type: z.literal("imports") }),
   /** The automatic backups, whole: the folder, a backup written or failed, the notice (§4.6.1). */
   autoBackupViewSchema.extend({ type: z.literal("auto_backup") }),
+  /** Where the last 试识别 is (§30.5): running, its result, or why it gave none. */
+  z.object({ type: z.literal("recognition_trial"), trial: trialViewSchema }),
   /** The phone's take to a desktop moved (§20); `null` before the first. */
   z.object({
     type: z.literal("phone_take"),
@@ -3538,7 +3639,11 @@ export interface CommandArgs {
   /** 重新识别 (§26): the take follows as `dictation` events (`retake`, `recording`); its text goes
    *  to the clipboard and into the history. Refused (an `error` event) while a take runs. */
   /** §26.4: `asr` / `refine` other models than the settings', for this take only. */
-  audio_retake: { id: string; asr?: RecognitionChoice; refine?: PolishChoice };
+  audio_retake: { id: string; asr?: RecognitionChoice; refine?: PolishChoice; vadTrim?: boolean };
+  /** 用最近一条录音试一下 (§30.5): the newest kept recording recognised with the saved settings;
+   *  `recognition_trial` events follow. Nothing is pasted, copied or written to the history;
+   *  refused (an `error` event) while a trial runs. */
+  recognition_trial: undefined;
   /** 导入音频或视频 (§31): the files join the import queue with these models and language; the
    *  queue follows as `imports` events, each entry as `history`. Refused (an `error` event) with
    *  the built-in service, with the history off, and on the phone. */
@@ -3861,7 +3966,7 @@ export function defaultSettings(): Settings {
     auto_update: false,
     activation: "hold",
     hold_threshold_ms: DEFAULT_HOLD_THRESHOLD_MS,
-    extra_recording_ms: 0,
+    extra_recording_ms: DEFAULT_EXTRA_RECORDING_MS,
     context_sharing: defaultContextSharing(),
     edit_hotkey: DEFAULT_EDIT_HOTKEY,
     solo_key: null,
@@ -3926,6 +4031,8 @@ export function applyEvent(state: UiState, event: UiEvent): UiState {
       const { type: _type, ...imports } = event;
       return { ...state, imports };
     }
+    case "recognition_trial":
+      return { ...state, recognition_trial: event.trial };
     case "engines": {
       const { type: _type, ...engines } = event;
       return { ...state, engines };

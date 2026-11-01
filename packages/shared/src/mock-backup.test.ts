@@ -103,7 +103,8 @@ describe("MockBackend backups (docs/dictation.md section 4.6)", () => {
       history.slice(0, 10).map((e) => e.id),
     );
     expect(part("presets")).toMatchObject({ restored: 0, skipped: { duplicate: 1 } });
-    expect(seen).toEqual(["scenes", "dictionary", "rules", "history"]);
+    // docs/dictation.md §30.6: the restored dictionary gives the recogniser a glossary.
+    expect(seen).toEqual(["scenes", "dictionary", "engines", "rules", "history"]);
     const state = backend.peek();
     expect(state.history_total).toBe(10);
     expect(state.dictionary.map((e) => e.term)).toEqual(["Kubernetes"]);

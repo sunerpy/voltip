@@ -159,6 +159,20 @@ export function Microphone() {
           </StatusRow>
         )}
         {usesMicrophone && (
+          // docs/dictation.md §30.3: a take that records the computer's sound would record it.
+          <StatusRow
+            label={t("settings.microphone.readySound")}
+            help={t("settings.microphone.readySoundHelp")}
+            note={mixed ? t("settings.microphone.readySoundMicOnly") : undefined}>
+            <Toggle
+              checked={source.recording.ready_sound}
+              disabled={mixed}
+              onChange={source.setReadySound}
+              label={t("settings.microphone.readySound")}
+            />
+          </StatusRow>
+        )}
+        {usesMicrophone && (
           <StatusRow
             label={t("settings.microphone.test")}
             help={t("settings.microphone.testHelp", { n: Math.round(MIC_TEST_MS / 1000) })}>

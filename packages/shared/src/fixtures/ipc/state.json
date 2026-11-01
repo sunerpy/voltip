@@ -107,7 +107,8 @@
       "source": "mixed",
       "output_device": "wasapi:{0.0.0.00000000}.{a1}",
       "max_minutes": 60,
-      "echo_cancel": false
+      "echo_cancel": false,
+      "ready_sound": true
     },
     "serve": {
       "enabled": true,
@@ -231,7 +232,19 @@
       "asr_ms": 640,
       "refine_ms": 2400,
       "mode": "whole_take",
-      "check": "written"
+      "check": "written",
+      "timing": {
+        "pressed_at": 1758700593000,
+        "device_open_ms": 38,
+        "first_audio_ms": 212,
+        "first_text_ms": 640,
+        "released_ms": 3412,
+        "tail_ms": 150,
+        "asr_ms": 655,
+        "refine_ms": 2410,
+        "insert_ms": 96,
+        "done_ms": 6731
+      }
     },
     "session": 7,
     "context": {
@@ -297,7 +310,20 @@
       "preset": {
         "id": "formal",
         "name": "书面语"
-      }
+      },
+      "timing": {
+        "pressed_at": 1758700593000,
+        "device_open_ms": 38,
+        "first_audio_ms": 212,
+        "first_text_ms": 640,
+        "released_ms": 3412,
+        "tail_ms": 150,
+        "asr_ms": 655,
+        "refine_ms": 2410,
+        "insert_ms": 96,
+        "done_ms": 6731
+      },
+      "glossary_sent": true
     },
     {
       "id": "1c2d3e4f-5a6b-4c8e-9f7a-0f3f1a1e8d4b",
@@ -629,6 +655,23 @@
       "at_ms": 1758700540000,
       "detail": "Access is denied. (os error 5)"
     }
+  },
+  "recognition_trial": {
+    "state": "done",
+    "recording": "4a7c2e10-6b1d-4f3a-9c8e-5d2b7a1f0e93",
+    "recorded_at_ms": 1758700480000,
+    "duration_ms": 4200,
+    "text": "Voltip 的试识别。",
+    "raw_text": "沃提普的试识别",
+    "asr_provider": "custom",
+    "asr_model": "whisper-1",
+    "asr_ms": 640,
+    "glossary_sent": true,
+    "refined": true,
+    "refine_provider": "custom",
+    "refine_model": "gpt-4o-mini",
+    "refine_ms": 820,
+    "elapsed_ms": 1530
   },
   "engines": {
     "asr_provider": "builtin",
@@ -1065,7 +1108,8 @@
           "issue": "key_missing"
         }
       ]
-    }
+    },
+    "glossary": "not_supported"
   },
   "update": {
     "state": "available",

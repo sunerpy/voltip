@@ -117,6 +117,7 @@ import {
   type Settings,
   type Snapshot,
   type TakeKind,
+  type TakeTiming,
   type TrustedDevice,
   type UiEvent,
   type UiState,
@@ -822,6 +823,8 @@ export const MOCK_DICTATION_BUSY = "已有听写正在进行";
 export const MOCK_RECORDING_GONE = "这段录音已不在录音缓存中";
 /** A 重新识别 on models that cannot run (no key, not installed): the core names the issue. */
 export const MOCK_RETAKE_NOT_READY = "服务商缺少 API 密钥（在「语音模型」或「AI 模型」页填写）";
+/** Why a 试识别 is refused: the last one has not ended (`voltip_core::trial::TRIAL_BUSY`). */
+export const MOCK_TRIAL_BUSY = "上一次试识别还没有结束";
 /** A kept recording's size per second: the core's 16 kHz mono 16-bit WAV. */
 export const MOCK_WAV_BYTES_PER_SECOND = 32_000;
 /** A kept long take's size per second: the core's Ogg Opus parts, about 21.5 kbit/s
@@ -1109,6 +1112,10 @@ export class MockBackend implements Backend {
    *  `extra_recording_ms` stop. */
   private pressedAt: number | undefined;
   private extraStop: ReturnType<typeof setTimeout> | undefined;
+  /** When the running take started (the press) and when its stop was asked for, before its extra
+   *  recording (§30.1); `listening.started_at` moves to the first samples. */
+  private takeStartedAt = 0;
+  private releasedAt: number | undefined;
   /** The output mode the current take runs (decided at start, like the core, §12) and how many
    *  characters `live_inject` has pasted so far (what a cancel reports). */
   private takeMode: OutputMode = "whole_take";
@@ -1361,6 +1368,8 @@ export class MockBackend implements Backend {
               notice: null,
               ...options.autoBackup,
             },
+      // docs/dictation.md §30.5: no 试识别 yet.
+      recognition_trial: null,
       dictionary: [...(options.dictionary ?? [])],
       rules: [...(options.rules ?? [])],
       vocabulary_ignored: [...(options.vocabularyIgnored ?? [])],
@@ -2643,11 +2652,15 @@ export class MockBackend implements Backend {
       if (this.state.auto_backup.notice !== null) this.emitAutoBackup({ notice: null });
     },
     audio_retake: (args) => {
-      const { id, asr, refine } = required(args);
+      const { id, asr, refine, vadTrim } = required(args);
       this.retake(id, {
         ...(asr === undefined ? {} : { asr }),
         ...(refine === undefined ? {} : { refine }),
+        ...(vadTrim === undefined ? {} : { vadTrim }),
       });
+    },
+    recognition_trial: () => {
+      this.recognitionTrial();
     },
     import_add: (args) => {
       this.importAdd(required(args));
@@ -4431,7 +4444,20 @@ export class MockBackend implements Backend {
         status[key] = { ...chain, selected_retry_reason: "outage" };
       }
     }
+    // docs/dictation.md §30.6: as the core, a service that would take the glossary gets none.
+    if ((status.glossary === "prompt" || status.glossary === "hotwords") && !this.hasGlossary()) {
+      status.glossary = "empty";
+    }
     return { ...status, ...this.engineOverrides };
+  }
+
+  /** A take may send a glossary (`runtime::no_glossary`, negated): the dictionary has an enabled
+   *  entry, or an enabled built-in scene has a term pack it adds in its applications. */
+  private hasGlossary(): boolean {
+    return (
+      this.state.dictionary.some((entry) => entry.enabled) ||
+      this.state.scenes.some((scene) => scene.enabled && hasTermPack(scene))
+    );
   }
 
   private emitPhase(phase: DictationPhase, session = this.state.dictation.session) {
@@ -4905,7 +4931,8 @@ export class MockBackend implements Backend {
       this.emit({ type: "error", message: MOCK_DICTATION_BUSY });
       return;
     }
-    const chosen = models.asr !== undefined || models.refine !== undefined;
+    const chosen =
+      models.asr !== undefined || models.refine !== undefined || models.vadTrim !== undefined;
     const engines = chosen
       ? this.resolveEngines(applyRetakeModels(this.state.settings.engines, models))
       : this.state.engines;
@@ -4977,6 +5004,7 @@ export class MockBackend implements Backend {
         ...(refineFailure === undefined ? {} : { refine_failure: refineFailure }),
         ...(refineFailure === "rate_limited" ||
         refineFailure === "quota" ||
+        refineFailure === "truncated" ||
         refineFailure === "failed"
           ? { refine_error: MOCK_REFINE_FAILED }
           : {}),
@@ -5024,6 +5052,99 @@ export class MockBackend implements Backend {
         stage_started_at: this.now(),
       });
       this.laterDictation(MOCK_REFINE_MS, finish);
+    });
+  }
+
+  /** 用最近一条录音试一下 (docs/dictation.md §30.5), as the core runs it: the newest kept WAV on the
+   *  settings' models, its scene matched against the application it was recorded in, cleaned up
+   *  only where a take would be; nothing is pasted, copied or written to the history, and the
+   *  take's state is left alone. */
+  private recognitionTrial() {
+    if (this.state.recognition_trial?.state === "running") {
+      this.emit({ type: "error", message: MOCK_TRIAL_BUSY });
+      return;
+    }
+    const recording = this.state.audio_cache.recordings.find((r) => r.format !== "opus");
+    if (recording === undefined) {
+      this.emit({
+        type: "recognition_trial",
+        trial: { state: "failed", failure: { kind: "no_recording" } },
+      });
+      return;
+    }
+    const engines = this.state.engines;
+    if (!engines.asr_ready) {
+      this.emit({
+        type: "recognition_trial",
+        trial: {
+          state: "failed",
+          recording: recording.id,
+          failure: { kind: "failed", code: "asr", message: `asr: ${MOCK_RETAKE_NOT_READY}` },
+        },
+      });
+      return;
+    }
+    const settings = this.state.settings.engines;
+    const scene =
+      recording.app === undefined ? undefined : matchScene(this.state.scenes, recording.app);
+    const wanted = scene?.overrides.refine_enabled ?? settings.refine_enabled;
+    // §12: a take in 边说边输入 is never cleaned up, so neither is its trial. The mode is the take's:
+    // the scene's when the live preview can serve it, the effective one otherwise.
+    const sceneMode = scene?.overrides.output_mode;
+    const mode =
+      sceneMode == null
+        ? engines.effective_output_mode
+        : sceneMode === "whole_take" || engines.live_preview_ready
+          ? sceneMode
+          : "whole_take";
+    const liveInject = wanted && mode === "live_inject";
+    const refine = wanted && !liveInject;
+    const refineFailure = !refine
+      ? undefined
+      : engines.refine_ready
+        ? this.refineFailure
+        : ("unconfigured" as const);
+    const polished = refine && refineFailure === undefined;
+    const startedAt = this.now();
+    this.emit({
+      type: "recognition_trial",
+      trial: { state: "running", recording: recording.id, started_at: startedAt },
+    });
+    const refineMs = refine && engines.refine_ready ? MOCK_REFINE_MS : 0;
+    this.later(MOCK_ASR_MS + refineMs, () => {
+      const vocabulary = Vocabulary.compile(this.state.dictionary, this.state.rules);
+      const corrected = vocabulary.correct(MOCK_DICTATION_RAW).text;
+      const refined = polished ? vocabulary.correct(MOCK_DICTATION_TEXT).text : corrected;
+      this.emit({
+        type: "recognition_trial",
+        trial: {
+          state: "done",
+          recording: recording.id,
+          recorded_at_ms: recording.at_ms,
+          duration_ms: recording.duration_ms,
+          text: vocabulary.applyRules(refined).text,
+          raw_text: MOCK_DICTATION_RAW,
+          asr_provider: settings.asr_provider,
+          asr_model: engines.asr_model,
+          asr_ms: MOCK_ASR_MS,
+          // §30.6: the dictionary's terms, and the term pack of the scene the recording matches.
+          glossary_sent:
+            (engines.glossary === "prompt" || engines.glossary === "hotwords") &&
+            (this.state.dictionary.some((entry) => entry.enabled) ||
+              (scene !== undefined && hasTermPack(scene))),
+          refined: polished,
+          ...(polished
+            ? {
+                refine_provider: settings.llm_provider,
+                refine_model: engines.refine_model,
+                refine_ms: MOCK_REFINE_MS,
+              }
+            : {}),
+          ...(refineFailure === undefined ? {} : { refine_failure: refineFailure }),
+          ...(liveInject ? { live_inject: true } : {}),
+          elapsed_ms: this.now() - startedAt,
+        },
+      });
     });
   }
 
@@ -5128,6 +5249,8 @@ export class MockBackend implements Backend {
     this.pinned = undefined;
     this.clearLiveTimers();
     this.clearExtraStop();
+    this.takeStartedAt = this.now();
+    this.releasedAt = undefined;
     const session = this.state.dictation.session + 1;
     this.takeKind = kind;
     this.copiedSelection = undefined;
@@ -5356,6 +5479,7 @@ export class MockBackend implements Backend {
   private stopDictation() {
     if (this.state.dictation.phase.phase !== "listening") return;
     const extra = this.state.settings.extra_recording_ms;
+    this.releasedAt ??= this.now();
     if (this.extraStop !== undefined) {
       this.clearExtraStop();
       this.finishTake();
@@ -5393,6 +5517,8 @@ export class MockBackend implements Backend {
     const session = this.state.dictation.session;
     const engines = this.state.engines;
     const stoppedAt = this.now();
+    const releasedAt = this.releasedAt ?? stoppedAt;
+    this.releasedAt = undefined;
     // The preview follows the take into processing until the final text replaces it (§11).
     const live = current.live;
     const preview = live === undefined ? "" : livePreviewText(live);
@@ -5468,10 +5594,25 @@ export class MockBackend implements Backend {
           : undefined;
       const checked = check === undefined ? {} : { check };
       const failedOver = liveError ?? modeError;
+      // docs/dictation.md §30.1: as the core times the take, from the press (the mock's device
+      // opens at once and delivers after MOCK_MIC_READY_MS).
+      const pressedAt = this.takeStartedAt;
+      const timing: TakeTiming = {
+        pressed_at: pressedAt,
+        device_open_ms: 0,
+        first_audio_ms: Math.max(0, startedAt - pressedAt),
+        released_ms: Math.max(0, releasedAt - pressedAt),
+        tail_ms: Math.max(0, stoppedAt - releasedAt),
+        asr_ms: asrMs,
+        ...(polished ? { refine_ms: MOCK_REFINE_MS } : {}),
+        insert_ms: 0,
+        done_ms: Math.max(0, this.now() - pressedAt),
+      };
       const extra = {
         ...(polished ? { refine_ms: MOCK_REFINE_MS } : {}),
         ...(segments === undefined ? {} : { segments }),
         ...(failedOver === undefined ? {} : { live_error: failedOver }),
+        timing,
       };
       const done: DictationPhase = {
         phase: "done",
@@ -5502,6 +5643,7 @@ export class MockBackend implements Backend {
         // As the core: a failed request keeps the service's words (§3.6).
         ...(refineFailure === "rate_limited" ||
         refineFailure === "quota" ||
+        refineFailure === "truncated" ||
         refineFailure === "failed"
           ? { refine_error: MOCK_REFINE_FAILED }
           : {}),
@@ -5998,9 +6140,16 @@ export class MockBackend implements Backend {
   }
 
   private emit(event: UiEvent) {
+    const glossaryInput = event.type === "dictionary" || event.type === "scenes";
+    const hadGlossary = glossaryInput && this.hasGlossary();
     this.state = applyEvent(this.state, event);
     this.log.push(event);
     for (const listener of this.listeners) listener(event);
+    // docs/dictation.md §30.6: the status follows the first enabled entry or term pack and the
+    // last, as the core's.
+    if (glossaryInput && hadGlossary !== this.hasGlossary()) {
+      this.emit({ type: "engines", ...this.resolveEngines(this.state.settings.engines) });
+    }
   }
 }
 
@@ -6069,6 +6218,12 @@ function sceneRefOf(scene: Scene): SceneRef {
     name: scene.name,
     ...(scene.builtin === undefined ? {} : { builtin: scene.builtin }),
   };
+}
+
+/** A built-in scene whose term pack is not empty (`vocabulary::packs::terms`): 聊天 has none. */
+function hasTermPack(scene: Scene): boolean {
+  const row = MOCK_BUILTIN_SCENES.find((r) => r.id === scene.builtin);
+  return row !== undefined && row.terms.length > 0;
 }
 
 /** The preview's fixed id of the built-in scene at `index` of `MOCK_BUILTIN_SCENES`. */

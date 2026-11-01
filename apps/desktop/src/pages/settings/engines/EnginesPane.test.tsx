@@ -6,8 +6,11 @@ import {
   providerStatus,
 } from "@voltip/shared";
 import {
+  MOCK_ASR_MS,
+  MOCK_DICTATION_TEXT,
   MOCK_ENGINE_BUILTIN,
   MOCK_MODEL_FILE,
+  MOCK_REFINE_MS,
   MOCK_MODEL_TICK_MS,
   MOCK_MODEL_TICKS,
   MOCK_MODELS_ROOT,
@@ -237,6 +240,194 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     expect(screen.queryByTestId("provider-asr-deepseek")).toBeNull();
     expect(screen.queryByTestId("provider-asr-ollama")).toBeNull();
     expect(modelsPage().textContent).not.toMatch(/计划中|尚未接入|示例/);
+  });
+
+  it("docs/dictation.md section 30.5: 试识别 recognises the newest kept recording and shows what a take would get, delivering nothing", async () => {
+    const user = userEvent.setup();
+    const recording = {
+      id: "r1",
+      at_ms: 1_758_699_000_000,
+      duration_ms: 4200,
+      bytes: 134_444,
+      status: { kind: "cancelled" as const },
+    };
+    const { backend } = renderApp({
+      path: "/speech",
+      mock: { history: [], audioCache: [recording] },
+    });
+    const trial = await screen.findByTestId("recognition-trial");
+    expect(trial).toHaveTextContent("录音时长 4.2 s");
+    await user.click(within(trial).getByRole("button", { name: "用最近一条录音试识别" }));
+    expect(within(trial).getByRole("button", { name: "正在识别…" })).toBeDisabled();
+    const result = await within(trial).findByTestId(
+      "recognition-trial-result",
+      {},
+      { timeout: (MOCK_ASR_MS + MOCK_REFINE_MS) * 4 },
+    );
+    expect(within(result).getByText(MOCK_DICTATION_TEXT)).toHaveAttribute("data-user-text");
+    expect(result).toHaveTextContent(`识别服务内置服务 · ${backend.peek().engines.asr_model}`);
+    expect(result).toHaveTextContent(`识别耗时${MOCK_ASR_MS} ms`);
+    // The dictionary is empty: no glossary went out.
+    expect(result).toHaveTextContent("术语表没有发给识别服务");
+    expect(result).toHaveTextContent(`AI 润色内置服务 · ${backend.peek().engines.refine_model}`);
+    expect(within(trial).getByRole("button", { name: "用最近一条录音试识别" })).toBeEnabled();
+    // Shown here only: no entry, and the take's state was left alone.
+    expect(backend.peek().history_recent).toEqual([]);
+    expect(backend.peek().dictation.phase.phase).toBe("idle");
+  });
+
+  it("regression: docs/dictation.md section 30.5: 试识别 in 边说边输入 is not cleaned up, and says why", async () => {
+    const user = userEvent.setup();
+    const recording = {
+      id: "r1",
+      at_ms: 1_758_699_000_000,
+      duration_ms: 4200,
+      bytes: 134_444,
+      status: { kind: "cancelled" as const },
+    };
+    const { backend } = renderApp({
+      path: "/speech",
+      mock: {
+        history: [],
+        audioCache: [recording],
+        settings: { engines: { ...defaultEngineSettings(), output_mode: "live_inject" } },
+        engines: { effective_output_mode: "live_inject" },
+      },
+    });
+    expect(backend.peek().settings.engines.refine_enabled).toBe(true);
+    const trial = await screen.findByTestId("recognition-trial");
+    await user.click(within(trial).getByRole("button", { name: "用最近一条录音试识别" }));
+    const result = await within(trial).findByTestId(
+      "recognition-trial-result",
+      {},
+      { timeout: MOCK_ASR_MS * 4 },
+    );
+    expect(result).toHaveTextContent("AI 润色「边说边输入」模式下不进行润色");
+    expect(result).not.toHaveTextContent("未开启");
+  });
+
+  it("docs/dictation.md section 30.5: 试识别 is off, and says why, while no recording can be tried; a failure says why too", async () => {
+    const recording = {
+      id: "r1",
+      at_ms: 1_758_699_000_000,
+      duration_ms: 4200,
+      bytes: 134_444,
+      status: { kind: "cancelled" as const },
+    };
+    const long = { ...recording, id: "long", duration_ms: 300_000, format: "opus" as const };
+    const cases: [Parameters<typeof renderApp>[0], string][] = [
+      [{ path: "/speech", mock: { history: [], audioCache: [] } }, "录音缓存中没有可用的录音"],
+      // A long take is not tried.
+      [{ path: "/speech", mock: { history: [], audioCache: [long] } }, "录音缓存中没有可用的录音"],
+      [
+        {
+          path: "/speech",
+          mock: {
+            history: [],
+            settings: { audio_cache: { enabled: false, keep: 20, max_mb: 200 } },
+          },
+        },
+        "开启「在本机保留录音」",
+      ],
+      [
+        {
+          path: "/speech",
+          mock: {
+            history: [],
+            audioCache: [recording],
+            settings: { history: { enabled: false, keep: 200 } },
+          },
+        },
+        "开启「保存听写历史」和「在本机保留录音」",
+      ],
+    ];
+    for (const [options, why] of cases) {
+      const view = renderApp(options);
+      const trial = await screen.findByTestId("recognition-trial");
+      expect(within(trial).getByRole("button", { name: "用最近一条录音试识别" })).toBeDisabled();
+      expect(trial).toHaveTextContent(why);
+      view.unmount();
+    }
+    // A recogniser that cannot run: the failure says why, in place.
+    const user = userEvent.setup();
+    renderApp({
+      path: "/speech",
+      mock: {
+        history: [],
+        audioCache: [recording],
+        settings: { engines: { ...defaultEngineSettings(), asr_provider: "groq" } },
+      },
+    });
+    const trial = await screen.findByTestId("recognition-trial");
+    await user.click(within(trial).getByRole("button", { name: "用最近一条录音试识别" }));
+    expect(await within(trial).findByRole("alert")).toHaveTextContent("识别服务出错：");
+  });
+
+  it("docs/dictation.md section 30.6: under the recognition cards, whether the service in use receives the glossary", async () => {
+    const entry = {
+      id: "00000000-0000-4000-8000-0000000000d1",
+      term: "Voltip",
+      heard_as: [],
+      enabled: true,
+      source: { kind: "manual" as const },
+      created_at_ms: 1,
+      updated_at_ms: 1,
+    };
+    const cases: [Parameters<typeof renderApp>[0], string][] = [
+      // The built-in service takes it as its prompt.
+      [{ path: "/speech", mock: { dictionary: [entry] } }, "当前识别服务会收到术语表。"],
+      [
+        { path: "/speech", mock: { dictionary: [{ ...entry, enabled: false }] } },
+        "没有启用的词条，目前不会向识别服务发送术语表。",
+      ],
+      [
+        {
+          path: "/speech",
+          mock: {
+            dictionary: [entry],
+            settings: { engines: { ...defaultEngineSettings(), asr_provider: "local" } },
+          },
+        },
+        "本地模型不接收术语表，词典只在识别之后纠正。",
+      ],
+      [
+        {
+          path: "/speech",
+          mock: {
+            dictionary: [entry],
+            providerKeys: [{ provider: "aliyun", kind: "asr" }],
+            settings: {
+              engines: {
+                ...defaultEngineSettings(),
+                asr_provider: "aliyun",
+                providers: { aliyun: { asr_model: "qwen3-asr-flash" } },
+              },
+            },
+          },
+        },
+        "当前识别服务不接收术语表，词典只在识别之后纠正。",
+      ],
+    ];
+    for (const [options, sentence] of cases) {
+      const { unmount } = renderApp(options);
+      expect(await screen.findByTestId("glossary-note")).toHaveTextContent(sentence);
+      unmount();
+    }
+  });
+
+  it("regression: docs/dictation.md section 30.6: with no enabled entry, an enabled built-in scene's terms still go out in its applications, and the note says so", async () => {
+    const preview = new MockBackend();
+    const coding = preview.peek().scenes.find((s) => s.builtin === "coding");
+    preview.destroy();
+    if (!coding) throw new Error("the 编程 scene");
+    const { backend } = renderApp({
+      path: "/speech",
+      mock: { dictionary: [], scenes: [{ ...coding, enabled: true }] },
+    });
+    expect(backend.peek().engines.glossary).toBe("prompt");
+    expect(await screen.findByTestId("glossary-note")).toHaveTextContent(
+      "词典没有启用的词条；在已启用的内置场景里，当前识别服务会收到该场景的术语表。",
+    );
   });
 
   it("regression: the built-in service's host is never shown, in the pane, the title bar or the state", async () => {

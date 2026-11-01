@@ -15,12 +15,14 @@ import {
   useUiState,
 } from "@voltip/ui";
 import { useState } from "react";
+import { GlossaryNote } from "../../../features/vocabulary/GlossaryNote";
 import { ChineseScript } from "./ChineseScript";
 import { type SpeechTab, SPEECH_TABS, languageOptions, providersFor } from "./helpers";
 import { LivePreview } from "./LivePreview";
 import { OutputMode, VadTrim } from "./OutputMode";
 import { PresetsSection } from "./PresetsSection";
 import { ProviderCards } from "./ProviderCard";
+import { RecognitionTrial } from "./RecognitionTrial";
 
 /** The 语音模型 group of the settings dialog (docs/dictation.md §3), in two views: 服务商与模型
  *  lists the recognition providers as a grid of cards (the one in use tinted and marked 使用中;
@@ -122,6 +124,10 @@ function ProviderList({ kind, initialOpen }: { kind: ServiceKind; initialOpen?: 
           />
         )}
         <ServicePrivacy kind={kind} />
+        {/* docs/dictation.md §30.6: whether the dictionary's terms reach the recogniser. */}
+        {kind === "asr" && <GlossaryNote className="mono text-[11px] text-fg-subtle" />}
+        {/* docs/dictation.md §30.5: the newest kept recording, recognised with these settings. */}
+        {kind === "asr" && <RecognitionTrial />}
       </SettingsSection>
       {/* docs/dictation.md §3.14: the desktop moves on for failures too, if asked. */}
       <FallbackSection kind={kind} outage />

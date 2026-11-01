@@ -16,9 +16,9 @@ import {
   MOCK_METER_INTERVAL_MS,
   MOCK_REFINE_MS,
   MOCK_STREAMING_MODEL_ID,
-  MockBackend,
   phoneIdentity,
 } from "@voltip/shared/mock";
+import { MockBackend } from "../test/mock";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { homeStats, statsBoundaries } from "../features/history/stats";

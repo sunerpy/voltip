@@ -107,6 +107,7 @@
         "echo_cancel": false,
         "max_minutes": 60,
         "output_device": "wasapi:{0.0.0.00000000}.{a1}",
+        "ready_sound": true,
         "source": "mixed"
       }
     },
@@ -150,6 +151,10 @@
     "name": "audio_cache_delete"
   },
   {
+    "args": null,
+    "name": "recognition_trial"
+  },
+  {
     "args": {
       "weekly": false
     },
@@ -173,7 +178,8 @@
       "id": "8e3f1b2a-0c4d-4e5f-a6b7-c8d9e0f1a2b3",
       "refine": {
         "kind": "off"
-      }
+      },
+      "vadTrim": false
     },
     "name": "audio_retake"
   },

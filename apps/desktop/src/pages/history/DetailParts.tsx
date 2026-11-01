@@ -3,12 +3,13 @@
 import {
   type EditRecord,
   type HistoryEntry,
+  type TakeTiming,
   type TFunction,
   type VocabularyHit,
   formatCount,
   isImported,
 } from "@voltip/shared";
-import { Lamp, useUiState } from "@voltip/ui";
+import { Lamp, type LampTone, useUiState } from "@voltip/ui";
 import { textChars } from "../../features/history/stats";
 
 /** A voice edit's detail (docs/dictation.md §19.5): the instruction as sent to the LLM, the
@@ -110,7 +111,92 @@ export function VocabularyHits({
   );
 }
 
+/** One step of a take's timeline: its words, how long it took, its colour in the bar. */
+interface TimelineStep {
+  key: "open" | "wait" | "record" | "tail" | "asr" | "refine" | "insert";
+  ms: number;
+  bar: string;
+  lamp: LampTone;
+}
+
+/** The steps of a take's timeline in order (docs/dictation.md §30.1): the microphone's opening,
+ *  the wait for its first sound, the recording and the extra recording after the release (a take
+ *  that recorded), then recognition, the clean-up when it ran and the hand-over. The recording's
+ *  steps end where the next begins, never before the previous one ended: they never overlap, and
+ *  a device that delivered while it opened counts as open by its first samples. */
+export function timelineSteps(timing: TakeTiming): TimelineStep[] {
+  const steps: TimelineStep[] = [];
+  const add = (key: TimelineStep["key"], ms: number, bar: string, lamp: LampTone) => {
+    steps.push({ key, ms: Math.max(0, ms), bar, lamp });
+  };
+  let at = 0;
+  const until = (end: number) => {
+    const ms = end - at;
+    at = Math.max(at, end);
+    return ms;
+  };
+  const { device_open_ms: open, first_audio_ms: audio, released_ms: released } = timing;
+  if (open !== undefined)
+    add("open", until(audio === undefined ? open : Math.min(open, audio)), "bg-fg-subtle", "idle");
+  if (open !== undefined && audio !== undefined) add("wait", until(audio), "bg-led-off", "off");
+  if (released !== undefined) {
+    add("record", until(released), "bg-accent/35", "accent");
+    add("tail", until(released + timing.tail_ms), "bg-accent-soft", "accent");
+  }
+  add("asr", timing.asr_ms, "bg-primary", "neutral");
+  if (timing.refine_ms !== undefined) add("refine", timing.refine_ms, "bg-accent", "accent");
+  add("insert", timing.insert_ms, "bg-warning-fill", "warn");
+  return steps;
+}
+
+/** 时间线 (docs/dictation.md §30.1): where a take's time went, from the key press (or a 重新识别's
+ *  start) to the result, as a bar and the steps' milliseconds. */
+function Timeline({ timing, t }: { timing: TakeTiming; t: TFunction }) {
+  const steps = timelineSteps(timing);
+  const span = Math.max(
+    timing.done_ms,
+    steps.reduce((sum, step) => sum + step.ms, 0),
+    1,
+  );
+  const pct = (n: number) => `${(n / span) * 100}%`;
+  return (
+    <div data-testid="history-timeline">
+      <div className="eyebrow">
+        {t(
+          timing.released_ms === undefined
+            ? "history.timing.timelineNoCapture"
+            : "history.timing.timeline",
+        )}
+      </div>
+      <div
+        className="mt-2 flex h-3 w-full overflow-hidden rounded-pill bg-inset"
+        role="img"
+        aria-label={t("history.timing.label")}>
+        {steps.map((step) => (
+          <span key={step.key} className={step.bar} style={{ width: pct(step.ms) }} />
+        ))}
+      </div>
+      <div className="mono mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-fg-muted">
+        {steps.map((step) => (
+          <span key={step.key} className="flex items-center gap-1.5">
+            <Lamp tone={step.lamp} size={6} />
+            {t(`history.timing.step.${step.key}`, { n: formatCount(step.ms) })}
+          </span>
+        ))}
+        {timing.first_text_ms !== undefined && (
+          <span>{t("history.timing.firstText", { n: formatCount(timing.first_text_ms) })}</span>
+        )}
+        <span className="ml-auto text-fg">
+          {t("history.timing.total", { n: formatCount(timing.done_ms) })}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export function TimingBar({ entry, t }: { entry: HistoryEntry; t: TFunction }) {
+  // docs/dictation.md §30.1: a take that recorded its timing shows the whole timeline.
+  if (entry.timing !== undefined) return <Timeline timing={entry.timing} t={t} />;
   const asr = entry.asr_ms;
   const refine = entry.refine_ms ?? 0;
   const total = asr + refine;

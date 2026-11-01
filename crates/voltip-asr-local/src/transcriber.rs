@@ -579,7 +579,15 @@ impl Transcriber for LocalTranscriber {
             .map_err(|e| DictationError::LocalFailed { failure: e.kind, detail: format!("本地识别失败：{}", e.message) })?;
         let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         // docs/dictation.md §3.5: the catalogue entry's name is the model the history records.
-        Ok(Transcript { text: text.trim().to_owned(), latency_ms, model: Some(entry.name.to_owned()), backend_note, provider: None, fallback: None })
+        Ok(Transcript {
+            text: text.trim().to_owned(),
+            latency_ms,
+            model: Some(entry.name.to_owned()),
+            backend_note,
+            provider: None,
+            fallback: None,
+            glossary_sent: false,
+        })
     }
 }
 
@@ -940,6 +948,8 @@ mod tests {
         let speech = pcm16(&[1000; 24_000], 16_000);
         assert_eq!(t.transcribe(&speech, Some("zh"), &[]).await.unwrap().text, "sense-voice-small:zh:16000:24000");
         assert_eq!(loader.loads.load(Ordering::SeqCst), 1, "the take found the warmed recogniser");
+        // docs/dictation.md §30.6: an on-device model takes no glossary, whatever the dictionary holds.
+        assert!(!t.transcribe(&speech, Some("zh"), &["Voltip".into()]).await.unwrap().glossary_sent);
         // A settings change to another model: the warm-up swaps it in (one model in memory).
         let paraformer = t.select("paraformer-zh");
         paraformer.warm_up(Some("zh")).unwrap().join().unwrap();

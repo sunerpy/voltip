@@ -467,6 +467,10 @@ impl StreamingSession for LinkSession {
     fn served(&self) -> (Option<ProviderId>, Option<SwitchReason>) {
         (Some(self.provider), self.reason)
     }
+
+    fn glossary_sent(&self) -> Option<bool> {
+        self.inner.glossary_sent()
+    }
 }
 
 /// Clean-up and voice edits along a chain (docs/dictation.md §3.5, §3.14); the answer names the

@@ -13,7 +13,7 @@ use crate::dictation::SwitchReason;
 use crate::dictation::fallback::{QuotaKey, QuotaLedger, open_order};
 use crate::models::{DEFAULT_LOCAL_MODEL_ID, ModelState};
 use crate::presets::PresetId;
-pub use crate::providers::{AsrProtocol, KeyPolicy, LlmApi, ProviderId, ReasoningEffort, ServiceKind};
+pub use crate::providers::{AsrProtocol, GlossaryRoute, KeyPolicy, LlmApi, ProviderId, ReasoningEffort, ServiceKind};
 use crate::providers::{PROVIDERS, SiteId, key_entry};
 
 /// The built-in recognition model's name when the build names none (`VOLTIP_ASR_MODEL`).
@@ -685,6 +685,10 @@ pub struct ResolvedEngines {
     /// `engine_clients` for the client factory, whose built-in clients send its headers; `None`
     /// when nothing is metered. Equal meterings name the same device and client.
     pub metering: Option<crate::usage::Metering>,
+    /// Resolved for one take only (a 重新识别 on other choices, a 试识别; docs/dictation.md §26.4,
+    /// §30.4): the factory makes this take's clients and changes nothing a shell keeps for the
+    /// settings (the VAD download, the injection preferences).
+    pub for_one_take: bool,
     providers: Vec<ProviderStatus>,
 }
 
@@ -797,6 +801,14 @@ pub enum FallbackService {
 }
 
 impl FallbackTarget {
+    /// Where the glossary goes in its recognition requests (docs/dictation.md §30.6).
+    fn glossary_route(&self) -> GlossaryRoute {
+        match &self.service {
+            FallbackService::Remote(remote) => GlossaryRoute::remote(&remote.url, &remote.model),
+            FallbackService::Local(_) => GlossaryRoute::NotSupported,
+        }
+    }
+
     /// The service it calls, when it is not on this device.
     pub fn remote(&self) -> Option<&RemoteService> {
         match &self.service {
@@ -1007,6 +1019,7 @@ impl ResolvedEngines {
             asr_fallback,
             refine_fallback,
             metering: None,
+            for_one_take: false,
             providers,
         }
     }
@@ -1110,6 +1123,15 @@ impl ResolvedEngines {
         self.status_with(&QuotaLedger::default())
     }
 
+    /// Where the glossary goes in the selected model's recognition requests (docs/dictation.md
+    /// §30.6): nowhere on-device, the remote service's way, unknown while no remote service can run.
+    pub fn glossary_route(&self) -> Option<GlossaryRoute> {
+        if self.asr_provider == ProviderId::Local {
+            return Some(GlossaryRoute::NotSupported);
+        }
+        self.asr_remote.as_ref().map(|remote| GlossaryRoute::remote(&remote.url, &remote.model))
+    }
+
     /// The UI projection: provider ids, models, user-entered hosts and key presence only, and from
     /// `ledger` which fallback models ran out of quota (docs/dictation.md §3.5).
     pub fn status_with(&self, ledger: &QuotaLedger) -> EngineStatus {
@@ -1144,6 +1166,8 @@ impl ResolvedEngines {
             providers: self.providers.clone(),
             asr_fallback: self.asr_fallback.status(ledger),
             llm_fallback: self.refine_fallback.status(ledger),
+            // §30.6: a fallback model standing in sends its requests its own way.
+            glossary: self.asr_stand_in(ledger).map_or_else(|| self.glossary_route(), |target| Some(target.glossary_route())),
         }
     }
 }
@@ -1423,6 +1447,10 @@ pub struct EngineStatus {
     pub asr_fallback: FallbackStatus,
     /// The clean-up fallback models.
     pub llm_fallback: FallbackStatus,
+    /// Where the glossary goes in the recognition service's requests (docs/dictation.md §30.6);
+    /// `None` while recognition has no service that can run (a key is missing).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glossary: Option<GlossaryRoute>,
 }
 
 /// `EngineStatus.asr_fallback` / `llm_fallback` (docs/dictation.md §3.5).
@@ -1503,6 +1531,7 @@ impl Default for EngineStatus {
             providers: Vec::new(),
             asr_fallback: FallbackStatus::default(),
             llm_fallback: FallbackStatus::default(),
+            glossary: None,
         }
     }
 }
@@ -1535,6 +1564,44 @@ mod tests {
 
     fn with_provider(provider: ProviderId, choice: ProviderSettings) -> BTreeMap<ProviderId, ProviderSettings> {
         BTreeMap::from([(provider, choice)])
+    }
+
+    /// docs/dictation.md §30.6: where the glossary goes, by the recognition service in use — the
+    /// `prompt` of an OpenAI-compatible endpoint and of the built-in service, hot words for Model
+    /// Studio's `qwen-audio` models, nowhere for its other models and the on-device ones — and
+    /// nothing said while no service can run.
+    #[test]
+    fn the_status_says_where_the_glossary_goes() {
+        let route = |provider: ProviderId, model: Option<&str>, key: bool, built_in: &BuiltIn| {
+            let mut secrets = UserSecrets::default();
+            if key {
+                secrets.set(provider, ServiceKind::Asr, Some("sk-test".into()));
+            }
+            let choice = ProviderSettings { asr_model: model.map(str::to_owned), ..Default::default() };
+            let settings = EngineSettings { asr_provider: provider, providers: with_provider(provider, choice), ..EngineSettings::default() };
+            ResolvedEngines::resolve(&settings, &secrets, built_in).status().glossary
+        };
+        let cases = [
+            (ProviderId::Openai, Some("whisper-1"), Some(GlossaryRoute::Prompt)),
+            (ProviderId::Groq, None, Some(GlossaryRoute::Prompt)),
+            (ProviderId::Aliyun, Some("qwen-audio-3.1-asr-flash"), Some(GlossaryRoute::Hotwords)),
+            (ProviderId::Aliyun, Some("qwen-audio-3.1-asr-flash-streaming"), Some(GlossaryRoute::Hotwords)),
+            (ProviderId::Aliyun, Some("qwen-audio-3.1-asr-flash-message"), Some(GlossaryRoute::Hotwords)),
+            (ProviderId::Aliyun, Some("qwen3-asr-flash"), Some(GlossaryRoute::NotSupported)),
+            (ProviderId::Aliyun, Some("fun-asr-flash-2026-06-15"), Some(GlossaryRoute::NotSupported)),
+            (ProviderId::Aliyun, Some("paraformer-realtime-v2"), Some(GlossaryRoute::NotSupported)),
+        ];
+        for (provider, model, expected) in cases {
+            assert_eq!(route(provider, model, true, &BuiltIn::EMPTY), expected, "{provider:?} {model:?}");
+        }
+        assert_eq!(route(ProviderId::Local, None, false, &BuiltIn::EMPTY), Some(GlossaryRoute::NotSupported), "on-device");
+        assert_eq!(route(ProviderId::Builtin, None, false, &BUILT), Some(GlossaryRoute::Prompt), "the built-in service");
+        assert_eq!(route(ProviderId::Openai, Some("whisper-1"), false, &BuiltIn::EMPTY), None, "no key, no request");
+        let names: Vec<String> = [GlossaryRoute::Prompt, GlossaryRoute::Hotwords, GlossaryRoute::NotSupported, GlossaryRoute::Empty]
+            .iter()
+            .map(|r| serde_json::to_string(r).unwrap())
+            .collect();
+        assert_eq!(names, [r#""prompt""#, r#""hotwords""#, r#""not_supported""#, r#""empty""#]);
     }
 
     /// docs/dictation.md §28 (D13): 检查文字是否写入 and 识别结果卡片常驻 are on by default, read as on
@@ -2375,6 +2442,39 @@ mod tests {
         let read: FallbackSettings = serde_json::from_str(r#"{"enabled":true}"#).unwrap();
         assert!(!read.on_outage, "files written before it read as off");
         assert!(!FallbackSettings { on_outage: true, ..FallbackSettings::default() }.is_default());
+    }
+
+    /// regression (docs/dictation.md §30.6, completion review 2026-11-01): while a fallback model
+    /// stands in for the selected one, the glossary goes where the stand-in's requests go, as the
+    /// chain sends them: nowhere for Model Studio's Qwen3-ASR or a model on this device, the
+    /// `prompt` of an OpenAI-compatible one.
+    #[test]
+    fn regression_the_glossary_route_follows_the_model_standing_in() {
+        let mut secrets = UserSecrets::default();
+        for provider in [ProviderId::Openai, ProviderId::Aliyun, ProviderId::Groq] {
+            secrets.set(provider, ServiceKind::Asr, Some("sk-test".into()));
+        }
+        let shown = |selected: (ProviderId, &str), fallback: FallbackModel, selected_out: bool| {
+            let mut providers = with_provider(ProviderId::Aliyun, ProviderSettings { asr_url: Some(WORKSPACE.into()), ..Default::default() });
+            providers.entry(selected.0).or_default().asr_model = Some(selected.1.into());
+            let settings = EngineSettings {
+                asr_provider: selected.0,
+                providers,
+                asr_fallback: FallbackSettings { enabled: true, on_outage: false, models: vec![fallback] },
+                ..EngineSettings::default()
+            };
+            let resolved = ResolvedEngines::resolve(&settings, &secrets, &BUILT);
+            let ledger = QuotaLedger::with_clock(|| 1_000);
+            if selected_out {
+                ledger.mark(resolved.asr_fallback.selected.as_ref().unwrap(), SwitchReason::Quota);
+            }
+            resolved.status_with(&ledger).glossary
+        };
+        let whisper = (ProviderId::Openai, "whisper-1");
+        let qwen3 = (ProviderId::Aliyun, "qwen3-asr-flash");
+        assert_eq!(shown(whisper, fallback_entry(qwen3.0, qwen3.1), false), Some(GlossaryRoute::Prompt), "the selected model");
+        assert_eq!(shown(whisper, fallback_entry(qwen3.0, qwen3.1), true), Some(GlossaryRoute::NotSupported), "Qwen3-ASR stands in");
+        assert_eq!(shown(qwen3, fallback_entry(ProviderId::Groq, "whisper-large-v3"), true), Some(GlossaryRoute::Prompt), "Groq stands in");
     }
 
     /// docs/dictation.md §3.5, §11.9: the live preview and the output mode the pages show follow

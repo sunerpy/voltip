@@ -56,7 +56,7 @@ pub const DEV_DATA_DIR_ENV: &str = "VOLTIP_DEV_DATA_DIR";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 157] = [
+pub const COMMANDS: [&str; 158] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -120,6 +120,7 @@ pub const COMMANDS: [&str; 157] = [
     "audio_cache_clear",
     "audio_cache_delete",
     "audio_retake",
+    "recognition_trial",
     "import_add",
     "import_cancel",
     "import_retry",
@@ -696,15 +697,23 @@ fn audio_cache_delete(bridge: tauri::State<'_, Bridge>, id: String) -> Result<()
 }
 
 /// 重新识别 (docs/dictation.md §26): the take follows as `dictation` events, its text lands on
-/// the clipboard and in the history.
+/// the clipboard and in the history. `vad_trim: false` keeps the silence (§30.4).
 #[tauri::command]
 fn audio_retake(
     bridge: tauri::State<'_, Bridge>,
     id: String,
     asr: Option<voltip_core::audio_cache::RecognitionChoice>,
     refine: Option<voltip_core::audio_cache::PolishChoice>,
+    vad_trim: Option<bool>,
 ) -> Result<(), String> {
-    Ok(bridge.dispatch(UiCommand::AudioRetake { id, asr, refine })?)
+    Ok(bridge.dispatch(UiCommand::AudioRetake { id, asr, refine, vad_trim })?)
+}
+
+/// 用最近一条录音试一下 (docs/dictation.md §30.5): `recognition_trial` events follow; nothing is
+/// pasted, copied or written to the history.
+#[tauri::command]
+fn recognition_trial(bridge: tauri::State<'_, Bridge>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::RecognitionTrial)?)
 }
 
 /// 导入音频或视频 (docs/dictation.md §31): the files join the import queue with the same models and
@@ -1761,6 +1770,7 @@ pub fn build_app<R: Runtime>(
             audio_cache_clear,
             audio_cache_delete,
             audio_retake,
+            recognition_trial,
             import_add,
             import_cancel,
             import_retry,

@@ -112,6 +112,9 @@ describe("Dictionary page", () => {
     expect(screen.getByTestId("dictionary-explain")).toHaveTextContent(
       "最多 500 条 · 每条最多 10 个曾听成",
     );
+    // docs/dictation.md §30.6: what the recognition service in use does with the glossary.
+    expect(screen.getByTestId("dictionary-explain")).not.toHaveTextContent("发给云端识别");
+    expect(screen.getByTestId("glossary-note")).toHaveTextContent("当前识别服务会收到术语表。");
     const table = screen.getByRole("table", { name: "词条表" });
     const rows = within(table).getAllByRole("row").slice(1);
     expect(rows.map((r) => within(r).getAllByRole("cell")[1]?.textContent)).toEqual([

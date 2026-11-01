@@ -32,6 +32,7 @@ pub mod script;
 pub mod serve;
 mod settings;
 pub mod sync;
+pub mod trial;
 pub mod ui;
 pub mod usage;
 mod view;
@@ -60,8 +61,8 @@ pub use models::{
 };
 pub use presets::{BuiltinPreset, CustomPreset, PresetDraft, PresetError, PresetId, PresetRef, PresetTrial, PresetTryOutcome, TakePreset};
 pub use providers::{
-    AsrProtocol, ConsolePage, KeyPolicy, LlmApi, PROVIDERS, ProbeError, ProbeFailure, ProbeOutcome, ProbeReport, ProviderId, ProviderSite, ProviderSpec,
-    ReasoningEffort, ServiceKind, ServicePreset, SiteId, key_entries, key_env_var, load_user_secrets, peek_user_secrets,
+    AsrProtocol, ConsolePage, GlossaryRoute, KeyPolicy, LlmApi, PROVIDERS, ProbeError, ProbeFailure, ProbeOutcome, ProbeReport, ProviderId, ProviderSite,
+    ProviderSpec, ReasoningEffort, ServiceKind, ServicePreset, SiteId, key_entries, key_env_var, load_user_secrets, peek_user_secrets,
 };
 pub use runtime::{
     AUTO_WEEKLY_DELAY, AppCore, CoreCommand, CoreConfig, CoreEvent, CoreHandle, EXTRA_RECORDING_POLL, MAX_ACTIVATION_MS, PRESET_TRY_UNCONFIGURED,
@@ -69,9 +70,9 @@ pub use runtime::{
 };
 pub use scenes::{AppRef, BuiltinScene, ContextSharing, Scene, SceneDraft, SceneError, SceneMatch, SceneOverrides, SceneRef, TakeContext};
 pub use settings::{
-    AudioCacheSettings, BackupSettings, DEFAULT_MAX_MINUTES, HistorySettings, Locale, MAX_MINUTES_CHOICES, MIN_SERVE_PORT, OverlayPlacement,
-    PROXY_PASSWORD_ENTRY, PhoneTalkMode, ProxyMode, ProxySettings, RecordingSettings, RecordingSource, SETTINGS_FILE_NAME, ServeSettings, Settings,
-    SettingsStore, ThemeId, load_proxy_password, peek_proxy_password, proxy_error, proxy_error_text,
+    AudioCacheSettings, BackupSettings, DEFAULT_EXTRA_RECORDING_MS, DEFAULT_MAX_MINUTES, HistorySettings, Locale, MAX_MINUTES_CHOICES, MIN_SERVE_PORT,
+    OverlayPlacement, PROXY_PASSWORD_ENTRY, PhoneTalkMode, ProxyMode, ProxySettings, RecordingSettings, RecordingSource, SETTINGS_FILE_NAME, ServeSettings,
+    Settings, SettingsStore, ThemeId, load_proxy_password, peek_proxy_password, proxy_error, proxy_error_text,
 };
 pub use view::{DeviceConnection, DeviceView, RelayFailure, RelaySource, RelayStatus};
 pub use vocabulary::{

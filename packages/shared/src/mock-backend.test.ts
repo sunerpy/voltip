@@ -23,6 +23,7 @@ import {
   MOCK_AUDIO_DEVICES,
   MOCK_TAKEN_PORTS,
   MOCK_TEXT_MS,
+  MOCK_TRIAL_BUSY,
   PHONE_TEXT_UNAVAILABLE,
   MOCK_AVAILABLE_VERSION,
   MOCK_CURRENT_VERSION,
@@ -65,7 +66,8 @@ import {
   MOCK_NO_SPEECH,
   MOCK_SCENE_MODE_NOT_READY,
   MOCK_STREAMING_MODEL_ID,
-  MockBackend,
+  MockBackend as RealMockBackend,
+  type MockBackendOptions,
   mockSameChord,
   SHARE_UNAVAILABLE,
   PRESET_TRY_UNCONFIGURED,
@@ -80,6 +82,7 @@ import {
   startOfLocalDay,
 } from "./mock-backend";
 import {
+  DEFAULT_EXTRA_RECORDING_MS,
   DEFAULT_MAX_MINUTES,
   BUILTIN_PRESETS,
   BUILTIN_SCENES,
@@ -106,6 +109,15 @@ import {
   providerStatus,
 } from "./schema";
 import { livePreviewText } from "./labels";
+
+/** These tests were written for a stop that closes the microphone at once. A new install keeps
+ *  recording `DEFAULT_EXTRA_RECORDING_MS` after the stop (docs/dictation.md §30.4): the tests of
+ *  the extra recording ask for it, and one test below checks the default itself. */
+class MockBackend extends RealMockBackend {
+  constructor(options: MockBackendOptions = {}) {
+    super({ ...options, settings: { extra_recording_ms: 0, ...options.settings } });
+  }
+}
 
 function collect(backend: MockBackend) {
   const events: UiEvent[] = [];
@@ -622,6 +634,26 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
     expect(entry?.preset).toBeUndefined();
   });
 
+  it("docs/dictation.md §3.12: an answer cut off at the output limit keeps the raw text and the service's words", async () => {
+    const backend = new MockBackend({ now: () => clock, history: [] });
+    backend.simulateRefineFailure("truncated");
+    await backend.invoke("dictation_start");
+    tick(MOCK_MIC_READY_MS + 3200);
+    await backend.invoke("dictation_stop");
+    tick(MOCK_ASR_MS + MOCK_REFINE_MS);
+    expect(backend.peek().dictation.phase).toMatchObject({
+      phase: "done",
+      text: MOCK_DICTATION_RAW,
+      refined: false,
+      refine_failure: "truncated",
+    });
+    expect(backend.peek().history_recent[0]).toMatchObject({
+      refined: false,
+      refine_failure: "truncated",
+      refine_error: MOCK_REFINE_FAILED,
+    });
+  });
+
   it("docs/dictation.md §14.3: another window in front copies the text, says so, and stays as long as a failure", async () => {
     // §28: with 识别结果卡片常驻 off the card leaves after its usual time.
     const backend = new MockBackend({
@@ -733,7 +765,23 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
       asr_ms: MOCK_ASR_MS,
       refine_ms: MOCK_REFINE_MS,
       mode: "whole_take",
+      // docs/dictation.md §30.1: from the press; the device opens at once, delivers after
+      // MOCK_MIC_READY_MS, and the stop comes 3.2 s later with no extra recording.
+      timing: {
+        pressed_at: T0,
+        device_open_ms: 0,
+        first_audio_ms: MOCK_MIC_READY_MS,
+        released_ms: MOCK_MIC_READY_MS + 3200,
+        tail_ms: 0,
+        asr_ms: MOCK_ASR_MS,
+        refine_ms: MOCK_REFINE_MS,
+        insert_ms: 0,
+        done_ms: MOCK_MIC_READY_MS + 3200 + MOCK_ASR_MS + MOCK_REFINE_MS,
+      },
     });
+    expect(backend.peek().history_recent[0]?.timing).toEqual(
+      done.phase === "done" ? done.timing : undefined,
+    );
     // The history row lands before the done phase so a UI reading both sees them together.
     const history = backend.peek().history_recent;
     expect(history).toHaveLength(1);
@@ -770,7 +818,13 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
       kind: "dictation",
     });
     await backend.invoke("settings_set_recording", {
-      recording: { source: "system", output_device: null, max_minutes: 60, echo_cancel: true },
+      recording: {
+        source: "system",
+        output_device: null,
+        max_minutes: 60,
+        echo_cancel: true,
+        ready_sound: false,
+      },
     });
     await backend.invoke("dictation_start");
     tick(MOCK_MIC_READY_MS);
@@ -934,11 +988,16 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
       duration_ms: 1000,
       asr_ms: MOCK_ASR_MS,
       mode: "whole_take",
+      timing: expect.objectContaining({
+        released_ms: MOCK_MIC_READY_MS + 1000,
+        asr_ms: MOCK_ASR_MS,
+      }),
     });
     expect(backend.peek().history_recent[0]).toMatchObject({
       refined: false,
       outcome: { kind: "inserted", via: "clipboard" },
     });
+    expect(backend.peek().history_recent[0]?.timing?.refine_ms).toBeUndefined();
     expect(backend.peek().history_recent[0]?.refine_model).toBeUndefined();
     backend.destroy();
   });
@@ -1948,13 +2007,16 @@ describe("MockBackend locale, auto-update and updater (docs/frontend.md §7)", (
       output_device: null,
       max_minutes: DEFAULT_MAX_MINUTES,
       echo_cancel: true,
+      ready_sound: false,
     });
-    // Echo cancellation off (docs/dictation.md §22.6): kept as saved, like the rest.
+    // Echo cancellation off (docs/dictation.md §22.6) and the ready sound on (§30.3): kept as
+    // saved, like the rest.
     const mixed = {
       source: "mixed" as const,
       output_device: "fake:speakers",
       max_minutes: 60,
       echo_cancel: false,
+      ready_sound: true,
     };
     await backend.invoke("settings_set_recording", { recording: mixed });
     expect(backend.peek().settings.recording).toEqual(mixed);
@@ -2279,6 +2341,22 @@ describe("MockBackend activation (docs/dictation.md §13)", () => {
     backend.destroy();
   });
 
+  it("docs/dictation.md §30.4: a new install keeps the microphone open 150 ms after the stop", async () => {
+    const backend = new RealMockBackend({ now: () => clock, history: [] });
+    expect(backend.peek().settings.extra_recording_ms).toBe(DEFAULT_EXTRA_RECORDING_MS);
+    expect(DEFAULT_EXTRA_RECORDING_MS).toBe(150);
+    await backend.invoke("dictation_start");
+    tick(MOCK_MIC_READY_MS + 1000);
+    await backend.invoke("dictation_stop");
+    tick(DEFAULT_EXTRA_RECORDING_MS - 1);
+    expect(backend.peek().dictation.phase.phase).toBe("listening");
+    tick(1);
+    expect(backend.peek().dictation.phase).toMatchObject({ phase: "processing" });
+    tick(MOCK_ASR_MS + MOCK_REFINE_MS);
+    expect(backend.peek().history_recent[0]?.timing?.tail_ms).toBe(DEFAULT_EXTRA_RECORDING_MS);
+    backend.destroy();
+  });
+
   it("regression: extra_recording_ms keeps the microphone open after the stop; a second stop closes it at once and a cancel in the window drops the take", async () => {
     const backend = new MockBackend({
       now: () => clock,
@@ -2433,6 +2511,7 @@ describe("MockBackend output modes (docs/dictation.md §12)", () => {
       refine_ms: MOCK_REFINE_MS,
       mode: "streaming_final",
       segments: [committed, { text: last.current, start_ms: committed.end_ms, end_ms: duration }],
+      timing: expect.objectContaining({ asr_ms: MOCK_FINALIZE_MS, refine_ms: MOCK_REFINE_MS }),
     });
     expect(backend.peek().history_recent[0]).toMatchObject({
       mode: "streaming_final",
@@ -2624,7 +2703,8 @@ describe("MockBackend personal dictionary and replacement rules (docs/dictation.
       updated_at_ms: T0,
     });
     expect(good.source).toEqual({ kind: "history", history_id: HISTORY_ID });
-    expect(events.map((e) => e.type)).toEqual(["dictionary", "dictionary"]);
+    // docs/dictation.md §30.6: the first enabled entry gives the recogniser a glossary.
+    expect(events.map((e) => e.type)).toEqual(["dictionary", "engines", "dictionary"]);
     // Wrong on its own: the call rejects and nothing is emitted.
     await expect(backend.invoke("dictionary_add", { entry: draft(" ", []) })).rejects.toThrow(
       "dictionary: 正确写法不能为空",
@@ -2635,7 +2715,7 @@ describe("MockBackend personal dictionary and replacement rules (docs/dictation.
     await expect(backend.invoke("dictionary_remove", { id: "nope" })).rejects.toThrow(
       "id must be a UUID",
     );
-    expect(events).toHaveLength(2);
+    expect(events).toHaveLength(3);
     // A clash with the list: an error event, the list unchanged.
     await backend.invoke("dictionary_add", { entry: draft("voltip", []) });
     await backend.invoke("dictionary_add", { entry: draft("World", ["谷歌IDR"]) });
@@ -3086,6 +3166,59 @@ describe("MockBackend scenes and context (docs/dictation.md section 18)", () => 
     expect(packs.map((p) => p.id)).toEqual([...BUILTIN_SCENES]);
     expect(packs.find((p) => p.id === "chat")?.terms).toEqual([]);
     expect(packs.find((p) => p.id === "coding")?.terms).toContain("Kubernetes");
+    backend.destroy();
+  });
+
+  it("regression: docs/dictation.md §30.6: an enabled built-in scene with a term pack sends a glossary in its applications, with an empty dictionary", async () => {
+    const backend = new MockBackend({ now: () => clock, history: [] });
+    expect(backend.peek().dictionary).toEqual([]);
+    expect(backend.peek().engines.glossary).toBe("empty");
+    const builtin = (id: string) => {
+      const found = backend.peek().scenes.find((s) => s.builtin === id);
+      if (!found) throw new Error(id);
+      return found;
+    };
+    const turn = async (id: string, enabled: boolean) => {
+      const { name, match, overrides } = builtin(id);
+      await backend.invoke("scenes_update", {
+        id: builtin(id).id,
+        scene: { name, enabled, match, overrides },
+      });
+    };
+    // 聊天 has no term pack.
+    await turn("chat", true);
+    expect(backend.peek().engines.glossary).toBe("empty");
+    await turn("coding", true);
+    expect(backend.peek().engines.glossary).toBe("prompt");
+    // A 试识别 sends the pack only for a recording made in the scene's application.
+    const app = builtin("coding").match.apps[0];
+    if (app === undefined) throw new Error("an application of 编程");
+    const trial = async (recordedIn: string) => {
+      const kept = new MockBackend({
+        now: () => clock,
+        history: [],
+        scenes: backend.peek().scenes,
+        audioCache: [
+          {
+            id: "r1",
+            at_ms: T0,
+            duration_ms: 3000,
+            bytes: 96_044,
+            app: { id: recordedIn, name: recordedIn },
+            status: { kind: "cancelled" },
+          },
+        ],
+      });
+      await kept.invoke("recognition_trial");
+      tick(MOCK_ASR_MS + MOCK_REFINE_MS);
+      const result = kept.peek().recognition_trial;
+      kept.destroy();
+      return result?.state === "done" ? result.glossary_sent : undefined;
+    };
+    expect(await trial(app)).toBe(true);
+    expect(await trial("notepad")).toBe(false);
+    await turn("coding", false);
+    expect(backend.peek().engines.glossary).toBe("empty");
     backend.destroy();
   });
 
@@ -4285,6 +4418,150 @@ describe("MockBackend audio cache (docs/dictation.md §26)", () => {
     expect(entry?.refine_model).toBeUndefined();
     expect(backend.peek().settings.engines).toEqual(engines);
     expect(backend.peek().engines.asr_provider).toBe("builtin");
+  });
+
+  it("试识别 recognises the newest kept WAV with the settings and delivers nothing (§30.5)", async () => {
+    const backend = new MockBackend({
+      now: () => clock,
+      history: [],
+      audioCache: [
+        {
+          id: "long",
+          at_ms: T0,
+          duration_ms: 300_000,
+          bytes: 2_000_000,
+          status: { kind: "cancelled" },
+          format: "opus",
+        },
+        {
+          id: "r1",
+          at_ms: T0 - 1,
+          duration_ms: 3000,
+          bytes: 96_044,
+          status: { kind: "cancelled" },
+        },
+      ],
+    });
+    const events = collect(backend);
+    await backend.invoke("recognition_trial");
+    expect(backend.peek().recognition_trial).toEqual({
+      state: "running",
+      recording: "r1",
+      started_at: T0,
+    });
+    await backend.invoke("recognition_trial");
+    expect(events).toContainEqual({ type: "error", message: MOCK_TRIAL_BUSY });
+    tick(MOCK_ASR_MS + MOCK_REFINE_MS);
+    expect(backend.peek().recognition_trial).toMatchObject({
+      state: "done",
+      recording: "r1",
+      recorded_at_ms: T0 - 1,
+      duration_ms: 3000,
+      raw_text: MOCK_DICTATION_RAW,
+      text: MOCK_DICTATION_TEXT,
+      refined: true,
+      asr_provider: "builtin",
+      glossary_sent: false,
+      elapsed_ms: MOCK_ASR_MS + MOCK_REFINE_MS,
+    });
+    expect(backend.peek().history_recent).toEqual([]);
+    expect(backend.peek().dictation.phase.phase).toBe("idle");
+    expect(backend.peek().audio_cache.recordings.map((r) => r.status.kind)).toEqual([
+      "cancelled",
+      "cancelled",
+    ]);
+  });
+
+  it("regression: 试识别 in 边说边输入 runs no clean-up, as a take there runs none (§12, §30.5)", async () => {
+    const recording = {
+      id: "r1",
+      at_ms: T0,
+      duration_ms: 3000,
+      bytes: 96_044,
+      app: { id: "slack", name: "Slack" },
+      status: { kind: "cancelled" as const },
+    };
+    const global = new MockBackend({
+      now: () => clock,
+      history: [],
+      settings: { engines: { ...defaultEngineSettings(), output_mode: "live_inject" } },
+      engines: { effective_output_mode: "live_inject" },
+      audioCache: [recording],
+    });
+    expect(global.peek().settings.engines.refine_enabled).toBe(true);
+    await global.invoke("recognition_trial");
+    tick(MOCK_ASR_MS);
+    const trial = global.peek().recognition_trial;
+    expect(trial).toMatchObject({
+      state: "done",
+      refined: false,
+      live_inject: true,
+      elapsed_ms: MOCK_ASR_MS,
+    });
+    expect(trial).not.toHaveProperty("refine_failure");
+    expect(trial).not.toHaveProperty("refine_model");
+    // A scene of the recording's application that types as one speaks, with the live preview ready.
+    const scene = new MockBackend({
+      now: () => clock,
+      history: [],
+      engines: { live_preview_ready: true },
+      scenes: [
+        {
+          id: "00000000-0000-4000-8000-000000000001",
+          name: "聊天",
+          enabled: true,
+          match: { apps: ["slack"], title_contains: [] },
+          overrides: { output_mode: "live_inject" },
+          created_at_ms: 1,
+          updated_at_ms: 1,
+        },
+      ],
+      audioCache: [recording],
+    });
+    expect(scene.peek().engines.effective_output_mode).toBe("whole_take");
+    await scene.invoke("recognition_trial");
+    tick(MOCK_ASR_MS);
+    expect(scene.peek().recognition_trial).toMatchObject({
+      state: "done",
+      refined: false,
+      live_inject: true,
+    });
+    // Without the live preview the scene's mode cannot be served, and the take is cleaned up.
+    const unserved = new MockBackend({
+      now: () => clock,
+      history: [],
+      scenes: scene.peek().scenes.filter((s) => s.builtin === undefined),
+      audioCache: [recording],
+    });
+    await unserved.invoke("recognition_trial");
+    tick(MOCK_ASR_MS + MOCK_REFINE_MS);
+    const cleaned = unserved.peek().recognition_trial;
+    expect(cleaned).toMatchObject({ state: "done", refined: true });
+    expect(cleaned).not.toHaveProperty("live_inject");
+  });
+
+  it("试识别 says when there is no recording, or no recogniser, to try", async () => {
+    const backend = new MockBackend({ now: () => clock, history: [], audioCache: [] });
+    await backend.invoke("recognition_trial");
+    expect(backend.peek().recognition_trial).toEqual({
+      state: "failed",
+      failure: { kind: "no_recording" },
+    });
+    const engines = { ...defaultEngineSettings(), asr_provider: "groq" as const };
+    const unready = new MockBackend({
+      now: () => clock,
+      history: [],
+      settings: { engines },
+      audioCache: [
+        { id: "r1", at_ms: T0, duration_ms: 3000, bytes: 96_044, status: { kind: "cancelled" } },
+      ],
+    });
+    await unready.invoke("recognition_trial");
+    expect(unready.peek().recognition_trial).toEqual({
+      state: "failed",
+      recording: "r1",
+      failure: { kind: "failed", code: "asr", message: `asr: ${MOCK_RETAKE_NOT_READY}` },
+    });
   });
 
   it("keeps nothing with the history off or on a phone", async () => {

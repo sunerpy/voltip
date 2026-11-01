@@ -89,6 +89,17 @@ impl DashscopeClient {
         self.mode
     }
 
+    /// Whether a request of this client carries `glossary` (docs/dictation.md §16.3, §30.6): as hot
+    /// words, for the `qwen-audio` models on the native and realtime protocols, when it has a term.
+    pub fn sends_glossary(&self, glossary: &[String]) -> bool {
+        self.vocabulary(glossary).is_some()
+    }
+
+    /// `glossary` as the request's `vocabulary` parameter, when the model takes hot words.
+    fn vocabulary(&self, glossary: &[String]) -> Option<Value> {
+        (self.mode != DashscopeMode::Chat && Family::of(&self.config.model).takes_hotwords()).then(|| hotwords(glossary)).flatten()
+    }
+
     /// Where requests go: the HTTP endpoint, or the WebSocket of a realtime model.
     pub fn endpoint(&self) -> String {
         match self.mode {
@@ -124,9 +135,7 @@ impl DashscopeClient {
         {
             parameters.insert("language_hints".into(), json!([hint]));
         }
-        if family.takes_hotwords()
-            && let Some(vocabulary) = hotwords(glossary)
-        {
+        if let Some(vocabulary) = self.vocabulary(glossary) {
             parameters.insert("vocabulary".into(), vocabulary);
         }
         if live {
@@ -174,9 +183,7 @@ impl DashscopeClient {
         if let Some(hint) = hint(language, family) {
             parameters.insert("language_hints".into(), json!([hint]));
         }
-        if family.takes_hotwords()
-            && let Some(vocabulary) = hotwords(glossary)
-        {
+        if let Some(vocabulary) = self.vocabulary(glossary) {
             parameters.insert("vocabulary".into(), vocabulary);
         }
         let body = json!({
@@ -597,6 +604,34 @@ pub(crate) mod tests {
         assert!(matches!(&err, AsrError::BadResponse(m) if m.contains("output.text")), "{err:?}");
         let err = client(&server, "qwen-audio-3.1-asr-flash", DashscopeMode::Multimodal).transcribe(b"not audio", None, &[]).await.unwrap_err();
         assert!(matches!(err, AsrError::Audio(_)), "{err:?}");
+    }
+
+    /// docs/dictation.md §30.6: which requests carry the glossary — the `qwen-audio` models' on the
+    /// native and realtime protocols, with a term to send — as the request bodies above show.
+    #[test]
+    fn the_glossary_goes_out_as_hot_words_only_where_the_model_takes_them() {
+        let terms = vec!["Voltip".to_owned()];
+        let cases = [
+            ("qwen-audio-3.1-asr-flash", DashscopeMode::Multimodal, true),
+            ("qwen-audio-3.1-asr-flash-streaming", DashscopeMode::Duplex, true),
+            ("qwen-audio-3.1-asr-flash-message", DashscopeMode::Duplex, true),
+            ("fun-asr-flash-2026-06-15", DashscopeMode::Multimodal, false),
+            ("fun-asr-realtime", DashscopeMode::Duplex, false),
+            ("paraformer-realtime-v2", DashscopeMode::Duplex, false),
+            ("qwen3-asr-flash", DashscopeMode::Chat, false),
+            // The chat form never sends hot words, whatever the model is called.
+            ("qwen-audio-turbo", DashscopeMode::Chat, false),
+        ];
+        for (model, mode, sent) in cases {
+            let c = DashscopeClient::new(AsrConfig::new("https://dashscope.aliyuncs.com/compatible-mode/v1", model), mode).unwrap();
+            assert_eq!(c.sends_glossary(&terms), sent, "{model}");
+            assert!(!c.sends_glossary(&[]), "{model}: nothing to send");
+            assert!(!c.sends_glossary(&["  ".to_owned()]), "{model}: a blank term is not a term");
+            // The realtime task's parameters agree.
+            if mode == DashscopeMode::Duplex {
+                assert_eq!(c.duplex_options(None, &terms, 16_000, true).parameters.contains_key("vocabulary"), sent, "{model}");
+            }
+        }
     }
 
     /// Model Studio's error bodies as errors a person can act on: the key (401, `InvalidApiKey`),

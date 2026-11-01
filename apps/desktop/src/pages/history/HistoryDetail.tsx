@@ -636,7 +636,9 @@ export function HistoryDetail({
               }}>
               {retakes.running === kept.id
                 ? t("history.recordings.retaking")
-                : t("history.recordings.retake")}
+                : retakeModels.keepsSilence
+                  ? t("history.recordings.retakeUntrimmed")
+                  : t("history.recordings.retake")}
             </Button>
           </div>
         </div>
@@ -661,6 +663,22 @@ export function HistoryDetail({
             value={
               <span data-testid="history-asr-provider">
                 {servedByText(entry.asr_provider, entry.asr_fallback, locale)}
+              </span>
+            }
+            size="sm"
+          />
+        )}
+        {entry.glossary_sent !== undefined && (
+          // docs/dictation.md §30.6: whether the recognition's requests carried the glossary.
+          <Readout
+            label={t("history.detail.glossary.label")}
+            value={
+              <span data-testid="history-glossary">
+                {t(
+                  entry.glossary_sent
+                    ? "history.detail.glossary.sent"
+                    : "history.detail.glossary.notSent",
+                )}
               </span>
             }
             size="sm"

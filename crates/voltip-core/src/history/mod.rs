@@ -194,6 +194,16 @@ pub struct HistoryEntry {
     /// counts toward no statistics and teaches the dictionary nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file: Option<ImportedFile>,
+    /// When each step of the take happened (docs/dictation.md §30.1); absent for entries that are
+    /// no take of this computer's (a phone's text, an imported file) and in entries written before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timing: Option<crate::dictation::TakeTiming>,
+    /// Whether the recognition that wrote `raw_text` was sent the glossary (docs/dictation.md
+    /// §16.3, §30.5): `true` when the service took the dictionary's terms as a prompt or hot words,
+    /// `false` when it did not or there were none. Absent when no recognition of this computer's
+    /// wrote the text, and in entries written before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glossary_sent: Option<bool>,
 }
 
 /// The file an imported entry came from (docs/dictation.md §31): its name, never where it is.

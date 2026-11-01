@@ -1,4 +1,5 @@
-import { MockBackend, type MockBackendOptions, sampleDevices } from "@voltip/shared/mock";
+import { type MockBackendOptions, sampleDevices } from "@voltip/shared/mock";
+import { MockBackend } from "./mock";
 import { render } from "@testing-library/react";
 import { App } from "../App";
 import type { TrayRequestSource } from "../app/tray-requests";

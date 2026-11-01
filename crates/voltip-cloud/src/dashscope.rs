@@ -43,7 +43,15 @@ impl Transcriber for DashscopeTranscriber {
     /// the model takes them.
     async fn transcribe(&self, wav: &[u8], language: Option<&str>, glossary: &[String]) -> Result<Transcript, DictationError> {
         let t = self.client.transcribe(wav, language, glossary).await.map_err(crate::asr_error)?;
-        Ok(Transcript { text: t.text, latency_ms: t.latency_ms, model: Some(t.model), backend_note: None, provider: None, fallback: None })
+        Ok(Transcript {
+            text: t.text,
+            latency_ms: t.latency_ms,
+            model: Some(t.model),
+            backend_note: None,
+            provider: None,
+            fallback: None,
+            glossary_sent: self.client.sends_glossary(glossary),
+        })
     }
 
     fn streaming(&self, glossary: &[String]) -> Option<Arc<dyn StreamingTranscriber>> {
@@ -68,6 +76,7 @@ impl StreamingTranscriber for DashscopeStreaming {
         let runtime = tokio::runtime::Handle::try_current().map_err(|_| DictationError::Asr("realtime model: no runtime for the connection".into()))?;
         let options = self.client.duplex_options(language, &self.glossary, LIVE_SAMPLE_RATE_HZ, true);
         let model = options.model.clone();
+        let glossary_sent = self.client.sends_glossary(&self.glossary);
         let (commands, inbox) = mpsc::unbounded_channel();
         let (events_tx, events) = std_mpsc::channel();
         let (done_tx, done) = std_mpsc::sync_channel(1);
@@ -78,7 +87,7 @@ impl StreamingTranscriber for DashscopeStreaming {
             }
             let _ = done_tx.send(result.map_err(DictationError::Asr));
         });
-        Ok(Box::new(DashscopeSession { commands, events, done, finish_timeout: self.finish_timeout, model }))
+        Ok(Box::new(DashscopeSession { commands, events, done, finish_timeout: self.finish_timeout, model, glossary_sent }))
     }
 
     /// Nothing to load: the model is the service's.
@@ -97,6 +106,8 @@ struct DashscopeSession {
     finish_timeout: Duration,
     /// The realtime model the session streams to: its text's model (docs/dictation.md §3.5).
     model: String,
+    /// Its task carries the glossary as hot words (docs/dictation.md §30.6).
+    glossary_sent: bool,
 }
 
 impl StreamingSession for DashscopeSession {
@@ -114,10 +125,14 @@ impl StreamingSession for DashscopeSession {
         Some(self.model.clone())
     }
 
+    fn glossary_sent(&self) -> Option<bool> {
+        Some(self.glossary_sent)
+    }
+
     fn finish(self: Box<Self>) -> Result<StreamFinal, DictationError> {
         let _ = self.commands.send(Command::Finish);
         match self.done.recv_timeout(self.finish_timeout) {
-            Ok(result) => result,
+            Ok(result) => result.map(|fin| StreamFinal { glossary_sent: Some(self.glossary_sent), ..fin }),
             // docs/dictation.md §3.14: the service went silent, a timeout.
             Err(_) => Err(DictationError::Unreachable {
                 service: voltip_core::ServiceKind::Asr,
@@ -163,7 +178,7 @@ async fn drive(options: &DuplexOptions, mut inbox: mpsc::UnboundedReceiver<Comma
                 DuplexEvent::Finished => {
                     sender.close().await;
                     // A sentence the service never closed is the tail.
-                    return Ok(StreamFinal { committed, tail: current, model: Some(options.model.clone()), provider: None, fallback: None });
+                    return Ok(StreamFinal { committed, tail: current, model: Some(options.model.clone()), provider: None, fallback: None, glossary_sent: None });
                 }
             },
         }
@@ -271,6 +286,8 @@ pub(crate) mod tests {
         let mut session = streaming.open(Some("zh")).unwrap();
         // docs/dictation.md §3.5: the session names the model its text comes from.
         assert!(session.model().is_some_and(|m| m.starts_with("qwen-audio-")), "{:?}", session.model());
+        // §30.6: and whether its task carries the glossary.
+        assert!(session.glossary_sent().is_some(), "a realtime session can say");
         let mut events = Vec::new();
         for _ in 0..chunks {
             session.feed(&[0.25; 1600]);
@@ -309,6 +326,7 @@ pub(crate) mod tests {
         assert_eq!(fin.committed.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(), ["第1句。", "字字。"]);
         assert_eq!(fin.tail, "");
         assert_eq!(fin.model.as_deref(), Some("qwen-audio-3.1-asr-flash-message"), "the receipt comes back with the flush");
+        assert_eq!(fin.glossary_sent, Some(true), "the hot words went with the task");
         let seen = seen.lock().unwrap();
         assert_eq!(seen.audio_bytes, 5 * 3200, "16-bit PCM, 100 ms per feed");
         assert!(seen.finished);

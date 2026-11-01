@@ -98,6 +98,7 @@ const EMPTY: UiState = {
   models: [],
   models_location: emptyModelsLocation(),
   auto_backup: emptyAutoBackup(),
+  recognition_trial: null,
   dictionary: [],
   rules: [],
   vocabulary_ignored: [],

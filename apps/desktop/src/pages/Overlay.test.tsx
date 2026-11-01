@@ -18,8 +18,8 @@ import {
   MOCK_MIC_READY_MS,
   MOCK_REFINE_MS,
   MOCK_STREAMING_MODEL_ID,
-  MockBackend,
 } from "@voltip/shared/mock";
+import { MockBackend } from "../test/mock";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderApp } from "../test/render";
@@ -279,7 +279,13 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
       await screen.findByTestId("overlay-window");
       await act(async () => {
         await backend.invoke("settings_set_recording", {
-          recording: { source: "mixed", output_device: null, max_minutes: 120, echo_cancel: true },
+          recording: {
+            source: "mixed",
+            output_device: null,
+            max_minutes: 120,
+            echo_cancel: true,
+            ready_sound: false,
+          },
         });
       });
       await act(async () => {
@@ -343,6 +349,14 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
         await vi.advanceTimersByTimeAsync(MOCK_DICTATION_DWELL_MS);
       });
       expect(screen.getByTestId("overlay-window")).toHaveAttribute("data-state", "blank");
+      // §3.12: an answer cut off at the output limit says the transcript was kept.
+      backend.simulateRefineFailure("truncated");
+      const cut = await take();
+      expect(screen.getByTestId("pill-note")).toHaveTextContent("润色结果不完整，已保留识别原文");
+      expect(cut).toHaveTextContent("粘贴");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MOCK_DICTATION_DWELL_MS);
+      });
       // Polished again: no note.
       backend.simulateRefineFailure(null);
       await take();

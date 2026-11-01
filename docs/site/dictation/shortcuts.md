@@ -18,7 +18,7 @@ Settings → Shortcuts offers three ways for the shortcut to control a recording
 | **Press to start, again to stop** | Press once to start and once more to stop. Releasing the keys does nothing. |
 | **Hold or press** | Hold to talk as above; a short press instead locks the recording so you can speak hands-free, and the next press ends it. |
 
-For the third mode, **Short-press threshold** sets how long a press may last and still count as short (300 ms by default). In every mode, **Keep recording after release** keeps the microphone open for up to five seconds after you stop, so the last word is not cut off.
+For the third mode, **Short-press threshold** sets how long a press may last and still count as short (300 ms by default). In every mode, **Keep recording after release** keeps the microphone open for up to five seconds after you stop, so the last word is not cut off. New installs start at 150 ms; 0 stops at once. Measured on a Linux computer with the local Paraformer model (20 Chinese and mixed Chinese-English sentences, three times each): stopping 0.1 seconds before the last word ended cut the last character off about 5% of the sentences, and stopping 0.2 seconds before, about 15%; at 150 ms none lost it. An earlier install keeps its setting, and you can change it to 150 ms here.
 
 When you hold to talk and the release never reaches Voltip (for example because another program caught the key at that moment), Voltip notices within a second that the key is up and ends the recording as usual. This works on Windows, on a Mac and in an X11 session on Linux.
 
@@ -67,6 +67,8 @@ Under **Settings → Recording source**, or from the microphone menu under the p
 When mixing, Voltip removes the sound of the speakers from what the microphone records, so the computer's sound is not recorded twice. This is **Cancel speaker echo** under Settings → Recording source, on by default. At high speaker volume, headphones are still recommended. A voice edit always records the microphone.
 
 Recording computer audio needs macOS 14.6 or later on a Mac, and a PulseAudio or PipeWire sound server on Linux; see [Platform notes](/reference/platforms). Where it is not available, the two options are dimmed and the reason is shown.
+
+**“Ready to speak” sound**, on the same page, is off by default. When it is on, a short sound of about 0.1 seconds plays when the microphone starts recording, so you know you can speak. The sound is not transcribed: Voltip silences the short stretch of the recording while it plays, which silences anything said during it too, so start speaking after the sound. It plays only when the recording source is **Microphone**, since a recording of the computer's sound would contain it. With Bluetooth headphones, the system may switch to its call mode when the sound plays.
 
 ## Recording length
 

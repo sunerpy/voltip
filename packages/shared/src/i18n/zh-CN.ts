@@ -245,6 +245,7 @@ export const zhCN = {
       unconfigured: "未配置 AI 服务",
       too_long: "全文超过 2000 字",
       empty: "返回了空结果",
+      truncated: "结果不完整",
       failed: "请求失败",
     },
     failed: "失败 · {reason}",
@@ -841,6 +842,8 @@ export const zhCN = {
       },
       retake: "重新识别",
       retaking: "正在识别…",
+      /** docs/dictation.md §30.4: the retake keeps the silence the settings trim. */
+      retakeUntrimmed: "不裁剪静音重新识别",
       delete: "删除录音",
       deleted: "已删除录音",
       done: "已重新识别，文字已复制到剪贴板",
@@ -854,6 +857,11 @@ export const zhCN = {
         polish: "AI 润色",
         polishTrigger: "重新识别使用的 AI 润色：{name}",
         noPolish: "不润色",
+        /** docs/dictation.md §30.4: an on-device retake while the settings trim the silence. */
+        silence: "首尾静音",
+        trim: "裁剪首尾静音",
+        keepSilence: "不裁剪静音",
+        untrimmed: "{name} · 不裁剪静音",
       },
       /** The home page's short list (user request 2026-10-26). */
       viewAll: "查看全部 {n} 条",
@@ -1032,7 +1040,8 @@ export const zhCN = {
         viewEntry: "查看词条",
         computing: "正在计算影响范围…",
         view: "查看",
-        dictionaryNote: "识别完成后立即纠正；正确写法还会作为术语发送给云端识别和 AI 润色。",
+        dictionaryNote:
+          "识别完成后立即纠正；正确写法还会作为术语发给 AI 润色，以及支持术语表的识别服务。",
         ruleNote: "替换规则在 AI 润色之后执行，按规则列表的顺序改写最终文本。新规则排在列表末尾。",
         polishOnly: "这段文字由 AI 润色产生，原文中没有，因此建议使用替换规则。",
         find: "查找",
@@ -1111,6 +1120,10 @@ export const zhCN = {
       preset: "AI 预设",
       notRefined: "未润色",
       notRefinedBecause: "未润色 · {reason}",
+      /** docs/dictation.md §30.6: whether the recognition's requests carried the glossary. */
+      glossary: { label: "术语表", sent: "已发给识别服务", notSent: "没有发给识别服务" },
+      /** docs/dictation.md §3.12: the polished answer stopped at the model's output limit. */
+      refineTruncated: "润色结果不完整，已保留识别原文",
       outcome: "插入结果",
       duration: "音频时长",
       chars: "字数",
@@ -1130,6 +1143,19 @@ export const zhCN = {
       /** A clean-up was asked for and its text was not used: why, as `dictation.refineFailure`. */
       refineFailed: "润色 — · {reason}",
       total: "总计 {n} ms",
+      /** docs/dictation.md §30.1: a take's timeline, from the key press (or a 重新识别's start). */
+      timeline: "时间线 · 从按下快捷键到出结果",
+      timelineNoCapture: "时间线 · 从开始识别到出结果",
+      step: {
+        open: "打开麦克风 {n} ms",
+        wait: "等待声音 {n} ms",
+        record: "录音 {n} ms",
+        tail: "延录 {n} ms",
+        asr: "识别 {n} ms",
+        refine: "润色 {n} ms",
+        insert: "插入 {n} ms",
+      },
+      firstText: "实时预览首字 {n} ms",
     },
     confirm: {
       deleteTitle: "删除这条记录？",
@@ -1167,7 +1193,16 @@ export const zhCN = {
     newEntry: "新建词条",
     explainTitle: "识别之后立即纠正",
     explain:
-      "每段识别结果先把「曾听成」的写法改成正确写法，再交给润色和替换规则；启用词条的正确写法同时作为术语表发给云端识别和 AI 润色。本地识别模型不接收术语表。",
+      "每段识别结果先把「曾听成」的写法改成正确写法，再交给润色和替换规则；启用词条的正确写法还会作为术语表发给 AI 润色，以及支持术语表的识别服务。",
+    /** docs/dictation.md §30.6: what the recognition service in use does with the glossary
+     *  (`EngineStatus.glossary`); the dictionary page and the recognition settings say it. */
+    glossary: {
+      receives: "当前识别服务会收到术语表。",
+      scenes: "词典没有启用的词条；在已启用的内置场景里，当前识别服务会收到该场景的术语表。",
+      notSupported: "当前识别服务不接收术语表，词典只在识别之后纠正。",
+      local: "本地模型不接收术语表，词典只在识别之后纠正。",
+      empty: "没有启用的词条，目前不会向识别服务发送术语表。",
+    },
     facts: "最多 {limit} 条 · 每条最多 {heard} 个曾听成",
     hitsTitle: "历史记录里的命中",
     list: "词条",
@@ -1477,6 +1512,23 @@ export const zhCN = {
     asrSection: {
       title: "语音识别服务商",
       note: "选一家服务商把录音转成文字；打开卡片选择模型、填写密钥。",
+    },
+    /** 试识别 (docs/dictation.md §30.5): the newest kept recording, recognised with the settings. */
+    trial: {
+      title: "试识别",
+      help: "用录音缓存中最近的一条录音，按当前设置识别一次。结果只显示在这里，不会粘贴或复制，也不写入听写历史。",
+      run: "用最近一条录音试识别",
+      running: "正在识别…",
+      historyOff: "需要先在「隐私与历史」中开启「保存听写历史」和「在本机保留录音」。",
+      cacheOff: "需要先在「隐私与历史」中开启「在本机保留录音」。",
+      noRecording: "录音缓存中没有可用的录音。完成一次 2 分钟以内的听写后即可试识别。",
+      recording: "录音时长 {length}",
+      provider: "识别服务",
+      asrTime: "识别耗时",
+      glossary: "术语表",
+      refine: "AI 润色",
+      refineOff: "未开启",
+      total: "总耗时",
     },
     llmSection: {
       title: "AI 润色服务商",
@@ -2426,6 +2478,11 @@ export const zhCN = {
       echoCancel: "消除扬声器回声",
       echoCancelHelp:
         "电脑声音从扬声器播放时，从麦克风的录音中去掉这部分声音，避免同一段声音录入两次。",
+      /** docs/dictation.md §30.3: `settings.recording.ready_sound`. */
+      readySound: "「可以说话」提示音",
+      readySoundHelp:
+        "麦克风开始录音时播放一声约 0.1 秒的短音，表示可以开始说话。提示音不会被识别，提示音响着时说的话也会被静音。使用蓝牙耳机时，系统可能因此切换到通话模式。",
+      readySoundMicOnly: "只在录音来源为「麦克风」时播放。",
       output: "输出设备",
       outputHelp: "录制这个设备播放的声音。",
       outputDefault: "跟随系统默认（{name}）",

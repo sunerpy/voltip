@@ -14,8 +14,8 @@ use voltip_core::vocabulary::{
     AcceptOutcome, DICTIONARY_FILE_NAME, IGNORED_FILE_NAME, IgnoredPair, RULES_FILE_NAME, Refusal, Reply, UndoOutcome, export_rules_toml, parse_rules_toml,
 };
 use voltip_core::{
-    AppCore, CoreCommand, CoreConfig, CoreEvent, CoreHandle, DictationPhase, DictionaryDraft, DictionaryEntry, EntrySource, ImportMode, ReplacementRule,
-    RuleDraft, RuleKind, Settings, SettingsStore, VocabularyHit, VocabularyHits,
+    AppCore, CoreCommand, CoreConfig, CoreEvent, CoreHandle, DictationPhase, DictionaryDraft, DictionaryEntry, EntrySource, GlossaryRoute, ImportMode,
+    ReplacementRule, RuleDraft, RuleKind, Settings, SettingsStore, VocabularyHit, VocabularyHits,
 };
 use voltip_identity::MemorySecretStore;
 
@@ -76,6 +76,34 @@ fn draft(term: &str, heard: &[&str]) -> DictionaryDraft {
 
 fn rule(name: &str, kind: RuleKind, pattern: &str, replacement: &str) -> RuleDraft {
     RuleDraft { name: name.into(), kind, pattern: pattern.into(), replacement: replacement.into(), case_sensitive: true, enabled: true }
+}
+
+/// The first engines status whose glossary route is `route` (startup and the model listing send
+/// more statuses than the dictionary does).
+async fn glossary(node: &mut Node, route: GlossaryRoute) {
+    wait(node, |e| matches!(e, CoreEvent::Engines(s) if s.glossary == Some(route)).then_some(())).await;
+}
+
+/// docs/dictation.md §30.6: the engines' status says when the dictionary has nothing to send to a
+/// recognition service that would take it, and follows the first enabled entry and the last one.
+#[tokio::test]
+async fn the_status_says_when_the_dictionary_has_no_glossary_to_send() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut node = start(dir.path(), Arc::new(FakeInjector::paste()));
+    // An empty dictionary; the custom endpoint would take the glossary as its prompt.
+    glossary(&mut node, GlossaryRoute::Empty).await;
+    node.handle.send(CoreCommand::DictionaryAdd { draft: draft("Voltip", &[]), source: EntrySource::Manual }).await.unwrap();
+    let id = wait(&mut node, |e| match e {
+        CoreEvent::Dictionary(d) => d.first().map(|entry| entry.id),
+        _ => None,
+    })
+    .await;
+    glossary(&mut node, GlossaryRoute::Prompt).await;
+    // A disabled entry is not sent.
+    let off = DictionaryDraft { enabled: false, ..draft("Voltip", &[]) };
+    node.handle.send(CoreCommand::DictionaryUpdate { id, draft: off }).await.unwrap();
+    glossary(&mut node, GlossaryRoute::Empty).await;
+    node.handle.send(CoreCommand::Shutdown).await.unwrap();
 }
 
 /// Every command, the events after each, the refusals (as `error` events, the list unchanged),

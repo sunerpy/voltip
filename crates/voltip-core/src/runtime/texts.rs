@@ -167,6 +167,8 @@ impl Runtime {
             origin: Some(EntryOrigin { device: text.name, kind: origin_kind(text.source) }),
             processed: None,
             file: None,
+            timing: None,
+            glossary_sent: None,
         };
         self.record_history(entry);
         self.deliver_next_text();

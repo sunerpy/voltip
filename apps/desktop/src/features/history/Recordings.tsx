@@ -165,7 +165,11 @@ function RowActions({
         onClick={() => {
           list.retake(r.id);
         }}>
-        {retaking ? t("history.recordings.retaking") : t("history.recordings.retake")}
+        {retaking
+          ? t("history.recordings.retaking")
+          : list.choice.keepsSilence
+            ? t("history.recordings.retakeUntrimmed")
+            : t("history.recordings.retake")}
       </Button>
       <IconButton
         icon="trash"

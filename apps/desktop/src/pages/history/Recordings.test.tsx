@@ -415,6 +415,29 @@ describe("History · an entry's kept recording and 重新润色", () => {
     expect(backend.peek().settings.engines).toEqual(engines);
   });
 
+  it("docs/dictation.md section 30.4: an on-device entry's 重新识别 can keep the silence the settings trim", async () => {
+    const user = withTimers();
+    const first = entry(1);
+    const backend = new MockBackend({
+      now: () => Date.now(),
+      history: [first],
+      settings: { engines: { ...defaultEngineSettings(), asr_provider: "local", vad_trim: true } },
+      models: { "qwen3-asr-0.6b": { kind: "installed", path: "/models/x", installed_at: 1 } },
+      audioCache: [recording("r-linked", { kind: "recognized", entry: first.id })],
+    });
+    const invoke = vi.spyOn(backend, "invoke");
+    renderApp({ path: "/history", backend });
+    const kept = await screen.findByTestId("history-kept-recording");
+    await user.click(within(kept).getByTestId("retake-speech"));
+    await user.click(
+      within(screen.getByRole("menu")).getByRole("menuitemradio", { name: "不裁剪静音" }),
+    );
+    await user.click(within(kept).getByRole("button", { name: "不裁剪静音重新识别" }));
+    expect(invoke).toHaveBeenCalledWith("audio_retake", { id: "r-linked", vadTrim: false });
+    await recognise();
+    expect(backend.peek().settings.engines.vad_trim).toBe(true);
+  });
+
   it("an entry without a kept recording has no 重新识别", async () => {
     renderApp({
       path: "/history",

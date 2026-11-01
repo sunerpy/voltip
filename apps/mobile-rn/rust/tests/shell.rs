@@ -35,6 +35,8 @@ const DESKTOP_ONLY: &[&str] = &[
     "audio_cache_clear",
     "audio_cache_delete",
     "audio_retake",
+    // 试识别 recognises the recording cache's newest recording (docs/dictation.md §30.5).
+    "recognition_trial",
     // The result cards and 复制上一条结果 (docs/dictation.md §28) live in the desktop's pill, tray
     // and global hotkeys; a phone has none of them.
     "dictation_dismiss",

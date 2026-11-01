@@ -1,6 +1,7 @@
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MOCK_ASR_MS, MOCK_REFINE_MS, MockBackend } from "@voltip/shared/mock";
+import { MOCK_ASR_MS, MOCK_REFINE_MS } from "@voltip/shared/mock";
+import { MockBackend } from "../test/mock";
 import { TITLE_BAR_SEARCH_LABEL, TRAFFIC_LIGHTS_BRAND_INSET } from "@voltip/ui";
 import { renderApp } from "../test/render";
 

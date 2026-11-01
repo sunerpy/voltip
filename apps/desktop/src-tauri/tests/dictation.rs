@@ -214,6 +214,28 @@ fn native_injector_switches_on_the_mode_the_factory_saw() {
     assert_eq!(failing.inject("x").unwrap_err(), DictationError::Inject("clipboard: busy".into()));
 }
 
+/// docs/dictation.md §30.4: the clients of one take (a 重新识别 that keeps the silence, a 试识别)
+/// change nothing the shell keeps for the settings — the VAD stays wanted, and the injection
+/// preferences stay as the settings' configuration left them.
+#[test]
+fn a_one_take_configuration_changes_nothing_but_its_clients() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = voltip_asr_local::ModelStore::new(dir.path().to_path_buf());
+    store.set_auxiliary_wanted(true);
+    let prefs = InsertPrefs::shared(InjectMode::Paste);
+    let factory = engine_factory(prefs.clone(), LocalTranscriber::new(dir.path().to_path_buf()), Some(store.clone()), voltip_net::Network::new());
+    let mut one_take = resolved(None, None, None, None, InjectMode::ClipboardOnly);
+    one_take.vad_trim = false;
+    one_take.for_one_take = true;
+    factory(&one_take);
+    assert!(store.auxiliary_wanted(), "the settings still want the VAD");
+    assert_eq!(prefs.lock().mode, InjectMode::Paste, "the settings' injection mode stays");
+    // The settings' own configuration says what it says.
+    factory(&resolved(None, None, None, None, InjectMode::ClipboardOnly));
+    assert!(!store.auxiliary_wanted());
+    assert_eq!(prefs.lock().mode, InjectMode::ClipboardOnly);
+}
+
 #[tokio::test]
 async fn build_clients_follows_the_resolved_configuration() {
     let local = LocalTranscriber::new(std::env::temp_dir().join("voltip-test-models"));

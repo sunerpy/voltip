@@ -21,6 +21,9 @@ import {
 
 /** The AI 润色 menu's 不润色 row. */
 export const POLISH_OFF_ID = "retake:polish-off";
+/** The 语音模型 menu's rows for the silence (docs/dictation.md §30.4): as the settings trim it, or kept. */
+export const TRIM_ID = "retake:trim";
+export const KEEP_SILENCE_ID = "retake:keep-silence";
 
 /** A picker's button: the model's icon and short name, then the menu chevron. */
 const PICKER =
@@ -43,6 +46,11 @@ function offers(sections: readonly MenuSection[], id: string): boolean {
   );
 }
 
+/** The 语音模型 menu's section for the silence. */
+function isSilence(section: MenuSection): boolean {
+  return section.items.some((item) => item.id === TRIM_ID);
+}
+
 /** The label of the checked row, if one is. */
 function checkedLabel(sections: readonly MenuSection[]): string | undefined {
   for (const section of sections) {
@@ -62,18 +70,46 @@ export interface RetakeMenus {
 
 /** The menus for `chosen` (docs/dictation.md §26.4): the 语音模型 menu's providers and installed
  *  local models, the AI 润色 menu's models with 不润色 first. Nothing chosen checks the settings'
- *  models, as the title bar's menus do; a choice checks itself alone. */
+ *  models, as the title bar's menus do; a choice checks itself alone. When the retake runs
+ *  on-device and the settings trim the silence (`vadTrim`), the 语音模型 menu ends with 裁剪首尾静音
+ *  and 不裁剪静音 (§30.4). */
 export function retakeMenus(
   status: EngineStatus,
   models: readonly ModelState[],
   chosen: RetakeModels,
   t: TFunction,
   locale: Locale,
+  vadTrim = false,
 ): RetakeMenus {
   const speechAll = speechMenuSections(status, models, t, locale);
   const asrId = chosen.asr === undefined ? undefined : choiceId(chosen.asr);
   const asr = asrId !== undefined && offers(speechAll, asrId) ? chosen.asr : undefined;
-  const speech = asr === undefined || asrId === undefined ? speechAll : checkOnly(speechAll, asrId);
+  const picked = asr === undefined || asrId === undefined ? speechAll : checkOnly(speechAll, asrId);
+  const onDevice = asr === undefined ? status.asr_provider === "local" : asr.kind === "local";
+  const trims = vadTrim && onDevice;
+  const keepSilence = trims && chosen.vadTrim === false;
+  const speech: MenuSection[] = trims
+    ? [
+        ...picked,
+        {
+          label: t("history.recordings.models.silence"),
+          items: [
+            {
+              kind: "radio",
+              id: TRIM_ID,
+              label: t("history.recordings.models.trim"),
+              checked: !keepSilence,
+            },
+            {
+              kind: "radio",
+              id: KEEP_SILENCE_ID,
+              label: t("history.recordings.models.keepSilence"),
+              checked: keepSilence,
+            },
+          ],
+        },
+      ]
+    : picked;
 
   const polishAll: MenuSection[] = [
     {
@@ -107,6 +143,7 @@ export function retakeMenus(
     models: {
       ...(asr === undefined ? {} : { asr }),
       ...(refine === undefined ? {} : { refine }),
+      ...(keepSilence ? { vadTrim: false } : {}),
     },
   };
 }
@@ -120,13 +157,33 @@ export function useRetakeModels() {
   const { t, locale } = i18n;
   const { navigate } = useRouter();
   const [chosen, setChosen] = useState<RetakeModels>({});
-  const menus = retakeMenus(state.engines, state.models, chosen, t, locale);
+  const menus = retakeMenus(
+    state.engines,
+    state.models,
+    chosen,
+    t,
+    locale,
+    state.settings.engines.vad_trim,
+  );
   const polishName = usePolishModelName();
+  const keepsSilence = menus.models.vadTrim === false;
+  const model =
+    checkedLabel(menus.speech.filter((s) => !isSilence(s))) ??
+    engineReadout(state.engines, i18n).value;
   return {
     ...menus,
-    speechName: checkedLabel(menus.speech) ?? engineReadout(state.engines, i18n).value,
+    keepsSilence,
+    speechName: keepsSilence ? t("history.recordings.models.untrimmed", { name: model }) : model,
     polishName: checkedLabel(menus.polish) ?? polishName,
     chooseSpeech: (id: string) => {
+      if (id === KEEP_SILENCE_ID) {
+        setChosen((c) => ({ ...c, vadTrim: false }));
+        return;
+      }
+      if (id === TRIM_ID) {
+        setChosen(({ vadTrim: _kept, ...c }) => c);
+        return;
+      }
       const choice = parseChoice(id);
       if (choice?.kind === "manage") {
         navigate(SPEECH_ROUTE);

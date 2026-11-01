@@ -72,6 +72,7 @@ function loadFixture(name: string): unknown {
 /** Every event tag the Rust enum has (the `Record` makes a new `UiEventType` a compile error). */
 const EVENT_TYPE_SET: Record<UiEventType, null> = {
   state: null,
+  recognition_trial: null,
   serve: null,
   network: null,
   mcp: null,
@@ -165,6 +166,7 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   audio_cache_clear: null,
   audio_cache_delete: null,
   audio_retake: null,
+  recognition_trial: null,
   import_add: null,
   import_cancel: null,
   import_retry: null,
@@ -311,6 +313,7 @@ const argSchemas = {
       id: z.string(),
       asr: recognitionChoiceSchema.optional(),
       refine: polishChoiceSchema.optional(),
+      vadTrim: z.boolean().optional(),
     })
     .strict(),
   import_add: z
@@ -427,6 +430,7 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
     case "dictation_cancel":
     case "history_clear":
     case "audio_cache_clear":
+    case "recognition_trial":
     case "backup_folder_reset":
     case "backup_notice_dismiss":
     case "models_location_reset":
@@ -656,6 +660,7 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
         output_device: "wasapi:{0.0.0.00000000}.{a1}",
         max_minutes: 60,
         echo_cancel: false,
+        ready_sound: true,
       },
       serve: {
         enabled: true,
@@ -1457,7 +1462,15 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       ...asrFallback,
       models: asrFallback.models.map(({ retry_at_ms: _at, retry_reason: _reason, ...m }) => m),
     };
-    expect(resolved).toEqual({ ...fixture.engines, asr_fallback: withoutLedger });
+    // §30.6: the glossary goes where the model standing in sends it, which the ledger picks: here
+    // the local model, the custom one being out after its outage. Without one the preview reports
+    // the selected model's (the built-in service's prompt).
+    expect(fixture.engines.glossary).toBe("not_supported");
+    expect(resolved).toEqual({
+      ...fixture.engines,
+      asr_fallback: withoutLedger,
+      glossary: "prompt",
+    });
     expect(resolved.asr_fallback?.models.map((m) => m.skip ?? m.issue ?? "ready")).toEqual([
       "ready",
       "same_as_selected",

@@ -234,6 +234,7 @@ export const en: Messages = {
       unconfigured: "no AI service set up",
       too_long: "over 2,000 characters",
       empty: "empty answer",
+      truncated: "answer cut off",
       failed: "request failed",
     },
     failed: "Failed · {reason}",
@@ -823,6 +824,7 @@ export const en: Messages = {
       },
       retake: "Recognise again",
       retaking: "Recognising…",
+      retakeUntrimmed: "Recognise again without trimming silence",
       delete: "Delete recording",
       deleted: "Recording deleted",
       done: "Recognised again; the text is on the clipboard",
@@ -836,6 +838,10 @@ export const en: Messages = {
         polish: "AI polish",
         polishTrigger: "AI polish for recognising again: {name}",
         noPolish: "No polish",
+        silence: "Silence at either end",
+        trim: "Trim the silence",
+        keepSilence: "Keep the silence",
+        untrimmed: "{name} · silence kept",
       },
       /** The home page's short list (user request 2026-10-26). */
       viewAll: "View all {n}",
@@ -1016,7 +1022,7 @@ export const en: Messages = {
         computing: "Checking the effect…",
         view: "Show",
         dictionaryNote:
-          "Corrected right after recognition; the right spelling is also sent as a term to cloud recognition and AI polish.",
+          "Corrected right after recognition; the right spelling is also sent as a term to AI polish and to recognition services that take a glossary.",
         ruleNote:
           "Rules run after AI polish, in list order, on the final text. A new rule goes to the end of the list.",
         polishOnly:
@@ -1095,6 +1101,12 @@ export const en: Messages = {
       preset: "AI preset",
       notRefined: "Not polished",
       notRefinedBecause: "Not polished · {reason}",
+      glossary: {
+        label: "Glossary",
+        sent: "Sent to recognition",
+        notSent: "Not sent to recognition",
+      },
+      refineTruncated: "The polished text was incomplete; the transcript was kept",
       outcome: "Result",
       duration: "Audio length",
       chars: "Characters",
@@ -1114,6 +1126,18 @@ export const en: Messages = {
       /** A clean-up was asked for and its text was not used: why, as `dictation.refineFailure`. */
       refineFailed: "Polish — · {reason}",
       total: "Total {n} ms",
+      timeline: "Timeline · from the shortcut press to the result",
+      timelineNoCapture: "Timeline · from the start of recognition to the result",
+      step: {
+        open: "Microphone open {n} ms",
+        wait: "Waiting for sound {n} ms",
+        record: "Recording {n} ms",
+        tail: "Extra recording {n} ms",
+        asr: "Recognition {n} ms",
+        refine: "Polish {n} ms",
+        insert: "Insert {n} ms",
+      },
+      firstText: "First live preview text {n} ms",
     },
     confirm: {
       deleteTitle: "Delete this entry?",
@@ -1151,7 +1175,16 @@ export const en: Messages = {
     newEntry: "New entry",
     explainTitle: "Corrected right after transcription",
     explain:
-      "Each recognition result has its misheard forms replaced by the right spelling before polishing and the replacement rules; the right spellings of enabled entries also go to cloud recognition and AI polishing as a glossary. Local recognition models take no glossary.",
+      "Each recognition result has its misheard forms replaced by the right spelling before polishing and the replacement rules; the right spellings of enabled entries also go to AI polishing as a glossary, and to recognition services that take one.",
+    glossary: {
+      receives: "The recognition service in use receives the glossary.",
+      scenes:
+        "No dictionary entry is enabled; in an enabled built-in scene, the recognition service in use receives that scene's terms as its glossary.",
+      notSupported:
+        "The recognition service in use takes no glossary; the dictionary corrects its text afterwards.",
+      local: "Local models take no glossary; the dictionary corrects their text afterwards.",
+      empty: "No entry is enabled yet, so no glossary goes to recognition.",
+    },
     facts: "Up to {limit} entries · up to {heard} misheard forms each",
     hitsTitle: "Hits in history",
     list: "Entries",
@@ -1465,6 +1498,24 @@ export const en: Messages = {
     asrSection: {
       title: "Speech recognition provider",
       note: "Pick the provider that turns your recording into text; open a card to choose a model and enter a key.",
+    },
+    trial: {
+      title: "Test recognition",
+      help: "Recognises the newest recording in the recording cache once, with the current settings. The result is shown here only: nothing is pasted or copied, and nothing goes into the dictation history.",
+      run: "Test with the newest recording",
+      running: "Recognising…",
+      historyOff:
+        "Turn on Keep dictation history and Keep recordings on this computer under Privacy and history first.",
+      cacheOff: "Turn on Keep recordings on this computer under Privacy and history first.",
+      noRecording:
+        "The recording cache has no recording to test with. Dictate once, for two minutes at most, and try again.",
+      recording: "Recording length {length}",
+      provider: "Recognition service",
+      asrTime: "Recognition time",
+      glossary: "Glossary",
+      refine: "AI polish",
+      refineOff: "Off",
+      total: "Total time",
     },
     llmSection: {
       title: "AI polish provider",
@@ -2441,6 +2492,10 @@ export const en: Messages = {
       echoCancel: "Cancel speaker echo",
       echoCancelHelp:
         "When the computer's sound plays through the speakers, it is removed from what the microphone records, so it is not recorded twice.",
+      readySound: "“Ready to speak” sound",
+      readySoundHelp:
+        "Plays a short sound of about 0.1 seconds when the microphone starts recording, so you know you can speak. The sound is not transcribed, and words said while it plays are silenced too. With Bluetooth headphones the system may switch to call mode.",
+      readySoundMicOnly: "Plays only when the recording source is the microphone.",
       output: "Output device",
       outputHelp: "The sound this device plays is recorded.",
       outputDefault: "System default ({name})",

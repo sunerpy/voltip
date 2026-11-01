@@ -27,6 +27,7 @@ use voltip_core::paste::{CopyReason, PasteFailure, PasteOutcome};
 use voltip_core::phone::{PhoneTakeFailure, PhoneTakeState, PhoneTakeView};
 use voltip_core::phone::{PhoneTextSource, SentText, SentTextFailure, SentTextState};
 use voltip_core::presets::{BuiltinPreset, CustomPreset, PresetDraft, PresetId, PresetRef, PresetTryOutcome};
+use voltip_core::trial::{TrialFailure, TrialResult, TrialView};
 use voltip_core::ui::{
     GpuDevice, HardwareStatus, HotkeyCapabilities, HotkeyStatus, NetworkStatus, RefineNotice, ServePhase, ServeStatus, UiEvent, UiState, UpdateStatus,
 };
@@ -379,12 +380,13 @@ fn settings() -> Settings {
         pairing_always_on: true,
         microphone: Some("wasapi:{0.0.1.00000000}.{c2}".into()),
         // docs/dictation.md §22: the microphone and the computer's sound, an hour at most, with the
-        // echo cancellation (§22.6) away from its default.
+        // echo cancellation (§22.6) and the ready cue (§30.3) away from their defaults.
         recording: voltip_core::RecordingSettings {
             source: voltip_core::RecordingSource::Mixed,
             output_device: Some("wasapi:{0.0.0.00000000}.{a1}".into()),
             max_minutes: 60,
             echo_cancel: false,
+            ready_sound: true,
         },
         // docs/dictation.md §23.6: the local speech service on, with a preset and a scene.
         serve: voltip_core::ServeSettings {
@@ -475,6 +477,24 @@ fn take_context() -> TakeContext {
     }
 }
 
+/// When the steps of the sample take happened (docs/dictation.md §30.1): the device opened before
+/// its first samples, the key came up at 3.4 s, 150 ms of extra recording, then recognition, the
+/// clean-up and the paste.
+fn take_timing() -> voltip_core::dictation::TakeTiming {
+    voltip_core::dictation::TakeTiming {
+        pressed_at: AT_MS - 7_000,
+        device_open_ms: Some(38),
+        first_audio_ms: Some(212),
+        first_text_ms: Some(640),
+        released_ms: Some(3_412),
+        tail_ms: 150,
+        asr_ms: 655,
+        refine_ms: Some(2_410),
+        insert_ms: 96,
+        done_ms: 6_731,
+    }
+}
+
 fn done_phase() -> DictationPhase {
     DictationPhase::Done {
         text: REFINED_TEXT.into(),
@@ -493,6 +513,7 @@ fn done_phase() -> DictationPhase {
         clipboard_code: None,
         // docs/dictation.md §28: the insert check saw the text at the caret.
         check: Some(InsertCheck::Written),
+        timing: Some(take_timing()),
     }
 }
 
@@ -515,6 +536,7 @@ fn streamed_done_phase() -> DictationPhase {
         live_error: None,
         clipboard_code: None,
         check: None,
+        timing: None,
     }
 }
 
@@ -539,6 +561,7 @@ fn fallen_back_done_phase() -> DictationPhase {
                 live_error: Some("open: asr: 实时识别模型未下载：实时预览".into()),
                 clipboard_code: None,
                 check: None,
+                timing: None,
             }
         }
         other => other,
@@ -599,6 +622,9 @@ fn history_entries() -> Vec<HistoryEntry> {
             origin: None,
             processed: None,
             file: None,
+            // docs/dictation.md §30.1, §30.5: the take's timeline; its recognition got the glossary.
+            timing: Some(take_timing()),
+            glossary_sent: Some(true),
         },
         HistoryEntry {
             id: uuid(HISTORY_ID_2),
@@ -636,6 +662,8 @@ fn history_entries() -> Vec<HistoryEntry> {
             origin: None,
             processed: None,
             file: None,
+            timing: None,
+            glossary_sent: None,
         },
         // docs/dictation.md §19: the instruction is the raw text, the rewrite the text.
         HistoryEntry {
@@ -672,6 +700,8 @@ fn history_entries() -> Vec<HistoryEntry> {
             origin: None,
             processed: None,
             file: None,
+            timing: None,
+            glossary_sent: None,
         },
         // docs/dictation.md §20.6: text a phone sent, inserted as it was.
         HistoryEntry {
@@ -706,6 +736,8 @@ fn history_entries() -> Vec<HistoryEntry> {
             origin: Some(EntryOrigin { device: "Pixel 8".into(), kind: OriginKind::Typed }),
             processed: None,
             file: None,
+            timing: None,
+            glossary_sent: None,
         },
     ]
 }
@@ -748,6 +780,8 @@ fn imported_history_entry() -> HistoryEntry {
         origin: None,
         processed: None,
         file: Some(ImportedFile { name: "季度会议.mp4".into(), duration_ms: 9_500 }),
+        timing: None,
+        glossary_sent: Some(false),
     }
 }
 
@@ -1205,6 +1239,29 @@ fn models_location() -> ModelsLocationView {
 /// The automatic backups (docs/dictation.md §4.6.1): a folder of the user's with this computer's
 /// weekly backup in it (its tag in the name, user decision D23), the failure of the one before an
 /// update, and its notice on home.
+/// A 试识别 that recognised and cleaned up the newest kept recording (docs/dictation.md §30.5).
+fn trial_result() -> TrialResult {
+    TrialResult {
+        recording: uuid(RECORDING_ID),
+        recorded_at_ms: AT_MS - 120_000,
+        duration_ms: 4_200,
+        text: "Voltip 的试识别。".into(),
+        raw_text: "沃提普的试识别".into(),
+        asr_provider: ProviderId::Custom,
+        asr_model: "whisper-1".into(),
+        asr_fallback: None,
+        asr_ms: 640,
+        glossary_sent: true,
+        refined: true,
+        refine_provider: Some(ProviderId::Custom),
+        refine_model: Some("gpt-4o-mini".into()),
+        refine_ms: Some(820),
+        refine_failure: None,
+        live_inject: false,
+        elapsed_ms: 1_530,
+    }
+}
+
 fn auto_backup() -> AutoBackupView {
     let failure = AutoBackupFailure { kind: AutoKind::Update, at_ms: AT_MS - 60_000, detail: "Access is denied. (os error 5)".into() };
     let device = voltip_core::backup::auto::device_tag(&DESKTOP_KEY);
@@ -1271,6 +1328,7 @@ fn full_state() -> UiState {
         audio_cache: audio_cache(),
         imports: imports_view(),
         auto_backup: auto_backup(),
+        recognition_trial: Some(TrialView::Done(Box::new(trial_result()))),
         // More entries than the recent ones: the rest are read through the queries.
         history_total: 312,
         engines: engine_status(),
@@ -1395,6 +1453,7 @@ fn event_tag(event: &UiEvent) -> &'static str {
         UiEvent::AudioCache(_) => "audio_cache",
         UiEvent::Imports(_) => "imports",
         UiEvent::AutoBackup(_) => "auto_backup",
+        UiEvent::RecognitionTrial { .. } => "recognition_trial",
         UiEvent::ProviderProbe(_) => "provider_probe",
         UiEvent::PhoneTake { .. } => "phone_take",
         UiEvent::SentTexts { .. } => "sent_texts",
@@ -1411,7 +1470,7 @@ fn event_tag(event: &UiEvent) -> &'static str {
     }
 }
 
-const ALL_EVENT_TAGS: [&str; 33] = [
+const ALL_EVENT_TAGS: [&str; 34] = [
     "state",
     "identity",
     "settings",
@@ -1445,6 +1504,7 @@ const ALL_EVENT_TAGS: [&str; 33] = [
     "usage",
     "imports",
     "auto_backup",
+    "recognition_trial",
 ];
 
 /// The computer's settings as a phone shows them (docs/dictation.md §20.8): every `Option` set.
@@ -1845,6 +1905,7 @@ fn all_events() -> Vec<UiEvent> {
                 // docs/dictation.md §14.3: another window came to the front, so the text was copied.
                 clipboard_code: Some(ClipboardCode::TargetChanged),
                 check: None,
+                timing: None,
             },
             session: 8,
             context: None,
@@ -1874,6 +1935,7 @@ fn all_events() -> Vec<UiEvent> {
                 live_error: None,
                 clipboard_code: None,
                 check: Some(InsertCheck::NotWritten),
+                timing: None,
             },
             session: 9,
             context: None,
@@ -2198,6 +2260,7 @@ fn all_events() -> Vec<UiEvent> {
                 live_error: None,
                 clipboard_code: None,
                 check: None,
+                timing: None,
             },
             session: 20,
             context: Some(TakeContext { app: AppRef { id: "slack".into(), name: "Slack".into() }, scene: None }),
@@ -2325,6 +2388,42 @@ fn all_events() -> Vec<UiEvent> {
         UiEvent::AutoBackup(auto_backup()),
         UiEvent::AutoBackup(AutoBackupView { folder: auto_backup().default_folder, custom: false, last: None, failure: None, notice: None, ..auto_backup() }),
         UiEvent::AutoBackup(AutoBackupView::default()),
+        // docs/dictation.md §30.5: a 试识别 running, its result, one in 边说边输入, a failed one, and none
+        // to try.
+        UiEvent::RecognitionTrial { trial: TrialView::Running { recording: uuid(RECORDING_ID), started_at: AT_MS } },
+        UiEvent::RecognitionTrial { trial: TrialView::Done(Box::new(trial_result())) },
+        UiEvent::RecognitionTrial {
+            trial: TrialView::Done(Box::new(TrialResult {
+                asr_provider: ProviderId::Builtin,
+                asr_model: "Qwen/Qwen3-ASR-1.7B".into(),
+                asr_fallback: Some(voltip_core::dictation::SwitchReason::Quota),
+                glossary_sent: false,
+                refined: false,
+                refine_provider: None,
+                refine_model: None,
+                refine_ms: Some(1_200),
+                refine_failure: Some(RefineFailure::Truncated),
+                ..trial_result()
+            })),
+        },
+        // In 边说边输入 a take is never cleaned up (docs/dictation.md §12), and neither is its trial.
+        UiEvent::RecognitionTrial {
+            trial: TrialView::Done(Box::new(TrialResult {
+                refined: false,
+                refine_provider: None,
+                refine_model: None,
+                refine_ms: None,
+                live_inject: true,
+                ..trial_result()
+            })),
+        },
+        UiEvent::RecognitionTrial {
+            trial: TrialView::Failed {
+                recording: Some(uuid(RECORDING_ID)),
+                failure: TrialFailure::Failed { code: FailureCode::Asr, message: "asr: 503 service unavailable".into() },
+            },
+        },
+        UiEvent::RecognitionTrial { trial: TrialView::Failed { recording: None, failure: TrialFailure::NoRecording } },
         // docs/dictation.md §10.9: a move halfway, every way one ends, and the phone (no library).
         UiEvent::ModelsLocation(models_location()),
         UiEvent::ModelsLocation(ModelsLocationView { moving: None, last: Some(ModelsMoveOutcome::Cancelled), ..models_location() }),
@@ -2388,6 +2487,7 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::AudioCacheClear => "AudioCacheClear",
         UiCommand::AudioCacheDelete { .. } => "AudioCacheDelete",
         UiCommand::AudioRetake { .. } => "AudioRetake",
+        UiCommand::RecognitionTrial => "RecognitionTrial",
         UiCommand::SettingsSetOverlay { .. } => "SettingsSetOverlay",
         UiCommand::PhoneTakeStart { .. } => "PhoneTakeStart",
         UiCommand::PhoneTakeStop => "PhoneTakeStop",
@@ -2488,11 +2588,13 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         // docs/dictation.md §13.1: the lone-key trigger (`null` switches it off).
         ("settings_set_solo_key", json!({ "key": "mouse_back" }), "SettingsSetSoloKey"),
         ("settings_set_microphone", json!({ "device": "wasapi:{0.0.1.00000000}.{c2}" }), "SettingsSetMicrophone"),
-        // docs/dictation.md §22: the source, the output device, the longest length of a take and the
-        // echo cancellation of a mixed one (§22.6).
+        // docs/dictation.md §22: the source, the output device, the longest length of a take, the
+        // echo cancellation of a mixed one (§22.6) and the ready sound (§30.3).
         (
             "settings_set_recording",
-            json!({ "recording": { "source": "mixed", "output_device": "wasapi:{0.0.0.00000000}.{a1}", "max_minutes": 60, "echo_cancel": false } }),
+            json!({
+                "recording": { "source": "mixed", "output_device": "wasapi:{0.0.0.00000000}.{a1}", "max_minutes": 60, "echo_cancel": false, "ready_sound": true }
+            }),
             "SettingsSetRecording",
         ),
         ("settings_set_locale", json!({ "locale": "en" }), "SettingsSetLocale"),
@@ -2502,6 +2604,8 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         ("settings_set_audio_cache", json!({ "enabled": true, "keep": 50, "maxMb": 500 }), "SettingsSetAudioCache"),
         ("audio_cache_clear", Value::Null, "AudioCacheClear"),
         ("audio_cache_delete", json!({ "id": RECORDING_ID_2 }), "AudioCacheDelete"),
+        // docs/dictation.md §30.5: 用最近一条录音试一下.
+        ("recognition_trial", Value::Null, "RecognitionTrial"),
         // docs/dictation.md §4.6.1: the weekly backup, the default folder again, home's notice closed.
         ("settings_set_backup", json!({ "weekly": false }), "SettingsSetBackup"),
         ("backup_folder_reset", Value::Null, "BackupFolderReset"),
@@ -2509,7 +2613,8 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         // §26.4: on other models than the settings', for that take only.
         (
             "audio_retake",
-            json!({ "id": RECORDING_ID_2, "asr": { "kind": "remote", "provider": "custom", "model": "whisper-2" }, "refine": { "kind": "off" } }),
+            // docs/dictation.md §30.4: 不裁剪静音重新识别 keeps the silence for that take.
+            json!({ "id": RECORDING_ID_2, "asr": { "kind": "remote", "provider": "custom", "model": "whisper-2" }, "refine": { "kind": "off" }, "vadTrim": false }),
             "AudioRetake",
         ),
         ("settings_set_overlay", json!({ "placement": "top" }), "SettingsSetOverlay"),
