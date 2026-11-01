@@ -1180,7 +1180,7 @@ export const en: Messages = {
       receives: "The recognition service in use receives the glossary.",
       notSupported:
         "The recognition service in use takes no glossary; the dictionary corrects its text afterwards.",
-      local: "On-device models take no glossary; the dictionary corrects their text afterwards.",
+      local: "Local models take no glossary; the dictionary corrects their text afterwards.",
       empty: "No entry is enabled yet, so no glossary goes to recognition.",
     },
     facts: "Up to {limit} entries · up to {heard} misheard forms each",

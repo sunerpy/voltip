@@ -358,7 +358,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
             settings: { engines: { ...defaultEngineSettings(), asr_provider: "local" } },
           },
         },
-        "本机模型不接收术语表，词典只在识别之后纠正。",
+        "本地模型不接收术语表，词典只在识别之后纠正。",
       ],
       [
         {
