@@ -71,6 +71,14 @@ Recognition can also run on a GPU server of your own, used as the custom endpoin
 
 When a provider refuses a request (a wrong key, a used-up quota, an unknown model, a busy service and so on), the overlay, the home page and the history show what the service answered, for example **Speech recognition failed: the key was refused: Incorrect API key provided**. Keys, tokens and account ids in it are masked; a long answer shows its beginning, and the history's details show all of it.
 
+## Test recognition
+
+Once a provider is set up, you can check it on a real recording: **Test with the newest recording**, under the recognition services on the Speech models page, recognises the newest recording in the recording cache once, with the settings you saved. The result is shown there only, never pasted or copied, and it does not go into the dictation history: the text, the recognition service and model, how long recognition took, whether the glossary was sent, the AI polish result and the total time. When recognition fails, the service's answer is shown.
+
+- It needs **Keep dictation history** and **Keep recordings on this computer** under Privacy and history, and a dictation recording of two minutes at most in the recording cache. Otherwise the button is unavailable and says why.
+- A test sends the same requests to the recognition service (and to AI polish, when it is on) as a dictation. With the built-in service it counts towards the daily usage, as **Recognized again**.
+- One test runs at a time.
+
 ## Google AI Studio
 
 Google AI Studio offers Gemini models for AI polish. Create a key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) (**Get a key** in the provider's settings opens it) and enter it in the Google AI Studio settings on the **AI models** page. The model list suggests Gemini models with a free tier, `gemini-3.5-flash-lite` first: polish handles short texts, and Flash-Lite answers faster. Once the key is saved, the list also shows every text model the key can use, so you choose from the list instead of typing a name.
@@ -114,7 +122,7 @@ Model Studio's speech models use Model Studio's own interfaces, and Voltip picks
 
 With the endpoint left empty, Voltip uses the public address `https://dashscope.aliyuncs.com/compatible-mode/v1`. For your workspace's own address, enter it under **Endpoint**, for example `https://<workspace ID>.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`; the Singapore region uses `dashscope-intl.aliyuncs.com`. A Model Studio address entered for a **Custom endpoint** follows the same rules.
 
-The correct spellings in your [dictionary](/recognition/dictionary) go to the qwen-audio models as hot words. For AI polish with Model Studio's Qwen or DeepSeek models, Voltip turns off their thinking mode, which is on by default and makes polish slow.
+The correct spellings in your [dictionary](/recognition/dictionary) go to the qwen-audio models as hot words; Model Studio's other speech models take no glossary. For AI polish with Model Studio's Qwen or DeepSeek models, Voltip turns off their thinking mode, which is on by default and makes polish slow.
 
 Model Studio gives newly activated models a free quota, one for each model. **View quota** in the Model Studio settings opens the console's free quota page, where you see each model's remaining quota and usage: Model Studio has no API for reading the quota with an API key, so Voltip does not show it. To use the free quota only, turn on **Free Quota Only** (免费额度用完即停 in the Chinese console) on that page. Once the quota is used up, dictation says that the model's quota is used up, or Voltip moves on to another model: see the next section.
 

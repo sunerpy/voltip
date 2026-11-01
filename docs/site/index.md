@@ -59,7 +59,7 @@ home:
         text: Hold to talk, or press once to start and again to stop; record the microphone, the sound the computer plays, or both.
       - icon: audio
         name: Recognition
-        text: A local model, the built-in service or your provider, on the whole recording or as you speak. Your dictionary's right spellings and the scene's terms go with the recording as hotwords, so cloud recognition keeps them; local models take none.
+        text: A local model, the built-in service or your provider, on the whole recording or as you speak. Your dictionary's right spellings and the scene's terms go with the recording to recognition services that take a glossary, so they keep them; local models and services without one take none.
       - icon: book
         name: Dictionary
         text: After recognition, what a word is heard as is replaced with its right spelling, for local models and cloud services alike.
@@ -251,7 +251,7 @@ home:
     items:
       - title: Dictionary and rules
         wide: true
-        body: Add a word the recogniser gets wrong once, and it is spelled right from then on; cloud recognition and AI polish get the right spelling as a hint too. Rules rewrite the text last, with regular expressions if needed. In the history, select a misheard word to add it.
+        body: Add a word the recogniser gets wrong once, and it is spelled right from then on; AI polish, and recognition services that take a glossary, get the right spelling too. Rules rewrite the text last, with regular expressions if needed. In the history, select a misheard word to add it.
         swap: { from: cube control, to: kubectl }
         guide: "[Dictionary and rules](/recognition/dictionary)"
       - title: Start with a single key

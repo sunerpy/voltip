@@ -13,7 +13,17 @@ The **Dictionary** page lists words the recogniser tends to get wrong. Each entr
 - the **right spelling**, for example `kubectl` or a colleague's name;
 - up to 10 spellings it is **heard as**, for example `cube control`.
 
-Right after recognition, every heard-as spelling in the text is replaced with the right one, before AI polish and the rules. The right spellings of enabled entries are also sent as a hint to cloud recognition and to AI polish, which keep them as written. Local models take no hints, so for them the dictionary works through the corrections alone.
+Right after recognition, every heard-as spelling in the text is replaced with the right one, before AI polish and the rules. The right spellings of enabled entries also go as a glossary to AI polish, and to recognition services that take one, which keep them as written:
+
+| Recognition service | Glossary |
+| --- | --- |
+| The built-in service | Sent with the recording |
+| OpenAI, Groq, SiliconFlow and custom endpoints | Sent with the recording |
+| Alibaba Cloud Model Studio's qwen-audio models | Sent as hot words |
+| Model Studio's other speech models, such as fun-asr-realtime | Not sent |
+| Local models | Not sent |
+
+With a recognition service that takes no glossary, the dictionary works through the corrections alone. The top of the Dictionary page, and the Speech models page under the recognition services, say whether the service in use receives the glossary; in the history, an entry's **Glossary** line says whether it went to recognition that time.
 
 Matching works like this:
 
@@ -28,7 +38,7 @@ The **Try it** box on the page shows what the dictionary changes in a sample tex
   alt="The Dictionary page with three entries, and the Try it box showing a sample sentence before and after the corrections."
   caption="Three entries, and their corrections in the Try it box." />
 
-The dictionary holds up to 500 entries. Their order is their priority when the hint to cloud services has to be shortened.
+The dictionary holds up to 500 entries. Their order is their priority when the glossary has to be shortened.
 
 ## Replacement rules
 

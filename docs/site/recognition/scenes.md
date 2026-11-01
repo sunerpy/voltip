@@ -49,4 +49,4 @@ Voltip comes with ready-made scenes for common kinds of writing. Each has an [AI
 
 Built-in scenes are off until you turn them on. They are listed after your own scenes and marked **Built-in**, so your own scenes take precedence. You can change a built-in scene's apps, preset and instructions, but not its name, and it cannot be deleted. **Restore default** puts back its apps, preset and instructions and leaves it on or off.
 
-When a built-in scene applies, its terms are given to recognition and AI polish together with your dictionary, and they do not count towards the dictionary's limits. The scene shows how many terms it has; Chat has none.
+When a built-in scene applies, its terms go to AI polish, and to recognition services that take a glossary, together with your dictionary (see [Dictionary](/recognition/dictionary#dictionary)), and they do not count towards the dictionary's limits. The scene shows how many terms it has; Chat has none.
