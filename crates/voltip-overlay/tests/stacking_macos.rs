@@ -38,6 +38,9 @@ mod mac {
 
     /// How long a window or an application may take to come up, to the front or on top.
     const WAIT: Duration = Duration::from_secs(30);
+    /// How long the cover waits for full screen after asking, and how many times it asks.
+    const FULL_SCREEN_TRY: Duration = Duration::from_secs(10);
+    const FULL_SCREEN_TRIES: u32 = 4;
     /// The environment variable that turns this binary into the cover.
     const COVER: &str = "VOLTIP_OVERLAY_COVER";
 
@@ -179,7 +182,8 @@ mod mac {
             let ready = rx.recv_timeout(WAIT).expect("the cover's window");
             cover.window = ready.strip_prefix("window ").and_then(|n| n.parse().ok()).expect("the cover's window number");
             if kind == "full-screen" {
-                assert_eq!(rx.recv_timeout(WAIT).as_deref(), Ok("full-screen"), "the cover did not go full screen");
+                let entering = FULL_SCREEN_TRY * FULL_SCREEN_TRIES + WAIT;
+                assert_eq!(rx.recv_timeout(entering).as_deref(), Ok("full-screen"), "the cover did not go full screen");
             }
             let pid = cover.pid();
             assert!(wait_until(|| frontmost_pid() == Some(pid)), "the cover did not come to the front (in front: {:?})", frontmost_pid());
@@ -260,6 +264,14 @@ mod mac {
             let pill = make_pill(panel);
             let cover = Cover::open("full-screen");
             let at = pill_centre();
+            // Its full-screen Space is in front once the cover's window is at the pill's place:
+            // until the Space has slid in, the desktop and the pill on it still show (run
+            // 41330006513, Intel).
+            assert!(
+                wait_until(|| window_at(at) == cover.window),
+                "the cover's full-screen Space did not come to the front (window {} is at the pill's place)",
+                window_at(at)
+            );
             for (policy, name) in [(NSApplicationActivationPolicy::Regular, "regular"), (NSApplicationActivationPolicy::Accessory, "accessory")] {
                 set_policy(policy);
                 show_pill_like_tao();
@@ -322,10 +334,16 @@ mod mac {
         println!("window {}", window.windowNumber());
         let _ = std::io::stdout().flush();
         if full_screen {
-            // Once the application runs: toggle full screen, then say when it is.
+            // Once the application runs: toggle full screen, then say when it is. macOS drops the
+            // request while another application's full-screen Space is still closing (the earlier
+            // cover's, just ended: run 41330001090), so a window not in full screen after a while
+            // asks again.
             std::thread::spawn(|| {
-                on_main(|_| WINDOWS.with_borrow(|windows| windows[0].toggleFullScreen(None)));
-                let entered = wait_until(|| on_main(|_| WINDOWS.with_borrow(|windows| windows[0].styleMask().contains(NSWindowStyleMask::FullScreen))));
+                let in_full_screen = || on_main(|_| WINDOWS.with_borrow(|windows| windows[0].styleMask().contains(NSWindowStyleMask::FullScreen)));
+                let entered = (0..FULL_SCREEN_TRIES).any(|_| {
+                    on_main(|_| WINDOWS.with_borrow(|windows| windows[0].toggleFullScreen(None)));
+                    wait_until_within(FULL_SCREEN_TRY, in_full_screen)
+                });
                 println!("{}", if entered { "full-screen" } else { "not full screen" });
                 let _ = std::io::stdout().flush();
             });
