@@ -54,8 +54,8 @@ windows-sys = { version = "=0.61.2", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 
-# tests/stacking_macos.rs: AppKit on the main thread (the pill, and another process's window in
-# front of it); the versions the desktop shell already pulls.
+# tests/stacking_macos.rs: AppKit on the main thread (the pill, as tao's window or a non-activating
+# panel, and another process's window in front of it); the versions the desktop shell already pulls.
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 block2 = "=0.6.2"
 objc2 = "=0.6.4"
@@ -65,6 +65,7 @@ objc2-app-kit = { version = "=0.3.2", default-features = false, features = [
     "NSApplication",
     "NSColor",
     "NSGraphics",
+    "NSPanel",
     "NSResponder",
     "NSRunningApplication",
     "NSScreen",

@@ -1,10 +1,12 @@
 //! The pill's stacking on a real macOS desktop (docs/dictation.md §32). The pill is a window of the
-//! test's own made the way tao makes Voltip's (borderless, at the floating level, on every Space),
-//! shown the way tao shows it (`makeKeyAndOrderFront` while another application is active) and
-//! then raised as the shell raises it ([`raise`]). In front is a window of another process (this
-//! binary started again as the "cover"): one at the floating level, as a pinned note or a player
-//! kept on top is, and one in full screen, in a Space of its own. The pill must be the window a
-//! click at its centre would reach, and the other application must stay active.
+//! test's own made the way tao makes Voltip's (borderless, at the floating level, on every Space)
+//! and shown the way tao shows it (`makeKeyAndOrderFront`). In front comes a window of another
+//! process (this binary started again as the "cover"), and that application is activated: one at
+//! the floating level, as a pinned note or a player kept on top is, and one in full screen, in a
+//! Space of its own. Shown that way, a floating window of another application brought to the front
+//! covers the pill; raised as the shell raises it ([`raise`]), the pill must be the window a click
+//! at its centre would reach, before and after another such window comes to the front, and the
+//! other application must stay active.
 //!
 //! AppKit wants the main thread, so this test has its own `main` (`harness = false`): the main
 //! thread runs the application, the checks run on another thread and hand AppKit work to the main
@@ -27,8 +29,8 @@ mod mac {
     use objc2::rc::Retained;
     use objc2::{MainThreadMarker, MainThreadOnly as _};
     use objc2_app_kit::{
-        NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSColor, NSFloatingWindowLevel, NSScreen, NSWindow, NSWindowCollectionBehavior,
-        NSWindowStyleMask, NSWorkspace,
+        NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSColor, NSFloatingWindowLevel, NSPanel, NSScreen, NSWindow,
+        NSWindowCollectionBehavior, NSWindowStyleMask, NSWorkspace,
     };
     use objc2_foundation::{NSOperationQueue, NSPoint, NSRect, NSSize};
     use voltip_overlay::macos::raise;
@@ -77,10 +79,21 @@ mod mac {
     }
 
     /// A window like Voltip's pill, hidden (an earlier test's is closed first); its window number.
-    fn make_pill() -> isize {
-        on_main(|mtm| {
+    /// `panel`: a non-activating panel (`NSPanel`) instead of tao's window, which the full-screen
+    /// probe compares.
+    fn make_pill(panel: bool) -> isize {
+        on_main(move |mtm| {
             WINDOWS.with_borrow_mut(|windows| windows.drain(..).for_each(|w| w.orderOut(None)));
-            let pill = window(mtm, pill_frame(mtm), NSWindowStyleMask::Borderless);
+            let frame = pill_frame(mtm);
+            let pill = if panel {
+                let style = NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel;
+                let panel = NSPanel::initWithContentRect_styleMask_backing_defer(NSPanel::alloc(mtm), frame, style, NSBackingStoreType::Buffered, false);
+                // SAFETY: the panel is owned by the returned `Retained`, not released by AppKit.
+                unsafe { panel.setReleasedWhenClosed(false) };
+                panel.into_super()
+            } else {
+                window(mtm, frame, NSWindowStyleMask::Borderless)
+            };
             pill.setBackgroundColor(Some(&NSColor::greenColor()));
             pill.setLevel(NSFloatingWindowLevel);
             pill.setCollectionBehavior(NSWindowCollectionBehavior::CanJoinAllSpaces);
@@ -100,23 +113,14 @@ mod mac {
         on_main(|_| WINDOWS.with_borrow(|windows| raise(Retained::as_ptr(&windows[0]).cast_mut().cast::<c_void>())));
     }
 
-    /// Show the pill as the shell does: tao's show, then the raise. Says which window a click at
-    /// the pill's centre reached in between (the cover's, before 2026-11-01).
-    fn show_and_raise_pill(pill: isize, cover: &Cover) {
-        show_pill_like_tao();
-        let at = pill_centre();
-        // The window server takes a moment to show it: give the pill a second to come up by itself.
-        let by_itself = wait_until_within(Duration::from_secs(1), || window_at(at) == pill);
-        println!(
-            "stacking_macos: shown as tao shows it, a click at its centre reaches window {} (the pill {pill}, the cover {}, on top by itself: {by_itself})",
-            window_at(at),
-            cover.window
-        );
-        raise_pill();
-    }
-
     fn close_pill() {
         on_main(|_| WINDOWS.with_borrow_mut(|windows| windows.drain(..).for_each(|w| w.orderOut(None))));
+    }
+
+    /// The test application's activation policy: regular (Voltip with a Dock icon) or accessory
+    /// (Voltip started in the menu bar, docs/dictation.md §15.2).
+    fn set_policy(policy: NSApplicationActivationPolicy) {
+        let _ = on_main(move |mtm| NSApplication::sharedApplication(mtm).setActivationPolicy(policy));
     }
 
     /// The pill's centre, in screen points.
@@ -153,7 +157,8 @@ mod mac {
         }
     }
 
-    /// Another application with one window in front: `floating` or `full-screen`. Ended on drop.
+    /// Another application with one window, brought to the front: `floating` or `full-screen`.
+    /// Ended on drop.
     struct Cover {
         child: Child,
         window: isize,
@@ -175,10 +180,8 @@ mod mac {
             if kind == "full-screen" {
                 assert_eq!(rx.recv_timeout(WAIT).as_deref(), Ok("full-screen"), "the cover did not go full screen");
             }
-            let pid = i32::try_from(cover.child.id()).unwrap();
+            let pid = cover.pid();
             assert!(wait_until(|| frontmost_pid() == Some(pid)), "the cover did not come to the front (in front: {:?})", frontmost_pid());
-            let at = pill_centre();
-            assert!(wait_until(|| window_at(at) == cover.window), "the cover's window is not over the pill's place (window {} is)", window_at(at));
             cover
         }
 
@@ -226,30 +229,63 @@ mod mac {
         println!("stacking_macos: {what}: the pill is on top");
     }
 
-    fn regression_the_pill_shows_above_a_floating_window_of_another_application() {
-        let pill = make_pill();
-        let cover = Cover::open("floating");
-        show_and_raise_pill(pill, &cover);
-        assert_pill_on_top(pill, &cover, "a floating window of another application");
+    fn regression_the_pill_stays_above_floating_windows_of_another_application_brought_to_the_front() {
+        let pill = make_pill(false);
+        show_pill_like_tao();
+        let at = pill_centre();
+        // What tao's floating level does: another application's floating window brought to the
+        // front covers the pill (before 2026-11-01, the whole take).
+        let first = Cover::open("floating");
+        assert!(
+            wait_until(|| window_at(at) == first.window),
+            "a floating window of another application should cover a pill at tao's level (window {} is on top, the pill is {pill})",
+            window_at(at)
+        );
+        println!("stacking_macos: at tao's floating level, the other application's floating window covers the pill");
+        raise_pill();
+        assert_pill_on_top(pill, &first, "raised over a floating window of another application");
+        // While the pill shows, another floating window of another application comes to the front.
+        let second = Cover::open("floating");
+        assert_pill_on_top(pill, &second, "a floating window of another application brought to the front while the pill shows");
         close_pill();
     }
 
-    fn regression_the_pill_shows_over_an_application_in_full_screen() {
-        let pill = make_pill();
-        let cover = Cover::open("full-screen");
-        show_and_raise_pill(pill, &cover);
-        assert_pill_on_top(pill, &cover, "an application in full screen");
-        close_pill();
+    /// Whether a pill raised as the shell raises it shows over an application in full screen, as
+    /// tao's window and as a non-activating panel, with the test application regular and then
+    /// accessory. Each case is reported; docs/dictation.md §32.3 records what macOS allows.
+    fn the_pill_over_an_application_in_full_screen() {
+        for panel in [false, true] {
+            let pill = make_pill(panel);
+            let cover = Cover::open("full-screen");
+            let at = pill_centre();
+            for (policy, name) in [(NSApplicationActivationPolicy::Regular, "regular"), (NSApplicationActivationPolicy::Accessory, "accessory")] {
+                set_policy(policy);
+                show_pill_like_tao();
+                raise_pill();
+                let on_top = wait_until_within(Duration::from_secs(3), || window_at(at) == pill);
+                println!(
+                    "stacking_macos: full screen, {} in a {name} application: on top {on_top} (window {} is, the cover is {}; the pill: {}; in front: pid {:?}, the cover {})",
+                    if panel { "a non-activating panel" } else { "tao's window" },
+                    window_at(at),
+                    cover.window,
+                    pill_state(),
+                    frontmost_pid(),
+                    cover.pid()
+                );
+            }
+            set_policy(NSApplicationActivationPolicy::Regular);
+            close_pill();
+        }
     }
 
     /// The checks, on their own thread while the main thread runs the application.
     fn checks() -> bool {
         let tests: [(&str, fn()); 2] = [
             (
-                "regression_the_pill_shows_above_a_floating_window_of_another_application",
-                regression_the_pill_shows_above_a_floating_window_of_another_application,
+                "regression_the_pill_stays_above_floating_windows_of_another_application_brought_to_the_front",
+                regression_the_pill_stays_above_floating_windows_of_another_application_brought_to_the_front,
             ),
-            ("regression_the_pill_shows_over_an_application_in_full_screen", regression_the_pill_shows_over_an_application_in_full_screen),
+            ("the_pill_over_an_application_in_full_screen", the_pill_over_an_application_in_full_screen),
         ];
         let mut passed = true;
         for (name, test) in tests {
