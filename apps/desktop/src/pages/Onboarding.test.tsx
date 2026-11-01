@@ -10,9 +10,9 @@ import {
   MOCK_DICTATION_TEXT,
   MOCK_HOTKEY_BACKEND,
   MOCK_REFINE_MS,
-  MockBackend,
   desktopIdentity,
 } from "@voltip/shared/mock";
+import { MockBackend } from "../test/mock";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderApp } from "../test/render";

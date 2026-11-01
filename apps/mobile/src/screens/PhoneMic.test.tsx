@@ -4,10 +4,10 @@ import {
   MOCK_DICTATION_TEXT,
   MOCK_MIC_READY_MS,
   MOCK_REFINE_MS,
-  MockBackend,
   sampleDevices,
   sampleHistory,
 } from "@voltip/shared/mock";
+import { MockBackend } from "../test/mock";
 import { PHONE_TAKE_FAILURES, zhT } from "@voltip/shared";
 import { act, fireEvent, screen, within } from "@testing-library/react";
 import { renderApp } from "../test/render";

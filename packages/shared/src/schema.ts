@@ -337,6 +337,9 @@ export type Activation = z.infer<typeof activationSchema>;
 /** `voltip_core::dictation::activation::DEFAULT_HOLD_THRESHOLD_MS`: a `hold_or_toggle` release
  *  before this many milliseconds locks the take instead of stopping it. */
 export const DEFAULT_HOLD_THRESHOLD_MS = 300;
+/** `extra_recording_ms` of a new install (`voltip_core::DEFAULT_EXTRA_RECORDING_MS`, docs/dictation.md
+ *  §30.4); a settings file without the key reads as 0. */
+export const DEFAULT_EXTRA_RECORDING_MS = 150;
 /** `voltip_core::MAX_ACTIVATION_MS`: the core refuses larger threshold / extra-recording values. */
 export const MAX_ACTIVATION_MS = 5000;
 
@@ -3961,7 +3964,7 @@ export function defaultSettings(): Settings {
     auto_update: false,
     activation: "hold",
     hold_threshold_ms: DEFAULT_HOLD_THRESHOLD_MS,
-    extra_recording_ms: 0,
+    extra_recording_ms: DEFAULT_EXTRA_RECORDING_MS,
     context_sharing: defaultContextSharing(),
     edit_hotkey: DEFAULT_EDIT_HOTKEY,
     solo_key: null,

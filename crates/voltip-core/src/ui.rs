@@ -999,8 +999,9 @@ mod tests {
         // A state serialized before the dictation fields existed still parses.
         let legacy = r#"{"identity":null,"settings":{"schema":1,"theme":"light","follow_system_theme":false,"relay_enabled":true},"secret_backend":"","relay":{"state":"disconnected","attempts":0},"pairing":{"state":{"state":"idle"},"local_confirmed":false,"peer_confirmed":false},"devices":[]}"#;
         let back: UiState = serde_json::from_str(legacy).unwrap();
-        // The stored theme stays (new installs start on 澄空, 0.1.1); everything else defaults.
-        let settings = Settings { theme: crate::ThemeId::Light, ..Settings::default() };
+        // The stored theme stays (new installs start on 澄空, 0.1.1); everything else defaults, but
+        // the extra recording a file did not have reads as 0 (new installs start at 150, §30.4).
+        let settings = Settings { theme: crate::ThemeId::Light, extra_recording_ms: 0, ..Settings::default() };
         assert_eq!(back, UiState { settings, ..UiState::default() });
     }
 

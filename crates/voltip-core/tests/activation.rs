@@ -12,8 +12,8 @@ use tokio::sync::mpsc;
 use voltip_core::dictation::fakes::{FAKE_TRANSCRIPT, FakeAudio, FakeInjector, FakeTranscriber};
 use voltip_core::dictation::{DictationPorts, Transcriber};
 use voltip_core::{
-    Activation, AppCore, CoreCommand, CoreConfig, CoreEvent, CoreHandle, DictationPhase, EdgeSource, MAX_ACTIVATION_MS, ResolvedEngines, SETTINGS_FILE_NAME,
-    Settings, SettingsStore, TakeKind, now_ms,
+    Activation, AppCore, CoreCommand, CoreConfig, CoreEvent, CoreHandle, DEFAULT_EXTRA_RECORDING_MS, DictationPhase, EdgeSource, MAX_ACTIVATION_MS,
+    ResolvedEngines, SETTINGS_FILE_NAME, Settings, SettingsStore, TakeKind, now_ms,
 };
 use voltip_identity::MemorySecretStore;
 
@@ -117,7 +117,7 @@ async fn hotkey_edges_drive_hold_toggle_and_lock_through_the_core() {
     let audio = Arc::new(FakeAudio::speech());
     let mut node = start(audio.clone(), Arc::new(FakeTranscriber::ok(FAKE_TRANSCRIPT)));
     let settings = wait(&mut node, |e| if let CoreEvent::Ready { settings, .. } = e { Some(settings.clone()) } else { None }).await;
-    assert_eq!((settings.activation, settings.hold_threshold_ms, settings.extra_recording_ms), (Activation::Hold, 300, 0), "defaults");
+    assert_eq!((settings.activation, settings.hold_threshold_ms, settings.extra_recording_ms), (Activation::Hold, 300, DEFAULT_EXTRA_RECORDING_MS), "defaults");
 
     // hold: press → listening (not locked), release → stop after the 50 ms grace → done.
     edge(&node, true, EdgeSource::Hotkey).await;

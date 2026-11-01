@@ -18,8 +18,8 @@ import {
   MOCK_MIC_READY_MS,
   MOCK_REFINE_MS,
   MOCK_STREAMING_MODEL_ID,
-  MockBackend,
 } from "@voltip/shared/mock";
+import { MockBackend } from "../test/mock";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderApp } from "../test/render";

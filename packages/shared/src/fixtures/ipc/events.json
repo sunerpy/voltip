@@ -24,7 +24,7 @@
       "auto_update": false,
       "activation": "hold",
       "hold_threshold_ms": 300,
-      "extra_recording_ms": 0,
+      "extra_recording_ms": 150,
       "context_sharing": {
         "app_name": true,
         "window_title": false

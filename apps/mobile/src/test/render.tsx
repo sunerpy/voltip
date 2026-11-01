@@ -1,4 +1,5 @@
-import { MockBackend, type MockBackendOptions } from "@voltip/shared/mock";
+import { type MockBackendOptions } from "@voltip/shared/mock";
+import { MockBackend } from "./mock";
 import { render } from "@testing-library/react";
 import { App, type AppProps } from "../App";
 import type { SystemBack } from "../app/back";

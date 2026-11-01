@@ -204,6 +204,11 @@ impl RecordingSettings {
     }
 }
 
+/// `Settings.extra_recording_ms` of a new install (docs/dictation.md §30.4): the smallest of the
+/// measured values that kept the last character of takes stopped 100 ms before the speech ended.
+/// Settings files keep what they hold: one written before the setting existed reads as 0.
+pub const DEFAULT_EXTRA_RECORDING_MS: u32 = 150;
+
 /// User settings.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct Settings {
@@ -239,7 +244,8 @@ pub struct Settings {
     #[serde(default = "default_hold_threshold_ms")]
     pub hold_threshold_ms: u32,
     /// Keep recording this long after a stop before the microphone closes (trailing syllables);
-    /// `0` stops at once.
+    /// `0` stops at once. A new install starts at [`DEFAULT_EXTRA_RECORDING_MS`]; a file written
+    /// before the setting existed reads as 0.
     #[serde(default)]
     pub extra_recording_ms: u32,
     /// Which parts of a take's context may go to the LLM clean-up (docs/dictation.md §18.5):
@@ -498,7 +504,7 @@ impl Default for Settings {
             auto_update: false,
             activation: Activation::Hold,
             hold_threshold_ms: DEFAULT_HOLD_THRESHOLD_MS,
-            extra_recording_ms: 0,
+            extra_recording_ms: DEFAULT_EXTRA_RECORDING_MS,
             context_sharing: ContextSharing::default(),
             edit_hotkey: default_edit_hotkey(),
             copy_last_hotkey: None,
@@ -764,6 +770,22 @@ mod tests {
         let s2 = Settings { context_sharing: ContextSharing { app_name: false, window_title: true }, ..Settings::default() };
         store.save(&s2).unwrap();
         assert_eq!(store.load().unwrap(), s2);
+    }
+
+    /// docs/dictation.md §30.4: a new install keeps the microphone open 150 ms after the stop (the
+    /// measured default); a settings file already written keeps its value, 0 included, and one
+    /// written before the setting existed reads as 0, as that install recorded.
+    #[test]
+    fn a_new_install_keeps_recording_150_ms_after_the_stop_and_an_existing_one_keeps_its_value() {
+        assert_eq!(Settings::default().extra_recording_ms, DEFAULT_EXTRA_RECORDING_MS);
+        assert_eq!(DEFAULT_EXTRA_RECORDING_MS, 150);
+        let dir = tempfile::tempdir().unwrap();
+        let store = SettingsStore::new(dir.path());
+        assert_eq!(store.load().unwrap().extra_recording_ms, 150, "no settings file yet: a new install");
+        store.save(&Settings { extra_recording_ms: 0, ..Settings::default() }).unwrap();
+        assert_eq!(store.load().unwrap().extra_recording_ms, 0, "an install that stops at once keeps doing so");
+        let older = r#"{"schema":1,"theme":"light","follow_system_theme":false,"relay_enabled":true}"#;
+        assert_eq!(serde_json::from_str::<Settings>(older).unwrap().extra_recording_ms, 0);
     }
 
     /// A `settings.json` written before the activation machine (docs/dictation.md §13) has no

@@ -1448,7 +1448,10 @@ fn overlay_pill_and_hotkey_edges_follow_the_dictation_contract() {
 fn hotkey_edges_run_hold_toggle_and_lock_flows_through_the_command_layer() {
     with_running_app(|_, webview, rx| {
         let st = wait_state(webview, |s| s.identity.is_some());
-        assert_eq!((st.settings.activation, st.settings.hold_threshold_ms, st.settings.extra_recording_ms), (Activation::Hold, 300, 0));
+        assert_eq!(
+            (st.settings.activation, st.settings.hold_threshold_ms, st.settings.extra_recording_ms),
+            (Activation::Hold, 300, voltip_core::DEFAULT_EXTRA_RECORDING_MS)
+        );
         let edge = |pressed: bool, source: &str| json!({ "pressed": pressed, "atMs": voltip_core::now_ms(), "source": source });
 
         // hold

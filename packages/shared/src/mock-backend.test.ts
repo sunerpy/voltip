@@ -66,7 +66,8 @@ import {
   MOCK_NO_SPEECH,
   MOCK_SCENE_MODE_NOT_READY,
   MOCK_STREAMING_MODEL_ID,
-  MockBackend,
+  MockBackend as RealMockBackend,
+  type MockBackendOptions,
   mockSameChord,
   SHARE_UNAVAILABLE,
   PRESET_TRY_UNCONFIGURED,
@@ -81,6 +82,7 @@ import {
   startOfLocalDay,
 } from "./mock-backend";
 import {
+  DEFAULT_EXTRA_RECORDING_MS,
   DEFAULT_MAX_MINUTES,
   BUILTIN_PRESETS,
   BUILTIN_SCENES,
@@ -107,6 +109,15 @@ import {
   providerStatus,
 } from "./schema";
 import { livePreviewText } from "./labels";
+
+/** These tests were written for a stop that closes the microphone at once. A new install keeps
+ *  recording `DEFAULT_EXTRA_RECORDING_MS` after the stop (docs/dictation.md §30.4): the tests of
+ *  the extra recording ask for it, and one test below checks the default itself. */
+class MockBackend extends RealMockBackend {
+  constructor(options: MockBackendOptions = {}) {
+    super({ ...options, settings: { extra_recording_ms: 0, ...options.settings } });
+  }
+}
 
 function collect(backend: MockBackend) {
   const events: UiEvent[] = [];
@@ -2327,6 +2338,22 @@ describe("MockBackend activation (docs/dictation.md §13)", () => {
     await backend.invoke("dictation_stop");
     await backend.invoke("hotkey_edge", { pressed: true, source: "cli" });
     expect(backend.peek().dictation.phase.phase).toBe("processing");
+    backend.destroy();
+  });
+
+  it("docs/dictation.md §30.4: a new install keeps the microphone open 150 ms after the stop", async () => {
+    const backend = new RealMockBackend({ now: () => clock, history: [] });
+    expect(backend.peek().settings.extra_recording_ms).toBe(DEFAULT_EXTRA_RECORDING_MS);
+    expect(DEFAULT_EXTRA_RECORDING_MS).toBe(150);
+    await backend.invoke("dictation_start");
+    tick(MOCK_MIC_READY_MS + 1000);
+    await backend.invoke("dictation_stop");
+    tick(DEFAULT_EXTRA_RECORDING_MS - 1);
+    expect(backend.peek().dictation.phase.phase).toBe("listening");
+    tick(1);
+    expect(backend.peek().dictation.phase).toMatchObject({ phase: "processing" });
+    tick(MOCK_ASR_MS + MOCK_REFINE_MS);
+    expect(backend.peek().history_recent[0]?.timing?.tail_ms).toBe(DEFAULT_EXTRA_RECORDING_MS);
     backend.destroy();
   });
 
