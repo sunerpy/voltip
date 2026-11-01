@@ -242,3 +242,119 @@ async fn builtin_scenes_through_the_core() {
     assert_eq!(again.iter().map(|s| s.id).collect::<Vec<_>>(), restored.iter().map(|s| s.id).collect::<Vec<_>>());
     node.handle.send(CoreCommand::Shutdown).await.unwrap();
 }
+
+/// regression (docs/dictation.md §30.2, completion review 2026-11-01): the release settles a
+/// take's scene. A probe that answers while 松开后继续录音 keeps the microphone open applies no
+/// scene, as it applies none when the stop comes before the answer without the extra window.
+#[tokio::test]
+async fn regression_a_probe_answering_during_the_extra_recording_applies_no_scene() {
+    let dir = tempfile::tempdir().unwrap();
+    // A long window, so the answer certainly lands inside it.
+    SettingsStore::new(dir.path())
+        .save(&Settings { relay_enabled: false, engines: voltip_core::dictation::fakes::fake_engines(), extra_recording_ms: 2_000, ..Settings::default() })
+        .unwrap();
+    let probe = Arc::new(FakeProbe::app_when_released("slack", "Slack"));
+    let refiner = Arc::new(FakeRefiner::ok("润色后的文本"));
+    let mut node = start(dir.path(), probe.clone(), refiner.clone());
+    assert!(scenes(&mut node).await.is_empty());
+    // The scene switches the clean-up off and leaves the output mode alone: the device opens at
+    // the press, the probe still asking (§30.2).
+    node.handle.send(CoreCommand::SceneAdd(draft("聊天", &["slack"], SceneOverrides { refine_enabled: Some(false), ..Default::default() }))).await.unwrap();
+    assert_eq!(scenes(&mut node).await.len(), 1);
+
+    node.handle.send(CoreCommand::DictationStart).await.unwrap();
+    wait(&mut node, |e| matches!(e, CoreEvent::Dictation(s) if matches!(s.phase, DictationPhase::Listening { ready: true, .. })).then_some(())).await;
+    node.handle.send(CoreCommand::DictationStop).await.unwrap();
+    // Commands run in order: once the devices are listed, the stop is in and the window runs.
+    node.handle.send(CoreCommand::RefreshDevices).await.unwrap();
+    wait(&mut node, |e| matches!(e, CoreEvent::Devices(_)).then_some(())).await;
+    probe.release();
+    let done = wait(&mut node, |e| match e {
+        CoreEvent::Dictation(s) if s.phase.is_terminal() => Some(s.clone()),
+        _ => None,
+    })
+    .await;
+    assert!(matches!(&done.phase, DictationPhase::Done { refined: true, .. }), "the global clean-up ran: {done:?}");
+    assert!(done.context.as_ref().is_none_or(|c| c.scene.is_none()), "no scene after the release: {done:?}");
+    assert_eq!(refiner.calls(), 1);
+    let history = wait(&mut node, |e| if let CoreEvent::History { recent: h, .. } = e { (!h.is_empty()).then(|| h.clone()) } else { None }).await;
+    assert_eq!(history[0].scene, None);
+    node.handle.send(CoreCommand::Shutdown).await.unwrap();
+}
+
+/// The first engines status whose glossary route is `route` (startup sends several).
+/// Waits for a status that sends the glossary `route`'s way; fails saying so after 10 s.
+async fn glossary(node: &mut Node, route: voltip_core::GlossaryRoute) {
+    let found = tokio::time::timeout(STEP, async {
+        loop {
+            if let CoreEvent::Engines(s) = node.events.recv().await.expect("core alive") {
+                if s.glossary == Some(route) {
+                    return;
+                }
+            }
+        }
+    })
+    .await;
+    assert!(found.is_ok(), "no status with the glossary route {route:?} within 10 s");
+}
+
+/// regression (docs/dictation.md §30.6, completion review 2026-11-01): with an empty dictionary,
+/// an enabled built-in scene's term pack still goes out as the glossary (§18.10). The status
+/// does not say that nothing is sent while such a scene is on, and the take in its application
+/// and a 试识别 of that take's recording carry the pack.
+#[tokio::test]
+async fn regression_an_enabled_builtin_scene_sends_its_terms_with_an_empty_dictionary() {
+    use voltip_core::trial::TrialView;
+    use voltip_core::{AudioCacheSettings, BuiltinScene, GlossaryRoute};
+    let dir = tempfile::tempdir().unwrap();
+    SettingsStore::new(dir.path())
+        .save(&Settings {
+            relay_enabled: false,
+            engines: voltip_core::dictation::fakes::fake_engines(),
+            audio_cache: AudioCacheSettings { enabled: true, ..AudioCacheSettings::default() },
+            ..Settings::default()
+        })
+        .unwrap();
+    let probe = Arc::new(FakeProbe::app("nothing", "Nothing", None));
+    let mut node = start_with(dir.path(), probe.clone(), Arc::new(FakeRefiner::ok("润色后的文本")), true);
+    // Startup announces the scenes and the status, in either order.
+    let (mut list, mut empty) = (None, false);
+    while list.is_none() || !empty {
+        wait(&mut node, |e| {
+            match e {
+                CoreEvent::Scenes(s) => list = Some(s.clone()),
+                CoreEvent::Engines(s) if s.glossary == Some(GlossaryRoute::Empty) => empty = true,
+                _ => return None,
+            }
+            Some(())
+        })
+        .await;
+    }
+    let coding = list.unwrap().into_iter().find(|s| s.builtin == Some(BuiltinScene::Coding)).unwrap();
+    let Some(app) = coding.matching.apps.first().cloned() else {
+        // A host with no default applications for 编程开发 (not a desktop): nothing to match.
+        return;
+    };
+    let mut on = SceneDraft::from(&coding);
+    on.enabled = true;
+    node.handle.send(CoreCommand::SceneUpdate { id: coding.id, draft: on }).await.unwrap();
+    glossary(&mut node, GlossaryRoute::Prompt).await;
+
+    probe.set_app(&app, "Editor", None);
+    let (_, history) = take(&mut node).await;
+    assert_eq!(history[0].glossary_sent, Some(true), "the term pack went out");
+    node.handle.send(CoreCommand::RecognitionTrial).await.unwrap();
+    let trial = wait(&mut node, |e| match e {
+        CoreEvent::RecognitionTrial(TrialView::Done(result)) => Some(result.clone()),
+        CoreEvent::RecognitionTrial(TrialView::Failed { failure, .. }) => panic!("{failure:?}"),
+        _ => None,
+    })
+    .await;
+    assert!(trial.glossary_sent, "the trial of that recording too");
+
+    let mut off = SceneDraft::from(&coding);
+    off.enabled = false;
+    node.handle.send(CoreCommand::SceneUpdate { id: coding.id, draft: off }).await.unwrap();
+    glossary(&mut node, GlossaryRoute::Empty).await;
+    node.handle.send(CoreCommand::Shutdown).await.unwrap();
+}

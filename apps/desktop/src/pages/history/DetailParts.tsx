@@ -121,24 +121,27 @@ interface TimelineStep {
 
 /** The steps of a take's timeline in order (docs/dictation.md §30.1): the microphone's opening,
  *  the wait for its first sound, the recording and the extra recording after the release (a take
- *  that recorded), then recognition, the clean-up when it ran and the hand-over. */
+ *  that recorded), then recognition, the clean-up when it ran and the hand-over. The recording's
+ *  steps end where the next begins, never before the previous one ended: they never overlap, and
+ *  a device that delivered while it opened counts as open by its first samples. */
 export function timelineSteps(timing: TakeTiming): TimelineStep[] {
   const steps: TimelineStep[] = [];
   const add = (key: TimelineStep["key"], ms: number, bar: string, lamp: LampTone) => {
     steps.push({ key, ms: Math.max(0, ms), bar, lamp });
   };
-  if (timing.device_open_ms !== undefined)
-    add("open", timing.device_open_ms, "bg-fg-subtle", "idle");
-  if (timing.device_open_ms !== undefined && timing.first_audio_ms !== undefined)
-    add("wait", timing.first_audio_ms - timing.device_open_ms, "bg-led-off", "off");
-  if (timing.released_ms !== undefined) {
-    add(
-      "record",
-      timing.released_ms - (timing.first_audio_ms ?? timing.device_open_ms ?? 0),
-      "bg-accent/35",
-      "accent",
-    );
-    add("tail", timing.tail_ms, "bg-accent-soft", "accent");
+  let at = 0;
+  const until = (end: number) => {
+    const ms = end - at;
+    at = Math.max(at, end);
+    return ms;
+  };
+  const { device_open_ms: open, first_audio_ms: audio, released_ms: released } = timing;
+  if (open !== undefined)
+    add("open", until(audio === undefined ? open : Math.min(open, audio)), "bg-fg-subtle", "idle");
+  if (open !== undefined && audio !== undefined) add("wait", until(audio), "bg-led-off", "off");
+  if (released !== undefined) {
+    add("record", until(released), "bg-accent/35", "accent");
+    add("tail", until(released + timing.tail_ms), "bg-accent-soft", "accent");
   }
   add("asr", timing.asr_ms, "bg-primary", "neutral");
   if (timing.refine_ms !== undefined) add("refine", timing.refine_ms, "bg-accent", "accent");

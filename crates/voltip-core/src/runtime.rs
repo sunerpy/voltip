@@ -1035,7 +1035,7 @@ impl AppCore {
             history,
             audio,
             recovery: Recovery { leftovers, stop: Arc::new(std::sync::atomic::AtomicBool::new(false)), tx: recover_tx },
-            glossary_empty: !crate::vocabulary::has_glossary(dictionary.entries()),
+            glossary_empty: no_glossary(dictionary.entries(), scenes.scenes()),
             trial_busy: Arc::default(),
             dictionary,
             rules,
@@ -1147,6 +1147,13 @@ fn check_fallback_models(kind: ServiceKind, fallback: &FallbackSettings, library
         }
     }
     Ok(())
+}
+
+/// Nothing can go out as the glossary (docs/dictation.md §30.6): no enabled dictionary entry, and
+/// no enabled built-in scene whose term pack joins a take's glossary when it matches (§18.10).
+fn no_glossary(dictionary: &[crate::vocabulary::DictionaryEntry], scenes: &[crate::scenes::Scene]) -> bool {
+    !crate::vocabulary::has_glossary(dictionary)
+        && !scenes.iter().any(|scene| scene.enabled && scene.builtin.is_some_and(|category| !crate::vocabulary::packs::terms(category).is_empty()))
 }
 
 fn kind_name(kind: ServiceKind) -> &'static str {
@@ -1276,8 +1283,8 @@ struct Runtime {
     recovery: Recovery,
     /// `dictionary.json` (docs/dictation.md §16).
     dictionary: DictionaryStore,
-    /// The dictionary has no enabled entry to send as the glossary (docs/dictation.md §30.6), as
-    /// `UiState.engines` last said.
+    /// Nothing can go out as the glossary: the dictionary has no enabled entry and no enabled
+    /// built-in scene adds a term pack (docs/dictation.md §30.6), as `UiState.engines` last said.
     glossary_empty: bool,
     /// A 试识别 runs (docs/dictation.md §30.5): set by its command, cleared by its task.
     trial_busy: Arc<std::sync::atomic::AtomicBool>,
@@ -2567,8 +2574,14 @@ impl Runtime {
     fn recompile_vocabulary(&mut self) {
         let vocabulary = Vocabulary::compile(self.dictionary.entries(), self.rules.rules());
         tracing::debug!(?vocabulary, "vocabulary recompiled");
-        let empty = vocabulary.glossary().is_empty();
         self.dictation.set_vocabulary(Arc::new(vocabulary));
+        self.refresh_glossary_empty();
+    }
+
+    /// Whether anything can go out as the glossary, from the dictionary and the scenes; the status
+    /// says it when that changes (docs/dictation.md §30.6).
+    fn refresh_glossary_empty(&mut self) {
+        let empty = no_glossary(self.dictionary.entries(), self.scenes.scenes());
         if empty != self.glossary_empty {
             self.glossary_empty = empty;
             self.emit(CoreEvent::Engines(self.engine_status()));
@@ -2634,6 +2647,8 @@ impl Runtime {
         let scenes = self.scenes.scenes().to_vec();
         self.dictation.set_scenes(Arc::new(scenes.clone()));
         self.emit(CoreEvent::Scenes(scenes));
+        // §30.6: a built-in scene switched on or off may bring its term pack or take it away.
+        self.refresh_glossary_empty();
         Ok(())
     }
 

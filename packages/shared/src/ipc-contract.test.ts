@@ -1462,7 +1462,15 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       ...asrFallback,
       models: asrFallback.models.map(({ retry_at_ms: _at, retry_reason: _reason, ...m }) => m),
     };
-    expect(resolved).toEqual({ ...fixture.engines, asr_fallback: withoutLedger });
+    // §30.6: the glossary goes where the model standing in sends it, which the ledger picks: here
+    // the local model, the custom one being out after its outage. Without one the preview reports
+    // the selected model's (the built-in service's prompt).
+    expect(fixture.engines.glossary).toBe("not_supported");
+    expect(resolved).toEqual({
+      ...fixture.engines,
+      asr_fallback: withoutLedger,
+      glossary: "prompt",
+    });
     expect(resolved.asr_fallback?.models.map((m) => m.skip ?? m.issue ?? "ready")).toEqual([
       "ready",
       "same_as_selected",

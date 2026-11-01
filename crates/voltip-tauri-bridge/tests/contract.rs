@@ -1257,6 +1257,7 @@ fn trial_result() -> TrialResult {
         refine_model: Some("gpt-4o-mini".into()),
         refine_ms: Some(820),
         refine_failure: None,
+        live_inject: false,
         elapsed_ms: 1_530,
     }
 }
@@ -2387,7 +2388,8 @@ fn all_events() -> Vec<UiEvent> {
         UiEvent::AutoBackup(auto_backup()),
         UiEvent::AutoBackup(AutoBackupView { folder: auto_backup().default_folder, custom: false, last: None, failure: None, notice: None, ..auto_backup() }),
         UiEvent::AutoBackup(AutoBackupView::default()),
-        // docs/dictation.md §30.5: a 试识别 running, its result, a failed one, and none to try.
+        // docs/dictation.md §30.5: a 试识别 running, its result, one in 边说边输入, a failed one, and none
+        // to try.
         UiEvent::RecognitionTrial { trial: TrialView::Running { recording: uuid(RECORDING_ID), started_at: AT_MS } },
         UiEvent::RecognitionTrial { trial: TrialView::Done(Box::new(trial_result())) },
         UiEvent::RecognitionTrial {
@@ -2401,6 +2403,17 @@ fn all_events() -> Vec<UiEvent> {
                 refine_model: None,
                 refine_ms: Some(1_200),
                 refine_failure: Some(RefineFailure::Truncated),
+                ..trial_result()
+            })),
+        },
+        // In 边说边输入 a take is never cleaned up (docs/dictation.md §12), and neither is its trial.
+        UiEvent::RecognitionTrial {
+            trial: TrialView::Done(Box::new(TrialResult {
+                refined: false,
+                refine_provider: None,
+                refine_model: None,
+                refine_ms: None,
+                live_inject: true,
                 ..trial_result()
             })),
         },

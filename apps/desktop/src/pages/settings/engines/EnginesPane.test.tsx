@@ -276,6 +276,36 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     expect(backend.peek().dictation.phase.phase).toBe("idle");
   });
 
+  it("regression: docs/dictation.md section 30.5: 试识别 in 边说边输入 is not cleaned up, and says why", async () => {
+    const user = userEvent.setup();
+    const recording = {
+      id: "r1",
+      at_ms: 1_758_699_000_000,
+      duration_ms: 4200,
+      bytes: 134_444,
+      status: { kind: "cancelled" as const },
+    };
+    const { backend } = renderApp({
+      path: "/speech",
+      mock: {
+        history: [],
+        audioCache: [recording],
+        settings: { engines: { ...defaultEngineSettings(), output_mode: "live_inject" } },
+        engines: { effective_output_mode: "live_inject" },
+      },
+    });
+    expect(backend.peek().settings.engines.refine_enabled).toBe(true);
+    const trial = await screen.findByTestId("recognition-trial");
+    await user.click(within(trial).getByRole("button", { name: "用最近一条录音试识别" }));
+    const result = await within(trial).findByTestId(
+      "recognition-trial-result",
+      {},
+      { timeout: MOCK_ASR_MS * 4 },
+    );
+    expect(result).toHaveTextContent("AI 润色「边说边输入」模式下不进行润色");
+    expect(result).not.toHaveTextContent("未开启");
+  });
+
   it("docs/dictation.md section 30.5: 试识别 is off, and says why, while no recording can be tried; a failure says why too", async () => {
     const recording = {
       id: "r1",
@@ -383,6 +413,21 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
       expect(await screen.findByTestId("glossary-note")).toHaveTextContent(sentence);
       unmount();
     }
+  });
+
+  it("regression: docs/dictation.md section 30.6: with no enabled entry, an enabled built-in scene's terms still go out in its applications, and the note says so", async () => {
+    const preview = new MockBackend();
+    const coding = preview.peek().scenes.find((s) => s.builtin === "coding");
+    preview.destroy();
+    if (!coding) throw new Error("the 编程 scene");
+    const { backend } = renderApp({
+      path: "/speech",
+      mock: { dictionary: [], scenes: [{ ...coding, enabled: true }] },
+    });
+    expect(backend.peek().engines.glossary).toBe("prompt");
+    expect(await screen.findByTestId("glossary-note")).toHaveTextContent(
+      "词典没有启用的词条；在已启用的内置场景里，当前识别服务会收到该场景的术语表。",
+    );
   });
 
   it("regression: the built-in service's host is never shown, in the pane, the title bar or the state", async () => {

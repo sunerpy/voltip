@@ -449,6 +449,13 @@ interface Primary {
   local: boolean;
 }
 
+/** A fallback model ready to stand in: whether it streams, and what it does with the glossary
+ *  (`FallbackTarget::glossary_route`). */
+interface StandIn {
+  streams: boolean;
+  glossary: GlossaryRoute;
+}
+
 /** Mirrors `fallback_plan` + `FallbackPlan::status` without a ledger (docs/dictation.md §3.5,
  *  §3.14): one row per settings entry, its problem or why it is skipped; `selected` is the model in
  *  use when it is ready. With recognition on this device (`onDevice`) every service is left out,
@@ -458,10 +465,10 @@ function fallbackStatus(
   input: EngineResolveInput,
   selected: Primary | undefined,
   onDevice: boolean,
-): { status: FallbackStatus; standIn: { streams: boolean } | undefined } {
+): { status: FallbackStatus; standIn: StandIn | undefined } {
   const config = fallbackSettingsOf(input.settings, kind);
   const seen = new Set<string>();
-  const ready: { streams: boolean }[] = [];
+  const ready: StandIn[] = [];
   let localReady = false;
   const place = (
     key: string,
@@ -482,7 +489,7 @@ function fallbackStatus(
       const skipped = place(localKeyOf(id), "local", id);
       if (skipped !== undefined) return skipped;
       localReady = true;
-      ready.push({ streams: false });
+      ready.push({ streams: false, glossary: "not_supported" });
       return { provider: "local", model: id };
     }
     const r = target(entry.provider, kind, input, asked);
@@ -495,7 +502,11 @@ function fallbackStatus(
         provider: entry.provider,
         model,
       };
-      if (row.skip === undefined && !onDevice) ready.push({ streams: asrStreams(r.ok.url, model) });
+      if (row.skip === undefined && !onDevice)
+        ready.push({
+          streams: asrStreams(r.ok.url, model),
+          glossary: glossaryRoute(r.ok.url, model),
+        });
     }
     // §3.14: recognition on this device never moves on to a service.
     return onDevice ? { provider: row.provider, model: row.model, skip: "not_for_local" } : row;
@@ -648,11 +659,14 @@ export function resolveEngineStatus(input: EngineResolveInput): EngineStatus {
         : undefined,
       false,
     ).status,
-    // `ResolvedEngines::glossary_route`: nowhere on-device, unknown without a service that runs.
-    ...(asrProvider === "local"
-      ? { glossary: "not_supported" as const }
-      : asrTarget === undefined
-        ? {}
-        : { glossary: glossaryRoute(asrTarget.url, asrTarget.model) }),
+    // `ResolvedEngines::status_with`: the route of the model standing in, else the selected one's
+    // (`glossary_route`): nowhere on-device, unknown without a service that runs.
+    ...(standIn !== undefined
+      ? { glossary: standIn.glossary }
+      : asrProvider === "local"
+        ? { glossary: "not_supported" as const }
+        : asrTarget === undefined
+          ? {}
+          : { glossary: glossaryRoute(asrTarget.url, asrTarget.model) }),
   };
 }

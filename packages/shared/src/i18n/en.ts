@@ -1178,6 +1178,8 @@ export const en: Messages = {
       "Each recognition result has its misheard forms replaced by the right spelling before polishing and the replacement rules; the right spellings of enabled entries also go to AI polishing as a glossary, and to recognition services that take one.",
     glossary: {
       receives: "The recognition service in use receives the glossary.",
+      scenes:
+        "No dictionary entry is enabled; in an enabled built-in scene, the recognition service in use receives that scene's terms as its glossary.",
       notSupported:
         "The recognition service in use takes no glossary; the dictionary corrects its text afterwards.",
       local: "Local models take no glossary; the dictionary corrects their text afterwards.",

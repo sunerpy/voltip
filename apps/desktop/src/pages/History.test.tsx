@@ -2,6 +2,7 @@ import {
   type DictionaryEntry,
   HISTORY_LIMIT,
   type HistoryEntry,
+  type TakeTiming,
   formatCount,
 } from "@voltip/shared";
 import {
@@ -15,6 +16,7 @@ import {
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderApp } from "../test/render";
+import { timelineSteps } from "./history/DetailParts";
 import { writeHistoryPageSize } from "./history-list/page-size";
 
 /** Fixed pixel panel sizes and two-fixed-column grids broke the 1440 / 1920 px windows (Windows
@@ -384,6 +386,37 @@ describe("History page", () => {
     expect(again).toHaveTextContent("总计 530 ms");
     expect(again).not.toHaveTextContent("打开麦克风");
     expect(again).not.toHaveTextContent("润色 ");
+  });
+
+  it("regression: docs/dictation.md section 30.1: the steps of a timeline never overlap", () => {
+    const ms = (timing: TakeTiming) =>
+      Object.fromEntries(timelineSteps(timing).map((s) => [s.key, s.ms]));
+    // The first samples came while the device opened (the core read them before the open returned).
+    expect(
+      ms({
+        pressed_at: 0,
+        device_open_ms: 100,
+        first_audio_ms: 50,
+        released_ms: 1_000,
+        tail_ms: 150,
+        asr_ms: 200,
+        insert_ms: 10,
+        done_ms: 1_360,
+      }),
+    ).toEqual({ open: 50, wait: 0, record: 950, tail: 150, asr: 200, insert: 10 });
+    // They came after the release, while 松开后继续录音 kept the microphone open.
+    expect(
+      ms({
+        pressed_at: 0,
+        device_open_ms: 20,
+        first_audio_ms: 300,
+        released_ms: 200,
+        tail_ms: 400,
+        asr_ms: 100,
+        insert_ms: 0,
+        done_ms: 700,
+      }),
+    ).toEqual({ open: 20, wait: 280, record: 0, tail: 300, asr: 100, insert: 0 });
   });
 
   it("docs/dictation.md section 3.12: an entry whose polished text was cut off says the transcript was kept", async () => {

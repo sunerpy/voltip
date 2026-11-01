@@ -801,6 +801,14 @@ pub enum FallbackService {
 }
 
 impl FallbackTarget {
+    /// Where the glossary goes in its recognition requests (docs/dictation.md §30.6).
+    fn glossary_route(&self) -> GlossaryRoute {
+        match &self.service {
+            FallbackService::Remote(remote) => GlossaryRoute::remote(&remote.url, &remote.model),
+            FallbackService::Local(_) => GlossaryRoute::NotSupported,
+        }
+    }
+
     /// The service it calls, when it is not on this device.
     pub fn remote(&self) -> Option<&RemoteService> {
         match &self.service {
@@ -1115,8 +1123,8 @@ impl ResolvedEngines {
         self.status_with(&QuotaLedger::default())
     }
 
-    /// Where the glossary goes in the recognition requests (docs/dictation.md §30.6): nowhere
-    /// on-device, the remote service's way, unknown while no remote service can run.
+    /// Where the glossary goes in the selected model's recognition requests (docs/dictation.md
+    /// §30.6): nowhere on-device, the remote service's way, unknown while no remote service can run.
     pub fn glossary_route(&self) -> Option<GlossaryRoute> {
         if self.asr_provider == ProviderId::Local {
             return Some(GlossaryRoute::NotSupported);
@@ -1158,7 +1166,8 @@ impl ResolvedEngines {
             providers: self.providers.clone(),
             asr_fallback: self.asr_fallback.status(ledger),
             llm_fallback: self.refine_fallback.status(ledger),
-            glossary: self.glossary_route(),
+            // §30.6: a fallback model standing in sends its requests its own way.
+            glossary: self.asr_stand_in(ledger).map_or_else(|| self.glossary_route(), |target| Some(target.glossary_route())),
         }
     }
 }
@@ -2433,6 +2442,39 @@ mod tests {
         let read: FallbackSettings = serde_json::from_str(r#"{"enabled":true}"#).unwrap();
         assert!(!read.on_outage, "files written before it read as off");
         assert!(!FallbackSettings { on_outage: true, ..FallbackSettings::default() }.is_default());
+    }
+
+    /// regression (docs/dictation.md §30.6, completion review 2026-11-01): while a fallback model
+    /// stands in for the selected one, the glossary goes where the stand-in's requests go, as the
+    /// chain sends them: nowhere for Model Studio's Qwen3-ASR or a model on this device, the
+    /// `prompt` of an OpenAI-compatible one.
+    #[test]
+    fn regression_the_glossary_route_follows_the_model_standing_in() {
+        let mut secrets = UserSecrets::default();
+        for provider in [ProviderId::Openai, ProviderId::Aliyun, ProviderId::Groq] {
+            secrets.set(provider, ServiceKind::Asr, Some("sk-test".into()));
+        }
+        let shown = |selected: (ProviderId, &str), fallback: FallbackModel, selected_out: bool| {
+            let mut providers = with_provider(ProviderId::Aliyun, ProviderSettings { asr_url: Some(WORKSPACE.into()), ..Default::default() });
+            providers.entry(selected.0).or_default().asr_model = Some(selected.1.into());
+            let settings = EngineSettings {
+                asr_provider: selected.0,
+                providers,
+                asr_fallback: FallbackSettings { enabled: true, on_outage: false, models: vec![fallback] },
+                ..EngineSettings::default()
+            };
+            let resolved = ResolvedEngines::resolve(&settings, &secrets, &BUILT);
+            let ledger = QuotaLedger::with_clock(|| 1_000);
+            if selected_out {
+                ledger.mark(resolved.asr_fallback.selected.as_ref().unwrap(), SwitchReason::Quota);
+            }
+            resolved.status_with(&ledger).glossary
+        };
+        let whisper = (ProviderId::Openai, "whisper-1");
+        let qwen3 = (ProviderId::Aliyun, "qwen3-asr-flash");
+        assert_eq!(shown(whisper, fallback_entry(qwen3.0, qwen3.1), false), Some(GlossaryRoute::Prompt), "the selected model");
+        assert_eq!(shown(whisper, fallback_entry(qwen3.0, qwen3.1), true), Some(GlossaryRoute::NotSupported), "Qwen3-ASR stands in");
+        assert_eq!(shown(qwen3, fallback_entry(ProviderId::Groq, "whisper-large-v3"), true), Some(GlossaryRoute::Prompt), "Groq stands in");
     }
 
     /// docs/dictation.md §3.5, §11.9: the live preview and the output mode the pages show follow

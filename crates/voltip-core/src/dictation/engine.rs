@@ -155,6 +155,9 @@ pub enum Internal {
         session: u64,
         /// The running capture, or why it did not start.
         result: Result<Box<dyn Capture>, DictationError>,
+        /// When the open returned: the take's timeline counts from it, not from when the core
+        /// got to the message (docs/dictation.md §30.1).
+        at: tokio::time::Instant,
     },
     /// The device close + PCM conversion finished (on a blocking thread).
     Stopped {
@@ -167,6 +170,9 @@ pub enum Internal {
     CaptureReady {
         /// Session.
         session: u64,
+        /// When they arrived: a full queue delays the message, not the mark (docs/dictation.md
+        /// §30.1). Samples that came while the device opened arrived when the open returned.
+        at: tokio::time::Instant,
     },
     /// The streaming recogniser's current sentence changed (throttled to [`PARTIAL_THROTTLE`]).
     Partial {
@@ -302,11 +308,11 @@ impl std::fmt::Debug for Internal {
             Self::Context { session, app } => {
                 f.debug_struct("Context").field("session", session).field("app", &app.as_ref().map(|a| a.app_id.as_str())).finish()
             }
-            Self::CaptureStarted { session, result } => f.debug_struct("CaptureStarted").field("session", session).field("ok", &result.is_ok()).finish(),
+            Self::CaptureStarted { session, result, .. } => f.debug_struct("CaptureStarted").field("session", session).field("ok", &result.is_ok()).finish(),
             Self::Stopped { session, result } => {
                 f.debug_struct("Stopped").field("session", session).field("result", &result.as_ref().map(|r| r.duration_ms)).finish()
             }
-            Self::CaptureReady { session } => f.debug_struct("CaptureReady").field("session", session).finish(),
+            Self::CaptureReady { session, .. } => f.debug_struct("CaptureReady").field("session", session).finish(),
             // Preview text never reaches the log, like transcripts.
             Self::Partial { session, current } => f.debug_struct("Partial").field("session", session).field("chars", &current.chars().count()).finish(),
             Self::Segment { session, segment } => f.debug_struct("Segment").field("session", session).field("end_ms", &segment.end_ms).finish(),
@@ -560,9 +566,15 @@ impl TimingMarks {
                 ProcessingStage::Inserting => insert_ms += ms,
             }
         }
+        // A device that delivered while it opened counts as open by its first samples: the steps of
+        // the timeline never overlap.
+        let device_open = match (self.device_open, self.first_audio) {
+            (Some(open), Some(audio)) => Some(open.min(audio)),
+            (open, _) => open,
+        };
         TakeTiming {
             pressed_at: self.pressed_at,
-            device_open_ms: since(self.device_open),
+            device_open_ms: since(device_open),
             first_audio_ms: since(self.first_audio),
             first_text_ms: since(self.first_text),
             released_ms: since(self.released),
@@ -1406,6 +1418,12 @@ impl DictationEngine {
         self.resolve_output_mode(self.output_mode)
     }
 
+    /// The output mode a take on this computer runs with: its scene's when the scene asks for one
+    /// (docs/dictation.md §18.4), else the settings'; the streaming modes need the live preview.
+    pub fn take_output_mode(&self, scene: Option<OutputMode>) -> OutputMode {
+        scene.map_or_else(|| self.effective_output_mode(), |mode| self.resolve_output_mode(mode)).0
+    }
+
     /// The mode a run asking for `mode` gets: the streaming modes need the live preview, the rest
     /// is `whole_take`, with the reason (docs/dictation.md §12; the same rule for a scene, §18.4).
     /// A realtime model streaming the take turns `whole_take` into `streaming_final` (§11.9): its
@@ -1796,17 +1814,19 @@ impl DictationEngine {
                 Ok(result) => result,
                 Err(e) => Err(DictationError::Audio(format!("capture task failed: {e}"))),
             };
+            let opened_at = tokio::time::Instant::now();
             // A device that delivered while it opened is ready before it is open, as it always
-            // read; one that delivers later is forwarded once it does — or never, when its capture
-            // is dropped first.
+            // read, and both happened when the open returned; one that delivers later is
+            // forwarded once it does — or never, when its capture is dropped first.
             let ready_now = ready_rx.try_recv().is_ok();
             if ready_now {
-                let _ = tx.send(Internal::CaptureReady { session }).await;
+                let _ = tx.send(Internal::CaptureReady { session, at: opened_at }).await;
             }
             let opened = result.is_ok();
-            let _ = tx.send(Internal::CaptureStarted { session, result }).await;
+            let _ = tx.send(Internal::CaptureStarted { session, result, at: opened_at }).await;
             if !ready_now && opened && ready_rx.await.is_ok() {
-                let _ = tx.send(Internal::CaptureReady { session }).await;
+                let at = tokio::time::Instant::now();
+                let _ = tx.send(Internal::CaptureReady { session, at }).await;
             }
         });
         if matches!(self.status.phase, DictationPhase::Listening { .. }) {
@@ -1825,8 +1845,8 @@ impl DictationEngine {
             // Not waiting for a probe (a duplicate answer): nothing to do.
             None => return Vec::new(),
             Some(ProbeWait::Alongside) => {
-                // A stop that came before the answer runs without a scene, as below.
-                let mut effects = if matches!(self.status.phase, DictationPhase::Listening { .. }) { self.apply_context(app) } else { Vec::new() };
+                // A release that came before the answer runs without a scene, as below.
+                let mut effects = if self.scene_still_open() { self.apply_context(app) } else { Vec::new() };
                 effects.extend(self.start_waiting_preview());
                 return effects;
             }
@@ -1854,14 +1874,21 @@ impl DictationEngine {
             }
             edit.app_known = true;
         }
-        // A stop that came before the answer (a tap quicker than the probe) runs without a scene.
-        let effects = if matches!(self.status.phase, DictationPhase::Listening { .. }) { self.apply_context(app) } else { Vec::new() };
+        // A release that came before the answer (a tap quicker than the probe) runs without a scene.
+        let effects = if self.scene_still_open() { self.apply_context(app) } else { Vec::new() };
         self.open_capture();
         if self.take.edit.as_ref().is_some_and(|e| e.copy_wanted) {
             // The copy asked for while the probe ran goes out now.
             self.capture_selection();
         }
         effects
+    }
+
+    /// Whether the probe's answer may still pick this take's scene: it is listening and the key was
+    /// not released yet. The release settles the take (docs/dictation.md §30.2), also while
+    /// 松开后继续录音 keeps the microphone open after it.
+    fn scene_still_open(&self) -> bool {
+        matches!(self.status.phase, DictationPhase::Listening { .. }) && self.take.timing.released.is_none()
     }
 
     /// The live preview that waited for the probe's answer (docs/dictation.md §30.2) starts now,
@@ -2179,7 +2206,7 @@ impl DictationEngine {
     pub fn on_internal(&mut self, event: Internal) -> Vec<Effect> {
         match event {
             Internal::Context { session, app } => self.on_context(session, app),
-            Internal::CaptureStarted { session, result } => self.on_capture_started(session, result),
+            Internal::CaptureStarted { session, result, at } => self.on_capture_started(session, result, at),
             Internal::Stopped { session, result } => self.on_stopped(session, result),
             Internal::AutoStop { session } => {
                 if session == self.status.session && matches!(self.status.phase, DictationPhase::Listening { .. }) {
@@ -2194,10 +2221,10 @@ impl DictationEngine {
                 }
                 Vec::new()
             }
-            Internal::CaptureReady { session } => match &self.status.phase {
+            Internal::CaptureReady { session, at } => match &self.status.phase {
                 DictationPhase::Listening { ready: false, live, locked, .. } if session == self.status.session => {
                     let (live, locked) = (live.clone(), *locked);
-                    TimingMarks::mark(&mut self.take.timing.first_audio);
+                    self.take.timing.first_audio.get_or_insert(at);
                     vec![self.set_phase(DictationPhase::Listening { started_at: now_ms(), ready: true, live, locked })]
                 }
                 _ => Vec::new(),
@@ -2866,7 +2893,7 @@ impl DictationEngine {
         effects
     }
 
-    fn on_capture_started(&mut self, session: u64, result: Result<Box<dyn Capture>, DictationError>) -> Vec<Effect> {
+    fn on_capture_started(&mut self, session: u64, result: Result<Box<dyn Capture>, DictationError>, at: tokio::time::Instant) -> Vec<Effect> {
         if session != self.status.session {
             // Opened for a session that is over: release it, nothing to report.
             if let Ok(capture) = result {
@@ -2899,7 +2926,7 @@ impl DictationEngine {
             }
             Ok(mut capture) => match then {
                 None => {
-                    self.take.timing.device_open.get_or_insert_with(tokio::time::Instant::now);
+                    self.take.timing.device_open.get_or_insert(at);
                     let (mut worker, mut no_tap) = (None, false);
                     if self.live_enabled() {
                         match capture.live_pcm() {
@@ -2927,7 +2954,7 @@ impl DictationEngine {
                 Some(Then::Stop) => {
                     *mic = Mic::Stopping;
                     drop(mic);
-                    self.take.timing.device_open.get_or_insert_with(tokio::time::Instant::now);
+                    self.take.timing.device_open.get_or_insert(at);
                     self.begin_stop(capture);
                     // No worker was ever started for this take: nothing will flush.
                     self.degrade("the take ended while the device was opening".to_owned())
@@ -4996,12 +5023,12 @@ mod tests {
         // A capture that opened for an older session is released, not adopted.
         let stray = FakeAudio::speech();
         let capture = stray.start(None, Box::new(|_| {}), Box::new(|| {}), CaptureOptions::default()).unwrap();
-        assert!(r.engine.on_internal(Internal::CaptureStarted { session: 1, result: Ok(capture) }).is_empty());
+        assert!(r.engine.on_internal(Internal::CaptureStarted { session: 1, result: Ok(capture), at: tokio::time::Instant::now() }).is_empty());
         wait_until(|| stray.stops() == 1).await;
         assert_eq!(stray.stops(), 1);
         // …and so is one that arrives when the mic is no longer opening (duplicate).
         let capture = stray.start(None, Box::new(|_| {}), Box::new(|| {}), CaptureOptions::default()).unwrap();
-        assert!(r.engine.on_internal(Internal::CaptureStarted { session: 2, result: Ok(capture) }).is_empty());
+        assert!(r.engine.on_internal(Internal::CaptureStarted { session: 2, result: Ok(capture), at: tokio::time::Instant::now() }).is_empty());
         wait_until(|| stray.stops() == 2).await;
         assert_eq!(stray.stops(), 2);
         assert!(matches!(r.engine.status().phase, DictationPhase::Listening { .. }));
@@ -5189,10 +5216,10 @@ mod tests {
         let DictationPhase::Listening { started_at, ready: true, live: None, .. } = phase(&fx).clone() else { panic!("{fx:?}") };
         assert!(started_at > at_start, "started_at is re-taken when the audio arrives ({started_at} > {at_start})");
         assert!(r.next().await.is_empty());
-        assert!(r.engine.on_internal(Internal::CaptureReady { session: 1 }).is_empty(), "already ready: nothing to report");
-        assert!(r.engine.on_internal(Internal::CaptureReady { session: 7 }).is_empty(), "stale session");
+        assert!(r.engine.on_internal(Internal::CaptureReady { session: 1, at: tokio::time::Instant::now() }).is_empty(), "already ready: nothing to report");
+        assert!(r.engine.on_internal(Internal::CaptureReady { session: 7, at: tokio::time::Instant::now() }).is_empty(), "stale session");
         r.engine.stop().unwrap();
-        assert!(r.engine.on_internal(Internal::CaptureReady { session: 1 }).is_empty(), "late mark while processing");
+        assert!(r.engine.on_internal(Internal::CaptureReady { session: 1, at: tokio::time::Instant::now() }).is_empty(), "late mark while processing");
         let fx = r.run_to_terminal().await;
         assert!(matches!(phase(&fx), DictationPhase::Done { .. }));
         // A device that opens but never delivers: `ready` stays false until the stop.
@@ -5201,7 +5228,7 @@ mod tests {
         assert!(matches!(phase(&fx), DictationPhase::Listening { ready: false, .. }));
         assert!(r.next().await.is_empty(), "CaptureStarted only");
         assert!(matches!(r.engine.status().phase, DictationPhase::Listening { ready: false, .. }));
-        assert!(format!("{:?}", Internal::CaptureReady { session: 1 }).contains("CaptureReady"));
+        assert!(format!("{:?}", Internal::CaptureReady { session: 1, at: tokio::time::Instant::now() }).contains("CaptureReady"));
         r.engine.cancel().unwrap();
         r.wait_stops(1).await;
     }
@@ -5230,6 +5257,48 @@ mod tests {
         assert!(matches!(phase(&fx), DictationPhase::Listening { ready: true, .. }), "{fx:?}");
         r.engine.cancel().unwrap();
         r.wait_stops(1).await;
+    }
+
+    /// regression (docs/dictation.md §30.1, completion review 2026-11-01): the first samples count
+    /// from when they arrived, not from when a full queue let their mark through.
+    #[tokio::test(start_paused = true)]
+    async fn regression_the_first_samples_count_from_their_arrival_not_from_the_queue() {
+        let (audio, ready) = FakeAudio::speech().ready_by_hand();
+        let mut r = rig(audio, FakeTranscriber::ok(FAKE_TRANSCRIPT), None, FakeInjector::paste(), false);
+        r.engine.start().unwrap();
+        assert!(r.next().await.is_empty(), "the open reports nothing; the samples are still to come");
+        let tx = r.engine.internal.clone();
+        for _ in 0..INTERNAL_QUEUE {
+            tx.try_send(Internal::DwellOver { session: 0 }).expect("room in the queue");
+        }
+        assert!(ready.fire(), "the first samples arrive while the queue is full");
+        // Their mark waits for room; the core gets to it 700 ms later.
+        r.settle().await;
+        tokio::time::advance(Duration::from_millis(700)).await;
+        for _ in 0..INTERNAL_QUEUE {
+            assert!(r.next().await.is_empty(), "a stale notification changes nothing");
+        }
+        let marked = tokio::time::timeout(Duration::from_secs(5), r.rx.recv()).await.expect("the ready mark").expect("engine alive");
+        r.engine.on_internal(marked);
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        let DictationPhase::Done { timing: Some(t), .. } = phase(&fx) else { panic!("{fx:?}") };
+        assert!(t.first_audio_ms.is_some_and(|ms| ms < 700), "counted from the arrival: {t:?}");
+        assert!(t.device_open_ms <= t.first_audio_ms, "{t:?}");
+    }
+
+    /// docs/dictation.md §30.1: a device that delivered while it opened counts as open by its
+    /// first samples, so the steps of the timeline never overlap.
+    #[test]
+    fn the_device_counts_as_open_by_its_first_samples() {
+        let mut marks = TimingMarks::new();
+        let at = |ms| marks.pressed + Duration::from_millis(ms);
+        let (open, audio, released) = (at(100), at(50), at(1_000));
+        marks.device_open = Some(open);
+        marks.first_audio = Some(audio);
+        marks.released = Some(released);
+        let t = marks.finish();
+        assert_eq!((t.device_open_ms, t.first_audio_ms, t.released_ms), (Some(50), Some(50), Some(1_000)), "{t:?}");
     }
 
     /// docs/dictation.md §30.3: 开始录音时播放提示音 asks the capture for the ready cue — a take on
@@ -6373,6 +6442,28 @@ mod tests {
             assert_eq!(r.transcriber.calls(), 1);
         }
         assert_eq!(happy().engine.effective_output_mode(), (OutputMode::WholeTake, None));
+    }
+
+    /// docs/dictation.md §30.5: a 试识别 cleans up as the take it stands for would, so it asks for
+    /// that take's mode: its scene's where the live preview can serve it (§18.4), else the
+    /// settings' effective one.
+    #[tokio::test]
+    async fn a_takes_output_mode_is_its_scenes_where_it_can_be_served() {
+        let audio = Arc::new(FakeAudio::speech());
+        let transcriber = Arc::new(FakeTranscriber::ok(FAKE_TRANSCRIPT));
+        let injector = Arc::new(FakeInjector::paste());
+        let (levels_tx, _levels) = broadcast::channel(64);
+        let ports = DictationPorts { streaming: Some(Arc::new(FakeStreaming::script())), ..ports_with(audio, transcriber, None, injector) };
+        let (mut engine, _rx) = DictationEngine::new(ports, &resolved_mode(OutputMode::WholeTake, true, false), levels_tx);
+        assert_eq!(engine.take_output_mode(None), OutputMode::WholeTake);
+        assert_eq!(engine.take_output_mode(Some(OutputMode::LiveInject)), OutputMode::LiveInject);
+        engine.configure(&resolved_mode(OutputMode::LiveInject, true, false));
+        assert_eq!(engine.take_output_mode(None), OutputMode::LiveInject);
+        assert_eq!(engine.take_output_mode(Some(OutputMode::WholeTake)), OutputMode::WholeTake, "the scene's mode wins");
+        // The live preview off: neither the settings' streaming mode nor the scene's can run.
+        engine.configure(&resolved_mode(OutputMode::LiveInject, false, false));
+        assert_eq!(engine.take_output_mode(None), OutputMode::WholeTake);
+        assert_eq!(engine.take_output_mode(Some(OutputMode::LiveInject)), OutputMode::WholeTake);
     }
 
     // ---------------- vocabulary (docs/dictation.md §16) and script (§17) ----------------
@@ -7638,6 +7729,35 @@ mod tests {
         assert_eq!(r.transcriber.languages(), vec![Some("en".to_owned())], "the scene's language");
         assert_eq!(record(&fx).unwrap().scene.as_ref().map(|s| s.name.as_str()), Some("英文"));
         assert_eq!(r.audio.starts(), 1);
+    }
+
+    /// regression (docs/dictation.md §30.2, completion review 2026-11-01): the release settles the
+    /// take's scene where the device waits for the probe too. A release noted before the answer
+    /// (松开后继续录音 keeps the take listening) leaves the take on the global settings.
+    #[tokio::test(start_paused = true)]
+    async fn regression_an_answer_after_the_release_applies_no_scene_where_the_device_waited() {
+        let probe = Arc::new(FakeProbe::app_when_released("slack", "Slack"));
+        let mut r = rig_probed(probe.clone(), FakeTranscriber::ok("hi"), Some(FakeRefiner::ok("润色")), None, &resolved(true, None));
+        let english = crate::scenes::SceneOverrides {
+            language: Some("en".into()),
+            refine_enabled: Some(false),
+            output_mode: Some(OutputMode::WholeTake),
+            ..Default::default()
+        };
+        r.engine.set_scenes(Arc::new(vec![scene_with("英文", &["slack"], &[], english)]));
+        r.engine.start().unwrap();
+        wait_until(|| probe.calls() == 1).await;
+        r.settle().await;
+        assert_eq!(r.audio.starts(), 0, "the device waits for the answer");
+        r.engine.note_release();
+        probe.release();
+        let fx = r.next().await;
+        assert!(fx.iter().all(|e| !matches!(e, Effect::Status(s) if s.context.is_some())), "no context after the release: {fx:?}");
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { refined: true, .. }), "the global clean-up ran: {fx:?}");
+        assert_eq!(r.transcriber.languages(), vec![None], "the global language");
+        assert_eq!(record(&fx).unwrap().scene, None);
     }
 
     /// docs/dictation.md §30.2: a scene that may change the output mode, or a voice edit, keeps the

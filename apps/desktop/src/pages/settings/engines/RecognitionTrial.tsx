@@ -21,7 +21,7 @@ function blockedReason(state: UiState, t: TFunction): string | undefined {
 }
 
 /** 试识别 (docs/dictation.md §30.5), under the recognition providers: the newest kept recording of
- *  two minutes at most, recognised (and cleaned up when the settings say so) with the saved
+ *  two minutes at most, recognised (and cleaned up where a take would be) with the saved
  *  settings. The text, who wrote it, how long it took and whether the glossary went out are shown
  *  here only: nothing is pasted, copied or written to the history. The button is off, and says
  *  why, while no recording can be tried. Not shown where the app keeps no recordings (the phone). */
@@ -87,9 +87,11 @@ function TrialDone({ result }: { result: TrialResult }) {
       ]
         .filter((part) => part !== undefined)
         .join(" · ")
-    : result.refine_failure === undefined
-      ? t("engines.trial.refineOff")
-      : notRefinedText(result.refine_failure, locale);
+    : result.refine_failure !== undefined
+      ? notRefinedText(result.refine_failure, locale)
+      : result.live_inject === true
+        ? t("engines.refineLiveInject")
+        : t("engines.trial.refineOff");
   const rows: [string, string][] = [
     [
       t("engines.trial.provider"),

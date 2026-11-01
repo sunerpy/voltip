@@ -4451,9 +4451,13 @@ export class MockBackend implements Backend {
     return { ...status, ...this.engineOverrides };
   }
 
-  /** The dictionary has an enabled entry to send as the glossary (`vocabulary::has_glossary`). */
+  /** A take may send a glossary (`runtime::no_glossary`, negated): the dictionary has an enabled
+   *  entry, or an enabled built-in scene has a term pack it adds in its applications. */
   private hasGlossary(): boolean {
-    return this.state.dictionary.some((entry) => entry.enabled);
+    return (
+      this.state.dictionary.some((entry) => entry.enabled) ||
+      this.state.scenes.some((scene) => scene.enabled && hasTermPack(scene))
+    );
   }
 
   private emitPhase(phase: DictationPhase, session = this.state.dictation.session) {
@@ -5052,8 +5056,9 @@ export class MockBackend implements Backend {
   }
 
   /** 用最近一条录音试一下 (docs/dictation.md §30.5), as the core runs it: the newest kept WAV on the
-   *  settings' models, its scene matched against the application it was recorded in; nothing is
-   *  pasted, copied or written to the history, and the take's state is left alone. */
+   *  settings' models, its scene matched against the application it was recorded in, cleaned up
+   *  only where a take would be; nothing is pasted, copied or written to the history, and the
+   *  take's state is left alone. */
   private recognitionTrial() {
     if (this.state.recognition_trial?.state === "running") {
       this.emit({ type: "error", message: MOCK_TRIAL_BUSY });
@@ -5082,7 +5087,18 @@ export class MockBackend implements Backend {
     const settings = this.state.settings.engines;
     const scene =
       recording.app === undefined ? undefined : matchScene(this.state.scenes, recording.app);
-    const refine = scene?.overrides.refine_enabled ?? settings.refine_enabled;
+    const wanted = scene?.overrides.refine_enabled ?? settings.refine_enabled;
+    // §12: a take in 边说边输入 is never cleaned up, so neither is its trial. The mode is the take's:
+    // the scene's when the live preview can serve it, the effective one otherwise.
+    const sceneMode = scene?.overrides.output_mode;
+    const mode =
+      sceneMode == null
+        ? engines.effective_output_mode
+        : sceneMode === "whole_take" || engines.live_preview_ready
+          ? sceneMode
+          : "whole_take";
+    const liveInject = wanted && mode === "live_inject";
+    const refine = wanted && !liveInject;
     const refineFailure = !refine
       ? undefined
       : engines.refine_ready
@@ -5111,7 +5127,11 @@ export class MockBackend implements Backend {
           asr_provider: settings.asr_provider,
           asr_model: engines.asr_model,
           asr_ms: MOCK_ASR_MS,
-          glossary_sent: engines.glossary === "prompt" || engines.glossary === "hotwords",
+          // §30.6: the dictionary's terms, and the term pack of the scene the recording matches.
+          glossary_sent:
+            (engines.glossary === "prompt" || engines.glossary === "hotwords") &&
+            (this.state.dictionary.some((entry) => entry.enabled) ||
+              (scene !== undefined && hasTermPack(scene))),
           refined: polished,
           ...(polished
             ? {
@@ -5121,6 +5141,7 @@ export class MockBackend implements Backend {
               }
             : {}),
           ...(refineFailure === undefined ? {} : { refine_failure: refineFailure }),
+          ...(liveInject ? { live_inject: true } : {}),
           elapsed_ms: this.now() - startedAt,
         },
       });
@@ -6119,12 +6140,14 @@ export class MockBackend implements Backend {
   }
 
   private emit(event: UiEvent) {
-    const hadGlossary = event.type === "dictionary" && this.hasGlossary();
+    const glossaryInput = event.type === "dictionary" || event.type === "scenes";
+    const hadGlossary = glossaryInput && this.hasGlossary();
     this.state = applyEvent(this.state, event);
     this.log.push(event);
     for (const listener of this.listeners) listener(event);
-    // docs/dictation.md §30.6: the status follows the first enabled entry and the last, as the core's.
-    if (event.type === "dictionary" && hadGlossary !== this.hasGlossary()) {
+    // docs/dictation.md §30.6: the status follows the first enabled entry or term pack and the
+    // last, as the core's.
+    if (glossaryInput && hadGlossary !== this.hasGlossary()) {
       this.emit({ type: "engines", ...this.resolveEngines(this.state.settings.engines) });
     }
   }
@@ -6195,6 +6218,12 @@ function sceneRefOf(scene: Scene): SceneRef {
     name: scene.name,
     ...(scene.builtin === undefined ? {} : { builtin: scene.builtin }),
   };
+}
+
+/** A built-in scene whose term pack is not empty (`vocabulary::packs::terms`): 聊天 has none. */
+function hasTermPack(scene: Scene): boolean {
+  const row = MOCK_BUILTIN_SCENES.find((r) => r.id === scene.builtin);
+  return row !== undefined && row.terms.length > 0;
 }
 
 /** The preview's fixed id of the built-in scene at `index` of `MOCK_BUILTIN_SCENES`. */

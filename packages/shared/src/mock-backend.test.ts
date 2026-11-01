@@ -3169,6 +3169,59 @@ describe("MockBackend scenes and context (docs/dictation.md section 18)", () => 
     backend.destroy();
   });
 
+  it("regression: docs/dictation.md §30.6: an enabled built-in scene with a term pack sends a glossary in its applications, with an empty dictionary", async () => {
+    const backend = new MockBackend({ now: () => clock, history: [] });
+    expect(backend.peek().dictionary).toEqual([]);
+    expect(backend.peek().engines.glossary).toBe("empty");
+    const builtin = (id: string) => {
+      const found = backend.peek().scenes.find((s) => s.builtin === id);
+      if (!found) throw new Error(id);
+      return found;
+    };
+    const turn = async (id: string, enabled: boolean) => {
+      const { name, match, overrides } = builtin(id);
+      await backend.invoke("scenes_update", {
+        id: builtin(id).id,
+        scene: { name, enabled, match, overrides },
+      });
+    };
+    // 聊天 has no term pack.
+    await turn("chat", true);
+    expect(backend.peek().engines.glossary).toBe("empty");
+    await turn("coding", true);
+    expect(backend.peek().engines.glossary).toBe("prompt");
+    // A 试识别 sends the pack only for a recording made in the scene's application.
+    const app = builtin("coding").match.apps[0];
+    if (app === undefined) throw new Error("an application of 编程");
+    const trial = async (recordedIn: string) => {
+      const kept = new MockBackend({
+        now: () => clock,
+        history: [],
+        scenes: backend.peek().scenes,
+        audioCache: [
+          {
+            id: "r1",
+            at_ms: T0,
+            duration_ms: 3000,
+            bytes: 96_044,
+            app: { id: recordedIn, name: recordedIn },
+            status: { kind: "cancelled" },
+          },
+        ],
+      });
+      await kept.invoke("recognition_trial");
+      tick(MOCK_ASR_MS + MOCK_REFINE_MS);
+      const result = kept.peek().recognition_trial;
+      kept.destroy();
+      return result?.state === "done" ? result.glossary_sent : undefined;
+    };
+    expect(await trial(app)).toBe(true);
+    expect(await trial("notepad")).toBe(false);
+    await turn("coding", false);
+    expect(backend.peek().engines.glossary).toBe("empty");
+    backend.destroy();
+  });
+
   it("regression: the phone's scenes follow the core: built-in ones and its own without applications, and a pinned scene", async () => {
     // User decision 2026-10-01: the phone picks a take's scene on its talk card (it refused every
     // scene command before); a desktop's scene still names an application.
@@ -4417,6 +4470,74 @@ describe("MockBackend audio cache (docs/dictation.md §26)", () => {
       "cancelled",
       "cancelled",
     ]);
+  });
+
+  it("regression: 试识别 in 边说边输入 runs no clean-up, as a take there runs none (§12, §30.5)", async () => {
+    const recording = {
+      id: "r1",
+      at_ms: T0,
+      duration_ms: 3000,
+      bytes: 96_044,
+      app: { id: "slack", name: "Slack" },
+      status: { kind: "cancelled" as const },
+    };
+    const global = new MockBackend({
+      now: () => clock,
+      history: [],
+      settings: { engines: { ...defaultEngineSettings(), output_mode: "live_inject" } },
+      engines: { effective_output_mode: "live_inject" },
+      audioCache: [recording],
+    });
+    expect(global.peek().settings.engines.refine_enabled).toBe(true);
+    await global.invoke("recognition_trial");
+    tick(MOCK_ASR_MS);
+    const trial = global.peek().recognition_trial;
+    expect(trial).toMatchObject({
+      state: "done",
+      refined: false,
+      live_inject: true,
+      elapsed_ms: MOCK_ASR_MS,
+    });
+    expect(trial).not.toHaveProperty("refine_failure");
+    expect(trial).not.toHaveProperty("refine_model");
+    // A scene of the recording's application that types as one speaks, with the live preview ready.
+    const scene = new MockBackend({
+      now: () => clock,
+      history: [],
+      engines: { live_preview_ready: true },
+      scenes: [
+        {
+          id: "00000000-0000-4000-8000-000000000001",
+          name: "聊天",
+          enabled: true,
+          match: { apps: ["slack"], title_contains: [] },
+          overrides: { output_mode: "live_inject" },
+          created_at_ms: 1,
+          updated_at_ms: 1,
+        },
+      ],
+      audioCache: [recording],
+    });
+    expect(scene.peek().engines.effective_output_mode).toBe("whole_take");
+    await scene.invoke("recognition_trial");
+    tick(MOCK_ASR_MS);
+    expect(scene.peek().recognition_trial).toMatchObject({
+      state: "done",
+      refined: false,
+      live_inject: true,
+    });
+    // Without the live preview the scene's mode cannot be served, and the take is cleaned up.
+    const unserved = new MockBackend({
+      now: () => clock,
+      history: [],
+      scenes: scene.peek().scenes.filter((s) => s.builtin === undefined),
+      audioCache: [recording],
+    });
+    await unserved.invoke("recognition_trial");
+    tick(MOCK_ASR_MS + MOCK_REFINE_MS);
+    const cleaned = unserved.peek().recognition_trial;
+    expect(cleaned).toMatchObject({ state: "done", refined: true });
+    expect(cleaned).not.toHaveProperty("live_inject");
   });
 
   it("试识别 says when there is no recording, or no recogniser, to try", async () => {

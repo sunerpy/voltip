@@ -1354,6 +1354,8 @@ export const trialResultSchema = z.object({
   refine_ms: z.number().nonnegative().optional(),
   /** Why a clean-up the settings ask for was not used (§3.6). */
   refine_failure: refineFailureSchema.optional(),
+  /** The settings ask for a clean-up, but the take's mode is 边说边输入, where none runs (§12). */
+  live_inject: z.boolean().optional(),
   elapsed_ms: z.number().nonnegative(),
 });
 export type TrialResult = z.infer<typeof trialResultSchema>;

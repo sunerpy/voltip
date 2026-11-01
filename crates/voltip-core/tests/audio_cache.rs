@@ -446,6 +446,89 @@ async fn a_trial_cleans_up_as_the_settings_say_and_one_runs_at_a_time() {
     shutdown(node).await;
 }
 
+/// regression (docs/dictation.md §30.5, completion review 2026-11-01): 试识别 cleans up only where a
+/// take would. In the output mode 边说边输入 (`live_inject`), which never cleans up (§12), nothing
+/// goes to the clean-up: set in the settings, or by the scene of the recording's application.
+#[tokio::test]
+async fn regression_a_trial_in_live_inject_runs_no_clean_up() {
+    use voltip_core::dictation::fakes::{FAKE_STREAMING_MODEL_ID, FakeModels, FakeProbe, FakeStreaming};
+    use voltip_core::{OutputMode, SceneDraft, SceneMatch, SceneOverrides};
+    let dir = tempfile::tempdir().unwrap();
+    let custom = ProviderSettings {
+        asr_url: Some("https://asr.example.test".into()),
+        asr_model: Some("whisper".into()),
+        llm_url: Some("https://llm.example.test/v1".into()),
+        llm_model: Some("polish".into()),
+        ..Default::default()
+    };
+    let engines = EngineSettings {
+        asr_provider: ProviderId::Custom,
+        llm_provider: ProviderId::Custom,
+        refine_enabled: true,
+        live_preview: true,
+        providers: [(ProviderId::Custom, custom)].into(),
+        ..EngineSettings::default()
+    };
+    SettingsStore::new(dir.path()).save(&Settings { relay_enabled: false, engines: engines.clone(), ..Settings::default() }).unwrap();
+    let transcriber = Arc::new(FakeTranscriber::ok("你好"));
+    let refiner = Arc::new(FakeRefiner::ok("你好。"));
+    let factory: voltip_core::dictation::EngineFactory = {
+        let (transcriber, refiner) = (transcriber.clone(), refiner.clone());
+        Arc::new(move |_: &ResolvedEngines| (transcriber.clone() as Arc<dyn Transcriber>, Some(refiner.clone() as Arc<dyn Refiner>)))
+    };
+    let ports = DictationPorts {
+        audio: Arc::new(FakeAudio::speech()),
+        injector: Arc::new(FakeInjector::paste()),
+        factory,
+        // The live preview is usable, so 边说边输入 is what a take would run.
+        models: Some(Arc::new(FakeModels::new(1).with_installed(FAKE_STREAMING_MODEL_ID))),
+        streaming: Some(Arc::new(FakeStreaming::script())),
+        probe: Some(Arc::new(FakeProbe::app("slack", "Slack", None))),
+        service_probe: None,
+        segmenter: None,
+    };
+    let (handle, events) = AppCore::start_with(CoreConfig::new(dir.path().to_path_buf()), Arc::new(MemorySecretStore::new()), ports).unwrap();
+    let mut node = Node { handle, events };
+    ready(&mut node).await;
+    // A whole take in Slack, cleaned up, keeps its recording and the application: the stop waits for
+    // the probe's answer (one that came after the release would apply no context, §30.2).
+    node.handle.send(CoreCommand::DictationStart).await.unwrap();
+    wait(&mut node, |e| matches!(e, CoreEvent::Dictation(s) if matches!(s.phase, DictationPhase::Listening { .. }) && s.context.is_some()).then_some(()))
+        .await;
+    node.handle.send(CoreCommand::DictationStop).await.unwrap();
+    let done = wait(&mut node, |e| match e {
+        CoreEvent::Dictation(s) if s.phase.is_terminal() => Some(s.phase.clone()),
+        _ => None,
+    })
+    .await;
+    assert!(matches!(done, DictationPhase::Done { refined: true, .. }), "{done:?}");
+    cache_until(&mut node, |v| v.recordings.first().is_some_and(|r| r.status.entry().is_some())).await;
+    node.handle.send(CoreCommand::SetEngines(EngineSettings { output_mode: OutputMode::LiveInject, ..engines.clone() })).await.unwrap();
+    wait(&mut node, |e| matches!(e, CoreEvent::Engines(s) if s.effective_output_mode == OutputMode::LiveInject).then_some(())).await;
+    let before = refiner.calls();
+    node.handle.send(CoreCommand::RecognitionTrial).await.unwrap();
+    let (view, _) = trial_end(&mut node).await;
+    let TrialView::Done(result) = view else { panic!("{view:?}") };
+    assert_eq!((result.text.as_str(), result.refined, result.refine_failure), ("你好", false, None), "{result:?}");
+    assert!(result.live_inject, "it says why: {result:?}");
+    assert_eq!(refiner.calls(), before, "nothing went to the clean-up");
+
+    // Whole takes again, and a scene for Slack that types as one speaks: the trial of the Slack
+    // recording follows the scene, as a take there would.
+    node.handle.send(CoreCommand::SetEngines(engines)).await.unwrap();
+    wait(&mut node, |e| matches!(e, CoreEvent::Engines(s) if s.effective_output_mode == OutputMode::WholeTake).then_some(())).await;
+    let live = SceneOverrides { output_mode: Some(OutputMode::LiveInject), ..Default::default() };
+    let matching = SceneMatch { apps: vec!["slack".into()], title_contains: Vec::new() };
+    node.handle.send(CoreCommand::SceneAdd(SceneDraft { name: "聊天".into(), enabled: true, matching, overrides: live })).await.unwrap();
+    wait(&mut node, |e| matches!(e, CoreEvent::Scenes(s) if s.iter().any(|scene| scene.name == "聊天")).then_some(())).await;
+    node.handle.send(CoreCommand::RecognitionTrial).await.unwrap();
+    let (view, _) = trial_end(&mut node).await;
+    let TrialView::Done(result) = view else { panic!("{view:?}") };
+    assert_eq!((result.refined, result.live_inject), (false, true), "{result:?}");
+    assert_eq!(refiner.calls(), before, "nothing went to the clean-up");
+    shutdown(node).await;
+}
+
 /// A trial whose recognition fails says why, as a take would; an app that keeps no recordings has
 /// none to try.
 #[tokio::test]

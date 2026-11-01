@@ -2044,7 +2044,7 @@
         }
       ]
     },
-    "glossary": "prompt"
+    "glossary": "not_supported"
   },
   {
     "type": "engines",
@@ -2483,7 +2483,7 @@
         }
       ]
     },
-    "glossary": "prompt"
+    "glossary": "not_supported"
   },
   {
     "type": "engines",
@@ -2922,7 +2922,7 @@
         }
       ]
     },
-    "glossary": "prompt"
+    "glossary": "not_supported"
   },
   {
     "type": "engines",
@@ -5823,6 +5823,24 @@
       "refined": false,
       "refine_ms": 1200,
       "refine_failure": "truncated",
+      "elapsed_ms": 1530
+    }
+  },
+  {
+    "type": "recognition_trial",
+    "trial": {
+      "state": "done",
+      "recording": "4a7c2e10-6b1d-4f3a-9c8e-5d2b7a1f0e93",
+      "recorded_at_ms": 1758700480000,
+      "duration_ms": 4200,
+      "text": "Voltip 的试识别。",
+      "raw_text": "沃提普的试识别",
+      "asr_provider": "custom",
+      "asr_model": "whisper-1",
+      "asr_ms": 640,
+      "glossary_sent": true,
+      "refined": false,
+      "live_inject": true,
       "elapsed_ms": 1530
     }
   },

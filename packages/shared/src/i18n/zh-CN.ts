@@ -1198,6 +1198,7 @@ export const zhCN = {
      *  (`EngineStatus.glossary`); the dictionary page and the recognition settings say it. */
     glossary: {
       receives: "当前识别服务会收到术语表。",
+      scenes: "词典没有启用的词条；在已启用的内置场景里，当前识别服务会收到该场景的术语表。",
       notSupported: "当前识别服务不接收术语表，词典只在识别之后纠正。",
       local: "本地模型不接收术语表，词典只在识别之后纠正。",
       empty: "没有启用的词条，目前不会向识别服务发送术语表。",

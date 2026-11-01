@@ -18,7 +18,7 @@ use crate::audio_cache::{
 use crate::dictation::archive::{self, ArchiveReport, Leftover};
 use crate::dictation::long;
 use crate::dictation::{FailureCode, Retake, RetakeAudio, TakeClients};
-use crate::engines::{ResolvedEngines, ServiceKind};
+use crate::engines::{OutputMode, ResolvedEngines, ServiceKind};
 use crate::history::HistoryStore;
 use crate::serve::{Catalog, Defaults, Profile, resolve_recipe};
 use crate::settings::{AudioCacheSettings, Settings};
@@ -183,6 +183,10 @@ impl Runtime {
         // A take names the application in front, not its id; the usage record, a 重新识别.
         recipe.hints.context.app_name = recording.app.as_ref().filter(|_| self.settings.context_sharing.app_name).map(|app| app.name.clone());
         recipe.hints.origin = Some(UsageOrigin::Retake);
+        // §12: a take that pastes sentence by sentence (边说边输入) never cleans up; nor does its trial.
+        let scene_mode =
+            recipe.scene.as_ref().and_then(|applied| self.scenes.scenes().iter().find(|s| s.id == applied.id)).and_then(|s| s.overrides.output_mode);
+        let live_inject = self.dictation.take_output_mode(scene_mode) == OutputMode::LiveInject;
         let job = TrialJob {
             recording: recording.id,
             recorded_at_ms: recording.at_ms,
@@ -191,6 +195,7 @@ impl Runtime {
             transcriber: self.dictation.transcriber(),
             refiner: self.dictation.refiner(),
             refine: recipe.refine,
+            live_inject,
             language: recipe.language,
             script: recipe.script,
             vocabulary: recipe.vocabulary,

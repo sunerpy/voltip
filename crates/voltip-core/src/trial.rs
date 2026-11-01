@@ -81,6 +81,10 @@ pub struct TrialResult {
     /// Why a clean-up that was asked for was not used (§3.6).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refine_failure: Option<RefineFailure>,
+    /// The take would run as 边说边输入 (`live_inject`, §12), which never cleans up: the clean-up the
+    /// settings ask for did not run.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub live_inject: bool,
     /// From the start of the trial to its text.
     pub elapsed_ms: u64,
 }
@@ -116,6 +120,8 @@ pub struct TrialJob {
     pub refiner: Option<Arc<dyn Refiner>>,
     /// Whether the settings clean takes up.
     pub refine: bool,
+    /// The take would run as 边说边输入, so the clean-up the settings ask for does not run (§12).
+    pub live_inject: bool,
     /// The language hint.
     pub language: Option<String>,
     /// The script the text is brought to.
@@ -147,7 +153,7 @@ pub async fn run(job: TrialJob) -> TrialView {
         return TrialView::Failed { recording: Some(job.recording), failure: TrialFailure::Failed { code: FailureCode::from(&e), message: e.to_string() } };
     }
     let corrected = steps::correct(&job.vocabulary, &recognised.text);
-    let cleaned = match (job.refine, &job.refiner) {
+    let cleaned = match (job.refine && !job.live_inject, &job.refiner) {
         (true, Some(refiner)) => steps::run_refine(refiner.as_ref(), &corrected.text, &job.hints).await,
         (true, None) => steps::CleanUp::skipped(&corrected.text, Some(RefineFailure::Unconfigured)),
         (false, _) => steps::CleanUp::skipped(&corrected.text, None),
@@ -170,6 +176,7 @@ pub async fn run(job: TrialJob) -> TrialView {
         refine_model: cleaned.refine_model.filter(|_| cleaned.refined),
         refine_ms: cleaned.refine_ms,
         refine_failure: cleaned.refine_failure,
+        live_inject: job.refine && job.live_inject,
         elapsed_ms,
     }))
 }
@@ -191,6 +198,7 @@ mod tests {
             transcriber: Arc::new(transcriber),
             refiner: refiner.map(|r| Arc::new(r) as Arc<dyn Refiner>),
             refine,
+            live_inject: false,
             language: Some("zh".into()),
             script: ChineseScript::Simplified,
             vocabulary: Arc::new(vocabulary),
