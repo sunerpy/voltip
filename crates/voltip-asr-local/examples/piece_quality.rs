@@ -7,8 +7,14 @@
 //! ```text
 //! cargo run --release -p voltip-asr-local --example piece_quality -- \
 //!   --model sense-voice-small --dir <model directory> --manifest /tmp/voltip-measure/corpus/manifest.csv \
-//!   [--lengths 30,60,90,119,121] [--machine linux] [--hyp-dir <directory>] [--header]
+//!   [--lengths 30,60,90,119,121 | --lengths all] [--machine linux] [--hyp-dir <directory>] [--header] \
+//!   [--vad-root <models root>]
 //! ```
+//!
+//! `--lengths all` takes every clip whatever its length (the sentences shape of make-corpus.py,
+//! whose lengths are fractional). `--vad-root` names a model library holding the `silero-vad`
+//! entry: every clip is first cut to its speech, as a take with `vad_trim` on is
+//! (docs/dictation.md §30.4).
 //!
 //! `--dir` holds the catalogue entry's files (`model.int8.onnx` + `tokens.txt`, or the GGUF). The
 //! manifest's paths are used as written, or else found beside the manifest (`<lang>/<file>`), so a
@@ -26,14 +32,14 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use voltip_asr_local::transcriber::language_for;
-use voltip_asr_local::{Abort, Compute, DefaultLoader, LocalDevice, Recognizer, RecognizerLoader, decode_wav, entry};
+use voltip_asr_local::{Abort, Compute, DefaultLoader, LocalDevice, Recognizer, RecognizerLoader, VadTrimmer, decode_wav, entry};
 use voltip_core::ChineseScript;
 
 /// One clip of the manifest.
 struct Clip {
     lang: String,
     name: String,
-    length_s: u32,
+    length_s: f64,
     speech_s: String,
     wav: PathBuf,
     reference: PathBuf,
@@ -165,8 +171,14 @@ fn main() {
     let dir = PathBuf::from(arg(&args, "--dir").expect("--dir <model directory>"));
     let manifest = PathBuf::from(arg(&args, "--manifest").expect("--manifest <manifest.csv>"));
     let machine = arg(&args, "--machine").unwrap_or_else(|| std::env::consts::OS.to_owned());
-    let lengths: Vec<u32> =
-        arg(&args, "--lengths").unwrap_or_else(|| "30,60,90,119,121".into()).split(',').map(|l| l.trim().parse().expect("--lengths")).collect();
+    let lengths_arg = arg(&args, "--lengths").unwrap_or_else(|| "30,60,90,119,121".into());
+    // `all`: one pass over every clip, whatever its length.
+    let lengths: Vec<Option<f64>> =
+        if lengths_arg == "all" { vec![None] } else { lengths_arg.split(',').map(|l| Some(l.trim().parse().expect("--lengths"))).collect() };
+    let vad = arg(&args, "--vad-root").map(|root| VadTrimmer::new(PathBuf::from(root)));
+    if let Some(vad) = &vad {
+        assert!(vad.is_installed(), "--vad-root: the silero-vad entry is not installed there");
+    }
     let hyp_dir = arg(&args, "--hyp-dir").map(PathBuf::from);
     let entry = entry(&model).unwrap_or_else(|| panic!("{model} is not in the catalogue"));
     if let Some(hyp_dir) = &hyp_dir {
@@ -182,6 +194,7 @@ fn main() {
     // The recogniser in memory and the language it was loaded for.
     let mut loaded: Option<(Option<&'static str>, Box<dyn Recognizer>, u128)> = None;
     for &length in &lengths {
+        let matches = |clip: &Clip| length.is_none_or(|l| (clip.length_s - l).abs() < 1e-6);
         for &lang in &languages {
             let language = language_for(entry.engine, Some(hint(lang)));
             if loaded.as_ref().is_none_or(|(l, _, _)| *l != language) {
@@ -192,8 +205,18 @@ fn main() {
                 loaded = Some((language, recognizer, started.elapsed().as_millis()));
             }
             let (_, recognizer, load_ms) = loaded.as_mut().unwrap();
-            for clip in clips.iter().filter(|c| c.lang == lang && c.length_s == length) {
+            for clip in clips.iter().filter(|c| c.lang == lang && matches(c)) {
                 let (samples, rate) = decode_wav(&std::fs::read(&clip.wav).unwrap_or_else(|e| panic!("{}: {e}", clip.wav.display()))).expect("wav");
+                let samples = match &vad {
+                    Some(vad) => {
+                        let trim = vad.trim(&samples, rate);
+                        if let Some(why) = &trim.skipped {
+                            eprintln!("{model} {}: not trimmed: {why}", clip.name);
+                        }
+                        trim.samples
+                    }
+                    None => samples,
+                };
                 let reference = std::fs::read_to_string(&clip.reference).expect("reference");
                 let started = Instant::now();
                 let outcome = recognizer.transcribe(rate, &samples, &Abort::new());
@@ -207,11 +230,12 @@ fn main() {
                 };
                 let (metric, edits, units) = score(lang, &reference, &text);
                 let rate_pct = if units == 0 { 0.0 } else { edits as f64 * 100.0 / units as f64 };
-                let rtf = infer_ms as f64 / (f64::from(length) * 1000.0);
+                let rtf = infer_ms as f64 / (clip.length_s * 1000.0);
                 println!(
-                    "piece,{machine},{model},{},{lang},{},{length},{},{load_ms},{infer_ms},{rtf:.4},{metric},{edits},{units},{rate_pct:.2},{status}",
+                    "piece,{machine},{model},{},{lang},{},{},{},{load_ms},{infer_ms},{rtf:.4},{metric},{edits},{units},{rate_pct:.2},{status}",
                     recognizer.backend(),
                     clip.name,
+                    clip.length_s,
                     clip.speech_s
                 );
                 if let Some(hyp_dir) = &hyp_dir {
@@ -222,6 +246,7 @@ fn main() {
             }
         }
         let peak = peak_rss_mb().map_or_else(String::new, |mb| format!("{mb:.1}"));
+        let length = length.map_or_else(|| "all".to_owned(), |l| l.to_string());
         println!("peak,{machine},{model},{length},{peak}");
     }
 }

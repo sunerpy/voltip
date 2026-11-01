@@ -15,8 +15,8 @@
 //! there to be removed. With `VOLTIP_CUE_CORPUS=<manifest.csv>` (scripts/measure/make-corpus.py
 //! sentences) and `VOLTIP_CUE_OUT=<dir>`, `the_cue_leaves_the_first_words_alone` records every
 //! sentence twice, with the cue and without it, the sentence starting 150 ms after the cue's window
-//! (or as long after the first samples without it); `scripts/measure/tail-loss.sh cue` recognises
-//! both and compares their first characters.
+//! (or as long after the first samples without it); `scripts/measure/cue-words.sh` runs it, has
+//! both recognised and compares their first characters.
 
 #![cfg(target_os = "linux")]
 
