@@ -2739,8 +2739,8 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 
 | 字段 | 记下的时刻或时长 |
 |---|---|
-| `device_open_ms` | `AudioSource::start` 返回，设备已打开；第一批样本先到时，记作第一批样本的时刻 |
-| `first_audio_ms` | 设备送来第一批样本（`CaptureReady`），按样本到达的时刻记 |
+| `device_open_ms` | `AudioSource::start` 返回，设备已打开；不晚于 `first_audio_ms` |
+| `first_audio_ms` | 设备送来第一批样本（`CaptureReady`）；打开期间就送来的，记作打开返回的时刻 |
 | `first_text_ms` | 实时预览的第一个字；没有实时预览时省略 |
 | `released_ms` | 松开：要求停止的时刻。按住说话时是 50 ms 的松开宽限（`release_grace_ms`，§13）过去之后；达到最长录音时长也算 |
 | `tail_ms` | 松开后麦克风又开了多久（`Settings.extra_recording_ms`，§13） |
@@ -2750,7 +2750,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 | `done_ms` | 出结果 |
 
 - 没有录音的一次（重新识别）省略 `device_open_ms`、`first_audio_ms`、`released_ms`。
-- 时钟是核心的 `tokio::time::Instant`（`TimingMarks`），记的是核心实际等了多久，不是服务报的耗时。设备打开与第一批样本按发生的时刻记：打开设备的任务与等首批样本的任务把时刻随消息带给引擎（`Internal::CaptureStarted.at`、`Internal::CaptureReady.at`），内部队列满时排队的时间不会算成「等待声音」。
+- 时钟是核心的 `tokio::time::Instant`（`TimingMarks`），记的是核心实际等了多久，不是服务报的耗时。设备打开与第一批样本按发生的时刻记，不按引擎从内部队列取到消息的时刻：打开设备的任务在 `start` 返回时取时刻，打开期间就送来的第一批样本也记作这个时刻（音频线程上取不到核心的时钟）；之后才到的，由等它的任务在标记到达时取时刻。两个时刻随消息带给引擎（`Internal::CaptureStarted.at`、`Internal::CaptureReady.at`），内部队列满时排队的时间不会算成「等待声音」。
 - 处理阶段（`ProcessingStage`）按开始的先后切分，`Transcribing` 与 `Finalizing` 计入 `asr_ms`，`Refining` 计入 `refine_ms`，`Inserting` 计入 `insert_ms`。
 - 松开后有延录时，运行时在开始等 `extra_recording_ms` 之前告诉引擎（`DictationEngine::note_release`），所以 `released_ms` 与录音结束之间的 `tail_ms` 就是延录；没有延录时两者相同。
 - 日志：每次结束写一行 `take timing`（各字段）。
@@ -2855,13 +2855,13 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 
 ### 30.7 门禁与未做
 
-- **Rust**：核心 `dictation::engine` 中 §30.1–§30.3 与 §30.6 列出的测试，以及截断的润色（§3.12）：`regression_the_history_keeps_why_the_clean_up_failed`、`the_kind_of_a_failed_clean_up_reaches_the_phase_and_the_history`、`dictation::steps@a_failed_or_empty_clean_up_keeps_the_text`、`dictation::tests@refine_failures_sort_the_error_and_serialize_snake_case`、`voltip-cloud@every_client_failure_reaches_the_core_with_its_kind_and_its_words`；`history/tests.rs@the_timeline_and_the_glossary_mark_round_trip_and_older_entries_read_without`；`settings.rs@a_new_install_keeps_recording_150_ms_after_the_stop_and_an_existing_one_keeps_its_value`；`tests/activation.rs@the_timeline_shows_the_extra_recording_after_the_release`；`tests/audio_cache.rs` 与 `trial.rs`（§30.4、§30.5）；`voltip-audio` 的 `cue.rs` 与 `recorder.rs`（§30.3）；桌面 `the_ready_cue_option_opens_the_cue_output`、`tests/dictation.rs@a_one_take_configuration_changes_nothing_but_its_clients` 与 `tests/ipc.rs`；IPC 契约夹具。
-- **TS**：`History.test.tsx`（时间线、术语表一行、润色被截断）、`HistoryDetail.test.tsx`、`Recordings.test.tsx` 与 `RetakeModels.test.ts`（不裁剪静音）、`Microphone.test.tsx`（提示音开关）、`EnginesPane.test.tsx`（试识别、术语表的一句）、`Dictionary.test.tsx`、`mock-backend.test.ts`、`ipc-contract.test.ts`。页面测试的 mock 后端默认 `extra_recording_ms` 为 0（`apps/{desktop,mobile}/src/test/mock.ts`），停止后立即结束；新安装的 150 ms 由 `mock-backend.test.ts` 与 Rust 的设置测试检查。
+- **Rust**：核心 `dictation::engine` 中 §30.1–§30.3 与 §30.6 列出的测试，以及截断的润色（§3.12）：`regression_the_history_keeps_why_the_clean_up_failed`、`the_kind_of_a_failed_clean_up_reaches_the_phase_and_the_history`、`dictation::steps@a_failed_or_empty_clean_up_keeps_the_text`、`dictation::tests@refine_failures_sort_the_error_and_serialize_snake_case`、`voltip-cloud@every_client_failure_reaches_the_core_with_its_kind_and_its_words`；`history/tests.rs@the_timeline_and_the_glossary_mark_round_trip_and_older_entries_read_without`；`settings.rs@a_new_install_keeps_recording_150_ms_after_the_stop_and_an_existing_one_keeps_its_value`；`tests/activation.rs@the_timeline_shows_the_extra_recording_after_the_release`；`tests/audio_cache.rs` 与 `trial.rs`（§30.4、§30.5）；`tests/scenes.rs` 的延录中的探测与内置场景的术语包（§30.2、§30.6）；`engines.rs@regression_the_glossary_route_follows_the_model_standing_in`；`voltip-audio` 的 `cue.rs` 与 `recorder.rs`（§30.3）；桌面 `the_ready_cue_option_opens_the_cue_output`、`tests/dictation.rs@a_one_take_configuration_changes_nothing_but_its_clients` 与 `tests/ipc.rs`；IPC 契约夹具。
+- **TS**：`History.test.tsx`（时间线及其分段、术语表一行、润色被截断）、`HistoryDetail.test.tsx`、`Recordings.test.tsx` 与 `RetakeModels.test.ts`（不裁剪静音）、`Microphone.test.tsx`（提示音开关）、`EnginesPane.test.tsx`（试识别及其在边说边输入时、术语表的一句及只有内置场景时）、`Dictionary.test.tsx`、`mock-backend.test.ts`、`fallback.test.ts`（候补顶替时的术语表）、`ipc-contract.test.ts`。页面测试的 mock 后端默认 `extra_recording_ms` 为 0（`apps/{desktop,mobile}/src/test/mock.ts`），停止后立即结束；新安装的 150 ms 由 `mock-backend.test.ts` 与 Rust 的设置测试检查。
 - **真设备与测量**：`crates/voltip-audio/tests/ready_cue.rs`（§30.3）；测量脚本的 Python 单测（`test_tail_loss.py`、`test_edge_loss.py`）在 `make verify` 的 `measure-helpers` 里。
-- **满载**（每个逻辑 CPU 一个空转循环）各跑 200 次：核心 `dictation::engine` 与 `trial.rs` 的全部测试（含计时、并行打开、`CaptureReady`、提示音选项与术语表）、`import::run`、历史与设置的新测试，`tests/activation.rs`、`tests/audio_cache.rs`、`tests/vocabulary.rs` 的全部测试，桌面 `tests/dictation.rs` 与 `dictation::` 的单测，`voltip-cloud` 与 `voltip-asr` 的百炼和术语表测试，都没有失败。`voltip-audio` 的 `cue::` 与 `recorder::` 第一轮有 4 次失败：假后端用一个全局标志判断提示音输出是否「在输入回调里」打开，别的线程上恰好在运行的回调也被算了进去；改为线程局部的标志后（`fake.rs@regression_an_output_opened_beside_a_running_callback_is_not_opened_inside_it`，先对着旧实现失败），连同 `fake::` 再跑 200 次，没有失败。
+- **满载**（每个逻辑 CPU 一个空转循环）各跑 200 次：核心 `dictation::engine` 与 `trial.rs` 的全部测试（含计时、并行打开、`CaptureReady`、提示音选项与术语表）、`import::run`、历史与设置的新测试，`tests/activation.rs`、`tests/audio_cache.rs`、`tests/vocabulary.rs` 的全部测试，桌面 `tests/dictation.rs` 与 `dictation::` 的单测，`voltip-cloud` 与 `voltip-asr` 的百炼和术语表测试，都没有失败。`voltip-audio` 的 `cue::` 与 `recorder::` 第一轮有 4 次失败：假后端用一个全局标志判断提示音输出是否「在输入回调里」打开，别的线程上恰好在运行的回调也被算了进去；改为线程局部的标志后（`fake.rs@regression_an_output_opened_beside_a_running_callback_is_not_opened_inside_it`，先对着旧实现失败），连同 `fake::` 再跑 200 次，没有失败。完成评审第一轮之后的修复（延录中的探测、计时的时刻、术语表的状态、边说边输入时的试识别）之后，核心 `dictation::engine::` 与 `trial::` 的单测、`tests/scenes.rs`、`tests/audio_cache.rs`、`tests/activation.rs`、`tests/vocabulary.rs` 在满载下又各跑 200 次，都没有失败。
 - **真入口**（`pnpm tauri dev -- --bin voltip-desktop`，Xvfb、辅助功能总线、私有 PulseAudio，只监听 127.0.0.1 的假服务）：新安装的「松开后继续录音」是 150，缺这一项的设置文件是 0；按快捷键听写后历史详情显示时间线与「术语表：没有发给识别服务」（本地模型）；试识别出结果，剪贴板与历史都没有变化；「不裁剪静音重新识别」这一次没有调用 VAD；提示音开着时 monitor 录到了提示音，保存的录音里提示音的时间窗（这里是 250 ms 的后备窗口）全为零；假服务收到的识别请求带着 `prompt`（词典的正确写法），润色在输出上限处被截断时历史写「润色结果不完整，已保留识别原文」。
 - **其他平台**：Windows 构建机的 `gate test` 与 `gate clippy`，托管 CI 的两台 Mac、`hooks-windows`、`windows-cross`、`windows-native`、`android` 与 `smoke-desktop`；本机 `make smoke-desktop`。
-- **失败原因的确认**：新测试先对着桩实现或 B 的实现失败：设备在探测回答之前没有打开（0 次，应为 1 次）；提示音选项三种情形都是 false；`regression_capture_ready_survives_a_full_queue` 等不到 `CaptureReady`（满队列上的 `try_send` 丢了它）；历史与 `Done` 里没有时间线和 `glossary_sent`；被截断的润色仍是普通的 `Refine` 错误；`qwen-audio` 模型的请求里没有热词；状态里没有术语表的去向，空词典也报 `prompt`；一次重新识别的客户端照旧裁剪静音（`(true, false)`，应为 `(false, true)`）；新安装的延录是 0（应为 150）。试识别的测试与实现一同写成，用两处临时改动（不检查是否已在运行、不套用词典）确认对应的测试以预期的原因失败；提示音的真设备测试在去掉置零后失败（§30.3）。
+- **失败原因的确认**：新测试先对着桩实现或 B 的实现失败：设备在探测回答之前没有打开（0 次，应为 1 次）；提示音选项三种情形都是 false；`regression_capture_ready_survives_a_full_queue` 等不到 `CaptureReady`（满队列上的 `try_send` 丢了它）；历史与 `Done` 里没有时间线和 `glossary_sent`；被截断的润色仍是普通的 `Refine` 错误；`qwen-audio` 模型的请求里没有热词；状态里没有术语表的去向，空词典也报 `prompt`；一次重新识别的客户端照旧裁剪静音（`(true, false)`，应为 `(false, true)`）；新安装的延录是 0（应为 150）。试识别的测试与实现一同写成，用两处临时改动（不检查是否已在运行、不套用词典）确认对应的测试以预期的原因失败；提示音的真设备测试在去掉置零后失败（§30.3）。完成评审第一轮之后补的测试同样先失败：延录期间才回答的探针仍套用了场景（场景关掉的润色没有运行）；满队列后到的首批样本被记作 700 ms（取出消息的时刻），首批样本先到时设备打开记作 100 ms、晚于首批样本的 50 ms，界面的分段因此重叠；百炼 qwen3-asr-flash 顶替时状态仍报 `Prompt`；只开着内置场景时状态停在 `Empty`；边说边输入时试识别得到润色后的「你好。」。场景改输出方式的那一半与内置场景的那一个，用临时去掉对应判断的方式确认失败（`left: (true, false)`；「no status with the glossary route Prompt within 10 s」）。
 
 #### 未做与限制
 
