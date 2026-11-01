@@ -947,7 +947,8 @@ jobs:
 
       # The pill's stacking on a real X server (docs/dictation.md §32): a window mapped over the
       # pill's place while it was hidden stays over it when it is mapped again, until the shell
-      # restacks it on top.
+      # restacks it on top; while it shows, the keeper restacks it over windows mapped or raised
+      # over it, and leaves menus (override-redirect windows) over it.
       - name: Real pill stacking under Xvfb (cargo test -p voltip-overlay --test stacking_x11 -- --ignored)
         timeout-minutes: 10
         run: xvfb-run -a cargo test -p voltip-overlay --test stacking_x11 -- --ignored --test-threads=1 --nocapture
@@ -1318,9 +1319,11 @@ jobs:
           done
           "$bin" --ignored
 
-      # The pill's stacking (docs/dictation.md §32): shown over a floating window of another
-      # application and over an application in full screen, the pill is the window a click at its
-      # centre reaches, and the other application stays active. The test has its own main.
+      # The pill's stacking (docs/dictation.md §32): a floating window of another application
+      # brought to the front covers a pill at tao's level, and not one the shell raised, before
+      # or while it shows; the other application stays active. Over an application in full
+      # screen, a non-activating panel comes up and tao's window does not (§32.3). The test has
+      # its own main.
       - name: Real pill stacking (cargo test -p voltip-overlay --test stacking_macos -- --ignored)
         timeout-minutes: 15
         run: cargo test -p voltip-overlay --test stacking_macos -- --ignored

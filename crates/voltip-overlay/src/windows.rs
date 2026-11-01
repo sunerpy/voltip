@@ -5,7 +5,8 @@
 //! the flag is already set, so a topmost window activated since (a full-screen player, a game, a
 //! pinned window) stays over the pill. [`raise`] puts the pill back at the top itself, and
 //! [`Keeper`] does it again while the pill shows: whenever another window comes to the front, and
-//! whenever a window appears or the stacking order changes and a window now covers the pill.
+//! whenever a window appears or the stacking order changes and a window now covers the pill
+//! ([`crate::contest`] says when a window that keeps coming back on top is left there).
 //!
 //! `HWND_TOPMOST` also makes a window topmost again when another program took that away (placed it
 //! after an ordinary window or said `HWND_NOTOPMOST`). Nothing here activates the pill or changes
@@ -16,7 +17,7 @@
 use std::cell::{Cell, RefCell};
 use std::sync::mpsc;
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use windows_sys::Win32::Foundation::{HWND, RECT, S_OK};
 use windows_sys::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
@@ -72,7 +73,7 @@ unsafe extern "system" fn on_event(_hook: HWINEVENTHOOK, event: u32, hwnd: HWND,
                 return;
             }
             if let Some(cover) = covering(pill)
-                && CONTEST.with_borrow_mut(|contest| contest.raise_over(cover))
+                && CONTEST.with_borrow_mut(|contest| contest.raise_over(cover, Instant::now()))
             {
                 raise_logged(pill);
             }

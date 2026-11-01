@@ -23,6 +23,7 @@
 mod support;
 
 use support::{Spec, TestWindow, assert_pill_on_top, center, dpi_aware, foreground, is_topmost, pill_rect, top_at, wait_until, work_area};
+use voltip_overlay::contest::AGAIN_AFTER;
 use voltip_overlay::windows::{Keeper, raise};
 use windows_sys::Win32::Foundation::RECT;
 use windows_sys::Win32::UI::WindowsAndMessaging::{HWND_NOTOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos};
@@ -102,6 +103,25 @@ fn regression_the_pill_goes_back_above_a_window_pinned_on_top_while_it_shows() {
     // No window comes to the front: the one in front is pinned on top where it is.
     front.pin();
     assert_pill_on_top(pill.hwnd, "the window in front pinned on top while the pill shows");
+    assert_focus_kept(&front);
+    drop(keeper);
+}
+
+#[test]
+#[ignore = "opens windows and clicks them: CI's windows-2025 desktop only"]
+fn regression_the_pill_goes_back_above_the_same_window_pinned_on_top_again_while_it_shows() {
+    dpi_aware();
+    let front = TestWindow::open(Spec::ordinary());
+    let (pill, keeper) = showing_over(&front);
+    front.pin();
+    assert_pill_on_top(pill.hwnd, "the window in front pinned on top while the pill shows");
+    // Unpinned and, with no other window coming to the front, pinned again: a new pin, not the
+    // window fighting back. A window back on top within `AGAIN_AFTER` of the raise over it is the
+    // latter (docs/dictation.md §32.2), so the second pin waits that long.
+    front.unpin();
+    std::thread::sleep(AGAIN_AFTER + std::time::Duration::from_millis(100));
+    front.pin();
+    assert_pill_on_top(pill.hwnd, "the same window pinned on top again while the pill shows");
     assert_focus_kept(&front);
     drop(keeper);
 }

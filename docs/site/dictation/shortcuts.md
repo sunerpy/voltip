@@ -42,9 +42,13 @@ While you dictate, a small overlay at the bottom of the screen shows what is hap
 - **Processing**: the step in progress — recognition, AI polish or insertion — with the time it has taken. For a long recording, recognition shows how many of its segments are done.
 - **Done**: how many characters were inserted, or why the text stayed on the clipboard. When the text was not written, the window changed or recognition failed, the overlay keeps a [result card](/dictation/output#result-cards) with buttons to paste or copy the text.
 
-The overlay stays above other windows, including windows set to stay on top and programs in full screen: it comes back to the top whenever it appears or changes state, and, while it shows, whenever another window comes to the front or is set to stay on top. The overlay never takes the keyboard focus, so the text still goes to the app you were using.
+The overlay stays above other windows, including windows set to stay on top and programs in full screen. It comes back to the top whenever it appears or changes state, and on Windows and Mac it also stays on top while it shows, when another window comes to the front or is set to stay on top. The overlay never takes the keyboard focus, so the text still goes to the app you were using.
 
-These can still cover the overlay: on Windows, a game running in exclusive full screen, and system screens such as the Start menu or the notification centre; on a Mac, an app in full screen, whose full-screen space the overlay does not appear in; on Linux, a full-screen window in front, and a pure Wayland session, which leaves the order of windows to the desktop.
+These can still cover the overlay:
+
+- **Windows**: a game running in exclusive full screen, and system screens such as the Start menu or the notification centre.
+- **Mac**: an app in full screen; the overlay does not appear in its full-screen space.
+- **Linux**: the window manager decides the order of windows. A full-screen window in front stays above the overlay; some desktops, such as GNOME, do not move the overlay back to the top while it shows; on a pure Wayland session, the order is entirely up to the desktop.
 
 ## Cancelling
 

@@ -18,10 +18,10 @@ use windows_sys::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, 
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEINPUT, SendInput};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, EnumWindows, GWL_EXSTYLE, GetClassNameW, GetForegroundWindow, GetMessageW,
-    GetSystemMetrics, GetWindowLongW, GetWindowRect, GetWindowThreadProcessId, HWND_TOPMOST, IsIconic, IsWindowVisible, MSG, PostThreadMessageW,
-    RegisterClassW, SM_CXSCREEN, SM_CYSCREEN, SPI_GETWORKAREA, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetCursorPos, SetWindowPos,
-    ShowWindow, SystemParametersInfoW, TranslateMessage, WM_QUIT, WNDCLASSW, WS_CLIPSIBLINGS, WS_EX_ACCEPTFILES, WS_EX_APPWINDOW, WS_EX_NOACTIVATE,
-    WS_EX_TOPMOST, WS_EX_WINDOWEDGE, WS_OVERLAPPEDWINDOW, WS_POPUP,
+    GetSystemMetrics, GetWindowLongW, GetWindowRect, GetWindowThreadProcessId, HWND_NOTOPMOST, HWND_TOPMOST, IsIconic, IsWindowVisible, MSG,
+    PostThreadMessageW, RegisterClassW, SM_CXSCREEN, SM_CYSCREEN, SPI_GETWORKAREA, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SetCursorPos, SetWindowPos, ShowWindow, SystemParametersInfoW, TranslateMessage, WM_QUIT, WNDCLASSW, WS_CLIPSIBLINGS, WS_EX_ACCEPTFILES, WS_EX_APPWINDOW,
+    WS_EX_NOACTIVATE, WS_EX_TOPMOST, WS_EX_WINDOWEDGE, WS_OVERLAPPEDWINDOW, WS_POPUP,
 };
 
 /// How long a window may take to come up, to the front or on top.
@@ -202,6 +202,13 @@ impl TestWindow {
         // SAFETY: a live window handle of this test.
         unsafe { SetWindowPos(self.hwnd as HWND, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) };
         assert!(wait_until(WAIT, || is_topmost(self.hwnd)), "the window could not be pinned on top");
+    }
+
+    /// Take it out of the topmost windows again, without activating it, and wait until it is.
+    pub fn unpin(&self) {
+        // SAFETY: a live window handle of this test.
+        unsafe { SetWindowPos(self.hwnd as HWND, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) };
+        assert!(wait_until(WAIT, || !is_topmost(self.hwnd)), "the window could not be unpinned");
     }
 
     pub fn rect(&self) -> RECT {

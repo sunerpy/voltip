@@ -12,9 +12,9 @@
 //!
 //! Stacking (docs/dictation.md §32): showing the window does not move it up the stacking order,
 //! so every show and every phase of a take puts it back on top ([`keep_on_top`], through
-//! `voltip-overlay`), and on Windows a keeper does it again whenever another window comes to the
-//! front while the pill shows. None of it takes the focus: the result card's 粘贴 still goes to the
-//! window in front.
+//! `voltip-overlay`), and on Windows and X11 a keeper does it again while the pill shows, when
+//! another window comes to the front or over it. None of it takes the focus: the result card's 粘贴
+//! still goes to the window in front.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -273,19 +273,23 @@ fn show_fixed<R: Runtime>(app: &AppHandle<R>, state: &'static str, placement: Ov
 }
 
 /// What keeps the pill above the other windows (docs/dictation.md §32; managed state): on Windows
-/// the keeper of the pill on screen, on Linux the X11 connection the restacking goes through.
+/// the keeper of the pill on screen; on Linux the X11 connection the restacking goes through and
+/// the keeper of the pill on screen.
 #[derive(Debug, Default)]
 pub struct PillStacking {
     #[cfg(target_os = "windows")]
     keeper: Mutex<Option<voltip_overlay::windows::Keeper>>,
     #[cfg(target_os = "linux")]
     x11: voltip_overlay::x11::Stacker,
+    #[cfg(target_os = "linux")]
+    x11_keeper: Mutex<Option<voltip_overlay::x11::Keeper>>,
 }
 
 /// Put the pill on screen back above the other windows, on every show and every phase of a take,
 /// without taking the focus. Windows: the top of the topmost windows, kept there while it shows.
 /// macOS: the status window level, ordered to the front without activating the app (another
-/// application's full-screen Space takes only a non-activating panel, docs/dictation.md §32.3). Linux: on top of the X11 stacking order (pure Wayland: the
+/// application's full-screen Space takes only a non-activating panel, docs/dictation.md §32.3).
+/// Linux: on top of the X11 stacking order, kept there while it shows (pure Wayland: the
 /// compositor's choice). A failure is logged and the pill shows wherever it is.
 fn keep_on_top<R: Runtime>(app: &AppHandle<R>, window: &tauri::WebviewWindow<R>) {
     let Some(stacking) = app.try_state::<PillStacking>() else { return };
@@ -326,24 +330,33 @@ fn keep_on_top<R: Runtime>(app: &AppHandle<R>, window: &tauri::WebviewWindow<R>)
             RawWindowHandle::Xlib(xlib) => u32::try_from(xlib.window).ok(),
             _ => None,
         });
-        if let Some(xid) = xid
-            && let Err(e) = stacking.x11.raise(xid)
-        {
-            tracing::debug!(error = %e, "overlay restack failed");
+        if let Some(xid) = xid {
+            if let Err(e) = stacking.x11.raise(xid) {
+                tracing::debug!(error = %e, "overlay restack failed");
+            }
+            let mut keeper = stacking.x11_keeper.lock();
+            if keeper.is_none() {
+                match voltip_overlay::x11::Keeper::start(xid) {
+                    Ok(started) => *keeper = started,
+                    Err(e) => tracing::debug!(error = %e, "overlay keeper not started"),
+                }
+            }
         }
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     let _ = (stacking, window);
 }
 
-/// The pill is hidden: nothing keeps it on top any more (Windows: the keeper's hook goes).
+/// The pill is hidden: nothing keeps it on top any more (the Windows keeper's hooks and the X11
+/// keeper's connection go).
 fn let_go<R: Runtime>(app: &AppHandle<R>) {
+    let Some(stacking) = app.try_state::<PillStacking>() else { return };
     #[cfg(target_os = "windows")]
-    if let Some(stacking) = app.try_state::<PillStacking>() {
-        drop(stacking.keeper.lock().take());
-    }
-    #[cfg(not(target_os = "windows"))]
-    let _ = app;
+    drop(stacking.keeper.lock().take());
+    #[cfg(target_os = "linux")]
+    drop(stacking.x11_keeper.lock().take());
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    let _ = stacking;
 }
 
 /// Keep the pill in step with `UiEvent::Dictation` for as long as the bridge lives.

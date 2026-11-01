@@ -3,9 +3,9 @@
 //! with `voltip-desktop --toggle`, and the pill must be what the screen shows at its centre, by the
 //! Z order and by the pixels, while the window in front stays in front. The windows are a topmost
 //! one (a pinned window or a player), a topmost one over the whole monitor (a game or a player in
-//! full screen), the same activated while the pill shows, the window in front pinned on top and a
-//! topmost window coming up while the pill shows, and an ordinary one and an ordinary full-screen
-//! one (a browser after F11).
+//! full screen), the same activated while the pill shows, the window in front pinned on top (then
+//! unpinned and pinned again) and a topmost window coming up while the pill shows, and an ordinary
+//! one and an ordinary full-screen one (a browser after F11).
 //!
 //! A runner has no microphone: the take fails at once and its pill shows for the 2.5 s dwell,
 //! which every check fits into.
@@ -26,6 +26,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use support::{COVER_COLOR, Spec, TestWindow, above, center, describe, dpi_aware, foreground, pixel, rect_of, same_color, top_at, wait_until, work_area};
+use voltip_overlay::contest::AGAIN_AFTER;
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible};
 
@@ -216,6 +217,11 @@ fn regression_the_real_pill_goes_back_above_windows_pinned_or_shown_while_it_sho
     // No window comes to the front: the one in front is pinned on top where it is.
     front.pin();
     app.assert_on_top("the window in front pinned on top while the pill shows");
+    // Unpinned and pinned again later in the same take (a new pin, docs/dictation.md §32.2).
+    front.unpin();
+    std::thread::sleep(AGAIN_AFTER + Duration::from_millis(100));
+    front.pin();
+    app.assert_on_top("the same window pinned on top again while the pill shows");
     assert_eq!(foreground(), front.hwnd, "the pill took the window in front's place");
     app.end();
     app.take();
