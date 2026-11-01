@@ -1,0 +1,45 @@
+[package]
+name = "voltip-overlay"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Keeps the pill window above the other windows without taking the focus (docs/dictation.md §32): HWND_TOPMOST on every show and phase and again whenever another window comes to the front on Windows, the status window level and full-screen Spaces on macOS, the stacking order on X11. Kept apart from the desktop shell so CI can run its tests against real windows on Windows, macOS and X11 desktops without building the app."
+
+# Win32 and AppKit are FFI: unsafe is denied, and allowed in those two modules
+# (`#![allow(unsafe_code)]` in src/windows.rs and src/macos.rs), as in voltip-hooks.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+
+[dependencies]
+tracing.workspace = true
+
+# SetWindowPos, the foreground WinEvent hook and its message loop: the version tokio / mio already
+# pull.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "=0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_UI_Accessibility",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+# tests/stacking_windows.rs: windows of the test's own (a pill made the way tao makes Voltip's, and
+# the windows that cover it), a message loop, clicks, the Z order and the screen's pixels.
+[target.'cfg(target_os = "windows")'.dev-dependencies]
+windows-sys = { version = "=0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_UI_Accessibility",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
