@@ -9,7 +9,8 @@
 //!   [`windows::Keeper`] does it again while the pill shows, whenever another window comes to the
 //!   front and whenever a window that covers it appears or is put on top (WinEvent hooks; no
 //!   polling). When it raises the pill over a covering window is [`contest`]'s rule.
-//! - macOS (`macos.rs`): the status window level, full-screen Spaces and `orderFrontRegardless`.
+//! - macOS (`macos.rs`): the status window level and `orderFrontRegardless`; another application's
+//!   full-screen Space takes only a non-activating panel, which the pill is not.
 //! - Linux (`x11.rs`): the X11 stacking order; a Wayland compositor stacks windows itself.
 //!
 //! The `#[ignore]`d tests open real windows: CI runs them on a Windows Server desktop, a macOS

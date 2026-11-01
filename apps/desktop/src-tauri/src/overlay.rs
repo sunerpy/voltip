@@ -284,8 +284,8 @@ pub struct PillStacking {
 
 /// Put the pill on screen back above the other windows, on every show and every phase of a take,
 /// without taking the focus. Windows: the top of the topmost windows, kept there while it shows.
-/// macOS: the status window level, every Space and full-screen Spaces, ordered to the front
-/// without activating the app. Linux: on top of the X11 stacking order (pure Wayland: the
+/// macOS: the status window level, ordered to the front without activating the app (another
+/// application's full-screen Space takes only a non-activating panel, docs/dictation.md §32.3). Linux: on top of the X11 stacking order (pure Wayland: the
 /// compositor's choice). A failure is logged and the pill shows wherever it is.
 fn keep_on_top<R: Runtime>(app: &AppHandle<R>, window: &tauri::WebviewWindow<R>) {
     let Some(stacking) = app.try_state::<PillStacking>() else { return };

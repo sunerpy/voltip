@@ -6,7 +6,8 @@
 //! Space of its own. Shown that way, a floating window of another application brought to the front
 //! covers the pill; raised as the shell raises it ([`raise`]), the pill must be the window a click
 //! at its centre would reach, before and after another such window comes to the front, and the
-//! other application must stay active.
+//! other application must stay active. Over an application in full screen, only a non-activating
+//! panel comes up, not tao's window (docs/dictation.md §32.3).
 //!
 //! AppKit wants the main thread, so this test has its own `main` (`harness = false`): the main
 //! thread runs the application, the checks run on another thread and hand AppKit work to the main
@@ -80,7 +81,7 @@ mod mac {
 
     /// A window like Voltip's pill, hidden (an earlier test's is closed first); its window number.
     /// `panel`: a non-activating panel (`NSPanel`) instead of tao's window, which the full-screen
-    /// probe compares.
+    /// check compares.
     fn make_pill(panel: bool) -> isize {
         on_main(move |mtm| {
             WINDOWS.with_borrow_mut(|windows| windows.drain(..).for_each(|w| w.orderOut(None)));
@@ -250,10 +251,11 @@ mod mac {
         close_pill();
     }
 
-    /// Whether a pill raised as the shell raises it shows over an application in full screen, as
-    /// tao's window and as a non-activating panel, with the test application regular and then
-    /// accessory. Each case is reported; docs/dictation.md §32.3 records what macOS allows.
-    fn the_pill_over_an_application_in_full_screen() {
+    /// docs/dictation.md §32.3: an application in full screen has a Space of its own. A pill raised
+    /// as the shell raises it stays off that Space as tao's window, with the test application
+    /// regular (Voltip with a Dock icon) or accessory (started in the menu bar); as a non-activating
+    /// panel it is on top there, and the other application stays active.
+    fn full_screen_spaces_take_a_non_activating_panel_and_not_tao_s_window() {
         for panel in [false, true] {
             let pill = make_pill(panel);
             let cover = Cover::open("full-screen");
@@ -262,16 +264,15 @@ mod mac {
                 set_policy(policy);
                 show_pill_like_tao();
                 raise_pill();
-                let on_top = wait_until_within(Duration::from_secs(3), || window_at(at) == pill);
-                println!(
-                    "stacking_macos: full screen, {} in a {name} application: on top {on_top} (window {} is, the cover is {}; the pill: {}; in front: pid {:?}, the cover {})",
-                    if panel { "a non-activating panel" } else { "tao's window" },
-                    window_at(at),
-                    cover.window,
-                    pill_state(),
-                    frontmost_pid(),
-                    cover.pid()
-                );
+                let what = format!("full screen, {} in a {name} application", if panel { "a non-activating panel" } else { "tao's window" });
+                if panel {
+                    assert_pill_on_top(pill, &cover, &what);
+                } else {
+                    // A window that never comes up: give it the time a raise takes, three times over.
+                    let on_top = wait_until_within(Duration::from_secs(3), || window_at(at) == pill);
+                    assert!(!on_top, "{what}: the pill is on top: macOS now puts tao's window on a full-screen Space (update docs/dictation.md §32.3)");
+                    println!("stacking_macos: {what}: off the full-screen Space ({})", pill_state());
+                }
             }
             set_policy(NSApplicationActivationPolicy::Regular);
             close_pill();
@@ -285,7 +286,7 @@ mod mac {
                 "regression_the_pill_stays_above_floating_windows_of_another_application_brought_to_the_front",
                 regression_the_pill_stays_above_floating_windows_of_another_application_brought_to_the_front,
             ),
-            ("the_pill_over_an_application_in_full_screen", the_pill_over_an_application_in_full_screen),
+            ("full_screen_spaces_take_a_non_activating_panel_and_not_tao_s_window", full_screen_spaces_take_a_non_activating_panel_and_not_tao_s_window),
         ];
         let mut passed = true;
         for (name, test) in tests {

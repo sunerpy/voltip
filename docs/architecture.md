@@ -24,7 +24,7 @@ crates/voltip-net        网络代理（docs/dictation.md §24）：跟随系统
 crates/voltip-cloud      云端识别与润色（voltip-asr、voltip-refine 的客户端；阿里云百炼的实时模型经 WebSocket 推流）作为核心的 Transcriber / Refiner / StreamingTranscriber 端口，桌面与手机共用
 crates/voltip-serve      本机语音服务的 HTTP 层（axum）：OpenAI 兼容的 /v1/audio/transcriptions、令牌、准入、边收边解码的 WAV 上传；处理在 voltip-core 的 serve 模块（docs/dictation.md §23）
 crates/voltip-focus      插入确认的焦点控件读取（docs/dictation.md §28）：Windows UI Automation、macOS 辅助功能接口、Linux AT-SPI，各在自己的工作线程上、有读取期限；判定规则在 voltip-platform 的 insert_check::rules（核心重导出）。与 voltip-hooks 一样单独成 crate，CI 不构建整个应用也能在真实桌面上跑它的测试
-crates/voltip-overlay    悬浮窗的层级（docs/dictation.md §32）：每次显示和每个阶段把悬浮窗放回最上层而不激活它，Windows 用 SetWindowPos(HWND_TOPMOST) 并在显示期间用 WinEvent 钩子再抬起，macOS 用状态栏级别与全屏 Space，X11 用叠放顺序。与 voltip-focus 一样单独成 crate，CI 不构建整个应用也能在真实桌面上跑它的测试
+crates/voltip-overlay    悬浮窗的层级（docs/dictation.md §32）：每次显示和每个阶段把悬浮窗放回最上层而不激活它，Windows 用 SetWindowPos(HWND_TOPMOST) 并在显示期间用 WinEvent 钩子再抬起，macOS 用状态栏级别，X11 用叠放顺序。与 voltip-focus 一样单独成 crate，CI 不构建整个应用也能在真实桌面上跑它的测试
 crates/voltip-media      导入的音视频文件（docs/dictation.md §31）：Symphonia 读容器并解码（Opus 用 opus-rs），逐块混成单声道、重采样到 16 kHz，写成长录音的录音格式；作为核心的 MediaDecoder 端口，桌面壳与 --transcribe-file 共用
 apps/desktop/src-tauri   桌面 shell：全局热键（tauri-plugin-global-shortcut）、悬浮胶囊窗口（预热、事件驱动）、无边框主窗口、音频电平 Channel；设置里打开本机服务时经 voltip-serve 监听 127.0.0.1
 apps/server              无头服务端 voltip-server（Linux x64 tar.gz）：命令行、只读地读 App 的数据目录与系统钥匙串，没有 GUI 和音频依赖

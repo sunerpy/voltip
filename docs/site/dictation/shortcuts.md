@@ -44,7 +44,7 @@ While you dictate, a small overlay at the bottom of the screen shows what is hap
 
 The overlay stays above other windows, including windows set to stay on top and programs in full screen: it comes back to the top whenever it appears or changes state, and, while it shows, whenever another window comes to the front or is set to stay on top. The overlay never takes the keyboard focus, so the text still goes to the app you were using.
 
-These can still cover the overlay: on Windows, a game running in exclusive full screen, and system screens such as the Start menu or the notification centre; on Linux, a full-screen window in front, and a pure Wayland session, which leaves the order of windows to the desktop.
+These can still cover the overlay: on Windows, a game running in exclusive full screen, and system screens such as the Start menu or the notification centre; on a Mac, an app in full screen, whose full-screen space the overlay does not appear in; on Linux, a full-screen window in front, and a pure Wayland session, which leaves the order of windows to the desktop.
 
 ## Cancelling
 

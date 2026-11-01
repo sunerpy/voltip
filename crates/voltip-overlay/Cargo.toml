@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
-description = "Keeps the pill window above the other windows without taking the focus (docs/dictation.md §32): HWND_TOPMOST on every show and phase and again whenever another window comes to the front on Windows, the status window level and full-screen Spaces on macOS, the stacking order on X11. Kept apart from the desktop shell so CI can run its tests against real windows on Windows, macOS and X11 desktops without building the app."
+description = "Keeps the pill window above the other windows without taking the focus (docs/dictation.md §32): HWND_TOPMOST on every show and phase on Windows, and again while it shows whenever another window comes to the front or one that covers it appears or is put on top; the status window level on macOS; the stacking order on X11. Kept apart from the desktop shell so CI can run its tests against real windows on Windows, macOS and X11 desktops without building the app."
 
 # Win32 and AppKit are FFI: unsafe is denied, and allowed in those two modules
 # (`#![allow(unsafe_code)]` in src/windows.rs and src/macos.rs), as in voltip-hooks.
