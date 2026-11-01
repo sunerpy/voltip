@@ -2739,8 +2739,8 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 
 | 字段 | 记下的时刻或时长 |
 |---|---|
-| `device_open_ms` | `AudioSource::start` 返回，设备已打开 |
-| `first_audio_ms` | 设备送来第一批样本（`CaptureReady`） |
+| `device_open_ms` | `AudioSource::start` 返回，设备已打开；第一批样本先到时，记作第一批样本的时刻 |
+| `first_audio_ms` | 设备送来第一批样本（`CaptureReady`），按样本到达的时刻记 |
 | `first_text_ms` | 实时预览的第一个字；没有实时预览时省略 |
 | `released_ms` | 松开：要求停止的时刻。按住说话时是 50 ms 的松开宽限（`release_grace_ms`，§13）过去之后；达到最长录音时长也算 |
 | `tail_ms` | 松开后麦克风又开了多久（`Settings.extra_recording_ms`，§13） |
@@ -2750,17 +2750,18 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 | `done_ms` | 出结果 |
 
 - 没有录音的一次（重新识别）省略 `device_open_ms`、`first_audio_ms`、`released_ms`。
-- 时钟是核心的 `tokio::time::Instant`（`TimingMarks`），记的是核心实际等了多久，不是服务报的耗时；处理阶段（`ProcessingStage`）按开始的先后切分，`Transcribing` 与 `Finalizing` 计入 `asr_ms`，`Refining` 计入 `refine_ms`，`Inserting` 计入 `insert_ms`。
+- 时钟是核心的 `tokio::time::Instant`（`TimingMarks`），记的是核心实际等了多久，不是服务报的耗时。设备打开与第一批样本按发生的时刻记：打开设备的任务与等首批样本的任务把时刻随消息带给引擎（`Internal::CaptureStarted.at`、`Internal::CaptureReady.at`），内部队列满时排队的时间不会算成「等待声音」。
+- 处理阶段（`ProcessingStage`）按开始的先后切分，`Transcribing` 与 `Finalizing` 计入 `asr_ms`，`Refining` 计入 `refine_ms`，`Inserting` 计入 `insert_ms`。
 - 松开后有延录时，运行时在开始等 `extra_recording_ms` 之前告诉引擎（`DictationEngine::note_release`），所以 `released_ms` 与录音结束之间的 `tail_ms` 就是延录；没有延录时两者相同。
 - 日志：每次结束写一行 `take timing`（各字段）。
-- 界面：历史详情「技术细节」的「时间线 · 从按下快捷键到出结果」（`DetailParts.tsx` 的 `Timeline`）：打开麦克风、等待声音、录音、延录、识别、润色、插入，按时长画成一条，下面写「实时预览首字 n ms」和总耗时；重新识别的记录写「时间线 · 从开始识别到出结果」，没有前面几段。没有 `timing` 的旧记录照旧显示识别与润色两段耗时。
+- 界面：历史详情「技术细节」的「时间线 · 从按下快捷键到出结果」（`DetailParts.tsx` 的 `Timeline`）：打开麦克风、等待声音、录音、延录、识别、润色、插入，按时长画成一条；每段从上一段的结束算到自己的时刻（`timelineSteps`），首尾相接、不重叠：首批样本先于设备打开时「等待声音」为 0，松开早于首批样本时「录音」为 0。下面写「实时预览首字 n ms」和总耗时；重新识别的记录写「时间线 · 从开始识别到出结果」，没有前面几段。没有 `timing` 的旧记录照旧显示识别与润色两段耗时。
 
 ### 30.2 设备打开与前台探测并行
 
 - **之前**：按下后先问前台探测（§18.4）这次匹配哪个场景，回答之后才打开设备；探测最多等 `PROBE_DEADLINE`（100 ms），这段时间说的话录不进去。
 - **现在**：`capture_independent_of_scene(scenes, kind)` 为真时，设备在按下时就开始打开，与探测同时进行（`ProbeWait::Alongside`）；条件是这是一次听写，且没有启用的场景改输出模式（输出模式决定手机录音的来源和每次的流式路径）。其他情况照旧等回答再打开（`ProbeWait::First`）：语音编辑（终端在前台时，在打开任何东西之前就拒绝，§19.2），以及有场景可能改输出模式时。
-- 探测回答之后再套用场景，并启动等着它的实时预览：实时预览的语言、字形、术语包和断句都跟场景走（§18.5），开始之前的声音留在 live tap 里，不会丢。探测回答之前就松开或取消：这次不套用场景，实时预览也一样。
-- **测试**：`without_a_scene_that_changes_the_mode_the_device_opens_while_the_probe_runs`、`a_scene_that_may_change_the_mode_or_a_voice_edit_waits_for_the_probe`、`the_live_preview_waits_for_the_answer_while_the_device_opens_at_once`、`cancel_or_stop_before_the_probe_answered`（假探针一直不回答，等状态，不等事件）；`the_capture_waits_for_the_probe_only_when_a_scene_may_change_the_mode`。
+- 探测回答之后再套用场景，并启动等着它的实时预览：实时预览的语言、字形、术语包和断句都跟场景走（§18.5），开始之前的声音留在 live tap 里，不会丢。探测回答之前就松开或取消：这次不套用场景，实时预览也一样。松开后继续录音的那段时间里引擎仍在「录音中」，但松开已经记下（`released_ms`），这时到的回答同样不套用（`DictationEngine::scene_still_open`）。
+- **测试**：`without_a_scene_that_changes_the_mode_the_device_opens_while_the_probe_runs`、`a_scene_that_may_change_the_mode_or_a_voice_edit_waits_for_the_probe`、`the_live_preview_waits_for_the_answer_while_the_device_opens_at_once`、`cancel_or_stop_before_the_probe_answered`（假探针一直不回答，等状态，不等事件）；`the_capture_waits_for_the_probe_only_when_a_scene_may_change_the_mode`；松开之后才到的回答：`regression_an_answer_after_the_release_applies_no_scene_where_the_device_waited`（先等探针的路径），`tests/scenes.rs@regression_a_probe_answering_during_the_extra_recording_applies_no_scene`（经运行时的延录）。
 - **实测**见 §30.4 的首字测量：Xvfb 里没有窗口管理器，探测立即回答，并行没有可省的时间；改动前后按下到设备打开都约 15 ms，首字都没有丢。
 
 ### 30.3 「可以说话」提示音
@@ -2829,8 +2830,9 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 - 「语音模型」页识别服务下方的「试识别」：「用最近一条录音试识别」按当前保存的设置把录音缓存（§26）里最近的一条录音识别一次，结果只显示在这里：文字、识别服务与模型、识别耗时、术语表是否发出、AI 润色（服务、模型、耗时或失败原因）、总耗时。不粘贴、不复制，不写历史记录。
 - 命令 `RecognitionTrial`（不带参数），事件 `CoreEvent::RecognitionTrial(TrialView)` → `UiEvent::RecognitionTrial`，`UiState.recognition_trial: Option<TrialView>`。`TrialView` 是 `Running { recording, started_at }`、`Done(TrialResult)` 或 `Failed { recording?, failure }`；`TrialFailure` 是 `NoRecording` 或 `Failed { code, message }`。
 - 它是单独的命令，不是 `deliver: false` 的重新识别：重新识别会改听写的阶段、悬浮窗和历史。试识别用引擎当前的客户端（即下一次听写会用的），场景按录音当时的应用匹配（`serve::resolve_recipe`，与重新识别相同），用量来源记为 `Retake`（计入额度，没有历史记录，所以不计节省的时间）。
+- 润色与下一次听写一致：输出方式按录音的场景（它的输出方式能用时）或当前生效的输出方式（`DictationEngine::take_output_mode`），是「边说边输入」时不润色（§12），结果的 `live_inject` 为真，界面写「「边说边输入」模式下不进行润色」。
 - 只取最近一条 WAV（长录音的 Opus 不算）；同一时间只运行一个，第二次请求返回「上一次试识别还没有结束」（`TRIAL_BUSY`）。按钮在历史记录关闭、录音缓存关闭或没有可用录音时不可用，并写明原因。
-- 测试：核心 `trial.rs` 的单测，`tests/audio_cache.rs` 的 `a_trial_recognises_the_newest_recording_and_delivers_nothing`、`a_trial_cleans_up_as_the_settings_say_and_one_runs_at_a_time`、`a_failed_trial_says_why`；契约夹具；`EnginesPane.test.tsx` 的三种状态；`mock-backend.test.ts`。手机上没有录音缓存，两个手机壳把 `recognition_trial` 列为仅电脑的命令（`apps/mobile/src-tauri/tests/ipc.rs`、`apps/mobile-rn/rust/tests/shell.rs` 的 `DESKTOP_ONLY`）。用用户自己的密钥对百炼和一个 OpenAI 兼容服务各试一次，在用户的电脑上做。
+- 测试：核心 `trial.rs` 的单测，`tests/audio_cache.rs` 的 `a_trial_recognises_the_newest_recording_and_delivers_nothing`、`a_trial_cleans_up_as_the_settings_say_and_one_runs_at_a_time`、`a_failed_trial_says_why`、`regression_a_trial_in_live_inject_runs_no_clean_up`；契约夹具；`EnginesPane.test.tsx` 的三种状态；`mock-backend.test.ts`。手机上没有录音缓存，两个手机壳把 `recognition_trial` 列为仅电脑的命令（`apps/mobile/src-tauri/tests/ipc.rs`、`apps/mobile-rn/rust/tests/shell.rs` 的 `DESKTOP_ONLY`）。用用户自己的密钥对百炼和一个 OpenAI 兼容服务各试一次，在用户的电脑上做。
 
 ### 30.6 术语表的去向
 
@@ -2842,12 +2844,14 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 | 阿里云百炼的 `qwen-audio-…-asr` 模型 | 任务参数里的热词 | `hotwords` |
 | 阿里云百炼的其他识别模型（Qwen3-ASR、Fun-ASR、Paraformer 等） | 不发送 | `not_supported` |
 | 本地模型 | 不发送，词典只在识别之后纠正 | `not_supported` |
-| 以上会发送、但词典没有启用的词条 | 不发送 | `empty` |
+| 以上会发送、但没有启用的词条，也没有启用的带术语包的内置场景 | 不发送 | `empty` |
 
-- `EngineStatus.glossary`：设置的识别服务下方与词典页顶部各一句，「当前识别服务会收到术语表。」「当前识别服务不接收术语表，词典只在识别之后纠正。」「本地模型不接收术语表，词典只在识别之后纠正。」「没有启用的词条，目前不会向识别服务发送术语表。」；核心还说不清（没有能运行的识别服务）时不显示。
+- 候补模型顶替所选模型时（额度用完，或服务出错且开着「服务出错时也改用候补」，§3.5、§3.14），状态按顶替的模型（`FallbackTarget::glossary_route`），与实际收到请求的客户端一致；预览的 `resolveEngineStatus` 同样按 `quotaOut` 选出的候补。
+- 启用的内置场景在它的应用里把术语包加进术语表（§18.10，聊天没有术语包）。所以词典为空、但有这样的场景时状态不是 `empty`（`runtime::no_glossary`，场景或词典变化时重算）。
+- `EngineStatus.glossary`：设置的识别服务下方与词典页顶部各一句，「当前识别服务会收到术语表。」（词典没有启用的词条时是「词典没有启用的词条；在已启用的内置场景里，当前识别服务会收到该场景的术语表。」）「当前识别服务不接收术语表，词典只在识别之后纠正。」「本地模型不接收术语表，词典只在识别之后纠正。」「没有启用的词条，目前不会向识别服务发送术语表。」；核心还说不清（没有能运行的识别服务）时不显示。
 - `HistoryEntry.glossary_sent`（`#[serde(default)]`）：这一次用到其文字的识别请求里，是否至少有一个带了术语表：整段、流式的终稿与重新解码、长录音的各段、候补链上实际给出文字的那一个。每个识别客户端都报告自己的请求带没带（`Transcript.glossary_sent`，流式会话的 `StreamFinal.glossary_sent`）。历史详情的「术语表」一行写「已发给识别服务」或「没有发给识别服务」；旧记录没有这个字段，不显示这一行。
 - **帮助文字更正**：此前设置页与词典页写「正确写法同时作为术语表发给云端识别和 AI 润色」，但百炼的大部分识别模型不接收；现在写「还会作为术语表发给 AI 润色，以及支持术语表的识别服务」，并由上面这句说明当前的服务。
-- 测试：`the_status_says_where_the_glossary_goes`、`the_status_says_when_the_dictionary_has_no_glossary_to_send`、`the_history_says_whether_the_glossary_went_to_the_recogniser`、`every_recognition_client_says_whether_the_glossary_went_out`、`the_glossary_goes_out_as_hot_words_only_where_the_model_takes_them`、`a_streamed_take_says_whether_its_requests_carried_the_glossary`、`an_imported_entry_says_whether_the_glossary_went_out`；前端 `Dictionary.test.tsx`、`HistoryDetail.test.tsx`、`EnginesPane.test.tsx`。
+- 测试：`the_status_says_where_the_glossary_goes`、`the_status_says_when_the_dictionary_has_no_glossary_to_send`、`the_history_says_whether_the_glossary_went_to_the_recogniser`、`every_recognition_client_says_whether_the_glossary_went_out`、`the_glossary_goes_out_as_hot_words_only_where_the_model_takes_them`、`a_streamed_take_says_whether_its_requests_carried_the_glossary`、`an_imported_entry_says_whether_the_glossary_went_out`、`regression_the_glossary_route_follows_the_model_standing_in`、`tests/scenes.rs@regression_an_enabled_builtin_scene_sends_its_terms_with_an_empty_dictionary`（状态、一次听写的历史与试识别）；前端 `Dictionary.test.tsx`、`HistoryDetail.test.tsx`、`EnginesPane.test.tsx`、`fallback.test.ts`（候补顶替时）、`mock-backend.test.ts`（内置场景的术语包）。
 
 ### 30.7 门禁与未做
 

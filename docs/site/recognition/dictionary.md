@@ -23,7 +23,7 @@ Right after recognition, every heard-as spelling in the text is replaced with th
 | Model Studio's other speech models, such as fun-asr-realtime | Not sent |
 | Local models | Not sent |
 
-With a recognition service that takes no glossary, the dictionary works through the corrections alone. The top of the Dictionary page, and the Speech models page under the recognition services, say whether the service in use receives the glossary; in the history, an entry's **Glossary** line says whether it went to recognition that time.
+With a recognition service that takes no glossary, the dictionary works through the corrections alone. An enabled built-in scene also adds its terms to the glossary in its apps, so a dictation there can send a glossary even when no dictionary entry is enabled. While a fallback model recognises in place of the selected one (its quota ran out, or it failed with **Also switch when a service fails** on), what happens to the glossary depends on the fallback model. The top of the Dictionary page, and the Speech models page under the recognition services, say whether the service in use receives the glossary; in the history, an entry's **Glossary** line says whether it went to recognition that time.
 
 Matching works like this:
 

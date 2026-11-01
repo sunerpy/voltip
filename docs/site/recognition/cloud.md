@@ -76,7 +76,7 @@ When a provider refuses a request (a wrong key, a used-up quota, an unknown mode
 Once a provider is set up, you can check it on a real recording: **Test with the newest recording**, under the recognition services on the Speech models page, recognises the newest recording in the recording cache once, with the settings you saved. The result is shown there only, never pasted or copied, and it does not go into the dictation history: the text, the recognition service and model, how long recognition took, whether the glossary was sent, the AI polish result and the total time. When recognition fails, the service's answer is shown.
 
 - It needs **Keep dictation history** and **Keep recordings on this computer** under Privacy and history, and a dictation recording of two minutes at most in the recording cache. Otherwise the button is unavailable and says why.
-- A test sends the same requests to the recognition service (and to AI polish, when it is on) as a dictation. With the built-in service it counts towards the daily usage, as **Recognized again**.
+- A test sends the same requests to the recognition service (and to AI polish, when it is on) as a dictation. With **Type as you speak** a dictation is not polished, and neither is a test: the result says **No polish in “Type as you speak” mode**. With the built-in service it counts towards the daily usage, as **Recognized again**.
 - One test runs at a time.
 
 ## Google AI Studio
