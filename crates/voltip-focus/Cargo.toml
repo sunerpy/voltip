@@ -57,7 +57,7 @@ windows-sys = { version = "=0.61.2", features = [
 # tests/focus_macos.rs: AppKit on the main thread (a window with a text view); the versions the
 # desktop shell already pulls.
 [target.'cfg(target_os = "macos")'.dev-dependencies]
-objc2 = "=0.6.4"
+objc2 = "=0.6.5"
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "libc", "NSApplication", "NSGraphics", "NSResponder", "NSRunningApplication", "NSText", "NSTextView", "NSView", "NSWindow", "NSWorkspace"] }
 objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSGeometry", "NSString"] }
 

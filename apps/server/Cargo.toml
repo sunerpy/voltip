@@ -48,7 +48,7 @@ voltip-serve.workspace = true
 
 # `_exit` (src/exit.rs); the version the graph already has.
 [target.'cfg(target_os = "linux")'.dependencies]
-libc = "=0.2.189"
+libc = "=0.2.191"
 
 [build-dependencies]
 # build.rs reads the app version from the root package.json.
