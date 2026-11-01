@@ -6,7 +6,8 @@
 //! pinned window) stays over the pill. [`raise`] puts the pill back at the top itself, and
 //! [`Keeper`] does it again while the pill shows: whenever another window comes to the front, and
 //! whenever a window appears or the stacking order changes and a window now covers the pill
-//! ([`crate::contest`] says when a window that keeps coming back on top is left there).
+//! ([`crate::contest`] says when a window that comes straight back on top is looked at again
+//! later instead).
 //!
 //! `HWND_TOPMOST` also makes a window topmost again when another program took that away (placed it
 //! after an ordinary window or said `HWND_NOTOPMOST`). Nothing here activates the pill or changes
@@ -25,11 +26,11 @@ use windows_sys::Win32::System::Threading::GetCurrentThreadId;
 use windows_sys::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CHILDID_SELF, DispatchMessageW, EVENT_OBJECT_REORDER, EVENT_OBJECT_SHOW, EVENT_SYSTEM_FOREGROUND, GW_HWNDPREV, GW_OWNER, GetClassNameW, GetMessageW,
-    GetWindow, GetWindowRect, HWND_TOPMOST, IsIconic, IsWindowVisible, MSG, OBJID_WINDOW, PostThreadMessageW, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOSIZE, SetWindowPos, TranslateMessage, WINEVENT_OUTOFCONTEXT, WM_QUIT,
+    GetWindow, GetWindowRect, HWND_TOPMOST, IsIconic, IsWindowVisible, KillTimer, MSG, OBJID_WINDOW, PostThreadMessageW, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE,
+    SWP_NOMOVE, SWP_NOSIZE, SetTimer, SetWindowPos, TranslateMessage, WINEVENT_OUTOFCONTEXT, WM_QUIT,
 };
 
-use crate::contest::Contest;
+use crate::contest::{Answer, Contest};
 
 /// How long the keeper's thread may take to install its hooks.
 const START_TIMEOUT: Duration = Duration::from_secs(5);
@@ -49,6 +50,8 @@ thread_local! {
     static PILL: Cell<isize> = const { Cell::new(0) };
     /// When it raises the pill over a window that covers it ([`Contest`]).
     static CONTEST: RefCell<Contest> = RefCell::new(Contest::default());
+    /// The thread timer set to look again at the pill ([`Answer::LookAgainIn`]); 0 when none is.
+    static LOOK_AGAIN: Cell<usize> = const { Cell::new(0) };
 }
 
 /// The keeper's hook: another window came to the front, so it is now at the top of its band (the
@@ -72,13 +75,46 @@ unsafe extern "system" fn on_event(_hook: HWINEVENTHOOK, event: u32, hwnd: HWND,
             if event == EVENT_OBJECT_SHOW && (object != OBJID_WINDOW || child != CHILDID_SELF.cast_signed() || hwnd as isize == pill) {
                 return;
             }
-            if let Some(cover) = covering(pill)
-                && CONTEST.with_borrow_mut(|contest| contest.raise_over(cover, Instant::now()))
-            {
-                raise_logged(pill);
-            }
+            raise_over_cover(pill);
         }
         _ => {}
+    }
+}
+
+/// A window may cover the pill: raise the pill over it, or look again later ([`Contest`]).
+fn raise_over_cover(pill: isize) {
+    let Some(cover) = covering(pill) else { return };
+    match CONTEST.with_borrow_mut(|contest| contest.raise_over(cover, Instant::now())) {
+        Answer::Raise => raise_logged(pill),
+        Answer::LookAgainIn(wait) => look_again_in(wait),
+        Answer::Leave => {}
+    }
+}
+
+/// Have the message loop call [`on_look_again`] after `wait`. A timer already set stays: it is
+/// due no later, and looking again then answers anew.
+fn look_again_in(wait: Duration) {
+    if LOOK_AGAIN.get() != 0 {
+        return;
+    }
+    let ms = u32::try_from(wait.as_millis()).unwrap_or(u32::MAX).saturating_add(1);
+    // SAFETY: a thread timer (no window) with a callback of the TIMERPROC signature; this
+    // thread's message loop delivers it, and `on_look_again` kills it.
+    let timer = unsafe { SetTimer(std::ptr::null_mut(), 0, ms, Some(on_look_again)) };
+    if timer == 0 {
+        tracing::debug!(error = %std::io::Error::last_os_error(), "overlay keeper: SetTimer failed");
+    }
+    LOOK_AGAIN.set(timer);
+}
+
+/// The timer [`look_again_in`] set: once only, then the pill is looked at again.
+unsafe extern "system" fn on_look_again(_hwnd: HWND, _message: u32, timer: usize, _time: u32) {
+    // SAFETY: the thread timer this keeper set on this thread, killed once.
+    unsafe { KillTimer(std::ptr::null_mut(), timer) };
+    LOOK_AGAIN.set(0);
+    let pill = PILL.get();
+    if pill != 0 {
+        raise_over_cover(pill);
     }
 }
 
@@ -148,8 +184,9 @@ fn class_is(hwnd: HWND, classes: &[&str]) -> bool {
 /// While it lives, puts the pill back on top whenever another window comes to the front
 /// (`EVENT_SYSTEM_FOREGROUND`) and whenever a window appears (`EVENT_OBJECT_SHOW`) or the stacking
 /// order changes (`EVENT_OBJECT_REORDER`) with a window over the pill: out-of-context WinEvent
-/// hooks on a thread of its own that pumps messages. Nothing runs between those events; dropping
-/// it removes the hooks and ends the thread.
+/// hooks on a thread of its own that pumps messages. Nothing runs between those events but the
+/// one-off timer that looks again at a window back over the pill at once; dropping it removes the
+/// hooks and ends the thread.
 #[derive(Debug)]
 pub struct Keeper {
     thread_id: u32,
@@ -219,5 +256,10 @@ fn run(hwnd: isize, ready: &mpsc::SyncSender<Result<u32, String>>) {
     for hook in hooks {
         // SAFETY: a handle SetWinEventHook returned on this thread, removed once.
         unsafe { UnhookWinEvent(hook) };
+    }
+    let timer = LOOK_AGAIN.replace(0);
+    if timer != 0 {
+        // SAFETY: the thread timer this keeper set on this thread and has not killed yet.
+        unsafe { KillTimer(std::ptr::null_mut(), timer) };
     }
 }

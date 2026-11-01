@@ -4,7 +4,7 @@
 //! Z order and by the pixels, while the window in front stays in front. The windows are a topmost
 //! one (a pinned window or a player), a topmost one over the whole monitor (a game or a player in
 //! full screen), the same activated while the pill shows, the window in front pinned on top (then
-//! unpinned and pinned again) and a topmost window coming up while the pill shows, and an ordinary
+//! unpinned and pinned again at once) and a topmost window coming up while the pill shows, and an ordinary
 //! one and an ordinary full-screen one (a browser after F11).
 //!
 //! A runner has no microphone: the take fails at once and its pill shows for the 2.5 s dwell,
@@ -215,13 +215,15 @@ fn regression_the_real_pill_goes_back_above_windows_pinned_or_shown_while_it_sho
     app.take();
     app.assert_on_top("before the window in front was pinned on top");
     // No window comes to the front: the one in front is pinned on top where it is.
+    let first_pin = Instant::now();
     front.pin();
     app.assert_on_top("the window in front pinned on top while the pill shows");
-    // Unpinned and pinned again later in the same take (a new pin, docs/dictation.md §32.2).
+    // Unpinned and pinned again at once, within `AGAIN_AFTER` of the raise over it: the keeper
+    // looks again once that has passed (docs/dictation.md §32.2).
     front.unpin();
-    std::thread::sleep(AGAIN_AFTER + Duration::from_millis(100));
     front.pin();
-    app.assert_on_top("the same window pinned on top again while the pill shows");
+    println!("pinned again {} ms after the first pin (AGAIN_AFTER is {} ms)", first_pin.elapsed().as_millis(), AGAIN_AFTER.as_millis());
+    app.assert_on_top("the same window pinned on top again at once while the pill shows");
     assert_eq!(foreground(), front.hwnd, "the pill took the window in front's place");
     app.end();
     app.take();

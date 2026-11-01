@@ -2,8 +2,8 @@
 //! without a window manager (Xvfb), where only the clients' own requests order the windows: the
 //! pill, hidden after a take, is mapped again the way GTK shows it, and a window mapped in the
 //! meantime must not stay over it once the shell raised it; while it shows, a window mapped over
-//! it or restacked over it later must not stay there either while the shell's [`Keeper`] runs,
-//! and without one it does. A menu or a tooltip (an override-redirect window) stays over the pill.
+//! it, then restacked over it again at once, must not stay there either while the shell's
+//! [`Keeper`] runs, and without one it does. A menu or a tooltip (an override-redirect window) stays over the pill.
 //! Checked by the stacking order and by the screen's pixels.
 //!
 //! It needs an X server, so it is ignored: CI runs it under Xvfb (`smoke-desktop`):
@@ -157,12 +157,14 @@ fn regression_the_pill_goes_back_above_windows_mapped_or_raised_over_it_while_it
     let pill = server.pill();
     let keeper = Keeper::start_on(Some(&server.display), pill).expect("the keeper").expect("a display");
     // While the pill shows, another window comes up over its place.
+    let mapped = Instant::now();
     let cover = server.cover();
     server.assert_pill_on_top(pill, "a window mapped over the pill while it shows");
-    // Later, that window is brought to the front again (a new event, not the window fighting back).
-    std::thread::sleep(AGAIN_AFTER + Duration::from_millis(100));
+    // That window is raised over the pill again at once, within `AGAIN_AFTER` of the restack over
+    // it: the keeper looks again once that has passed (docs/dictation.md §32.2).
     server.raise(cover);
-    server.assert_pill_on_top(pill, "the same window raised over the pill again while it shows");
+    println!("raised again {} ms after it was mapped (AGAIN_AFTER is {} ms)", mapped.elapsed().as_millis(), AGAIN_AFTER.as_millis());
+    server.assert_pill_on_top(pill, "the same window raised over the pill again at once while it shows");
     drop(keeper);
 }
 

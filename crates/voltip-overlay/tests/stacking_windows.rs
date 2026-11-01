@@ -113,15 +113,16 @@ fn regression_the_pill_goes_back_above_the_same_window_pinned_on_top_again_while
     dpi_aware();
     let front = TestWindow::open(Spec::ordinary());
     let (pill, keeper) = showing_over(&front);
+    let first_pin = std::time::Instant::now();
     front.pin();
     assert_pill_on_top(pill.hwnd, "the window in front pinned on top while the pill shows");
-    // Unpinned and, with no other window coming to the front, pinned again: a new pin, not the
-    // window fighting back. A window back on top within `AGAIN_AFTER` of the raise over it is the
-    // latter (docs/dictation.md §32.2), so the second pin waits that long.
+    // Unpinned and, with no other window coming to the front, pinned again at once: back over the
+    // pill within `AGAIN_AFTER` of the raise over it, so the keeper looks again once that has
+    // passed (docs/dictation.md §32.2), and the pill must be back on top then.
     front.unpin();
-    std::thread::sleep(AGAIN_AFTER + std::time::Duration::from_millis(100));
     front.pin();
-    assert_pill_on_top(pill.hwnd, "the same window pinned on top again while the pill shows");
+    println!("pinned again {} ms after the first pin (AGAIN_AFTER is {} ms)", first_pin.elapsed().as_millis(), AGAIN_AFTER.as_millis());
+    assert_pill_on_top(pill.hwnd, "the same window pinned on top again at once while the pill shows");
     assert_focus_kept(&front);
     drop(keeper);
 }

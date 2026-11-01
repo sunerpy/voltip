@@ -9,6 +9,7 @@
 //! background asks for, and a pure Wayland session has no stacking a client can ask for.
 
 use std::ffi::OsStr;
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
 use std::time::Instant;
@@ -20,7 +21,12 @@ use x11rb::protocol::xproto::{
 };
 use x11rb::rust_connection::RustConnection;
 
-use crate::contest::Contest;
+use crate::contest::{Answer, Contest};
+
+/// What a client message to the keeper's own window asks (its first value): end the thread, or
+/// look again at the pill.
+const STOP: u32 = 0;
+const LOOK_AGAIN: u32 = 1;
 
 /// The display a request goes to: `$DISPLAY`, or none (pure Wayland, no session).
 fn display_name(display: Option<&OsStr>) -> Option<&str> {
@@ -68,11 +74,13 @@ fn restack(conn: &RustConnection, window: Window) -> Result<(), String> {
 /// While it lives, restacks the pill on top whenever another window is mapped or restacked over
 /// it: a connection of its own with `SubstructureNotify` on the root window and a thread that waits
 /// for those events (nothing runs between them), with [`crate::contest`]'s rules for a window that
-/// keeps coming back on top. Override-redirect windows (menus, tooltips) are left over the pill.
-/// Dropping it ends the thread and the connection.
+/// comes straight back on top (an alarm thread has the keeper look again later). Override-redirect
+/// windows (menus, tooltips) are left over the pill. Dropping it ends the threads and the
+/// connection.
 pub struct Keeper {
     connection: Arc<RustConnection>,
-    /// An unmapped window of the keeper's own: a client message to it ends the thread.
+    /// An unmapped window of the keeper's own: a client message to it ends the thread or has it
+    /// look again ([`STOP`], [`LOOK_AGAIN`]).
     wake: Window,
     thread: Option<JoinHandle<()>>,
 }
@@ -118,43 +126,87 @@ impl Keeper {
 impl Drop for Keeper {
     /// Send the keeper's own window a client message, which ends the thread.
     fn drop(&mut self) {
-        let event = ClientMessageEvent::new(32, self.wake, x11rb::NONE, [0u32; 5]);
-        let _ = self.connection.send_event(false, self.wake, EventMask::NO_EVENT, event);
-        let _ = self.connection.flush();
+        let _ = send_to(&self.connection, self.wake, STOP);
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
     }
 }
 
+/// A client message to the keeper's own window, flushed.
+fn send_to(conn: &RustConnection, wake: Window, what: u32) -> Result<(), String> {
+    let event = ClientMessageEvent::new(32, wake, x11rb::NONE, [what, 0, 0, 0, 0]);
+    conn.send_event(false, wake, EventMask::NO_EVENT, event).map_err(|e| e.to_string())?;
+    conn.flush().map_err(|e| e.to_string())
+}
+
 /// The keeper's thread: wait for the root window's substructure events and restack the pill when
 /// a window that is not an override-redirect one covers it.
-fn watch(conn: &RustConnection, root: Window, pill: Window, wake: Window) {
+fn watch(conn: &Arc<RustConnection>, root: Window, pill: Window, wake: Window) {
+    let (later, times) = mpsc::channel();
+    let alarm = {
+        let conn = Arc::clone(conn);
+        std::thread::Builder::new().name("voltip-overlay-x11-alarm".into()).spawn(move || alarm(&conn, wake, &times))
+    };
     let mut contest = Contest::default();
     loop {
         let event = match conn.wait_for_event() {
             Ok(event) => event,
             Err(e) => {
                 tracing::debug!(error = %e, "overlay keeper: the X connection ended");
-                return;
+                break;
             }
         };
         let window = match event {
-            Event::ClientMessage(message) if message.window == wake => return,
-            Event::MapNotify(e) if !e.override_redirect => e.window,
-            Event::ConfigureNotify(e) if !e.override_redirect => e.window,
-            Event::CirculateNotify(e) => e.window,
+            Event::ClientMessage(message) if message.window == wake && message.data.as_data32()[0] == LOOK_AGAIN => None,
+            Event::ClientMessage(message) if message.window == wake => break,
+            Event::MapNotify(e) if !e.override_redirect => Some(e.window),
+            Event::ConfigureNotify(e) if !e.override_redirect => Some(e.window),
+            Event::CirculateNotify(e) => Some(e.window),
             _ => continue,
         };
         let Some(top) = top_level(conn, root, pill) else { continue };
-        if window == top {
+        if window == Some(top) {
             continue;
         }
-        if let Some(cover) = covering(conn, root, top)
-            && contest.raise_over(isize::try_from(cover).unwrap_or(isize::MAX), Instant::now())
-            && let Err(e) = restack(conn, pill)
-        {
-            tracing::debug!(error = %e, "overlay keeper: restack failed");
+        let Some(cover) = covering(conn, root, top) else { continue };
+        match contest.raise_over(isize::try_from(cover).unwrap_or(isize::MAX), Instant::now()) {
+            Answer::Raise => {
+                if let Err(e) = restack(conn, pill) {
+                    tracing::debug!(error = %e, "overlay keeper: restack failed");
+                }
+            }
+            Answer::LookAgainIn(wait) => {
+                let _ = later.send(Instant::now() + wait);
+            }
+            Answer::Leave => {}
+        }
+    }
+    drop(later);
+    if let Ok(alarm) = alarm {
+        let _ = alarm.join();
+    }
+}
+
+/// The keeper's alarm: once the earliest time it was given has come, it has the keeper look
+/// again ([`LOOK_AGAIN`]). It ends when the keeper's thread does.
+fn alarm(conn: &RustConnection, wake: Window, times: &mpsc::Receiver<Instant>) {
+    let mut next: Option<Instant> = None;
+    loop {
+        let received = match next {
+            None => times.recv().map_err(|_| RecvTimeoutError::Disconnected),
+            Some(at) => times.recv_timeout(at.saturating_duration_since(Instant::now())),
+        };
+        match received {
+            Ok(at) => next = Some(next.map_or(at, |next| next.min(at))),
+            Err(RecvTimeoutError::Timeout) => {
+                next = None;
+                if let Err(e) = send_to(conn, wake, LOOK_AGAIN) {
+                    tracing::debug!(error = %e, "overlay keeper: the X connection ended");
+                    return;
+                }
+            }
+            Err(RecvTimeoutError::Disconnected) => return,
         }
     }
 }
