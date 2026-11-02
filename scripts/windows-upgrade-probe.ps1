@@ -66,7 +66,9 @@ $exePath = Join-Path $installDir 'voltip-desktop.exe'
 # dev/voltip/Voltip; the WebView2 user data folder: the bundle identifier).
 $dataDir = Join-Path $env:APPDATA 'voltip\Voltip\data'
 $profileDir = Join-Path $env:LOCALAPPDATA 'dev.voltip.desktop'
-$policyKey = 'HKCU:\Software\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments'
+# HKLM: WebView2 ignores the per-user policy and the WEBVIEW2_* variables in an elevated host, and
+# CI's runner runs everything elevated (learn.microsoft.com, "Develop secure WebView2 apps").
+$policyKey = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments'
 $ruleName = 'voltip-upgrade-probe'
 
 function Wait-Until([scriptblock] $condition, [int] $seconds, [string] $what) {
@@ -136,7 +138,7 @@ function Write-Settings {
   New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
   $settings = [ordered]@{
     schema = 1; theme = 'glass'; follow_system_theme = $false
-    relay_url = "ws://127.0.0.1:$RelayPort"; relay_enabled = $true; auto_update = $false
+    relay_url = "ws://127.0.0.1:$RelayPort/ws"; relay_enabled = $true; auto_update = $false
   }
   $settings | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $dataDir 'settings.json') -Encoding utf8NoBOM
 }
@@ -183,6 +185,10 @@ function Wait-Voltip([int[]] $before, [string] $what) {
   } catch {
     $o = Port-Owner
     Note "${what}: the debugging port is served by $(if ($o) { "pid $($o.pid), started by pid $($o.parent)" } else { 'nothing' }), not by a browser process of Voltip pid $($proc.Id); $(@(Pages).Count) page(s)"
+    foreach ($b in @(WebView-Processes | Where-Object { $_.CommandLine -notmatch '--type=' })) {
+      $flags = @([regex]::Matches($b.CommandLine, '--[a-z0-9-]+') | ForEach-Object { $_.Value } | Sort-Object -Unique) -join ' '
+      Note "${what}: WebView2 browser pid $($b.ProcessId) <- $($b.ParentProcessId), flags: $flags"
+    }
     Wait-Until { @(Pages).Count -ge 2 } $TimeoutSec "two windows on the debugging port ($what)" | Out-Null
   }
   $proc
