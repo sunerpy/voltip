@@ -44,6 +44,13 @@ on:
         description: Measure the insert check on the Windows and Apple silicon desktops
         type: boolean
         default: false
+      # The update from the last release on Windows (docs/dictation.md §9.4): 0.2.1 installed and
+      # running, this build's installer over it, then which interface code each window runs. Off by
+      # default; `-f upgrade_probe=true`.
+      upgrade_probe:
+        description: Update 0.2.1 to this build on Windows and read the interface each window runs
+        type: boolean
+        default: false
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
@@ -511,7 +518,8 @@ jobs:
     name: windows-x64 · native run (Windows Server)
     needs: [windows-cross]
     runs-on: windows-2025
-    timeout-minutes: 60
+    # The upgrade probe (on demand) adds its rounds and the relay's build.
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.upgrade_probe && 120 || 60 }}
     defaults:
       run:
         shell: pwsh
@@ -532,6 +540,56 @@ jobs:
         with:
           name: voltip-windows-x64
           path: dist-windows
+
+      # On demand (`upgrade_probe`, docs/dictation.md §9.4): the update a user makes. Voltip 0.2.1
+      # from its release, installed and running against this build's relay on the runner, then this
+      # build's installer over it (`/S /UPDATE /R`) and over itself; every window is read over
+      # WebView2's debugging port (scripts/windows-upgrade-probe.ps1). First, while the runner has
+      # had no Voltip; the script removes what it installed. Voltip reaches no server: a firewall
+      # rule blocks its connections off this machine.
+      - name: Upgrade probe — the 0.2.1 installer from its release
+        if: github.event_name == 'workflow_dispatch' && inputs.upgrade_probe
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download v0.2.1 --repo $env:GITHUB_REPOSITORY --pattern 'Voltip_0.2.1_x64-setup.exe' --pattern 'SHA256SUMS' --dir old-release
+          $line = Get-Content old-release/SHA256SUMS | Where-Object { $_ -match 'Voltip_0\.2\.1_x64-setup\.exe$' }
+          if (-not $line) { throw 'SHA256SUMS names no Voltip_0.2.1_x64-setup.exe' }
+          $want = ($line -split '\s+')[0].ToLowerInvariant()
+          $have = (Get-FileHash old-release/Voltip_0.2.1_x64-setup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($want -ne $have) { throw "0.2.1 installer digest $have, SHA256SUMS says $want" }
+          "0.2.1 installer $have"
+
+      - name: Upgrade probe — Rust toolchain and this build's relay
+        if: github.event_name == 'workflow_dispatch' && inputs.upgrade_probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install
+          cargo build -p voltip-relay
+
+      - name: Upgrade probe — Node.js (the probe's debugging client)
+        if: github.event_name == 'workflow_dispatch' && inputs.upgrade_probe
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_MAJOR }}
+
+      - name: Upgrade probe — update 0.2.1 to this build, read every window
+        if: github.event_name == 'workflow_dispatch' && inputs.upgrade_probe
+        timeout-minutes: 45
+        run: |
+          $setup = Get-ChildItem dist-windows -Filter '*-setup.exe' | Select-Object -First 1
+          if (-not $setup) { throw 'no NSIS installer in the artifact' }
+          ./scripts/windows-upgrade-probe.ps1 -OldSetup old-release/Voltip_0.2.1_x64-setup.exe -NewSetup $setup.FullName -Relay target/debug/voltip-relay.exe -OutDir upgrade-probe -Rounds 3
+
+      - name: Upload the upgrade probe
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.upgrade_probe
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: upgrade-probe-windows
+          path: upgrade-probe
+          if-no-files-found: warn
+          retention-days: 7
 
       # The headless runs' two models (930 MB) from the Actions cache: huggingface.co and its mirror
       # both unreachable for a minute failed main's Intel Mac leg (2026-10-06, run 37401697547). One
