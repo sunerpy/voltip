@@ -2695,11 +2695,11 @@ impl Runtime {
     fn ignore_suggestions(&mut self, pairs: &[crate::vocabulary::SuggestionPair]) -> crate::vocabulary::BatchIgnoreOutcome {
         use crate::vocabulary::{Batch, BatchIgnoreOutcome};
         match self.ignored.add_batch(pairs, now_ms()) {
-            Ok(added) => {
-                if !added.is_empty() {
+            Ok(batch) => {
+                if !batch.added.is_empty() {
                     self.emit(CoreEvent::VocabularyIgnored(self.ignored.list().to_vec()));
                 }
-                BatchIgnoreOutcome::Ignored { undo: self.suggestion_batches.push(Batch::Ignored(added)) }
+                BatchIgnoreOutcome::Ignored { undo: self.suggestion_batches.push(Batch::Ignored(batch)) }
             }
             Err(e) => BatchIgnoreOutcome::Failed { message: e.to_string() },
         }
@@ -2718,7 +2718,7 @@ impl Runtime {
                 }
                 outcome
             }
-            Some(Batch::Ignored(pairs)) => match self.ignored.remove_batch(&pairs) {
+            Some(Batch::Ignored(batch)) => match self.ignored.remove_batch(&batch) {
                 Ok(changed) => {
                     if changed {
                         self.emit(CoreEvent::VocabularyIgnored(self.ignored.list().to_vec()));

@@ -17,8 +17,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::{
-    DictionaryDraft, DictionaryEntry, DictionaryStore, EntrySource, IgnoredPair, MAX_DICTIONARY_ENTRIES, MAX_HEARD_AS, ReplacementRule, Vocabulary,
-    validate_dictionary_draft,
+    DictionaryDraft, DictionaryEntry, DictionaryStore, EntrySource, IgnoredBatch, IgnoredPair, MAX_DICTIONARY_ENTRIES, MAX_HEARD_AS, ReplacementRule,
+    Vocabulary, validate_dictionary_draft,
 };
 use crate::history::HistoryText;
 use crate::mcp::candidates::{MAX_PAIRS, PairExample, candidates};
@@ -524,8 +524,8 @@ pub fn undo_batch(store: &mut DictionaryStore, changes: &[Accepted]) -> BatchUnd
 pub enum Batch {
     /// A batch 加入词典: the entries it made or added to ([`AcceptedBatch::changes`]).
     Accepted(Vec<Accepted>),
-    /// A batch 忽略: the pairs it put on the ignored list.
-    Ignored(Vec<SuggestionPair>),
+    /// A batch 忽略: the pairs it put on the ignored list and the ones it pushed out.
+    Ignored(IgnoredBatch),
 }
 
 /// The batches 撤销 can still take back, newest last, at most [`MAX_UNDOS`]; in memory only.
@@ -1073,11 +1073,11 @@ mod tests {
     #[test]
     fn the_batch_log_gives_each_batch_once_and_keeps_the_newest() {
         let mut log = BatchLog::default();
-        let pair = SuggestionPair { heard: "非".into(), polished: "飞".into() };
-        let ignored = log.push(Batch::Ignored(vec![pair.clone()]));
+        let batch = IgnoredBatch { added: vec![IgnoredPair { heard: "非".into(), polished: "飞".into(), at_ms: 1 }], dropped: vec![] };
+        let ignored = log.push(Batch::Ignored(batch.clone()));
         let accepted = log.push(Batch::Accepted(vec![]));
         assert_ne!(ignored, accepted);
-        assert_eq!(log.take(ignored), Some(Batch::Ignored(vec![pair])));
+        assert_eq!(log.take(ignored), Some(Batch::Ignored(batch)));
         assert_eq!(log.take(ignored), None, "taken once");
         assert_eq!(log.take(accepted), Some(Batch::Accepted(vec![])));
         let ids: Vec<Uuid> = (0..=MAX_UNDOS).map(|_| log.push(Batch::Accepted(vec![]))).collect();

@@ -102,6 +102,7 @@ import {
   type SceneDraft,
   type LevelFrame,
   MAX_ACTIVATION_MS,
+  MAX_IGNORED,
   type UiEvent,
   type UpdateStatus,
   defaultEngineSettings,
@@ -4342,6 +4343,26 @@ describe("MockBackend learning suggestions (docs/dictation.md section 16.10)", (
       ]),
     ).rejects.toThrow(/不能为空/);
     expect(backend.peek().vocabulary_ignored).toEqual([earlier]);
+    backend.destroy();
+  });
+
+  it("regression: 撤销 of a batch 忽略 on a full ignored list puts back the pairs it pushed out", async () => {
+    const full = Array.from({ length: MAX_IGNORED }, (_, i) => ({
+      heard: `听成${i}`,
+      polished: "正确",
+      at_ms: 1 + i,
+    }));
+    const backend = new MockBackend({ now: () => T, history: rows, vocabularyIgnored: full });
+    const outcome = await backend.vocabularySuggestionsIgnore([
+      { heard: "非", polished: "飞" },
+      { heard: "维他命", polished: "Voltip" },
+    ]);
+    if (outcome.kind !== "ignored") throw new Error(JSON.stringify(outcome));
+    const during = backend.peek().vocabulary_ignored;
+    expect(during).toHaveLength(MAX_IGNORED);
+    expect(during[0]?.heard).toBe("听成2");
+    expect(await backend.vocabularySuggestionsUndo(outcome.undo)).toEqual({ kind: "undone" });
+    expect(backend.peek().vocabulary_ignored).toEqual(full);
     backend.destroy();
   });
 });

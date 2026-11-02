@@ -11,8 +11,8 @@ use tokio::sync::mpsc;
 use voltip_core::dictation::fakes::{FAKE_TRANSCRIPT, FakeAudio, FakeInjector, FakeTranscriber};
 use voltip_core::dictation::{DictationPorts, Transcriber};
 use voltip_core::vocabulary::{
-    AcceptOutcome, BatchIgnoreOutcome, BatchItem, BatchUndoOutcome, DICTIONARY_FILE_NAME, IGNORED_FILE_NAME, IgnoredPair, RULES_FILE_NAME, Refusal, Reply,
-    SuggestionPair, SuggestionPick, UndoOutcome, export_rules_toml, parse_rules_toml,
+    AcceptOutcome, BatchIgnoreOutcome, BatchItem, BatchUndoOutcome, DICTIONARY_FILE_NAME, IGNORED_FILE_NAME, IgnoreStore, IgnoredPair, MAX_IGNORED,
+    RULES_FILE_NAME, Refusal, Reply, SuggestionPair, SuggestionPick, UndoOutcome, export_rules_toml, parse_rules_toml,
 };
 use voltip_core::{
     AppCore, CoreCommand, CoreConfig, CoreEvent, CoreHandle, DictationPhase, DictionaryDraft, DictionaryEntry, EntrySource, GlossaryRoute, ImportMode,
@@ -315,6 +315,36 @@ async fn the_ignored_list_holds_each_pair_with_when_it_was_ignored() {
 
     node.handle.send(CoreCommand::SuggestionUnignore { heard: "集成".into(), polished: "继承".into() }).await.unwrap();
     assert_eq!(ignored(&mut node).await, [last[1].clone()], "the other pair stays");
+    node.handle.send(CoreCommand::Shutdown).await.unwrap();
+}
+
+/// docs/dictation.md §16.10 (completion review, round 1): a batch 忽略 on a full ignored list pushes
+/// its oldest pairs out; 撤销 of the batch puts them back, with their times, so the list is as it was
+/// before the batch, in the core's event and on disk.
+#[tokio::test]
+async fn regression_undo_of_a_batch_ignore_on_a_full_list_puts_back_the_pairs_it_pushed_out() {
+    let dir = tempfile::tempdir().unwrap();
+    let full: Vec<serde_json::Value> =
+        (0..MAX_IGNORED).map(|i| serde_json::json!({ "heard": format!("听成{i}"), "polished": "正确", "at_ms": 1 + i as u64 })).collect();
+    std::fs::write(dir.path().join(IGNORED_FILE_NAME), serde_json::to_vec(&serde_json::json!({ "schema": 1, "pairs": full })).unwrap()).unwrap();
+    let mut node = start(dir.path(), Arc::new(FakeInjector::paste()));
+    let before = ignored(&mut node).await;
+    assert_eq!(before.len(), MAX_IGNORED);
+
+    let (reply, rx) = Reply::channel();
+    node.handle.send(CoreCommand::SuggestionsIgnore { pairs: vec![pair("非", "飞"), pair("维他命", "Voltip")], reply }).await.unwrap();
+    let BatchIgnoreOutcome::Ignored { undo } = answer(rx).await else { panic!("ignored") };
+    let during = ignored(&mut node).await;
+    assert_eq!(during.len(), MAX_IGNORED, "the cap holds");
+    assert_eq!((during[0].heard.as_str(), during[MAX_IGNORED - 1].heard.as_str()), ("听成2", "维他命"), "the two oldest made room");
+
+    let (reply, rx) = Reply::channel();
+    node.handle.send(CoreCommand::SuggestionsUndo { id: undo, reply }).await.unwrap();
+    assert_eq!(answer(rx).await, BatchUndoOutcome::Undone);
+    assert_eq!(ignored(&mut node).await, before, "as before the batch, times included");
+    let (reread, notice) = IgnoreStore::open(dir.path());
+    assert!(notice.is_none(), "{notice:?}");
+    assert_eq!(reread.list(), before.as_slice(), "on disk");
     node.handle.send(CoreCommand::Shutdown).await.unwrap();
 }
 

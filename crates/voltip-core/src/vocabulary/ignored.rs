@@ -68,6 +68,16 @@ pub fn validate_pair(heard: &str, polished: &str) -> Result<(String, String), Vo
     Ok((heard, polished))
 }
 
+/// What a batch 忽略 changed, for its 撤销 (docs/dictation.md §16.10): the pairs it put on the list
+/// and the oldest pairs it pushed out to keep [`MAX_IGNORED`], both as stored.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct IgnoredBatch {
+    /// The pairs the batch put on the list, normalised and with the batch's time.
+    pub added: Vec<IgnoredPair>,
+    /// The pairs it pushed out, oldest first, with their times.
+    pub dropped: Vec<IgnoredPair>,
+}
+
 /// The ignored pairs, oldest first.
 #[derive(Debug)]
 pub struct IgnoreStore {
@@ -116,9 +126,10 @@ impl IgnoreStore {
 
     /// Ignore every pair of `pairs` from now on, with one write (a batch 忽略, docs/dictation.md
     /// §16.10): each goes to the end with `now_ms`, once; a pair ignored already keeps its place and
-    /// time. Past [`MAX_IGNORED`] the oldest pairs are dropped. Returns the pairs the batch put on
-    /// the list, as stored. A pair that is not one refuses the whole batch; nothing changes.
-    pub fn add_batch(&mut self, pairs: &[SuggestionPair], now_ms: u64) -> Result<Vec<SuggestionPair>, VocabularyError> {
+    /// time. Past [`MAX_IGNORED`] the oldest pairs are dropped. Returns what 撤销 needs: the pairs the
+    /// batch put on the list and the ones it pushed out. A pair that is not one refuses the whole
+    /// batch; nothing changes.
+    pub fn add_batch(&mut self, pairs: &[SuggestionPair], now_ms: u64) -> Result<IgnoredBatch, VocabularyError> {
         let mut list = self.pairs.clone();
         let mut added = Vec::new();
         for pair in pairs {
@@ -126,27 +137,33 @@ impl IgnoreStore {
             if list.iter().any(|p| p.heard == heard && p.polished == polished) {
                 continue;
             }
-            list.push(IgnoredPair { heard: heard.clone(), polished: polished.clone(), at_ms: now_ms });
-            added.push(SuggestionPair { heard, polished });
+            let stored = IgnoredPair { heard, polished, at_ms: now_ms };
+            list.push(stored.clone());
+            added.push(stored);
         }
         if added.is_empty() {
-            return Ok(added);
+            return Ok(IgnoredBatch::default());
         }
         let over = list.len().saturating_sub(MAX_IGNORED);
-        list.drain(..over);
-        added.retain(|a| list.iter().any(|p| p.heard == a.heard && p.polished == a.polished));
+        let mut dropped: Vec<IgnoredPair> = list.drain(..over).collect();
+        // The batch's own pairs come after the old ones: only a batch past the cap by itself loses some.
+        dropped.truncate(self.pairs.len());
+        added.retain(|a| list.contains(a));
         self.commit(list)?;
-        Ok(added)
+        Ok(IgnoredBatch { added, dropped })
     }
 
-    /// Show every pair of `pairs` again, with one write (撤销 of a batch 忽略); pairs not in the
-    /// list change nothing. Returns whether the list changed. A pair that is not one refuses the
-    /// whole batch.
-    pub fn remove_batch(&mut self, pairs: &[SuggestionPair]) -> Result<bool, VocabularyError> {
-        let gone: Vec<(String, String)> = pairs.iter().map(|p| validate_pair(&p.heard, &p.polished)).collect::<Result<_, _>>()?;
-        let list: Vec<IgnoredPair> =
-            self.pairs.iter().filter(|p| !gone.iter().any(|(heard, polished)| *heard == p.heard && *polished == p.polished)).cloned().collect();
-        if list.len() == self.pairs.len() {
+    /// 撤销 of a batch 忽略, with one write: the batch's pairs come off the list and the pairs it
+    /// pushed out go back to the front with their times, so the list is as it was before the batch.
+    /// A pair taken off (取消忽略) or ignored again since stays as it is now; past [`MAX_IGNORED`] the
+    /// oldest pairs are dropped. Returns whether the list changed.
+    pub fn remove_batch(&mut self, batch: &IgnoredBatch) -> Result<bool, VocabularyError> {
+        let kept = self.pairs.iter().filter(|p| !batch.added.contains(p));
+        let back = batch.dropped.iter().filter(|d| !self.pairs.iter().any(|p| p.heard == d.heard && p.polished == d.polished));
+        let mut list: Vec<IgnoredPair> = back.chain(kept).cloned().collect();
+        let over = list.len().saturating_sub(MAX_IGNORED);
+        list.drain(..over);
+        if list == self.pairs {
             return Ok(false);
         }
         self.commit(list)?;
@@ -222,6 +239,10 @@ mod tests {
         SuggestionPair { heard: heard.into(), polished: polished.into() }
     }
 
+    fn stored(heard: &str, polished: &str, at_ms: u64) -> IgnoredPair {
+        IgnoredPair { heard: heard.into(), polished: polished.into(), at_ms }
+    }
+
     /// docs/dictation.md §16.10, a batch 忽略: the pairs go to the end of the list with one write,
     /// each once; a pair ignored already keeps its place and time, and is not one the batch added.
     /// Taking the batch back off the list is one write too, and leaves the other pairs alone.
@@ -231,20 +252,22 @@ mod tests {
         let (mut store, _) = IgnoreStore::open(dir.path());
         store.add("维他命", "Voltip", 10).unwrap();
         let saves = crate::list_file::saves();
-        let added = store.add_batch(&[pair("非", "飞"), pair("维他命", "Voltip"), pair(" 集成 ", "继承"), pair("非", "飞")], 20).unwrap();
+        let batch = store.add_batch(&[pair("非", "飞"), pair("维他命", "Voltip"), pair(" 集成 ", "继承"), pair("非", "飞")], 20).unwrap();
         assert_eq!(crate::list_file::saves() - saves, 1, "one write");
-        assert_eq!(added, [pair("非", "飞"), pair("集成", "继承")], "what the batch added, trimmed, each once");
+        assert_eq!(batch.added, [stored("非", "飞", 20), stored("集成", "继承", 20)], "what the batch added, trimmed, each once");
+        assert_eq!(batch.dropped, [], "room for it");
         let listed: Vec<(&str, u64)> = store.list().iter().map(|p| (p.heard.as_str(), p.at_ms)).collect();
         assert_eq!(listed, [("维他命", 10), ("非", 20), ("集成", 20)]);
         let (reread, _) = IgnoreStore::open(dir.path());
         assert_eq!(reread.list(), store.list(), "on disk");
 
         let saves = crate::list_file::saves();
-        assert_eq!(store.add_batch(&[pair("非", "飞"), pair("维他命", "Voltip")], 30).unwrap(), [], "ignored already");
-        store.remove_batch(&[pair("没有", "这组")]).unwrap();
+        assert_eq!(store.add_batch(&[pair("非", "飞"), pair("维他命", "Voltip")], 30).unwrap(), IgnoredBatch::default(), "ignored already");
+        let elsewhere = IgnoredBatch { added: vec![stored("没有", "这组", 20)], dropped: vec![] };
+        assert!(!store.remove_batch(&elsewhere).unwrap());
         assert_eq!(crate::list_file::saves(), saves, "nothing to write either time");
 
-        store.remove_batch(&added).unwrap();
+        assert!(store.remove_batch(&batch).unwrap());
         assert_eq!(crate::list_file::saves() - saves, 1, "one write");
         assert_eq!(heard_of(&store), ["维他命"], "the pair ignored before stays");
         let (reread, _) = IgnoreStore::open(dir.path());
@@ -252,22 +275,62 @@ mod tests {
 
         // A pair that is not one refuses the batch; nothing changes.
         assert!(store.add_batch(&[pair("集成", "继承"), pair("同", "同")], 40).is_err());
-        assert!(store.remove_batch(&[pair("维他命", "Voltip"), pair("", "x")]).is_err());
         assert_eq!(heard_of(&store), ["维他命"]);
     }
 
-    /// A batch past [`MAX_IGNORED`] drops the oldest pairs, never its own.
+    /// A batch past [`MAX_IGNORED`] drops the oldest pairs, never its own, and names them for its
+    /// 撤销, which puts them back with their times: the list is as it was before the batch.
     #[test]
-    fn a_batch_past_the_cap_drops_the_oldest_pairs() {
+    fn a_batch_past_the_cap_drops_the_oldest_pairs_and_its_undo_puts_them_back() {
         let dir = tempfile::tempdir().unwrap();
-        let full: Vec<IgnoredPair> = (0..MAX_IGNORED).map(|i| IgnoredPair { heard: format!("听成{i}"), polished: "正确".into(), at_ms: 1 }).collect();
-        std::fs::write(dir.path().join(IGNORED_FILE_NAME), serde_json::to_vec(&IgnoredFile { schema: IGNORED_SCHEMA, pairs: full }).unwrap()).unwrap();
+        let full: Vec<IgnoredPair> = (0..MAX_IGNORED).map(|i| stored(&format!("听成{i}"), "正确", 1 + i as u64)).collect();
+        std::fs::write(dir.path().join(IGNORED_FILE_NAME), serde_json::to_vec(&IgnoredFile { schema: IGNORED_SCHEMA, pairs: full.clone() }).unwrap()).unwrap();
         let (mut store, _) = IgnoreStore::open(dir.path());
-        let added = store.add_batch(&[pair("新1", "正确"), pair("新2", "正确"), pair("新3", "正确")], 2).unwrap();
-        assert_eq!(added.len(), 3);
+        let batch = store.add_batch(&[pair("新1", "正确"), pair("新2", "正确"), pair("新3", "正确")], 9000).unwrap();
+        assert_eq!(batch.added.len(), 3);
+        assert_eq!(batch.dropped, full[..3], "the three oldest, as they were");
         assert_eq!(store.list().len(), MAX_IGNORED);
         assert_eq!(store.list()[0].heard, "听成3", "the three oldest went");
         assert_eq!(store.list()[MAX_IGNORED - 3..].iter().map(|p| p.heard.as_str()).collect::<Vec<_>>(), ["新1", "新2", "新3"]);
+
+        let saves = crate::list_file::saves();
+        assert!(store.remove_batch(&batch).unwrap());
+        assert_eq!(crate::list_file::saves() - saves, 1, "one write");
+        assert_eq!(store.list(), full.as_slice(), "as before the batch");
+        let (reread, _) = IgnoreStore::open(dir.path());
+        assert_eq!(reread.list(), full.as_slice(), "on disk");
+    }
+
+    /// 撤销 of a batch 忽略 leaves alone what changed since: a pair of the batch taken off (取消忽略)
+    /// or ignored again, and a pushed-out pair that was ignored again, stay as they are now.
+    #[test]
+    fn undo_of_a_batch_ignore_keeps_what_changed_since() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut store, _) = IgnoreStore::open(dir.path());
+        let full: Vec<IgnoredPair> = (0..MAX_IGNORED).map(|i| stored(&format!("听成{i}"), "正确", 1 + i as u64)).collect();
+        store.commit(full.clone()).unwrap();
+        let batch = store.add_batch(&[pair("新1", "正确"), pair("新2", "正确"), pair("新3", "正确")], 9000).unwrap();
+        assert_eq!(batch.dropped.len(), 3);
+        store.remove("新1", "正确").unwrap();
+        store.add("新2", "正确", 9100).unwrap();
+        store.add("听成0", "正确", 9200).unwrap();
+        // Room for the two pairs that come back, so the cap does not drop the oldest of them again.
+        store.remove("听成10", "正确").unwrap();
+        assert!(store.remove_batch(&batch).unwrap());
+        let list = store.list();
+        assert_eq!(list.len(), MAX_IGNORED);
+        assert_eq!(
+            list[..2].iter().map(|p| (p.heard.as_str(), p.at_ms)).collect::<Vec<_>>(),
+            [("听成1", 2), ("听成2", 3)],
+            "the pushed-out pairs back in front, those not ignored again"
+        );
+        assert_eq!(
+            list[MAX_IGNORED - 2..].iter().map(|p| (p.heard.as_str(), p.at_ms)).collect::<Vec<_>>(),
+            [("新2", 9100), ("听成0", 9200)],
+            "ignored again since: kept as now"
+        );
+        assert!(!list.iter().any(|p| p.heard == "新1" || p.heard == "新3"), "the batch's other pairs are off the list");
+        assert!(!list.iter().any(|p| p.heard == "听成10"), "taken off since: stays off");
     }
 
     /// A file that cannot be used is moved aside, never deleted, and the list starts empty.
