@@ -217,12 +217,51 @@ function Wait-Voltip([int[]] $before, [string] $what) {
   $proc
 }
 
-# Whether Voltip shows a window: .NET's main window is a visible top-level window without an owner,
-# and the pill is hidden between dictations. WebView2 reports its page visible in a hidden window
-# too, so this is read from Windows.
+Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class VoltipProbeWindows {
+  delegate bool EnumProc(IntPtr hwnd, IntPtr lparam);
+  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc proc, IntPtr lparam);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowTextW(IntPtr hwnd, StringBuilder text, int max);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassNameW(IntPtr hwnd, StringBuilder text, int max);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
+  static string Text(IntPtr hwnd) { var t = new StringBuilder(256); GetWindowTextW(hwnd, t, t.Capacity); return t.ToString(); }
+  static string Class(IntPtr hwnd) { var t = new StringBuilder(256); GetClassNameW(hwnd, t, t.Capacity); return t.ToString(); }
+  // The top-level window of `pid` titled exactly `title`, visible or not; IntPtr.Zero when none.
+  public static IntPtr Find(uint pid, string title) {
+    IntPtr found = IntPtr.Zero;
+    EnumWindows((hwnd, _) => {
+      uint owner;
+      GetWindowThreadProcessId(hwnd, out owner);
+      if (owner != pid || Text(hwnd) != title) return true;
+      found = hwnd;
+      return false;
+    }, IntPtr.Zero);
+    return found;
+  }
+  // The visible top-level windows of `pid`, as "class 'title'".
+  public static string[] Visible(uint pid) {
+    var all = new List<string>();
+    EnumWindows((hwnd, _) => {
+      uint owner;
+      GetWindowThreadProcessId(hwnd, out owner);
+      if (owner == pid && IsWindowVisible(hwnd)) all.Add(Class(hwnd) + " '" + Text(hwnd) + "'");
+      return true;
+    }, IntPtr.Zero);
+    return all.ToArray();
+  }
+}
+'@
+
+# Whether Voltip's main window (titled Voltip; the pill is Voltip Overlay) is shown. WebView2 reports
+# its page visible in a hidden window too, so this is read from Windows.
 function Main-Shown([System.Diagnostics.Process] $proc) {
-  $proc.Refresh()
-  $proc.MainWindowHandle -ne [IntPtr]::Zero
+  $hwnd = [VoltipProbeWindows]::Find([uint32]$proc.Id, 'Voltip')
+  $hwnd -ne [IntPtr]::Zero -and [VoltipProbeWindows]::IsWindowVisible($hwnd)
 }
 
 # A second launch hands over to the running Voltip and shows its main window (`on_second_instance`).
@@ -248,7 +287,7 @@ function Probe([string] $stage, [int] $round, [System.Diagnostics.Process] $proc
     round = $round; stage = $stage; pid = $proc.Id; startedMs = $started
     exe = (Get-FileHash -LiteralPath $exePath -Algorithm SHA256).Hash.ToLowerInvariant(); embedded = $entries
     portOwner = $owner; webviews = Describe-WebViews; connections = Connections (@($proc.Id)); windows = $seen.windows
-    guard = Field $seen 'guard'; mainWindowShown = $shown
+    guard = Field $seen 'guard'; mainWindowShown = $shown; visibleWindows = @([VoltipProbeWindows]::Visible([uint32]$proc.Id))
   }
   $records.Add($record)
   $mainSeen = $false
@@ -291,7 +330,7 @@ function Probe([string] $stage, [int] $round, [System.Diagnostics.Process] $proc
   if ($judge -and $window -eq 'hidden' -and $shown) { $failures.Add("round $round ${stage}: Voltip shows a window after a start with --start-hidden") }
   if ($guard) { Judge-Guard (Field $seen 'guard') $stage $round $judge $entries }
   $count = Connections (@($proc.Id))
-  Note ("round $round ${stage}: pid $($proc.Id); main window $(if ($shown) { 'shown' } else { 'hidden' }); debugging port $(if ($owner) { "pid $($owner.pid) <- $($owner.parent)" } else { 'none' }); webviews " +
+  Note ("round $round ${stage}: pid $($proc.Id); main window $(if ($shown) { 'shown' } else { 'hidden' }) (visible: $(@([VoltipProbeWindows]::Visible([uint32]$proc.Id)) -join ', ')); debugging port $(if ($owner) { "pid $($owner.pid) <- $($owner.parent)" } else { 'none' }); webviews " +
     ((Describe-WebViews | ForEach-Object { "$($_.type)#$($_.pid)<-$($_.parent)" }) -join ', ') + "; connections $($count.local) local, $($count.elsewhere) elsewhere")
 }
 
