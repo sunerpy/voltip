@@ -15,8 +15,9 @@
     3. this build's installer (`-NewSetup`) run while it runs, as an update does, in one of three
        ways, in turn: run while Voltip runs (`/S /UPDATE /R`, the installer ends Voltip); the way
        the in-app updater does it (tauri-plugin-updater starts `/S /UPDATE /R /ARGS <arguments>`
-       and ends the app at once); the same for a Voltip started with `--start-hidden`, which comes
-       back hidden and is then shown by a second launch;
+       and ends the app at once); the same for a Voltip started with `--start-hidden`, which must
+       come back with no window shown (read from Windows: WebView2 reports a hidden window's page
+       as visible) and is then shown by a second launch;
     4. once the installer has opened Voltip again, every window read over WebView2's debugging
        port (scripts/webview-probe.mjs): the entry script its document loaded, compared with the
        ones the installed program carries; the main window's dictionary page and its 学习建议 tab;
@@ -27,8 +28,9 @@
        two documents (its own reload, then the check's) and stays; reloaded with its own it goes
        through one and clears the check's key.
   A window whose entry script the installed program does not carry, a dictionary page without the
-  tab, a relay card that never reads connected, or an interface check that does not reload exactly
-  once fails the run; every observation goes to <OutDir>/summary.txt and <OutDir>/rounds.json.
+  tab, a relay card that never reads connected, a main window shown or hidden against the variant,
+  or an interface check that does not reload exactly once fails the run; every observation goes to
+  <OutDir>/summary.txt and <OutDir>/rounds.json.
 
   Nothing reaches a server: Voltip's outbound connections anywhere but this machine are blocked by
   a firewall rule on the installed exe, the settings written before the first start point the
@@ -215,19 +217,29 @@ function Wait-Voltip([int[]] $before, [string] $what) {
   $proc
 }
 
-# `$guard`: run the interface check (step 6); judged only for this build, a control for 0.2.1.
-# `$visible`: the main window must be shown (after a hidden start's second launch).
+# Whether Voltip shows a window: .NET's main window is a visible top-level window without an owner,
+# and the pill is hidden between dictations. WebView2 reports its page visible in a hidden window
+# too, so this is read from Windows.
+function Main-Shown([System.Diagnostics.Process] $proc) {
+  $proc.Refresh()
+  $proc.MainWindowHandle -ne [IntPtr]::Zero
+}
+
 # A second launch hands over to the running Voltip and shows its main window (`on_second_instance`).
 function Show-Main([System.Diagnostics.Process] $running, [string] $what) {
   $second = Start-Process -FilePath $exePath -PassThru
   if (-not $second.WaitForExit($TimeoutSec * 1000)) { $second.Kill($true); throw "${what}: the second launch did not hand over within ${TimeoutSec}s" }
   if ($running.HasExited) { throw "${what}: Voltip exited on the second launch" }
+  Wait-Until { Main-Shown $running } $TimeoutSec "the main window to show ($what)" | Out-Null
 }
 
-function Probe([string] $stage, [int] $round, [System.Diagnostics.Process] $proc, [bool] $judge, [bool] $guard = $false, [bool] $visible = $false) {
+# `$guard`: run the interface check (step 6); judged only for this build, a control for 0.2.1.
+# `$window`: 'shown' or 'hidden', what Voltip's main window must be; '' leaves it unjudged.
+function Probe([string] $stage, [int] $round, [System.Diagnostics.Process] $proc, [bool] $judge, [bool] $guard = $false, [string] $window = '') {
   $entries = Embedded-Entries $exePath
+  $shown = Main-Shown $proc
   $out = & node $probeScript --port $Port --wait-ms ($TimeoutSec * 1000) --relay-connected-ms ($RelayConnectedSec * 1000) `
-    --guard-check $(if ($guard) { '1' } else { '0' }) --wait-visible $(if ($visible) { '1' } else { '0' })
+    --guard-check $(if ($guard) { '1' } else { '0' })
   if ($LASTEXITCODE -ne 0) { throw "webview-probe failed ($stage)" }
   $seen = $out | ConvertFrom-Json -Depth 20
   $started = [DateTimeOffset]::new($proc.StartTime.ToUniversalTime()).ToUnixTimeMilliseconds()
@@ -236,7 +248,7 @@ function Probe([string] $stage, [int] $round, [System.Diagnostics.Process] $proc
     round = $round; stage = $stage; pid = $proc.Id; startedMs = $started
     exe = (Get-FileHash -LiteralPath $exePath -Algorithm SHA256).Hash.ToLowerInvariant(); embedded = $entries
     portOwner = $owner; webviews = Describe-WebViews; connections = Connections (@($proc.Id)); windows = $seen.windows
-    guard = Field $seen 'guard'
+    guard = Field $seen 'guard'; mainWindowShown = $shown
   }
   $records.Add($record)
   $mainSeen = $false
@@ -269,16 +281,17 @@ function Probe([string] $stage, [int] $round, [System.Diagnostics.Process] $proc
     if (-not $carried) { $failures.Add("round $round ${stage}: the $label window runs $($entry -join ' '), which the installed program does not carry") }
     if ($older) { $failures.Add("round $round ${stage}: the $label window's document is older than its process") }
     if ($null -ne (Field $w 'guardKey')) { $failures.Add("round $round ${stage}: the $label window was reloaded by the interface check and still runs other code") }
-    if ($main -and $visible -and (Field $w 'visibility') -ne 'visible') { $failures.Add("round $round ${stage}: the main window is $(Field $w 'visibility') after the second launch") }
     if ($main) {
       if (-not (Field $w 'dictionary.suggestionsTab')) { $failures.Add("round $round ${stage}: the dictionary page has no 学习建议 tab") }
       if ($null -eq (Field $w 'relayCard.connectedMs')) { $failures.Add("round $round ${stage}: the relay card reads '$(Field $w 'relayCard.text')' after ${RelayConnectedSec}s (the core says $(Field $w 'core.relay'))") }
     }
   }
   if ($judge -and -not $mainSeen) { $failures.Add("round $round ${stage}: no main window was read") }
+  if ($judge -and $window -eq 'shown' -and -not $shown) { $failures.Add("round $round ${stage}: Voltip shows no window") }
+  if ($judge -and $window -eq 'hidden' -and $shown) { $failures.Add("round $round ${stage}: Voltip shows a window after a start with --start-hidden") }
   if ($guard) { Judge-Guard (Field $seen 'guard') $stage $round $judge $entries }
   $count = Connections (@($proc.Id))
-  Note ("round $round ${stage}: pid $($proc.Id); debugging port $(if ($owner) { "pid $($owner.pid) <- $($owner.parent)" } else { 'none' }); webviews " +
+  Note ("round $round ${stage}: pid $($proc.Id); main window $(if ($shown) { 'shown' } else { 'hidden' }); debugging port $(if ($owner) { "pid $($owner.pid) <- $($owner.parent)" } else { 'none' }); webviews " +
     ((Describe-WebViews | ForEach-Object { "$($_.type)#$($_.pid)<-$($_.parent)" }) -join ', ') + "; connections $($count.local) local, $($count.elsewhere) elsewhere")
 }
 
@@ -350,6 +363,7 @@ try {
           Start-Process -FilePath $exePath -RedirectStandardError "$log.err" -RedirectStandardOutput "$log.out" | Out-Null
         }
         $old = Wait-Voltip @() "0.2.1 start $start"
+        if ($arguments.Count -eq 0) { Wait-Until { Main-Shown $old } $TimeoutSec "the 0.2.1 window to show (start $start)" | Out-Null }
         Probe "0.2.1 start $start" $round $old $false ($start -eq 1)
         if ($start -eq 1) {
           $quit = Start-Process -FilePath $exePath -ArgumentList '--quit' -PassThru
@@ -363,19 +377,26 @@ try {
       $before = @(Voltip-Processes | ForEach-Object { $_.Id })
       Update-Voltip $variant $old "round ${round}: the update"
       $new = Wait-Voltip $before 'after the update'
-      Probe 'after the update' $round $new $true
-      if ($hidden) { Show-Main $new 'after the update'; Probe 'after the update, shown' $round $new $true $false $true }
+      if ($hidden) {
+        Probe 'after the update' $round $new $true $false 'hidden'
+        Show-Main $new 'after the update'
+        Probe 'after the update, shown' $round $new $true $false 'shown'
+      } else {
+        Wait-Until { Main-Shown $new } $TimeoutSec 'the window to show after the update' | Out-Null
+        Probe 'after the update' $round $new $true $false 'shown'
+      }
 
       # The same version over itself, the same way, then the interface check.
       $before = @(Voltip-Processes | ForEach-Object { $_.Id })
       Update-Voltip $variant $new "round ${round}: the same version again"
       $again = Wait-Voltip $before 'after the same version again'
       if ($hidden) {
-        Probe 'after the same version again' $round $again $true
+        Probe 'after the same version again' $round $again $true $false 'hidden'
         Show-Main $again 'after the same version again'
-        Probe 'after the same version again, shown' $round $again $true $true $true
+        Probe 'after the same version again, shown' $round $again $true $true 'shown'
       } else {
-        Probe 'after the same version again' $round $again $true $true
+        Wait-Until { Main-Shown $again } $TimeoutSec 'the window to show after the same version again' | Out-Null
+        Probe 'after the same version again' $round $again $true $true 'shown'
       }
     } catch {
       $failures.Add("round ${round}: $_")

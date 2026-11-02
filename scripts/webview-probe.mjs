@@ -6,7 +6,7 @@
 // and whether the dictionary page has its 学习建议 tab. Prints one JSON object on stdout.
 //
 //   node scripts/webview-probe.mjs --port 9222 [--wait-ms 60000] [--relay-connected-ms 0]
-//     [--guard-check 1] [--wait-visible 1]
+//     [--guard-check 1]
 //
 // `--wait-ms`: how long to wait for the main window and the pill window to have rendered.
 // `--relay-connected-ms`: when non-zero, also wait that long for the window's relay card to read
@@ -14,8 +14,6 @@
 // `--guard-check 1`: afterwards, check the main window's interface check (docs/dictation.md
 // §33.4) on the running program: reload the window with a document that names an entry script the
 // program does not carry, count the documents it goes through, then reload it with its own.
-// `--wait-visible 1`: wait for the main window to be shown (a start with `--start-hidden`, then a
-// second launch).
 // Node 22 or later (global fetch and WebSocket). Never writes to the page except to open the
 // dictionary page in the main window and, for the guard check, to reload it.
 
@@ -28,7 +26,7 @@ const GUARD_KEY = "voltip.ui-guard.reloaded";
 const SETTLED_MS = 3_000;
 
 function parseArgs(argv) {
-  const options = { port: 0, waitMs: DEFAULT_WAIT_MS, relayConnectedMs: 0, guardCheck: false, waitVisible: false };
+  const options = { port: 0, waitMs: DEFAULT_WAIT_MS, relayConnectedMs: 0, guardCheck: false };
   for (let i = 0; i < argv.length; i += 2) {
     const [flag, value] = [argv[i], argv[i + 1]];
     if (value === undefined) throw new Error(`${flag} needs a value`);
@@ -36,7 +34,6 @@ function parseArgs(argv) {
     else if (flag === "--wait-ms") options.waitMs = Number(value);
     else if (flag === "--relay-connected-ms") options.relayConnectedMs = Number(value);
     else if (flag === "--guard-check") options.guardCheck = value === "1";
-    else if (flag === "--wait-visible") options.waitVisible = value === "1";
     else throw new Error(`unknown flag ${flag}`);
   }
   if (!Number.isInteger(options.port) || options.port <= 0) throw new Error("--port is required");
@@ -103,10 +100,10 @@ async function connect(url) {
   return { call, on, close: () => socket.close() };
 }
 
-/** Evaluate `source` (an async function body that reads `WAIT_MS`, `RELAY_MS` and
- *  `WAIT_VISIBLE`) in the page and return its JSON value. */
+/** Evaluate `source` (an async function body that reads `WAIT_MS` and `RELAY_MS`) in the page
+ *  and return its JSON value. */
 async function evaluate(session, source, options) {
-  const constants = `const WAIT_MS = ${options.waitMs}; const RELAY_MS = ${options.relayConnectedMs}; const WAIT_VISIBLE = ${options.waitVisible};`;
+  const constants = `const WAIT_MS = ${options.waitMs}; const RELAY_MS = ${options.relayConnectedMs};`;
   const result = await session.call("Runtime.evaluate", {
     expression: `(async () => { ${constants} ${source} })()`,
     awaitPromise: true,
@@ -137,7 +134,6 @@ const HELPERS = `
 const DESCRIBE = `
   ${HELPERS}
   const label = window.__TAURI_INTERNALS__?.metadata?.currentWebview?.label ?? null;
-  const shown = WAIT_VISIBLE && label === "main" ? await until(() => document.visibilityState === "visible", WAIT_MS) : null;
   const rendered = await until(() => (document.getElementById("root")?.childElementCount ?? 0) > 0, WAIT_MS);
   const navigation = performance.getEntriesByType("navigation")[0];
   const scripts = performance.getEntriesByType("resource")
@@ -148,8 +144,9 @@ const DESCRIBE = `
     // When this document started loading (Unix ms): a document older than its process is stale.
     timeOrigin: Math.round(performance.timeOrigin),
     label,
+    // WebView2 reports "visible" for the webview of a hidden window too: whether a window is shown
+    // is read from Windows (scripts/windows-upgrade-probe.ps1).
     visibility: document.visibilityState,
-    shownMs: shown?.value ? shown.ms : null,
     entry: [...document.querySelectorAll("script[type=module][src]")].map((s) => path(s.getAttribute("src"))),
     scripts,
     navigation: navigation ? { type: navigation.type, deliveryType: navigation.deliveryType ?? "", transferSize: navigation.transferSize } : null,
