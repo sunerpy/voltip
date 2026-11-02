@@ -35,6 +35,7 @@ pub mod paste;
 pub mod platform;
 pub mod restart;
 pub mod solo_key;
+pub mod ui_guard;
 pub mod update;
 
 use tauri::{Emitter as _, Manager as _, Runtime};
@@ -1959,7 +1960,10 @@ pub fn run() {
     // docs/dictation.md §4.6.1: the weekly automatic backup, and the backups' state in the settings.
     config.auto_backup = true;
     let ports = dictation::production_ports(config.models_root.clone(), &config.network);
-    let mut app = match build_app(tauri::Builder::default(), config, secret_store(), ShellOptions::PRODUCTION.hidden(start_hidden), ports).build(context) {
+    // docs/dictation.md §33.4: a window running interface code this program does not carry reloads.
+    let guard = ui_guard::init(context.assets());
+    let builder = build_app(tauri::Builder::default(), config, secret_store(), ShellOptions::PRODUCTION.hidden(start_hidden), ports);
+    let mut app = match builder.plugin(guard).build(context) {
         Ok(app) => app,
         Err(e) => {
             tracing::error!(error = %e, "tauri failed to build");
