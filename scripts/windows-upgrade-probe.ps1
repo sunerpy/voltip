@@ -10,8 +10,8 @@
   round:
     1. a clean start: no Voltip, no data directory, no WebView2 profile;
     2. the released Voltip (`-OldSetup`, 0.2.1) installed silently and started twice, its relay
-       the build's own voltip-relay on this machine (`-Relay`); on the first start the interface
-       check of step 6 runs as a control: 0.2.1 has none, so its window keeps the stale entry;
+       the build's own voltip-relay on this machine (`-Relay`); on the first start the
+       simulations of step 6 run as a control: 0.2.1 has no check, so its window keeps them;
     3. this build's installer (`-NewSetup`) run while it runs, as an update does, in one of three
        ways, in turn: run while Voltip runs (`/S /UPDATE /R`, the installer ends Voltip); the way
        the in-app updater does it (tauri-plugin-updater starts `/S /UPDATE /R /ARGS <arguments>`
@@ -23,14 +23,17 @@
        ones the installed program carries; the main window's dictionary page and its 学习建议 tab;
        the relay card reading connected;
     5. the same installer once more over itself (the same version), the same way, and step 4;
-    6. the interface check (docs/dictation.md §33.4) on the running program: the main window
-       reloaded with a document naming an entry script the program does not carry goes through
-       two documents (its own reload, then the check's) and stays; reloaded with its own it goes
-       through one and clears the check's key.
+    6. the interface check (docs/dictation.md §33.4) on the running program, simulated over the
+       debugging port: a first document naming an entry script the program does not carry, and
+       a first document whose bundle declares another build, each go through two documents (the
+       stale one, then the program's at a fresh address) and end on the program's interface; a
+       window naming that script in every document goes through three and ends cleared
+       (about:blank); back at its address the window runs the program's interface. Every window
+       read must run the build the program's bundle declares.
   A window whose entry script the installed program does not carry, a dictionary page without the
   tab, a relay card that never reads connected, a main window shown or hidden against the variant,
-  or an interface check that does not reload exactly once fails the run; every observation goes to
-  <OutDir>/summary.txt and <OutDir>/rounds.json.
+  a window running another build, or an interface check that ends anywhere but stated in step 6
+  fails the run; every observation goes to <OutDir>/summary.txt and <OutDir>/rounds.json.
 
   Nothing reaches a server: Voltip's outbound connections anywhere but this machine are blocked by
   a firewall rule on the installed exe, the settings written before the first start point the
@@ -108,6 +111,13 @@ function Describe-WebViews {
 }
 
 # Every interface entry script the program carries: Tauri embeds its assets under their paths.
+# Every build the program's bundle declares (apps/desktop/vite.config.ts names each build; 0.2.1's
+# bundle names none).
+function Embedded-Builds([string] $exe) {
+  $text = [System.Text.Encoding]::Latin1.GetString([System.IO.File]::ReadAllBytes($exe))
+  @([regex]::Matches($text, 'voltip-ui-build-[0-9a-f]{32}(?![0-9A-Za-z])') | ForEach-Object { $_.Value } | Sort-Object -Unique)
+}
+
 function Embedded-Entries([string] $exe) {
   $text = [System.Text.Encoding]::Latin1.GetString([System.IO.File]::ReadAllBytes($exe))
   @([regex]::Matches($text, '/assets/index-[A-Za-z0-9_-]{6,}\.js') | ForEach-Object { $_.Value } | Sort-Object -Unique)
@@ -276,6 +286,7 @@ function Show-Main([System.Diagnostics.Process] $running, [string] $what) {
 # `$window`: 'shown' or 'hidden', what Voltip's main window must be; '' leaves it unjudged.
 function Probe([string] $stage, [int] $round, [System.Diagnostics.Process] $proc, [bool] $judge, [bool] $guard = $false, [string] $window = '') {
   $entries = Embedded-Entries $exePath
+  $builds = Embedded-Builds $exePath
   $shown = Main-Shown $proc
   $out = & node $probeScript --port $Port --wait-ms ($TimeoutSec * 1000) --relay-connected-ms ($RelayConnectedSec * 1000) `
     --guard-check $(if ($guard) { '1' } else { '0' })
@@ -285,7 +296,7 @@ function Probe([string] $stage, [int] $round, [System.Diagnostics.Process] $proc
   $owner = Port-Owner
   $record = [ordered]@{
     round = $round; stage = $stage; pid = $proc.Id; startedMs = $started
-    exe = (Get-FileHash -LiteralPath $exePath -Algorithm SHA256).Hash.ToLowerInvariant(); embedded = $entries
+    exe = (Get-FileHash -LiteralPath $exePath -Algorithm SHA256).Hash.ToLowerInvariant(); embedded = $entries; embeddedBuilds = $builds
     portOwner = $owner; webviews = Describe-WebViews; connections = Connections (@($proc.Id)); windows = $seen.windows
     guard = Field $seen 'guard'; mainWindowShown = $shown; visibleWindows = @([VoltipProbeWindows]::Visible([uint32]$proc.Id))
   }
@@ -307,7 +318,8 @@ function Probe([string] $stage, [int] $round, [System.Diagnostics.Process] $proc
     $line = "round $round $stage ${label}: entry $($entry -join ' ') " +
       "($(if ($carried) { 'carried by the program' } else { 'NOT carried by the program, which carries ' + ($entries -join ' ') })); " +
       "document $(if ($older) { 'OLDER than' } else { 'newer than' }) the process ($([long]$origin - $started) ms); " +
-      "navigation $(Field $w 'navigation.type')/$(Field $w 'navigation.deliveryType') $(Field $w 'navigation.transferSize') B; rendered $(Field $w 'rendered'); $(Field $w 'visibility')"
+      "navigation $(Field $w 'navigation.type')/$(Field $w 'navigation.deliveryType') $(Field $w 'navigation.transferSize') B; rendered $(Field $w 'rendered'); $(Field $w 'visibility'); " +
+      "build $(if (Field $w 'build') { Field $w 'build' } else { 'none' })$(if ($builds.Count -gt 0) { if ($builds -contains (Field $w 'build')) { ' (the program''s)' } else { ' (NOT the program''s)' } })"
     $main = $null -ne (Field $w 'dictionary')
     if ($main) {
       $mainSeen = $true
@@ -319,40 +331,57 @@ function Probe([string] $stage, [int] $round, [System.Diagnostics.Process] $proc
     if (-not $judge) { continue }
     if (-not $carried) { $failures.Add("round $round ${stage}: the $label window runs $($entry -join ' '), which the installed program does not carry") }
     if ($older) { $failures.Add("round $round ${stage}: the $label window's document is older than its process") }
-    if ($null -ne (Field $w 'guardKey')) { $failures.Add("round $round ${stage}: the $label window was reloaded by the interface check and still runs other code") }
+    $build = Field $w 'build'
+    if ($builds.Count -gt 0 -and $builds -notcontains $build) { $failures.Add("round $round ${stage}: the $label window runs build '$build', the program carries $($builds -join ' ')") }
+    if (Field $w 'reloadMarker') { $failures.Add("round $round ${stage}: the $label window's address still carries the interface check's marker") }
     if ($main) {
       if (-not (Field $w 'dictionary.suggestionsTab')) { $failures.Add("round $round ${stage}: the dictionary page has no 学习建议 tab") }
       if ($null -eq (Field $w 'relayCard.connectedMs')) { $failures.Add("round $round ${stage}: the relay card reads '$(Field $w 'relayCard.text')' after ${RelayConnectedSec}s (the core says $(Field $w 'core.relay'))") }
     }
   }
   if ($judge -and -not $mainSeen) { $failures.Add("round $round ${stage}: no main window was read") }
+  # This build's bundle always declares its build; none found means the windows' builds went unchecked.
+  if ($judge -and $builds.Count -eq 0) { $failures.Add("round $round ${stage}: the installed program carries no interface build (apps/desktop/vite.config.ts)") }
   if ($judge -and $window -eq 'shown' -and -not $shown) { $failures.Add("round $round ${stage}: Voltip shows no window") }
   if ($judge -and $window -eq 'hidden' -and $shown) { $failures.Add("round $round ${stage}: Voltip shows a window after a start with --start-hidden") }
-  if ($guard) { Judge-Guard (Field $seen 'guard') $stage $round $judge $entries }
+  if ($guard) { Judge-Guard (Field $seen 'guard') $stage $round $judge $entries $builds }
   $count = Connections (@($proc.Id))
   Note ("round $round ${stage}: pid $($proc.Id); main window $(if ($shown) { 'shown' } else { 'hidden' }) (visible: $(@([VoltipProbeWindows]::Visible([uint32]$proc.Id)) -join ', ')); debugging port $(if ($owner) { "pid $($owner.pid) <- $($owner.parent)" } else { 'none' }); webviews " +
     ((Describe-WebViews | ForEach-Object { "$($_.type)#$($_.pid)<-$($_.parent)" }) -join ', ') + "; connections $($count.local) local, $($count.elsewhere) elsewhere")
 }
 
-# The interface check's two reloads (step 6): with a stale entry, then with the program's own.
-function Judge-Guard($g, [string] $stage, [int] $round, [bool] $judge, [string[]] $entries) {
+# The interface check on the running program (step 6): the documents each simulation took the main
+# window through, and where it ended.
+function Judge-Guard($g, [string] $stage, [int] $round, [bool] $judge, [string[]] $entries, [string[]] $builds) {
   $problem = Field $g 'error'
   if ($problem) {
     Note "round $round ${stage}: interface check not run ($problem)"
     if ($judge) { $failures.Add("round $round ${stage}: the interface check could not be run ($problem)") }
     return
   }
-  $staleDocs = Field $g 'stale.documents'
-  $ownDocs = Field $g 'own.documents'
-  $ownEntry = @(Field $g 'own.entry')
-  Note ("round $round ${stage}: interface check: a stale entry -> $staleDocs document(s), key '$(Field $g 'stale.guardKey')', " +
-    "console [$(@(Field $g 'stale.warnings') -join ' | ')]; its own entry -> $ownDocs document(s), entry $($ownEntry -join ' '), key '$(Field $g 'own.guardKey')'")
+  $parts = foreach ($mode in 'stale-once', 'build-once', 'stale-always', 'home') {
+    "$mode -> $(Field $g "$mode.documents") document(s), at $(Field $g "$mode.href"), entry $(@(Field $g "$mode.entry") -join ' '), build $(Field $g "$mode.build"), console [$(@(Field $g "$mode.warnings") -join ' | ')]"
+  }
+  Note "round $round ${stage}: interface check: $($parts -join '; ')"
   if (-not $judge) { return }
-  if ($staleDocs -ne 2) { $failures.Add("round $round ${stage}: a window with a stale entry went through $staleDocs document(s), not 2 (its reload and the check's)") }
-  if ($null -eq (Field $g 'stale.guardKey')) { $failures.Add("round $round ${stage}: the interface check left no key after reloading a stale window") }
-  if ($ownDocs -ne 1) { $failures.Add("round $round ${stage}: the window reloaded with its own entry went through $ownDocs document(s), not 1") }
-  if ($null -ne (Field $g 'own.guardKey')) { $failures.Add("round $round ${stage}: the interface check kept its key once the window ran its own entry") }
-  if ($ownEntry.Count -eq 0 -or @($ownEntry | Where-Object { $entries -notcontains $_ }).Count -gt 0) { $failures.Add("round $round ${stage}: after the check the window runs $($ownEntry -join ' ')") }
+  $own = {
+    param($mode)
+    $entry = @(Field $g "$mode.entry")
+    $entry.Count -gt 0 -and @($entry | Where-Object { $entries -notcontains $_ }).Count -eq 0 -and
+      ($builds.Count -eq 0 -or $builds -contains (Field $g "$mode.build")) -and "$(Field $g "$mode.href")" -notmatch 'voltip-ui-reload'
+  }
+  # Replaced once by the program's document, which the window then keeps.
+  foreach ($mode in 'stale-once', 'build-once') {
+    $docs = Field $g "$mode.documents"
+    if ($docs -ne 2) { $failures.Add("round $round ${stage}: interface check ${mode}: $docs document(s), not 2 (the stale one, then the program's)") }
+    if (-not (& $own $mode)) { $failures.Add("round $round ${stage}: interface check ${mode}: the window ended on $(Field $g "$mode.href") running $(@(Field $g "$mode.entry") -join ' ') build $(Field $g "$mode.build")") }
+  }
+  # Still other code after the replacement: cleared, not kept.
+  $docs = Field $g 'stale-always.documents'
+  if ($docs -ne 3) { $failures.Add("round $round ${stage}: interface check stale-always: $docs document(s), not 3 (stale, stale again, cleared)") }
+  if ((Field $g 'stale-always.href') -ne 'about:blank') { $failures.Add("round $round ${stage}: interface check stale-always: the window ended on $(Field $g 'stale-always.href'), not cleared") }
+  $docs = Field $g 'home.documents'
+  if ($docs -ne 1 -or -not (& $own 'home')) { $failures.Add("round $round ${stage}: interface check: back home the window went through $docs document(s) and runs $(@(Field $g 'home.entry') -join ' ')") }
 }
 
 $relayProc = $null

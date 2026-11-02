@@ -11,16 +11,17 @@
 // `--wait-ms`: how long to wait for the main window and the pill window to have rendered.
 // `--relay-connected-ms`: when non-zero, also wait that long for the window's relay card to read
 // connected (the answer records how long it took, or that it never did).
-// `--guard-check 1`: afterwards, check the main window's interface check (docs/dictation.md
-// §33.4) on the running program: reload the window with a document that names an entry script the
-// program does not carry, count the documents it goes through, then reload it with its own.
+// `--guard-check 1`: afterwards, try the main window's interface check (docs/dictation.md §33.4)
+// on the running program, counting the documents the window goes through: a first document that
+// names an entry script the program does not carry; a first document whose bundle declares
+// another build; every document naming that script; then the window back at its own address.
 // Node 22 or later (global fetch and WebSocket). Never writes to the page except to open the
 // dictionary page in the main window and, for the guard check, to reload it.
 
 const DEFAULT_WAIT_MS = 60_000;
 const EVALUATE_TIMEOUT_MS = 30_000;
-/** The key `ui_guard.js` keeps its once in. */
-const GUARD_KEY = "voltip.ui-guard.reloaded";
+/** The query parameter a document the interface check reloaded carries until it removes it. */
+const RELOAD_MARKER = "voltip-ui-reload";
 /** After a document comes in, how long no other one may follow for the window to count as settled:
  *  the check reloads at DOMContentLoaded, well inside this. */
 const SETTLED_MS = 3_000;
@@ -152,8 +153,10 @@ const DESCRIBE = `
     navigation: navigation ? { type: navigation.type, deliveryType: navigation.deliveryType ?? "", transferSize: navigation.transferSize } : null,
     rendered: rendered.value === true,
     renderedMs: rendered.ms,
-    // Set while the interface check has reloaded this window and it still runs other code.
-    guardKey: (() => { try { return sessionStorage.getItem(${JSON.stringify(GUARD_KEY)}); } catch { return null; } })(),
+    // The build the bundle declared (apps/desktop/src/ui-build.ts); 0.2.1 declares none.
+    build: window.voltipUiBuild ?? null,
+    // Left in the URL only while the interface check is about to replace the document.
+    reloadMarker: new URL(location.href).searchParams.has(${JSON.stringify(RELOAD_MARKER)}),
   };
 `;
 
@@ -190,10 +193,26 @@ const MAIN = `
   };
 `;
 
-/** Run in every new document of the window under the guard check: once the parser has inserted a
- *  module script loading an `index-….js`, it names one the program does not carry. The browser
- *  has already fetched the program's own script; the check reads the document. */
-const STALE_DOCUMENT = `(() => {
+/** Run in every new document of the window under the guard check (`MODE` is set before it).
+ *  "stale-once", "stale-always": once the parser has inserted a module script loading an
+ *  `index-….js`, it names one the program does not carry (the browser has already fetched the
+ *  program's own; the check reads the document) — in the first document only, or in every one.
+ *  "build-once": in the first document, the bundle's declared build reads as another one and the
+ *  bundle cannot change it. "First" is kept in the window's session storage, which a navigation
+ *  in the same window keeps. */
+const SIMULATION = `(() => {
+  const first = (() => {
+    try {
+      if (sessionStorage.getItem("voltip-probe-" + MODE)) return false;
+      sessionStorage.setItem("voltip-probe-" + MODE, "1");
+      return true;
+    } catch { return true; }
+  })();
+  if (MODE === "build-once") {
+    if (first) Object.defineProperty(window, "voltipUiBuild", { get: () => "voltip-ui-build-ffffffffffffffffffffffffffffffff", set: () => {} });
+    return;
+  }
+  if (MODE === "stale-once" && !first) return;
   const stale = (node) => {
     if (!(node instanceof HTMLScriptElement) || node.type !== "module") return;
     const src = node.getAttribute("src") ?? "";
@@ -204,22 +223,23 @@ const STALE_DOCUMENT = `(() => {
   }).observe(document, { childList: true, subtree: true });
 })();`;
 
-/** What the window shows once settled: its entry scripts and the check's key. */
+/** What the window shows once settled: where it is, its entry scripts and declared build. */
 const SETTLED = `
   ${HELPERS}
   await until(() => document.readyState === "complete", WAIT_MS);
   return {
+    href: location.href,
     entry: [...document.querySelectorAll("script[type=module][src]")].map((s) => path(s.getAttribute("src"))),
+    build: window.voltipUiBuild ?? null,
     navigation: performance.getEntriesByType("navigation")[0]?.type ?? null,
-    guardKey: (() => { try { return sessionStorage.getItem(${JSON.stringify(GUARD_KEY)}); } catch { return null; } })(),
   };
 `;
 
-/** Reload the main window and report every document it goes through until none follows for
+/** Start `go` and report every document the main window goes through until none follows for
  *  `SETTLED_MS`: the commits counted, the check's console lines, what the last document shows. */
-async function reloadAndSettle(session, seen, options) {
+async function settle(session, seen, options, go) {
   const from = { documents: seen.documents.length, warnings: seen.warnings.length };
-  await session.call("Page.reload", {});
+  await go();
   const deadline = Date.now() + options.waitMs;
   for (;;) {
     const last = seen.documents.at(-1);
@@ -234,8 +254,9 @@ async function reloadAndSettle(session, seen, options) {
   };
 }
 
-/** The interface check on the running program (docs/dictation.md §33.4), in the main window. */
-async function guardCheck(target, options) {
+/** The interface check on the running program (docs/dictation.md §33.4), in the main window:
+ *  each simulation reloads the window with it in place, then the window goes back to `home`. */
+async function guardCheck(target, home, options) {
   const session = await connect(target.webSocketDebuggerUrl);
   const seen = { documents: [], warnings: [] };
   try {
@@ -248,11 +269,15 @@ async function guardCheck(target, options) {
     });
     await session.call("Page.enable", {});
     await session.call("Runtime.enable", {});
-    const { identifier } = await session.call("Page.addScriptToEvaluateOnNewDocument", { source: STALE_DOCUMENT });
-    const stale = await reloadAndSettle(session, seen, options);
-    await session.call("Page.removeScriptToEvaluateOnNewDocument", { identifier });
-    const own = await reloadAndSettle(session, seen, options);
-    return { stale, own };
+    const out = {};
+    for (const mode of ["stale-once", "build-once", "stale-always"]) {
+      const source = `(() => {\nconst MODE = ${JSON.stringify(mode)};\n${SIMULATION}\n})();`;
+      const { identifier } = await session.call("Page.addScriptToEvaluateOnNewDocument", { source });
+      out[mode] = await settle(session, seen, options, () => session.call("Page.navigate", { url: home }));
+      await session.call("Page.removeScriptToEvaluateOnNewDocument", { identifier });
+    }
+    out.home = await settle(session, seen, options, () => session.call("Page.navigate", { url: home }));
+    return out;
   } finally {
     session.close();
   }
@@ -271,7 +296,7 @@ async function main() {
       if (main && options.guardCheck) {
         session.close();
         try {
-          out.guard = await guardCheck(target, options);
+          out.guard = await guardCheck(target, window.href, options);
         } catch (e) {
           out.guard = { error: String(e instanceof Error ? e.message : e) };
         }
