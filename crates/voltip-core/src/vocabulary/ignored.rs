@@ -7,7 +7,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::{MAX_TERM_CHARS, VocabularyError, clean_line};
+use super::{MAX_TERM_CHARS, SuggestionPair, VocabularyError, clean_line};
 use crate::list_file::ListFile;
 
 /// File name of the list inside the app data directory.
@@ -114,6 +114,45 @@ impl IgnoreStore {
         self.commit(pairs)
     }
 
+    /// Ignore every pair of `pairs` from now on, with one write (a batch 忽略, docs/dictation.md
+    /// §16.10): each goes to the end with `now_ms`, once; a pair ignored already keeps its place and
+    /// time. Past [`MAX_IGNORED`] the oldest pairs are dropped. Returns the pairs the batch put on
+    /// the list, as stored. A pair that is not one refuses the whole batch; nothing changes.
+    pub fn add_batch(&mut self, pairs: &[SuggestionPair], now_ms: u64) -> Result<Vec<SuggestionPair>, VocabularyError> {
+        let mut list = self.pairs.clone();
+        let mut added = Vec::new();
+        for pair in pairs {
+            let (heard, polished) = validate_pair(&pair.heard, &pair.polished)?;
+            if list.iter().any(|p| p.heard == heard && p.polished == polished) {
+                continue;
+            }
+            list.push(IgnoredPair { heard: heard.clone(), polished: polished.clone(), at_ms: now_ms });
+            added.push(SuggestionPair { heard, polished });
+        }
+        if added.is_empty() {
+            return Ok(added);
+        }
+        let over = list.len().saturating_sub(MAX_IGNORED);
+        list.drain(..over);
+        added.retain(|a| list.iter().any(|p| p.heard == a.heard && p.polished == a.polished));
+        self.commit(list)?;
+        Ok(added)
+    }
+
+    /// Show every pair of `pairs` again, with one write (撤销 of a batch 忽略); pairs not in the
+    /// list change nothing. Returns whether the list changed. A pair that is not one refuses the
+    /// whole batch.
+    pub fn remove_batch(&mut self, pairs: &[SuggestionPair]) -> Result<bool, VocabularyError> {
+        let gone: Vec<(String, String)> = pairs.iter().map(|p| validate_pair(&p.heard, &p.polished)).collect::<Result<_, _>>()?;
+        let list: Vec<IgnoredPair> =
+            self.pairs.iter().filter(|p| !gone.iter().any(|(heard, polished)| *heard == p.heard && *polished == p.polished)).cloned().collect();
+        if list.len() == self.pairs.len() {
+            return Ok(false);
+        }
+        self.commit(list)?;
+        Ok(true)
+    }
+
     fn commit(&mut self, pairs: Vec<IgnoredPair>) -> Result<(), VocabularyError> {
         self.file.save(&IgnoredFile { schema: IGNORED_SCHEMA, pairs: pairs.clone() }).map_err(VocabularyError::Store)?;
         self.pairs = pairs;
@@ -177,6 +216,58 @@ mod tests {
             assert!(store.add(heard, polished, 1).is_err(), "{heard:?} → {polished:?}");
         }
         assert!(store.list().is_empty());
+    }
+
+    fn pair(heard: &str, polished: &str) -> SuggestionPair {
+        SuggestionPair { heard: heard.into(), polished: polished.into() }
+    }
+
+    /// docs/dictation.md §16.10, a batch 忽略: the pairs go to the end of the list with one write,
+    /// each once; a pair ignored already keeps its place and time, and is not one the batch added.
+    /// Taking the batch back off the list is one write too, and leaves the other pairs alone.
+    #[test]
+    fn a_batch_is_ignored_and_taken_back_with_one_write_each() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut store, _) = IgnoreStore::open(dir.path());
+        store.add("维他命", "Voltip", 10).unwrap();
+        let saves = crate::list_file::saves();
+        let added = store.add_batch(&[pair("非", "飞"), pair("维他命", "Voltip"), pair(" 集成 ", "继承"), pair("非", "飞")], 20).unwrap();
+        assert_eq!(crate::list_file::saves() - saves, 1, "one write");
+        assert_eq!(added, [pair("非", "飞"), pair("集成", "继承")], "what the batch added, trimmed, each once");
+        let listed: Vec<(&str, u64)> = store.list().iter().map(|p| (p.heard.as_str(), p.at_ms)).collect();
+        assert_eq!(listed, [("维他命", 10), ("非", 20), ("集成", 20)]);
+        let (reread, _) = IgnoreStore::open(dir.path());
+        assert_eq!(reread.list(), store.list(), "on disk");
+
+        let saves = crate::list_file::saves();
+        assert_eq!(store.add_batch(&[pair("非", "飞"), pair("维他命", "Voltip")], 30).unwrap(), [], "ignored already");
+        store.remove_batch(&[pair("没有", "这组")]).unwrap();
+        assert_eq!(crate::list_file::saves(), saves, "nothing to write either time");
+
+        store.remove_batch(&added).unwrap();
+        assert_eq!(crate::list_file::saves() - saves, 1, "one write");
+        assert_eq!(heard_of(&store), ["维他命"], "the pair ignored before stays");
+        let (reread, _) = IgnoreStore::open(dir.path());
+        assert_eq!(heard_of(&reread), ["维他命"]);
+
+        // A pair that is not one refuses the batch; nothing changes.
+        assert!(store.add_batch(&[pair("集成", "继承"), pair("同", "同")], 40).is_err());
+        assert!(store.remove_batch(&[pair("维他命", "Voltip"), pair("", "x")]).is_err());
+        assert_eq!(heard_of(&store), ["维他命"]);
+    }
+
+    /// A batch past [`MAX_IGNORED`] drops the oldest pairs, never its own.
+    #[test]
+    fn a_batch_past_the_cap_drops_the_oldest_pairs() {
+        let dir = tempfile::tempdir().unwrap();
+        let full: Vec<IgnoredPair> = (0..MAX_IGNORED).map(|i| IgnoredPair { heard: format!("听成{i}"), polished: "正确".into(), at_ms: 1 }).collect();
+        std::fs::write(dir.path().join(IGNORED_FILE_NAME), serde_json::to_vec(&IgnoredFile { schema: IGNORED_SCHEMA, pairs: full }).unwrap()).unwrap();
+        let (mut store, _) = IgnoreStore::open(dir.path());
+        let added = store.add_batch(&[pair("新1", "正确"), pair("新2", "正确"), pair("新3", "正确")], 2).unwrap();
+        assert_eq!(added.len(), 3);
+        assert_eq!(store.list().len(), MAX_IGNORED);
+        assert_eq!(store.list()[0].heard, "听成3", "the three oldest went");
+        assert_eq!(store.list()[MAX_IGNORED - 3..].iter().map(|p| p.heard.as_str()).collect::<Vec<_>>(), ["新1", "新2", "新3"]);
     }
 
     /// A file that cannot be used is moved aside, never deleted, and the list starts empty.

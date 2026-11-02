@@ -56,7 +56,7 @@ pub const DEV_DATA_DIR_ENV: &str = "VOLTIP_DEV_DATA_DIR";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 158] = [
+pub const COMMANDS: [&str; 161] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -172,6 +172,9 @@ pub const COMMANDS: [&str; 158] = [
     "vocabulary_suggestion_undo",
     "vocabulary_suggestion_ignore",
     "vocabulary_suggestion_unignore",
+    "vocabulary_suggestions_accept",
+    "vocabulary_suggestions_ignore",
+    "vocabulary_suggestions_undo",
     "scenes_add",
     "scenes_update",
     "scenes_remove",
@@ -1097,6 +1100,33 @@ async fn vocabulary_suggestion_undo(bridge: tauri::State<'_, Bridge>, id: uuid::
     Ok(bridge.vocabulary_suggestion_undo(id, SUGGESTION_WAIT).await?)
 }
 
+/// 加入词典 for several learning suggestions at once (docs/dictation.md §16.10): in order, with one
+/// write; answers what became of each pair and what 撤销 sends back. A batch with a pair that is not
+/// one is refused here, whole.
+#[tauri::command]
+async fn vocabulary_suggestions_accept(
+    bridge: tauri::State<'_, Bridge>,
+    pairs: Vec<voltip_core::vocabulary::SuggestionPick>,
+) -> Result<voltip_core::vocabulary::BatchAcceptOutcome, String> {
+    Ok(bridge.vocabulary_suggestions_accept(pairs, SUGGESTION_WAIT).await?)
+}
+
+/// 忽略 for several learning suggestions at once, with one write; answers what 撤销 sends back.
+#[tauri::command]
+async fn vocabulary_suggestions_ignore(
+    bridge: tauri::State<'_, Bridge>,
+    pairs: Vec<voltip_core::vocabulary::SuggestionPair>,
+) -> Result<voltip_core::vocabulary::BatchIgnoreOutcome, String> {
+    Ok(bridge.vocabulary_suggestions_ignore(pairs, SUGGESTION_WAIT).await?)
+}
+
+/// 撤销 of a batch: the entries it made or added to, while they are as it left them, or the pairs
+/// it ignored.
+#[tauri::command]
+async fn vocabulary_suggestions_undo(bridge: tauri::State<'_, Bridge>, id: uuid::Uuid) -> Result<voltip_core::vocabulary::BatchUndoOutcome, String> {
+    Ok(bridge.vocabulary_suggestions_undo(id, SUGGESTION_WAIT).await?)
+}
+
 /// 忽略 on a learning suggestion: the pair is left out from now on.
 #[tauri::command]
 fn vocabulary_suggestion_ignore(bridge: tauri::State<'_, Bridge>, heard: String, polished: String) -> Result<(), String> {
@@ -1822,6 +1852,9 @@ pub fn build_app<R: Runtime>(
             vocabulary_suggestion_undo,
             vocabulary_suggestion_ignore,
             vocabulary_suggestion_unignore,
+            vocabulary_suggestions_accept,
+            vocabulary_suggestions_ignore,
+            vocabulary_suggestions_undo,
             rules_warnings,
             scenes_add,
             scenes_update,

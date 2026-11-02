@@ -136,7 +136,9 @@ pnpm -C apps/desktop dev --host 127.0.0.1 --port 1430
 1. Open it at 1440 × 900 and navigate inside the app: a full reload resets the mock.
    Switch the theme with the sidebar's theme button — 澄空 (Clear Sky) for the `light`
    captures, 夜空 (Night Sky) for the `dark` ones — and the language in 设置 › 通用. The
-   overlay sheet has no sidebar: go back home to switch, then return to `/overlay`.
+   overlay sheet has no sidebar: go back home to switch, then return to `/overlay`. For the
+   dictionary's learning suggestions, open it at `/?history=suggestions`: the sample history
+   then has older polished takes, so some pairs are seen twice or more.
 2. Page captures are viewport screenshots at device pixel ratio 1, saved as WebP at
    quality 85.
 3. The overlay pills, `overlay-<state>-<lang>-<theme>.webp`, come from `/overlay` at device

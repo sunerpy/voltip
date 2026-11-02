@@ -11,7 +11,8 @@ use tokio::sync::mpsc;
 use voltip_core::dictation::fakes::{FAKE_TRANSCRIPT, FakeAudio, FakeInjector, FakeTranscriber};
 use voltip_core::dictation::{DictationPorts, Transcriber};
 use voltip_core::vocabulary::{
-    AcceptOutcome, DICTIONARY_FILE_NAME, IGNORED_FILE_NAME, IgnoredPair, RULES_FILE_NAME, Refusal, Reply, UndoOutcome, export_rules_toml, parse_rules_toml,
+    AcceptOutcome, BatchIgnoreOutcome, BatchItem, BatchUndoOutcome, DICTIONARY_FILE_NAME, IGNORED_FILE_NAME, IgnoredPair, RULES_FILE_NAME, Refusal, Reply,
+    SuggestionPair, SuggestionPick, UndoOutcome, export_rules_toml, parse_rules_toml,
 };
 use voltip_core::{
     AppCore, CoreCommand, CoreConfig, CoreEvent, CoreHandle, DictationPhase, DictionaryDraft, DictionaryEntry, EntrySource, GlossaryRoute, ImportMode,
@@ -314,5 +315,84 @@ async fn the_ignored_list_holds_each_pair_with_when_it_was_ignored() {
 
     node.handle.send(CoreCommand::SuggestionUnignore { heard: "集成".into(), polished: "继承".into() }).await.unwrap();
     assert_eq!(ignored(&mut node).await, [last[1].clone()], "the other pair stays");
+    node.handle.send(CoreCommand::Shutdown).await.unwrap();
+}
+
+fn pick(heard: &str, polished: &str) -> SuggestionPick {
+    SuggestionPick { heard: heard.into(), polished: polished.into(), history_id: uuid::Uuid::new_v4() }
+}
+
+fn pair(heard: &str, polished: &str) -> SuggestionPair {
+    SuggestionPair { heard: heard.into(), polished: polished.into() }
+}
+
+/// docs/dictation.md §16.10, batches through the real core task: a batch 加入词典 answers for each
+/// pick, sends one new dictionary for the whole batch and is on disk; 撤销 of the batch puts the
+/// dictionary back, once. A batch 忽略 sends one new ignored list, and its 撤销 takes the batch
+/// off it again. The batches 撤销 can take back are in memory: after a restart they are expired.
+#[tokio::test]
+async fn batches_of_suggestions_through_the_core() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut node = start(dir.path(), Arc::new(FakeInjector::paste()));
+    assert!(dictionary(&mut node).await.is_empty());
+    assert!(ignored(&mut node).await.is_empty());
+
+    let picks = vec![pick("非书", "飞书"), pick("飞输", "飞书"), pick("维他命", "Voltip"), pick("非书", "飞书")];
+    let (reply, rx) = Reply::channel();
+    node.handle.send(CoreCommand::SuggestionsAccept { picks: picks.clone(), reply }).await.unwrap();
+    let accepted = answer(rx).await;
+    let undo = accepted.undo.expect("something went in");
+    let kinds: Vec<&str> = accepted.items.iter().map(|i| if matches!(i, BatchItem::Accepted { .. }) { "accepted" } else { "refused" }).collect();
+    assert_eq!(kinds, ["accepted", "accepted", "accepted", "refused"], "the same pick twice: the second finds it there");
+
+    // The next batch, 忽略, and every event up to its ignored list: one dictionary, the first batch's.
+    let (reply, rx) = Reply::channel();
+    node.handle.send(CoreCommand::SuggestionsIgnore { pairs: vec![pair("提成", "集成"), pair("非", "飞")], reply }).await.unwrap();
+    let BatchIgnoreOutcome::Ignored { undo: ignore_undo } = answer(rx).await else { panic!("ignored") };
+    let mut lists = Vec::new();
+    let ignored_now = wait(&mut node, |e| match e {
+        CoreEvent::Dictionary(d) => {
+            lists.push(d.clone());
+            None
+        }
+        CoreEvent::VocabularyIgnored(p) => Some(p.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(lists.len(), 1, "one change for the batch: {lists:?}");
+    let list = &lists[0];
+    assert_eq!(
+        list.iter().map(|e| (e.term.as_str(), e.heard_as.clone())).collect::<Vec<_>>(),
+        [("飞书", vec!["非书".to_owned(), "飞输".to_owned()]), ("Voltip", vec!["维他命".to_owned()])]
+    );
+    assert_eq!(list[0].source, EntrySource::History { history_id: picks[0].history_id });
+    assert_eq!(&dictionary_file(dir.path()), list, "on disk");
+    assert_eq!(ignored_now.iter().map(|p| (p.heard.as_str(), p.polished.as_str())).collect::<Vec<_>>(), [("提成", "集成"), ("非", "飞")]);
+
+    let (reply, rx) = Reply::channel();
+    node.handle.send(CoreCommand::SuggestionsUndo { id: undo, reply }).await.unwrap();
+    assert_eq!(answer(rx).await, BatchUndoOutcome::Undone);
+    assert!(dictionary(&mut node).await.is_empty());
+    assert!(dictionary_file(dir.path()).is_empty());
+    let (reply, rx) = Reply::channel();
+    node.handle.send(CoreCommand::SuggestionsUndo { id: undo, reply }).await.unwrap();
+    assert_eq!(answer(rx).await, BatchUndoOutcome::Expired, "once");
+
+    let (reply, rx) = Reply::channel();
+    node.handle.send(CoreCommand::SuggestionsUndo { id: ignore_undo, reply }).await.unwrap();
+    assert_eq!(answer(rx).await, BatchUndoOutcome::Undone);
+    assert!(ignored(&mut node).await.is_empty(), "the batch is off the list");
+
+    let (reply, rx) = Reply::channel();
+    node.handle.send(CoreCommand::SuggestionsAccept { picks: vec![pick("库伯内特斯", "Kubernetes")], reply }).await.unwrap();
+    let kept = answer(rx).await.undo.expect("accepted");
+    assert_eq!(dictionary(&mut node).await.len(), 1);
+    node.handle.send(CoreCommand::Shutdown).await.unwrap();
+    drop(node);
+    let mut node = start(dir.path(), Arc::new(FakeInjector::paste()));
+    assert_eq!(dictionary(&mut node).await.len(), 1, "read back after a restart");
+    let (reply, rx) = Reply::channel();
+    node.handle.send(CoreCommand::SuggestionsUndo { id: kept, reply }).await.unwrap();
+    assert_eq!(answer(rx).await, BatchUndoOutcome::Expired, "the undo records do not outlive the app");
     node.handle.send(CoreCommand::Shutdown).await.unwrap();
 }

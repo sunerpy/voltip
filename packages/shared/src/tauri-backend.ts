@@ -21,6 +21,8 @@ import {
   type SegmentText,
   type SiteId,
   type SuggestionAcceptArgs,
+  type SuggestionPair,
+  type SuggestionPick,
   type VocabularyBacktestArgs,
   UI_EVENT_NAME,
   acceptOutcomeSchema,
@@ -30,6 +32,9 @@ import {
   backupFolderOutcomeSchema,
   backupImportOutcomeSchema,
   backupOpenOutcomeSchema,
+  batchAcceptOutcomeSchema,
+  batchIgnoreOutcomeSchema,
+  batchUndoOutcomeSchema,
   audioOutputsSchema,
   builtinPresetTextSchema,
   exportOutcomeSchema,
@@ -230,6 +235,21 @@ export class TauriBackend implements Backend {
   async vocabularySuggestionUndo(id: string) {
     const raw = await this.transport.invoke("vocabulary_suggestion_undo", { id });
     return undoOutcomeSchema.parse(raw);
+  }
+
+  async vocabularySuggestionsAccept(pairs: SuggestionPick[]) {
+    const raw = await this.transport.invoke("vocabulary_suggestions_accept", { pairs });
+    return batchAcceptOutcomeSchema.parse(raw);
+  }
+
+  async vocabularySuggestionsIgnore(pairs: SuggestionPair[]) {
+    const raw = await this.transport.invoke("vocabulary_suggestions_ignore", { pairs });
+    return batchIgnoreOutcomeSchema.parse(raw);
+  }
+
+  async vocabularySuggestionsUndo(id: string) {
+    const raw = await this.transport.invoke("vocabulary_suggestions_undo", { id });
+    return batchUndoOutcomeSchema.parse(raw);
   }
 
   async rulesWarnings() {

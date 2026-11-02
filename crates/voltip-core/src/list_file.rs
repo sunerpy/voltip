@@ -84,8 +84,23 @@ impl ListFile {
         let bytes = serde_json::to_vec_pretty(value).map_err(|e| err(&e))?;
         let tmp = self.path.with_extension("json.tmp");
         std::fs::write(&tmp, bytes).map_err(|e| err(&e))?;
-        std::fs::rename(&tmp, &self.path).map_err(|e| err(&e))
+        std::fs::rename(&tmp, &self.path).map_err(|e| err(&e))?;
+        #[cfg(test)]
+        SAVES.with(|saves| saves.set(saves.get() + 1));
+        Ok(())
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Files written on this thread: what a test reads to see that a change wrote once.
+    static SAVES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many list files this thread has written so far (unit tests only).
+#[cfg(test)]
+pub(crate) fn saves() -> usize {
+    SAVES.with(std::cell::Cell::get)
 }
 
 /// What a list file holds.

@@ -11,9 +11,11 @@ import {
 import {
   Button,
   Card,
+  Checkbox,
   EmptyState,
   IconButton,
   Panel,
+  Segmented,
   Table,
   type TableColumn,
   useI18n,
@@ -26,9 +28,13 @@ import { useBacktest } from "../history/useBacktest";
 import { IgnoredList } from "./IgnoredList";
 import { Line, Pair, ROW_BAND } from "./parts";
 import {
+  type BatchNotice,
+  type BatchUndoFailure,
   type RowAction,
+  type SuggestionsFilter,
   type SuggestionsView,
   type UndoFailure,
+  passes,
   suggestionKey,
 } from "./useSuggestions";
 
@@ -66,6 +72,119 @@ function undoFailureText(failure: UndoFailure, t: TFunction): string {
   return failure.kind === "failed"
     ? t("dictionary.suggestions.undoFailed.failed", { message: failure.message })
     : t(`dictionary.suggestions.undoFailed.${failure.kind}`);
+}
+
+function batchUndoFailureText(failure: BatchUndoFailure, t: TFunction): string {
+  switch (failure.kind) {
+    case "expired":
+      return t("dictionary.suggestions.batch.undoFailed.expired");
+    case "gone":
+    case "changed":
+      return t(`dictionary.suggestions.batch.undoFailed.${failure.kind}`, { term: failure.term });
+    case "failed":
+      return t("dictionary.suggestions.batch.undoFailed.failed", { message: failure.message });
+  }
+}
+
+/** What a batch did, in a sentence. */
+function batchText(
+  notice: Extract<BatchNotice, { kind: "accept" | "ignore" }>,
+  t: TFunction,
+): string {
+  const n = notice.keys.length;
+  if (notice.kind === "ignore") return t("dictionary.suggestions.batch.ignored", { n });
+  if (n === 0) return t("dictionary.suggestions.batch.refused", { n: notice.refused });
+  return notice.refused === 0
+    ? t("dictionary.suggestions.batch.accepted", { n })
+    : t("dictionary.suggestions.batch.acceptedSome", { n, refused: notice.refused });
+}
+
+/** The batches over the list, newest first: what each did, and its 撤销 while there is one. */
+function BatchNotices({ view }: { view: SuggestionsView }) {
+  const { t } = useI18n();
+  if (view.batches.length === 0) return null;
+  return (
+    <div className="mb-2 flex flex-col gap-1.5 text-[12px] leading-[18px]">
+      {view.batches.map((notice) => {
+        if (notice.kind === "failed") {
+          return (
+            <div key={notice.id} role="status" data-testid="suggestions-batch">
+              <Line
+                tone="danger"
+                text={t("dictionary.suggestions.actionFailed", { message: notice.message })}
+              />
+            </div>
+          );
+        }
+        const text = batchText(notice, t);
+        const tone = notice.keys.length === 0 || notice.refused > 0 ? "warn" : "info";
+        return (
+          <div
+            key={notice.id}
+            role="status"
+            data-testid="suggestions-batch"
+            className="flex flex-col gap-1">
+            <div className="flex flex-wrap items-center gap-x-2">
+              <Line tone={tone} text={text} />
+              {notice.undo !== undefined && notice.failure === undefined && (
+                <Button
+                  size="sm"
+                  variant="text"
+                  aria-label={t("dictionary.suggestions.batch.undo", { what: text })}
+                  loading={notice.undoing}
+                  onClick={() => {
+                    view.undoBatch(notice.id);
+                  }}>
+                  {t("dictionary.suggestions.undo")}
+                </Button>
+              )}
+            </div>
+            {notice.failure !== undefined && (
+              <Line tone="danger" text={batchUndoFailureText(notice.failure, t)} />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Over the list while rows are checked: how many, and 加入词典 / 忽略 for them. */
+function SelectionBar({ view }: { view: SuggestionsView }) {
+  const { t } = useI18n();
+  const n = view.checked.size;
+  if (n === 0) return null;
+  return (
+    <div
+      className="mb-2 flex flex-wrap items-center gap-2 rounded-6 bg-inset px-3 py-1.5 text-[12px]"
+      data-testid="suggestions-selection">
+      <span className="text-fg">{t("dictionary.suggestions.selection.count", { n })}</span>
+      <Button
+        size="sm"
+        aria-label={t("dictionary.suggestions.selection.acceptLabel", { n })}
+        disabled={view.busy}
+        onClick={view.acceptChecked}>
+        {t("dictionary.suggestions.accept")}
+      </Button>
+      <Button
+        size="sm"
+        variant="text-muted"
+        aria-label={t("dictionary.suggestions.selection.ignoreLabel", { n })}
+        disabled={view.busy}
+        onClick={view.ignoreChecked}>
+        {t("dictionary.suggestions.ignore")}
+      </Button>
+      <Button
+        size="sm"
+        variant="text"
+        className="ml-auto"
+        onClick={() => {
+          view.select(view.selectable, false);
+        }}>
+        {t("dictionary.suggestions.selection.clear")}
+      </Button>
+    </div>
+  );
 }
 
 /** The recognised text around the heard words, with those words lit. */
@@ -208,6 +327,13 @@ function RowButtons({
         <span className="text-[12px] text-fg-muted">{t("dictionary.suggestions.ignored")}</span>
         {undo(action.busy)}
       </>
+    ) : action?.kind === "batched" ? (
+      // 撤销 is the batch's, over the list.
+      action.what === "accept" ? (
+        <span className="text-[12px] text-ok-text">{t("dictionary.suggestions.accepted")}</span>
+      ) : (
+        <span className="text-[12px] text-fg-muted">{t("dictionary.suggestions.ignored")}</span>
+      )
     ) : undefined;
   const busy = action?.kind === "busy" ? action.what : undefined;
   return (
@@ -256,17 +382,64 @@ export interface SuggestionsPanelProps {
 }
 
 /** 学习建议 (docs/dictation.md §16.10): the pairs AI polish changed in the recent takes that the
- *  dictionary does not correct yet, most frequent first. 加入词典 and 忽略 go to the shell, which
- *  checks and saves them; a row acted on stays in place with its 撤销 until the page closes. The
- *  ignored pairs follow under 已忽略. */
+ *  dictionary does not correct yet, most frequent first; by default those seen twice or more. 加入词典
+ *  and 忽略 go to the shell, which checks and saves them, for one row or for the checked rows at
+ *  once (全部忽略: every row shown); a row acted on stays in place, with its 撤销 or its batch's, until
+ *  the page closes. The ignored pairs follow under 已忽略. */
 export function SuggestionsPanel({ view, onShowEntry }: SuggestionsPanelProps) {
   const { t, locale } = useI18n();
   const { navigate } = useRouter();
   const now = useNow();
-  const { load, rows, actions, expanded } = view;
+  const { load, visible, actions, expanded, selectable, checked } = view;
   const answer = load.kind === "answered" ? load.answer : undefined;
+  const allChecked = selectable.length > 0 && checked.size === selectable.length;
 
   const columns: TableColumn<Suggestion>[] = [
+    {
+      id: "select",
+      header: (
+        <Checkbox
+          label={t("dictionary.suggestions.select.all")}
+          checked={allChecked}
+          indeterminate={checked.size > 0 && !allChecked}
+          disabled={selectable.length === 0 || view.busy}
+          onChange={(on) => {
+            view.select(selectable, on);
+          }}
+        />
+      ),
+      width: 32,
+      align: "center",
+      mono: false,
+      cell: (s) => {
+        const key = suggestionKey(s);
+        const action = actions.get(key);
+        if (action?.kind === "busy") {
+          return (
+            <Checkbox
+              label={t("dictionary.suggestions.select.row", {
+                heard: s.heard,
+                polished: s.polished,
+              })}
+              checked={false}
+              disabled
+              onChange={() => undefined}
+            />
+          );
+        }
+        if (!selectable.includes(s)) return null;
+        return (
+          <Checkbox
+            label={t("dictionary.suggestions.select.row", { heard: s.heard, polished: s.polished })}
+            checked={checked.has(key)}
+            disabled={view.busy}
+            onChange={(on) => {
+              view.select([s], on);
+            }}
+          />
+        );
+      },
+    },
     {
       id: "pair",
       header: t("dictionary.suggestions.column.pair"),
@@ -352,7 +525,10 @@ export function SuggestionsPanel({ view, onShowEntry }: SuggestionsPanelProps) {
     const open = expanded === key;
     if (message === undefined && !open) return null;
     const decided =
-      action?.kind === "accepted" || action?.kind === "kept" || action?.kind === "ignored";
+      action?.kind === "accepted" ||
+      action?.kind === "kept" ||
+      action?.kind === "ignored" ||
+      action?.kind === "batched";
     return (
       <div className={ROW_BAND}>
         {message !== undefined && <div role="status">{message}</div>}
@@ -388,29 +564,65 @@ export function SuggestionsPanel({ view, onShowEntry }: SuggestionsPanelProps) {
       <EmptyState title={t("dictionary.suggestions.empty.noPolishedTitle")}>
         {t("dictionary.suggestions.empty.noPolished")}
       </EmptyState>
+    ) : load.answer.total > 0 && view.filter === "repeated" ? (
+      <EmptyState
+        title={t("dictionary.suggestions.empty.noneRepeatedTitle")}
+        actions={
+          <Button
+            size="sm"
+            onClick={() => {
+              view.setFilter("all");
+            }}>
+            {t("dictionary.suggestions.empty.showAll")}
+          </Button>
+        }>
+        {t("dictionary.suggestions.empty.noneRepeated", { n: load.answer.total })}
+      </EmptyState>
     ) : (
       <EmptyState title={t("dictionary.suggestions.empty.noneTitle")}>
         {t("dictionary.suggestions.empty.none", { n: load.answer.refined })}
       </EmptyState>
     );
 
-  const footer =
-    answer?.status === "ready"
-      ? [
-          t("dictionary.suggestions.footer", { n: answer.scanned, refined: answer.refined }),
-          ...(answer.skipped > 0
-            ? [t("dictionary.suggestions.skipped", { n: answer.skipped })]
-            : []),
-          ...(answer.total > answer.pairs.length
-            ? [
-                t("dictionary.suggestions.more", {
-                  shown: answer.pairs.length,
-                  total: answer.total,
-                }),
-              ]
-            : []),
-        ].join(" · ")
-      : undefined;
+  /** Under the list: the takes compared, then what the list shows and what it does not. */
+  const footer = (() => {
+    if (answer?.status !== "ready") return undefined;
+    // The suggestions the filter takes, of all of them, and how many the answer lists.
+    const inView = view.filter === "all" ? answer.total : answer.repeated;
+    const listed = answer.pairs.filter((p) => passes(p, view.filter)).length;
+    const hiddenOnce = view.filter === "repeated" ? answer.total - answer.repeated : 0;
+    return [
+      t("dictionary.suggestions.footer", { n: answer.scanned, refined: answer.refined }),
+      ...(answer.skipped > 0 ? [t("dictionary.suggestions.skipped", { n: answer.skipped })] : []),
+      inView > listed
+        ? t("dictionary.suggestions.more", { shown: listed, total: inView })
+        : t("dictionary.suggestions.shown", { n: visible.length }),
+      ...(hiddenOnce > 0 ? [t("dictionary.suggestions.hiddenOnce", { n: hiddenOnce })] : []),
+    ].join(" · ");
+  })();
+
+  /** Over the list once there is something to choose from: the filter and 全部忽略. */
+  const tools =
+    answer?.status === "ready" && (answer.total > 0 || view.rows.length > 0) ? (
+      <>
+        <Segmented<SuggestionsFilter>
+          label={t("dictionary.suggestions.filter.label")}
+          variant="ink"
+          size="sm"
+          value={view.filter}
+          onChange={view.setFilter}
+          options={[
+            { value: "repeated", label: t("dictionary.suggestions.filter.repeated") },
+            { value: "all", label: t("dictionary.suggestions.filter.all") },
+          ]}
+        />
+        {selectable.length > 0 && (
+          <Button size="sm" variant="text-muted" disabled={view.busy} onClick={view.ignoreShown}>
+            {t("dictionary.suggestions.ignoreAll", { n: selectable.length })}
+          </Button>
+        )}
+      </>
+    ) : undefined;
 
   return (
     <>
@@ -425,14 +637,16 @@ export function SuggestionsPanel({ view, onShowEntry }: SuggestionsPanelProps) {
           {t("dictionary.suggestions.undoNote")}
         </div>
       </Card>
-      <Panel eyebrow={t("dictionary.suggestions.list")} padding="sm">
-        {rows.length === 0 ? (
+      <Panel eyebrow={t("dictionary.suggestions.list")} padding="sm" right={tools}>
+        <SelectionBar view={view} />
+        <BatchNotices view={view} />
+        {visible.length === 0 ? (
           empty
         ) : (
           <Table
             label={t("dictionary.suggestions.table")}
             columns={columns}
-            rows={rows}
+            rows={visible}
             rowKey={suggestionKey}
             expandRow={more}
           />

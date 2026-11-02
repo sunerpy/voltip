@@ -11,10 +11,12 @@ import {
 import {
   type AcceptedSuggestion,
   acceptSuggestion,
+  acceptSuggestions,
   ruleWarnings,
   suggestVocabulary,
   suggestionDraft,
   suggestionTarget,
+  undoSuggestions,
 } from "./suggestions";
 
 let seq = 0;
@@ -111,6 +113,24 @@ describe("learning suggestions (docs/dictation.md §16.10)", () => {
     expect(out.pairs[1]?.examples[0]?.snippet).toBe("我们用维他命开会");
     const one = suggestVocabulary([], [], TAKES, [], 1);
     expect([one.total, one.pairs.length]).toEqual([3, 1]);
+  });
+
+  it("counts the suggestions seen twice or more, before the limit cuts the list", () => {
+    expect(suggestVocabulary([], [], TAKES, [], 1)).toMatchObject({ total: 3, repeated: 1 });
+    const more = [
+      take("又是维他命", "又是 Voltip。", 60),
+      take("还有库伯内特斯", "还有 Kubernetes", 55),
+      ...TAKES,
+    ];
+    const cut = suggestVocabulary([], [], more, [], 1);
+    expect([cut.total, cut.repeated, cut.pairs.map((p) => [p.heard, p.count])]).toEqual([
+      3,
+      3,
+      [["维他命", 2]],
+    ]);
+    const ignored = [{ heard: "非", polished: "飞", at_ms: 1 }];
+    expect(suggestVocabulary([], [], more, ignored)).toMatchObject({ total: 2, repeated: 2 });
+    expect(suggestVocabulary([], [], [], []).repeated).toBe(0);
   });
 
   it("leaves out what an enabled entry corrects and the ignored pairs, matched exactly", () => {
@@ -242,6 +262,104 @@ describe("加入词典 on a suggestion", () => {
       id: null,
       entry: { term: "飞", heard_as: ["非"], enabled: true },
     });
+  });
+});
+
+describe("加入词典 for a batch", () => {
+  const pick = (heard: string, polished: string, history_id = "h") => ({
+    heard,
+    polished,
+    history_id,
+  });
+
+  it("goes in in order, picks with one right spelling into one entry, and answers for each", () => {
+    const kube = entry("Kubernetes", ["酷伯"]);
+    const batch = acceptSuggestions(
+      [kube],
+      [],
+      [
+        pick("非书", "飞书", "h1"),
+        pick("库伯内特斯", "kubernetes"),
+        pick("飞输", "飞书"),
+        pick("维他命", "Voltip"),
+      ],
+      100,
+      nextId,
+    );
+    expect(batch.dictionary.map((e) => [e.term, e.heard_as])).toEqual([
+      ["Kubernetes", ["酷伯", "库伯内特斯"]],
+      ["飞书", ["非书", "飞输"]],
+      ["Voltip", ["维他命"]],
+    ]);
+    const [, feishu, voltip] = batch.dictionary;
+    expect(feishu).toMatchObject({ source: { kind: "history", history_id: "h1" } });
+    expect(batch.items).toEqual([
+      { kind: "accepted", entry_id: feishu?.id, term: "飞书", created: true },
+      { kind: "accepted", entry_id: kube.id, term: "Kubernetes", created: false },
+      { kind: "accepted", entry_id: feishu?.id, term: "飞书", created: false },
+      { kind: "accepted", entry_id: voltip?.id, term: "Voltip", created: true },
+    ]);
+    expect(batch.changes).toEqual([
+      { after: feishu },
+      { before: kube, after: batch.dictionary[0] },
+      { after: voltip },
+    ]);
+  });
+
+  it("refuses each pick in the way and takes the rest", () => {
+    const voltip = entry(
+      "Voltip",
+      Array.from({ length: MAX_HEARD_AS - 1 }, (_, i) => `沃${i}`),
+    );
+    const off = entry("飞书", [], { enabled: false });
+    const back = rule("改回去", "Kubernetes", "库伯内特斯");
+    const batch = acceptSuggestions(
+      [voltip, off],
+      [back],
+      [
+        pick("维他命", "Voltip"),
+        pick("沃提普", "Voltip"),
+        pick("非书", "飞书"),
+        pick("库伯内特斯", "Kubernetes"),
+        pick("提成", "集成"),
+      ],
+      100,
+      nextId,
+    );
+    expect(batch.items.map((i) => (i.kind === "accepted" ? i.term : i.refusal))).toEqual([
+      "Voltip",
+      { kind: "entry", entry_id: voltip.id, term: "Voltip", clash: "too_many" },
+      { kind: "entry", entry_id: off.id, term: "飞书", clash: "disabled" },
+      { kind: "rule", rule_id: back.id, name: "改回去", becomes: "库伯内特斯" },
+      "集成",
+    ]);
+    expect(batch.changes).toHaveLength(2);
+    const none = acceptSuggestions([voltip], [back], [pick("库伯内特斯", "Kubernetes")], 1, nextId);
+    expect([none.items[0]?.kind, none.changes, none.dictionary]).toEqual(["refused", [], [voltip]]);
+  });
+
+  it("撤销 puts the dictionary back while the batch's entries are as it left them", () => {
+    const kube = entry("Kubernetes", ["酷伯"]);
+    const lark = entry("Lark", []);
+    const batch = acceptSuggestions(
+      [kube, lark],
+      [],
+      [pick("非书", "飞书"), pick("库伯内特斯", "Kubernetes")],
+      100,
+      nextId,
+    );
+    // Another entry changed since: it stays changed.
+    const larkNow = { ...lark, heard_as: ["拉克"], updated_at_ms: 150 };
+    const later = batch.dictionary.map((e) => (e.id === lark.id ? larkNow : e));
+    expect(undoSuggestions(later, batch.changes)).toEqual([kube, larkNow]);
+    const feishu = batch.dictionary.find((e) => e.term === "飞书");
+    if (feishu === undefined) throw new Error("飞书");
+    const edited = batch.dictionary.map((e) =>
+      e.id === feishu.id ? { ...e, heard_as: ["非书", "飞输"] } : e,
+    );
+    expect(undoSuggestions(edited, batch.changes)).toEqual({ kind: "changed", term: "飞书" });
+    const deleted = batch.dictionary.filter((e) => e.id !== feishu.id);
+    expect(undoSuggestions(deleted, batch.changes)).toEqual({ kind: "gone", term: "飞书" });
   });
 });
 

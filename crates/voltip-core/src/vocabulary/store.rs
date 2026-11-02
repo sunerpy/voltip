@@ -167,9 +167,9 @@ impl DictionaryStore {
     }
 
     /// Put `entries` in the place of the dictionary, as they are (a backup's import,
-    /// docs/dictation.md §4.6): checked like a stored file, every entry in its normalised form and
-    /// the whole list within the rules, and written in one go. Refused whole, the file and the list
-    /// unchanged.
+    /// docs/dictation.md §4.6; a batch of learning suggestions and its 撤销, §16.10): checked like a
+    /// stored file, every entry in its normalised form and the whole list within the rules, and
+    /// written in one go. Refused whole, the file and the list unchanged.
     pub fn restore_list(&mut self, entries: Vec<DictionaryEntry>) -> Result<(), VocabularyError> {
         let unnormalised = entries.iter().find(|e| {
             let draft = DictionaryDraft { term: e.term.clone(), heard_as: e.heard_as.clone(), enabled: e.enabled };

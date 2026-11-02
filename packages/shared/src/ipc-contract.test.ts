@@ -55,6 +55,9 @@ import {
   vocabularyBacktestSchema,
   usageNoticeSchema,
   acceptOutcomeSchema,
+  batchAcceptOutcomeSchema,
+  batchIgnoreOutcomeSchema,
+  batchUndoOutcomeSchema,
   ruleWarningSchema,
   suggestionsAnswerSchema,
   undoOutcomeSchema,
@@ -1651,7 +1654,9 @@ describe("history queries (docs/dictation.md section 4.4)", () => {
       .parse(loadFixture("vocabulary-suggestions.json"));
     const ready = suggestionsAnswerSchema.parse(fixture.ready);
     if (ready.status !== "ready") throw new Error("ready");
-    expect([ready.scanned, ready.refined, ready.skipped, ready.total]).toEqual([2000, 1480, 3, 41]);
+    expect([ready.scanned, ready.refined, ready.skipped, ready.total, ready.repeated]).toEqual([
+      2000, 1480, 3, 41, 9,
+    ]);
     expect(ready.pairs.map((p) => [p.heard, p.polished, p.count])).toEqual([
       ["维他命", "Voltip", 12],
       ["提成", "集成", 3],
@@ -1692,6 +1697,26 @@ describe("history queries (docs/dictation.md section 4.4)", () => {
         .parse(fixture.rule_warnings)
         .map((w) => w.kind),
     ).toEqual(["duplicate", "inverse", "undoes_entry"]);
+    const batch = batchAcceptOutcomeSchema.parse(fixture.batch_accepted);
+    expect(batch.items.map((i) => (i.kind === "accepted" ? [i.term, i.created] : i.kind))).toEqual([
+      ["飞书", true],
+      ["飞书", false],
+      "refused",
+    ]);
+    expect(batch.undo).toMatch(/^[0-9a-f-]{36}$/);
+    expect(batchAcceptOutcomeSchema.parse(fixture.batch_refused).undo).toBeNull();
+    expect(
+      z
+        .array(batchIgnoreOutcomeSchema)
+        .parse(fixture.batch_ignored)
+        .map((o) => o.kind),
+    ).toEqual(["ignored", "failed"]);
+    expect(
+      z
+        .array(batchUndoOutcomeSchema)
+        .parse(fixture.batch_undo)
+        .map((u) => (u.kind === "gone" || u.kind === "changed" ? `${u.kind}:${u.term}` : u.kind)),
+    ).toEqual(["undone", "expired", "gone:飞书", "changed:Voltip", "failed"]);
   });
 
   it("vocabulary_backtest (section 16.9): the drafts and answers parse and TauriBackend sends the shell's arguments", async () => {

@@ -401,7 +401,8 @@ describe("Dictionary page · learning suggestions (docs/dictation.md §16.10)", 
     return screen.getByRole("table", { name: "学习建议" });
   }
 
-  /** The table's suggestion rows (not the detail rows under them): pair, count, last time. */
+  /** The table's suggestion rows (not the detail rows under them): pair, count, last time, the
+   *  cells after the check box. */
   function shownPairs(): string[][] {
     return within(suggestionTable())
       .getAllByRole("row")
@@ -410,7 +411,7 @@ describe("Dictionary page · learning suggestions (docs/dictation.md §16.10)", 
       .map((r) =>
         within(r)
           .getAllByRole("cell")
-          .slice(0, 3)
+          .slice(1, 4)
           .map((c) => c.textContent ?? ""),
       );
   }
@@ -427,6 +428,11 @@ describe("Dictionary page · learning suggestions (docs/dictation.md §16.10)", 
 
   async function openSuggestions(user: ReturnType<typeof userEvent.setup>, name = /^学习建议/) {
     await user.click(await screen.findByRole("tab", { name }));
+  }
+
+  /** The list shows the suggestions seen twice or more until 全部 is chosen. */
+  async function showAll(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(await screen.findByRole("radio", { name: "全部" }));
   }
 
   /** The rows of 已忽略: pair and when it was ignored. */
@@ -449,7 +455,8 @@ describe("Dictionary page · learning suggestions (docs/dictation.md §16.10)", 
     const tabs = await screen.findByRole("tablist", { name: "词典视图" });
     const entries = within(tabs).getByRole("tab", { name: "词条" });
     expect(entries).toHaveAttribute("aria-selected", "true");
-    const suggestions = await within(tabs).findByRole("tab", { name: "学习建议（3）" });
+    // The count is of the suggestions the list shows by default: those seen twice or more.
+    const suggestions = await within(tabs).findByRole("tab", { name: "学习建议（1）" });
     expect(suggestions).toHaveAttribute("aria-selected", "false");
     expect(screen.getByRole("tabpanel", { name: "词条" })).toContainElement(
       screen.getByRole("table", { name: "词条表" }),
@@ -460,6 +467,12 @@ describe("Dictionary page · learning suggestions (docs/dictation.md §16.10)", 
     expect(suggestions).toHaveFocus();
     expect(suggestions).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByRole("table", { name: "词条表" })).toBeNull();
+    expect(screen.getByRole("tabpanel", { name: "学习建议（1）" })).toContainElement(
+      suggestionTable(),
+    );
+    expect(shownPairs()).toEqual([["非→飞", "2", "2 小时前"]]);
+    await showAll(user);
+    expect(suggestions).toHaveAccessibleName("学习建议（3）");
     const panel = screen.getByRole("tabpanel", { name: "学习建议（3）" });
     expect(panel).toContainElement(suggestionTable());
     expect(shownPairs()).toEqual([
@@ -474,6 +487,7 @@ describe("Dictionary page · learning suggestions (docs/dictation.md §16.10)", 
     expect(screen.getByTestId("suggestions-footer")).toHaveTextContent(
       "最近 5 条记录 · 4 条经过 AI 润色",
     );
+    suggestions.focus();
     await user.keyboard("{Home}");
     expect(entries).toHaveFocus();
     await user.keyboard("{End}");
@@ -490,7 +504,7 @@ describe("Dictionary page · learning suggestions (docs/dictation.md §16.10)", 
     const user = userEvent.setup();
     renderApp({ path: "/dictionary", backend: learning() });
     await user.type(await screen.findByLabelText("识别文本"), "又是非书");
-    await openSuggestions(user, /^学习建议（3）$/);
+    await openSuggestions(user, /^学习建议（1）$/);
     const page = screen.getByTestId("page-dictionary");
     expect(screen.queryByLabelText("识别文本")).toBeNull();
     expect(page.querySelector(".grid")?.className).not.toMatch(/lg:grid-cols-/);
@@ -510,7 +524,8 @@ describe("Dictionary page · learning suggestions (docs/dictation.md §16.10)", 
     const user = userEvent.setup();
     const backend = learning();
     renderApp({ path: "/dictionary", backend });
-    await openSuggestions(user, /^学习建议（3）$/);
+    await openSuggestions(user, /^学习建议（1）$/);
+    await showAll(user);
     // Into the entry with that spelling.
     await user.click(screen.getByRole("button", { name: "加入词典：维他命 → Voltip" }));
     await waitFor(() => {
@@ -565,7 +580,8 @@ describe("Dictionary page · learning suggestions (docs/dictation.md §16.10)", 
     const backend = learning();
     vi.spyOn(backend, "vocabularySuggestionUndo").mockResolvedValueOnce({ kind: "changed" });
     renderApp({ path: "/dictionary", backend });
-    await openSuggestions(user, /^学习建议（3）$/);
+    await openSuggestions(user, /^学习建议（1）$/);
+    await showAll(user);
     await user.click(screen.getByRole("button", { name: "加入词典：维他命 → Voltip" }));
     await user.click(await screen.findByRole("button", { name: "撤销：维他命 → Voltip" }));
     expect(await screen.findByText("无法撤销：词条已被修改。")).toBeInTheDocument();
@@ -578,7 +594,8 @@ describe("Dictionary page · learning suggestions (docs/dictation.md §16.10)", 
     const user = userEvent.setup();
     const backend = learning();
     renderApp({ path: "/dictionary", backend });
-    await openSuggestions(user, /^学习建议（3）$/);
+    await openSuggestions(user, /^学习建议（1）$/);
+    await showAll(user);
     await user.click(screen.getByRole("button", { name: "忽略：非 → 飞" }));
     await waitFor(() => {
       expect(backend.peek().vocabulary_ignored).toMatchObject([{ heard: "非", polished: "飞" }]);
@@ -603,7 +620,8 @@ describe("Dictionary page · learning suggestions (docs/dictation.md §16.10)", 
     const backend = learning();
     const backtest = vi.spyOn(backend, "vocabularyBacktest");
     renderApp({ path: "/dictionary", backend });
-    await openSuggestions(user, /^学习建议（3）$/);
+    await openSuggestions(user, /^学习建议（1）$/);
+    await showAll(user);
     const details = screen.getByRole("button", { name: "详情：非 → 飞" });
     expect(details).toHaveAttribute("aria-expanded", "false");
     await user.click(details);
@@ -663,7 +681,8 @@ describe("Dictionary page · learning suggestions (docs/dictation.md §16.10)", 
       rules: [back],
     });
     renderApp({ path: "/dictionary", backend });
-    await openSuggestions(user, /^学习建议（3）$/);
+    await openSuggestions(user, /^学习建议（1）$/);
+    await showAll(user);
     await user.click(screen.getByRole("button", { name: "加入词典：非 → 飞" }));
     expect(await screen.findByText("词条「飞」已停用，启用后才能加入。")).toBeInTheDocument();
     expect(backend.peek().dictionary.find((e) => e.id === FEI)?.heard_as).toEqual([]);
@@ -759,6 +778,7 @@ describe("Dictionary page · learning suggestions (docs/dictation.md §16.10)", 
     const backend = learning({ now: () => Date.now() });
     renderApp({ path: "/dictionary", backend });
     await openSuggestions(user);
+    await showAll(user);
     await screen.findByRole("table", { name: "学习建议" });
     expect(screen.queryByRole("table", { name: "已忽略" })).toBeNull();
 
@@ -797,7 +817,12 @@ describe("Dictionary page · learning suggestions (docs/dictation.md §16.10)", 
       })),
     ];
     renderApp({ path: "/dictionary", backend: learning({ vocabularyIgnored: pairs }) });
-    await openSuggestions(user, /^学习建议（2）$/);
+    await openSuggestions(user, /^学习建议$/);
+    await showAll(user);
+    expect(screen.getByRole("tab", { name: "学习建议（2）" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
     expect(shownPairs().map((p) => p[0])).toEqual(["维他命→Voltip", "库伯内特斯→Kubernetes"]);
     expect(screen.getByText("已忽略（7）")).toBeInTheDocument();
     const five = [
@@ -844,7 +869,9 @@ describe("Dictionary page · learning suggestions (docs/dictation.md §16.10)", 
       vocabularyIgnored: [{ heard: "集成", polished: "继承", at_ms: AT - HOUR }],
     });
     renderApp({ path: "/dictionary", backend, systemLanguage: "en-US" });
-    await user.click(await screen.findByRole("tab", { name: "Suggestions (3)" }));
+    await user.click(await screen.findByRole("tab", { name: "Suggestions (1)" }));
+    await user.click(screen.getByRole("radio", { name: "All" }));
+    expect(screen.getByRole("tab", { name: "Suggestions (3)" })).toBeInTheDocument();
     expect(screen.getByRole("table", { name: "Suggestions" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add to dictionary: 非 → 飞" })).toBeEnabled();
     expect(screen.getByTestId("suggestions-footer")).toHaveTextContent(
@@ -856,5 +883,297 @@ describe("Dictionary page · learning suggestions (docs/dictation.md §16.10)", 
     expect(screen.getByText("Ignored (1)")).toBeInTheDocument();
     expect(ignoredRows("Ignored")).toEqual([["集成→继承", "1 hour ago"]]);
     expect(screen.getByRole("button", { name: "Stop ignoring: 集成 → 继承" })).toBeEnabled();
+  });
+
+  /** The notices over the list: what each batch did, newest first. */
+  function notices(): string[] {
+    return screen.queryAllByTestId("suggestions-batch").map((n) => n.textContent ?? "");
+  }
+
+  it("lists the suggestions seen twice or more until 全部; the tab and the footer say what is shown and what is hidden", async () => {
+    const user = userEvent.setup();
+    renderApp({ path: "/dictionary", backend: learning() });
+    await openSuggestions(user, /^学习建议（1）$/);
+    const filter = screen.getByRole("radiogroup", { name: "显示范围" });
+    expect(within(filter).getByRole("radio", { name: "出现 2 次及以上" })).toBeChecked();
+    expect(shownPairs().map((p) => p[0])).toEqual(["非→飞"]);
+    const footer = screen.getByTestId("suggestions-footer");
+    expect(footer).toHaveTextContent("显示 1 组 · 隐藏 2 组只出现 1 次的建议");
+    await showAll(user);
+    expect(within(filter).getByRole("radio", { name: "全部" })).toBeChecked();
+    expect(screen.getByRole("tab", { name: "学习建议（3）" })).toBeInTheDocument();
+    expect(shownPairs()).toHaveLength(3);
+    expect(footer).toHaveTextContent("显示 3 组");
+    expect(footer).not.toHaveTextContent("隐藏");
+    await user.click(within(filter).getByRole("radio", { name: "出现 2 次及以上" }));
+    expect(shownPairs().map((p) => p[0])).toEqual(["非→飞"]);
+    expect(screen.getByRole("tab", { name: "学习建议（1）" })).toBeInTheDocument();
+  });
+
+  it("with no suggestion seen twice, the list says how many were seen once and offers them all", async () => {
+    const user = userEvent.setup();
+    renderApp({
+      path: "/dictionary",
+      backend: learning({ history: takes().filter((t) => t.id !== SB) }),
+    });
+    await openSuggestions(user, /^学习建议$/);
+    expect(await screen.findByText("没有出现 2 次及以上的建议")).toBeInTheDocument();
+    expect(screen.getByText("另有 3 组只出现 1 次。")).toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: "学习建议" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "显示全部" }));
+    expect(shownPairs()).toHaveLength(3);
+    expect(screen.getByRole("radio", { name: "全部" })).toBeChecked();
+    expect(screen.getByRole("tab", { name: "学习建议（3）" })).toBeInTheDocument();
+  });
+
+  it("rows are checked one by one or all at once, also from the keyboard, and 全选 covers the rows shown", async () => {
+    const user = userEvent.setup();
+    renderApp({ path: "/dictionary", backend: learning() });
+    await openSuggestions(user, /^学习建议（1）$/);
+    await showAll(user);
+    const all = within(suggestionTable()).getByRole("checkbox", { name: "全选" });
+    expect(all).not.toBeChecked();
+    expect(screen.queryByText(/^已选/)).toBeNull();
+    // Tab reaches a row's box and Space checks it.
+    const fei = within(rowOf("非")).getByRole("checkbox", { name: "选择：非 → 飞" });
+    fei.focus();
+    await user.keyboard(" ");
+    expect(fei).toBeChecked();
+    expect(screen.getByText("已选 1 组")).toBeInTheDocument();
+    expect(all).toBePartiallyChecked();
+    await user.click(all);
+    expect(
+      within(suggestionTable())
+        .getAllByRole("checkbox", { name: /^选择：/ })
+        .every((box) => (box as HTMLInputElement).checked),
+    ).toBe(true);
+    expect(screen.getByText("已选 3 组")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "将所选的 3 组加入词典" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "忽略所选的 3 组" })).toBeEnabled();
+    // Rows the filter hides are no longer selected.
+    await user.click(screen.getByRole("radio", { name: "出现 2 次及以上" }));
+    expect(screen.getByText("已选 1 组")).toBeInTheDocument();
+    expect(all).toBeChecked();
+    await user.click(all);
+    expect(screen.queryByText(/^已选/)).toBeNull();
+    await showAll(user);
+    await user.click(
+      within(rowOf("维他命")).getByRole("checkbox", { name: "选择：维他命 → Voltip" }),
+    );
+    await user.click(screen.getByRole("button", { name: "取消选择" }));
+    expect(screen.queryByText(/^已选/)).toBeNull();
+    expect(
+      within(suggestionTable()).getByRole("checkbox", { name: "选择：维他命 → Voltip" }),
+    ).not.toBeChecked();
+  });
+
+  it("加入词典 for the checked rows adds them in one go, says which could not be added and why, and 撤销 takes the whole batch back", async () => {
+    const user = userEvent.setup();
+    const back: ReplacementRule = {
+      id: BACK,
+      name: "改回去",
+      kind: "literal",
+      pattern: "Kubernetes",
+      replacement: "库伯内特斯",
+      case_sensitive: true,
+      enabled: true,
+      created_at_ms: NOW,
+      updated_at_ms: NOW,
+      source: { kind: "manual" },
+      pending: false,
+    };
+    const backend = learning({ rules: [back] });
+    const batch = vi.spyOn(backend, "vocabularySuggestionsAccept");
+    renderApp({ path: "/dictionary", backend });
+    await openSuggestions(user, /^学习建议（1）$/);
+    await showAll(user);
+    await user.click(within(suggestionTable()).getByRole("checkbox", { name: "全选" }));
+    await user.click(screen.getByRole("button", { name: "将所选的 3 组加入词典" }));
+    await waitFor(() => {
+      expect(backend.peek().dictionary.map((e) => [e.term, e.heard_as])).toEqual([
+        ["Voltip", ["沃提普", "维他命"]],
+        ["good idea", ["谷歌IDR"]],
+        ["fetchUser", ["fetch user"]],
+        ["飞", ["非"]],
+      ]);
+    });
+    // In the order the list shows them, each with the take of its first example.
+    expect(batch).toHaveBeenCalledTimes(1);
+    expect(batch).toHaveBeenCalledWith([
+      { heard: "非", polished: "飞", history_id: SA },
+      { heard: "维他命", polished: "Voltip", history_id: SC },
+      { heard: "库伯内特斯", polished: "Kubernetes", history_id: SD },
+    ]);
+    expect(within(rowOf("非")).getByText("已加入词典")).toBeInTheDocument();
+    expect(within(rowOf("维他命")).getByText("已加入词典")).toBeInTheDocument();
+    // A row of a batch has no 撤销 of its own: the batch's is over the list.
+    expect(screen.queryByRole("button", { name: "撤销：非 → 飞" })).toBeNull();
+    expect(
+      screen.getByText(
+        "替换规则「改回去」会把「Kubernetes」改成「库伯内特斯」，加入词典后也不会生效。",
+      ),
+    ).toBeInTheDocument();
+    expect(notices()).toEqual(["已将 2 组加入词典，1 组无法加入，原因见对应的行。撤销"]);
+    expect(screen.queryByText(/^已选/)).toBeNull();
+    expect(await screen.findByRole("tab", { name: "学习建议（1）" })).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "撤销：已将 2 组加入词典，1 组无法加入，原因见对应的行。",
+      }),
+    );
+    await waitFor(() => {
+      expect(backend.peek().dictionary).toEqual(dictionary());
+    });
+    expect(notices()).toEqual([]);
+    expect(
+      await within(rowOf("非")).findByRole("button", { name: "加入词典：非 → 飞" }),
+    ).toBeEnabled();
+    expect(
+      within(rowOf("维他命")).getByRole("button", { name: "加入词典：维他命 → Voltip" }),
+    ).toBeEnabled();
+    expect(await screen.findByRole("tab", { name: "学习建议（3）" })).toBeInTheDocument();
+  });
+
+  it("a batch nothing could go in from says so, and a 撤销 that comes too late says why and keeps the entries", async () => {
+    const user = userEvent.setup();
+    const backend = learning({
+      dictionary: [...dictionary(), entry(FEI, "飞", [], { enabled: false })],
+    });
+    renderApp({ path: "/dictionary", backend });
+    await openSuggestions(user, /^学习建议（1）$/);
+    await user.click(within(rowOf("非")).getByRole("checkbox", { name: "选择：非 → 飞" }));
+    await user.click(screen.getByRole("button", { name: "将所选的 1 组加入词典" }));
+    expect(await screen.findByText("词条「飞」已停用，启用后才能加入。")).toBeInTheDocument();
+    expect(notices()).toEqual(["所选的 1 组都无法加入词典，原因见对应的行。"]);
+    expect(screen.queryByRole("button", { name: /^撤销：所选的/ })).toBeNull();
+
+    vi.spyOn(backend, "vocabularySuggestionsUndo").mockResolvedValueOnce({
+      kind: "changed",
+      term: "Voltip",
+    });
+    await showAll(user);
+    await user.click(
+      within(rowOf("维他命")).getByRole("checkbox", { name: "选择：维他命 → Voltip" }),
+    );
+    await user.click(screen.getByRole("button", { name: "将所选的 1 组加入词典" }));
+    await user.click(await screen.findByRole("button", { name: "撤销：已将 1 组加入词典。" }));
+    expect(await screen.findByText("无法撤销：词条「Voltip」已被修改。")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "撤销：已将 1 组加入词典。" })).toBeNull();
+    expect(within(rowOf("维他命")).getByText("已加入词典")).toBeInTheDocument();
+    expect(backend.peek().dictionary[0]?.heard_as).toEqual(["沃提普", "维他命"]);
+  });
+
+  it("忽略 for the checked rows and 全部忽略 for the rows shown put them on 已忽略, and 撤销 takes each batch back", async () => {
+    const user = userEvent.setup();
+    const backend = learning({ now: () => Date.now() });
+    const ignore = vi.spyOn(backend, "vocabularySuggestionsIgnore");
+    renderApp({ path: "/dictionary", backend });
+    await openSuggestions(user, /^学习建议（1）$/);
+    expect(screen.getByRole("button", { name: "全部忽略（1）" })).toBeEnabled();
+    await showAll(user);
+    await user.click(
+      within(rowOf("维他命")).getByRole("checkbox", { name: "选择：维他命 → Voltip" }),
+    );
+    await user.click(screen.getByRole("button", { name: "忽略所选的 1 组" }));
+    expect(await within(rowOf("维他命")).findByText("已忽略")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "撤销：维他命 → Voltip" })).toBeNull();
+    expect(ignoredRows()).toEqual([["维他命→Voltip", "刚刚"]]);
+    // 全部忽略 takes the rows the list shows and has not decided yet, from the keyboard too.
+    const rest = screen.getByRole("button", { name: "全部忽略（2）" });
+    rest.focus();
+    await user.keyboard("{Enter}");
+    await waitFor(() => {
+      expect(backend.peek().vocabulary_ignored.map((p) => p.heard)).toEqual([
+        "维他命",
+        "非",
+        "库伯内特斯",
+      ]);
+    });
+    expect(ignore).toHaveBeenLastCalledWith([
+      { heard: "非", polished: "飞" },
+      { heard: "库伯内特斯", polished: "Kubernetes" },
+    ]);
+    expect(notices()).toEqual(["已忽略 2 组。撤销", "已忽略 1 组。撤销"]);
+    expect(screen.queryByRole("button", { name: /^全部忽略/ })).toBeNull();
+    expect(await screen.findByRole("tab", { name: "学习建议" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "撤销：已忽略 2 组。" }));
+    await waitFor(() => {
+      expect(backend.peek().vocabulary_ignored.map((p) => p.heard)).toEqual(["维他命"]);
+    });
+    expect(notices()).toEqual(["已忽略 1 组。撤销"]);
+    expect(await within(rowOf("非")).findByRole("button", { name: "忽略：非 → 飞" })).toBeEnabled();
+    expect(within(rowOf("维他命")).getByText("已忽略")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "撤销：已忽略 1 组。" }));
+    await waitFor(() => {
+      expect(backend.peek().vocabulary_ignored).toEqual([]);
+    });
+    expect(notices()).toEqual([]);
+    expect(
+      await within(rowOf("维他命")).findByRole("button", { name: "忽略：维他命 → Voltip" }),
+    ).toBeEnabled();
+
+    // In the default view, 全部忽略 leaves the rows the filter hides alone.
+    await user.click(screen.getByRole("radio", { name: "出现 2 次及以上" }));
+    await user.click(screen.getByRole("button", { name: "全部忽略（1）" }));
+    await waitFor(() => {
+      expect(backend.peek().vocabulary_ignored.map((p) => p.heard)).toEqual(["非"]);
+    });
+  });
+
+  it("取消忽略 on 已忽略 takes a row of a batch back, and the batch's notice goes with its last row", async () => {
+    const user = userEvent.setup();
+    const backend = learning({ now: () => Date.now() });
+    renderApp({ path: "/dictionary", backend });
+    await openSuggestions(user, /^学习建议（1）$/);
+    await user.click(screen.getByRole("button", { name: "全部忽略（1）" }));
+    const ignored = await screen.findByRole("table", { name: "已忽略" });
+    expect(notices()).toEqual(["已忽略 1 组。撤销"]);
+    await user.click(within(ignored).getByRole("button", { name: "取消忽略：非 → 飞" }));
+    expect(await within(rowOf("非")).findByRole("button", { name: "忽略：非 → 飞" })).toBeEnabled();
+    expect(notices()).toEqual([]);
+  });
+
+  it("a batch that fails says why, and its rows can be tried again", async () => {
+    const user = userEvent.setup();
+    const backend = learning();
+    vi.spyOn(backend, "vocabularySuggestionsAccept").mockRejectedValueOnce(new Error("not now"));
+    vi.spyOn(backend, "vocabularySuggestionsIgnore").mockResolvedValueOnce({
+      kind: "failed",
+      message: "disk full",
+    });
+    renderApp({ path: "/dictionary", backend });
+    await openSuggestions(user, /^学习建议（1）$/);
+    await user.click(within(rowOf("非")).getByRole("checkbox", { name: "选择：非 → 飞" }));
+    await user.click(screen.getByRole("button", { name: "将所选的 1 组加入词典" }));
+    expect(await screen.findByText("操作失败：not now")).toBeInTheDocument();
+    expect(within(rowOf("非")).getByRole("button", { name: "加入词典：非 → 飞" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "全部忽略（1）" }));
+    expect(await screen.findByText("操作失败：disk full")).toBeInTheDocument();
+    expect(within(rowOf("非")).getByRole("button", { name: "忽略：非 → 飞" })).toBeEnabled();
+    expect(backend.peek().dictionary).toEqual(dictionary());
+    expect(backend.peek().vocabulary_ignored).toEqual([]);
+  });
+
+  it("the batches read the same in English", async () => {
+    const user = userEvent.setup();
+    renderApp({ path: "/dictionary", backend: learning(), systemLanguage: "en-US" });
+    await user.click(await screen.findByRole("tab", { name: "Suggestions (1)" }));
+    expect(screen.getByRole("radio", { name: "Seen twice or more" })).toBeChecked();
+    expect(screen.getByTestId("suggestions-footer")).toHaveTextContent(
+      "Showing 1 pair · 2 pairs seen once are hidden",
+    );
+    await user.click(screen.getByRole("radio", { name: "All" }));
+    const table = screen.getByRole("table", { name: "Suggestions" });
+    await user.click(within(table).getByRole("checkbox", { name: "Select all" }));
+    expect(screen.getByText("3 selected")).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Add the 3 selected pairs to the dictionary" }),
+    );
+    expect(await screen.findByText("Added 3 pairs to the dictionary.")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Undo: Added 3 pairs to the dictionary." }),
+    ).toBeEnabled();
   });
 });

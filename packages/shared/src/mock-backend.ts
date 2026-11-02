@@ -69,12 +69,18 @@ import {
   type AcceptOutcome,
   type RuleWarning,
   type SuggestionAcceptArgs,
+  type SuggestionPair,
+  type SuggestionPick,
   type SuggestionsAnswer,
+  type BatchAcceptOutcome,
+  type BatchIgnoreOutcome,
+  type BatchUndoOutcome,
   type UndoOutcome,
   BACKTEST_LIMIT,
   MAX_BACKTEST_LIMIT,
   MAX_IGNORED,
   MAX_SUGGESTIONS,
+  MAX_SUGGESTION_BATCH,
   type EngineSettings,
   type EngineStatus,
   type HistoryEntry,
@@ -255,7 +261,14 @@ import {
   validateRuleDraft,
   validateSuggestionPair,
 } from "./vocabulary";
-import { acceptSuggestion, ruleWarnings, suggestVocabulary } from "./suggestions";
+import {
+  type BatchChange,
+  acceptSuggestion,
+  acceptSuggestions,
+  ruleWarnings,
+  suggestVocabulary,
+  undoSuggestions,
+} from "./suggestions";
 
 export interface MockPeer {
   /** Milliseconds after `waiting_for_peer` until the simulated phone joins. */
@@ -1247,6 +1260,11 @@ export class MockBackend implements Backend {
     string,
     { before?: DictionaryEntry; after: DictionaryEntry }
   >();
+  /** The batches of suggestions 撤销 can still take back, oldest first. */
+  private readonly suggestionBatches = new Map<
+    string,
+    { kind: "accepted"; changes: BatchChange[] } | { kind: "ignored"; pairs: SuggestionPair[] }
+  >();
 
   constructor(options: MockBackendOptions = {}) {
     this.ttlSecs = options.ttlSecs ?? 120;
@@ -1540,6 +1558,81 @@ export class MockBackend implements Backend {
         ? this.state.dictionary.filter((e) => e.id !== record.after.id)
         : this.state.dictionary.map((e) => (e.id === before.id ? before : e));
     this.emit({ type: "dictionary", entries });
+    return { kind: "undone" };
+  }
+
+  /** Remember a batch for 撤销, keeping the newest `MAX_SUGGESTION_UNDOS` as the core does. */
+  private rememberBatch(
+    batch:
+      | { kind: "accepted"; changes: BatchChange[] }
+      | { kind: "ignored"; pairs: SuggestionPair[] },
+  ): string {
+    const id = this.uuid();
+    this.suggestionBatches.set(id, batch);
+    for (const old of this.suggestionBatches.keys()) {
+      if (this.suggestionBatches.size <= MAX_SUGGESTION_UNDOS) break;
+      this.suggestionBatches.delete(old);
+    }
+    return id;
+  }
+
+  /** A batch 加入词典 (`vocabulary_suggestions_accept`) as the core does it: the picks checked as
+   *  the bridge checks them, then in order, with one new dictionary. */
+  async vocabularySuggestionsAccept(pairs: SuggestionPick[]): Promise<BatchAcceptOutcome> {
+    await Promise.resolve();
+    batchSize("vocabulary_suggestions_accept", pairs.length);
+    const picks = pairs.map((p) => {
+      const [heard, polished] = validateSuggestionPair(p.heard, p.polished);
+      return { heard, polished, history_id: uuidArg(p.history_id) };
+    });
+    const { dictionary, rules } = this.state;
+    const batch = acceptSuggestions(dictionary, rules, picks, this.now(), () => this.uuid());
+    if (batch.changes.length === 0) return { items: batch.items, undo: null };
+    checkDictionary(batch.dictionary);
+    this.emit({ type: "dictionary", entries: batch.dictionary });
+    return {
+      items: batch.items,
+      undo: this.rememberBatch({ kind: "accepted", changes: batch.changes }),
+    };
+  }
+
+  /** A batch 忽略 (`vocabulary_suggestions_ignore`): the pairs not ignored yet go to the end of the
+   *  list, once, with one new list. */
+  async vocabularySuggestionsIgnore(pairs: SuggestionPair[]): Promise<BatchIgnoreOutcome> {
+    await Promise.resolve();
+    batchSize("vocabulary_suggestions_ignore", pairs.length);
+    const wanted = pairs.map((p) => validateSuggestionPair(p.heard, p.polished));
+    const list = [...this.state.vocabulary_ignored];
+    const added: SuggestionPair[] = [];
+    for (const [heard, polished] of wanted) {
+      if (list.some((i) => i.heard === heard && i.polished === polished)) continue;
+      list.push({ heard, polished, at_ms: this.now() });
+      added.push({ heard, polished });
+    }
+    if (added.length > 0)
+      this.emit({ type: "vocabulary_ignored", pairs: list.slice(-MAX_IGNORED) });
+    return { kind: "ignored", undo: this.rememberBatch({ kind: "ignored", pairs: added }) };
+  }
+
+  /** 撤销 of a batch (`vocabulary_suggestions_undo`): once; a batch 加入词典 only while its entries
+   *  are as it left them. */
+  async vocabularySuggestionsUndo(id: string): Promise<BatchUndoOutcome> {
+    await Promise.resolve();
+    const batch = this.suggestionBatches.get(uuidArg(id));
+    if (batch === undefined) return { kind: "expired" };
+    this.suggestionBatches.delete(id);
+    if (batch.kind === "ignored") {
+      const pairs = this.state.vocabulary_ignored.filter(
+        (i) => !batch.pairs.some((p) => p.heard === i.heard && p.polished === i.polished),
+      );
+      if (pairs.length !== this.state.vocabulary_ignored.length) {
+        this.emit({ type: "vocabulary_ignored", pairs });
+      }
+      return { kind: "undone" };
+    }
+    const result = undoSuggestions(this.state.dictionary, batch.changes);
+    if (!Array.isArray(result)) return result;
+    if (batch.changes.length > 0) this.emit({ type: "dictionary", entries: result });
     return { kind: "undone" };
   }
 
@@ -6238,8 +6331,16 @@ function required<T>(args: T | undefined): T {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** `voltip_core::vocabulary::MAX_UNDOS`: the accepted suggestions 撤销 can still take back. */
+/** `voltip_core::vocabulary::MAX_UNDOS`: the accepted suggestions 撤销 can still take back (and
+ *  the batches, each a record of its own). */
 const MAX_SUGGESTION_UNDOS = 100;
+
+/** A batch of learning suggestions holds 1–`MAX_SUGGESTION_BATCH` pairs, as the bridge checks. */
+function batchSize(command: string, length: number): void {
+  if (length < 1 || length > MAX_SUGGESTION_BATCH) {
+    throw new Error(`${command}: pairs 1–${MAX_SUGGESTION_BATCH}`);
+  }
+}
 
 /** An id argument as the bridge parses it: a UUID, or the command is refused. */
 function uuidArg(id: string): string {
@@ -6493,6 +6594,46 @@ export function sampleBackup(nowMs: number): MockBackupFile {
     },
     ...content,
   };
+}
+
+/** Polished takes from three days ago and before, newest first, for the screenshots of the
+ *  dictionary's learning suggestions (docs/dictation.md §16.10): after `sampleHistory`, they make
+ *  four suggestions seen twice or more (维他命 → Voltip four times, 库伯内提斯 → Kubernetes three,
+ *  瑞迪斯 → Redis and 泰普斯克瑞普特 → TypeScript twice) and two seen once. */
+export function sampleSuggestionTakes(nowMs: number): HistoryEntry[] {
+  const newest = startOfLocalDay(nowMs) - 3 * DAY_MS + 18 * 3_600_000;
+  const takes: [string, string][] = [
+    ["用维他命录了一段会议纪要", "用 Voltip 录了一段会议纪要。"],
+    ["库伯内提斯集群要升级", "Kubernetes 集群要升级。"],
+    ["缓存先放到瑞迪斯里", "缓存先放到 Redis 里。"],
+    ["维他命今天又更新了", "Voltip 今天又更新了。"],
+    ["这个模块用泰普斯克瑞普特重写", "这个模块用 TypeScript 重写。"],
+    ["把服务部署到库伯内提斯上", "把服务部署到 Kubernetes 上。"],
+    ["接口返回的杰森少了一个字段", "接口返回的 JSON 少了一个字段。"],
+    ["我在维他命里加了几个词条", "我在 Voltip 里加了几个词条。"],
+    ["瑞迪斯的连接数太多了", "Redis 的连接数太多了。"],
+    ["库伯内提斯的节点又满了", "Kubernetes 的节点又满了。"],
+    ["泰普斯克瑞普特的类型检查没过", "TypeScript 的类型检查没过。"],
+    ["打开格拉法纳上的曲线", "打开 Grafana 上的曲线。"],
+    ["维他命的悬浮窗挡住了按钮", "Voltip 的悬浮窗挡住了按钮。"],
+  ];
+  return takes.map(([raw, text], i) => ({
+    id: `00000000-0000-4000-8000-${String(900 + i).padStart(12, "0")}`,
+    at_ms: newest - i * 3 * 3_600_000,
+    raw_text: raw,
+    text,
+    refined: true,
+    asr_model: MOCK_ENGINE_BUILTIN.asr_model,
+    refine_model: MOCK_ENGINE_BUILTIN.refine_model,
+    refine_ms: 380,
+    preset: { id: "proofread" as const, name: "校对" },
+    duration_ms: 3200,
+    asr_ms: 520,
+    outcome: { kind: "inserted" as const, via: "paste" as const },
+    starred: false,
+    mode: "whole_take" as const,
+    kind: "dictation" as const,
+  }));
 }
 
 /** The sample history rows as real `HistoryEntry` records, dated relative to `nowMs` (today /

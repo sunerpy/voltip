@@ -1674,6 +1674,10 @@ export type VocabularyBacktest = z.infer<typeof vocabularyBacktestSchema>;
 
 /** `voltip_core::vocabulary::MAX_SUGGESTIONS`: the most suggestions one call returns. */
 export const MAX_SUGGESTIONS = 200;
+/** `MAX_BATCH`: the most pairs one batch 加入词典 or 忽略 takes. */
+export const MAX_SUGGESTION_BATCH = 200;
+/** `REPEATED_MIN`: the count from which a suggestion is repeated; the page lists those by default. */
+export const SUGGESTION_REPEATED_MIN = 2;
 /** `MAX_IGNORED`: the most pairs the ignored list keeps; past it the oldest is dropped. */
 export const MAX_IGNORED = 2000;
 
@@ -1706,7 +1710,8 @@ export type Suggestion = z.infer<typeof suggestionSchema>;
 
 /** What `vocabulary_suggestions` answers: `history_off` while history recording is off; else the
  *  takes looked at, the polished ones among them, those too long to compare, the suggestions in
- *  all and the first of them, most frequent first. */
+ *  all, how many of them were counted `SUGGESTION_REPEATED_MIN` times or more, and the first of
+ *  them, most frequent first. */
 export const suggestionsAnswerSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("history_off") }),
   z.object({
@@ -1715,6 +1720,7 @@ export const suggestionsAnswerSchema = z.discriminatedUnion("status", [
     refined: z.number().int().nonnegative(),
     skipped: z.number().int().nonnegative(),
     total: z.number().int().nonnegative(),
+    repeated: z.number().int().nonnegative(),
     pairs: z.array(suggestionSchema),
   }),
 ]);
@@ -1776,6 +1782,53 @@ export const undoOutcomeSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("failed"), message: z.string() }),
 ]);
 export type UndoOutcome = z.infer<typeof undoOutcomeSchema>;
+
+/** One suggestion picked for a batch 加入词典 (`SuggestionPick`): the pair and the take of its
+ *  first example, the new entry's source. */
+export type SuggestionPick = { heard: string; polished: string; history_id: string };
+/** One suggestion picked for a batch 忽略 (`SuggestionPair`). */
+export type SuggestionPair = { heard: string; polished: string };
+
+/** What became of one pick of a batch 加入词典 (`BatchItem`): in the dictionary now, in the entry
+ *  it made (`created`) or added its heard form to; or why nothing changed for it. */
+export const batchItemSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("accepted"),
+    entry_id: z.string(),
+    term: z.string(),
+    created: z.boolean(),
+  }),
+  z.object({ kind: z.literal("refused"), refusal: suggestionRefusalSchema }),
+]);
+export type BatchItem = z.infer<typeof batchItemSchema>;
+
+/** What `vocabulary_suggestions_accept` answers: one item per pick, in the order sent, and what
+ *  撤销 sends back (`null` when nothing went in). */
+export const batchAcceptOutcomeSchema = z.object({
+  items: z.array(batchItemSchema),
+  undo: z.string().nullable(),
+});
+export type BatchAcceptOutcome = z.infer<typeof batchAcceptOutcomeSchema>;
+
+/** What `vocabulary_suggestions_ignore` answers: the pairs are ignored, with what 撤销 sends back;
+ *  or the core's text, nothing changed. */
+export const batchIgnoreOutcomeSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("ignored"), undo: z.string() }),
+  z.object({ kind: z.literal("failed"), message: z.string() }),
+]);
+export type BatchIgnoreOutcome = z.infer<typeof batchIgnoreOutcomeSchema>;
+
+/** What `vocabulary_suggestions_undo` answers: the lists are as before the batch; the batch is
+ *  unknown to the core (undone already, or the app restarted); an entry it made or added to was
+ *  deleted or changed since (nothing undone; `term` names it); or the core's text. */
+export const batchUndoOutcomeSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("undone") }),
+  z.object({ kind: z.literal("expired") }),
+  z.object({ kind: z.literal("gone"), term: z.string() }),
+  z.object({ kind: z.literal("changed"), term: z.string() }),
+  z.object({ kind: z.literal("failed"), message: z.string() }),
+]);
+export type BatchUndoOutcome = z.infer<typeof batchUndoOutcomeSchema>;
 
 /** A hint the rules page shows beside a rule (`RuleWarning`, `rules_warnings`): another rule finds
  *  the same, another turns its replacement back, or it turns an entry's right spelling into one
@@ -3718,6 +3771,12 @@ export interface CommandArgs {
   vocabulary_suggestion_accept: SuggestionAcceptArgs;
   /** Query: 撤销 of an accepted suggestion (the undo's `id`). */
   vocabulary_suggestion_undo: { id: string };
+  /** Query: 加入词典 for several suggestions at once, in order; answers for each and with the undo. */
+  vocabulary_suggestions_accept: { pairs: SuggestionPick[] };
+  /** Query: 忽略 for several suggestions at once; answers with the undo. */
+  vocabulary_suggestions_ignore: { pairs: SuggestionPair[] };
+  /** Query: 撤销 of a batch (its undo id). */
+  vocabulary_suggestions_undo: { id: string };
   /** 忽略 on a suggestion / its 撤销; the core re-emits `vocabulary_ignored`. */
   vocabulary_suggestion_ignore: { heard: string; polished: string };
   vocabulary_suggestion_unignore: { heard: string; polished: string };
@@ -3844,6 +3903,9 @@ export type QueryCommand =
   | "vocabulary_suggestions"
   | "vocabulary_suggestion_accept"
   | "vocabulary_suggestion_undo"
+  | "vocabulary_suggestions_accept"
+  | "vocabulary_suggestions_ignore"
+  | "vocabulary_suggestions_undo"
   | "rules_warnings"
   | "recent_apps"
   | "history_query"
@@ -3897,6 +3959,9 @@ export const QUERY_COMMANDS: readonly QueryCommand[] = [
   "vocabulary_suggestions",
   "vocabulary_suggestion_accept",
   "vocabulary_suggestion_undo",
+  "vocabulary_suggestions_accept",
+  "vocabulary_suggestions_ignore",
+  "vocabulary_suggestions_undo",
   "rules_warnings",
   "recent_apps",
   "history_query",

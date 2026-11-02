@@ -1289,6 +1289,38 @@ export const zhCN = {
         undo: "撤销：{heard} → {polished}",
         details: "详情：{heard} → {polished}",
       },
+      /** Which suggestions the list shows: by default those seen twice or more. */
+      filter: { label: "显示范围", repeated: "出现 2 次及以上", all: "全部" },
+      /** The rows' check boxes. */
+      select: { all: "全选", row: "选择：{heard} → {polished}" },
+      /** The bar over the list while rows are checked. */
+      selection: {
+        count: "已选 {n} 组",
+        acceptLabel: { one: "将所选的 {n} 组加入词典", other: "将所选的 {n} 组加入词典" },
+        ignoreLabel: { one: "忽略所选的 {n} 组", other: "忽略所选的 {n} 组" },
+        clear: "取消选择",
+      },
+      ignoreAll: "全部忽略（{n}）",
+      /** What a batch did, over the list, with its 撤销. */
+      batch: {
+        accepted: { one: "已将 {n} 组加入词典。", other: "已将 {n} 组加入词典。" },
+        acceptedSome: {
+          one: "已将 {n} 组加入词典，{refused} 组无法加入，原因见对应的行。",
+          other: "已将 {n} 组加入词典，{refused} 组无法加入，原因见对应的行。",
+        },
+        refused: {
+          one: "所选的 {n} 组都无法加入词典，原因见对应的行。",
+          other: "所选的 {n} 组都无法加入词典，原因见对应的行。",
+        },
+        ignored: { one: "已忽略 {n} 组。", other: "已忽略 {n} 组。" },
+        undo: "撤销：{what}",
+        undoFailed: {
+          expired: "无法撤销：撤销记录已失效。",
+          gone: "无法撤销：词条「{term}」已被删除。",
+          changed: "无法撤销：词条「{term}」已被修改。",
+          failed: "无法撤销：{message}",
+        },
+      },
       examples: "识别原文中的例子",
       willCreate: "将新建词条「{term}」，曾听成「{heard}」。",
       willAdd: "将把「{heard}」加入词条「{term}」的曾听成写法（现有 {n} 个）。",
@@ -1337,6 +1369,9 @@ export const zhCN = {
           one: "最近 {n} 条经过 AI 润色的记录里，没有新的写法可以加入词典。",
           other: "最近 {n} 条经过 AI 润色的记录里，没有新的写法可以加入词典。",
         },
+        noneRepeatedTitle: "没有出现 2 次及以上的建议",
+        noneRepeated: { one: "另有 {n} 组只出现 1 次。", other: "另有 {n} 组只出现 1 次。" },
+        showAll: "显示全部",
       },
       footer: {
         one: "最近 {n} 条记录 · {refined} 条经过 AI 润色",
@@ -1344,6 +1379,8 @@ export const zhCN = {
       },
       skipped: "{n} 条过长，未比较",
       more: "显示前 {shown} 组 · 共 {total} 组",
+      shown: { one: "显示 {n} 组", other: "显示 {n} 组" },
+      hiddenOnce: { one: "隐藏 {n} 组只出现 1 次的建议", other: "隐藏 {n} 组只出现 1 次的建议" },
       /** 已忽略: the pairs 忽略 left out, newest first, each with 取消忽略. */
       ignoredList: {
         title: "已忽略（{n}）",
