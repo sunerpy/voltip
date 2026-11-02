@@ -9,7 +9,14 @@
 //! ([`OVERLAY_EVENT`]) instead of a navigation, so the document is never reloaded; hiding first
 //! paints [`BLANK_STATE`] (nothing) and hides a frame later, so the next show never starts from a
 //! stale pill.
+//!
+//! Stacking (docs/dictation.md §32): showing the window does not move it up the stacking order,
+//! so every show and every phase of a take puts it back on top ([`keep_on_top`], through
+//! `voltip-overlay`), and on Windows and X11 a keeper does it again while the pill shows, when
+//! another window comes to the front or over it. None of it takes the focus: the result card's 粘贴
+//! still goes to the window in front.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use parking_lot::Mutex;
@@ -62,11 +69,14 @@ pub struct OverlayState<'a> {
 #[derive(Debug)]
 pub struct OverlaySlot {
     state: Mutex<String>,
+    /// How many times the pill was shown: a hide waits a frame, and a show in that frame (the next
+    /// take's first phase) cancels it.
+    shows: AtomicU64,
 }
 
 impl Default for OverlaySlot {
     fn default() -> Self {
-        Self { state: Mutex::new(LIVE_STATE.to_owned()) }
+        Self { state: Mutex::new(LIVE_STATE.to_owned()), shows: AtomicU64::new(0) }
     }
 }
 
@@ -78,6 +88,22 @@ impl OverlaySlot {
 
     fn set(&self, state: &str) {
         *self.state.lock() = state.to_owned();
+    }
+
+    /// A show of the pill (every phase of a take, and the copied flash).
+    pub fn shown(&self) {
+        self.shows.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// Taken when a hide starts: [`OverlaySlot::may_hide`] answers whether no show came since.
+    pub fn hide_ticket(&self) -> u64 {
+        self.shows.load(Ordering::SeqCst)
+    }
+
+    /// Whether the hide that took `ticket` may still hide the window: not when the pill was shown
+    /// since (it would hide the pill of a take that has just started).
+    pub fn may_hide(&self, ticket: u64) -> bool {
+        self.shows.load(Ordering::SeqCst) == ticket
     }
 }
 
@@ -135,11 +161,21 @@ pub fn hide<R: Runtime>(app: &AppHandle<R>) {
     if !live && let Err(e) = window.emit_to(OVERLAY_LABEL, OVERLAY_EVENT, OverlayState { state: BLANK_STATE }) {
         tracing::warn!(error = %e, "overlay blank failed");
     }
+    let ticket = app.try_state::<OverlaySlot>().map(|slot| slot.hide_ticket());
+    let app = app.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(HIDE_AFTER_BLANK).await;
+        // A take that showed the pill in the meantime keeps it: before 2026-11-01 this hid the pill
+        // of a take started within the frame, until its next phase showed it again.
+        if let Some(ticket) = ticket
+            && app.try_state::<OverlaySlot>().is_some_and(|slot| !slot.may_hide(ticket))
+        {
+            return;
+        }
         if let Err(e) = window.hide() {
             tracing::warn!(error = %e, "overlay hide failed");
         }
+        let_go(&app);
     });
 }
 
@@ -180,13 +216,16 @@ pub fn show_live<R: Runtime>(app: &AppHandle<R>, placement: OverlayPlacement) ->
     window.set_position(tauri::LogicalPosition::new(x, y))?;
     let was_live = app.try_state::<OverlaySlot>().is_none_or(|s| s.current() == LIVE_STATE);
     remember(app, LIVE_STATE);
+    if let Some(slot) = app.try_state::<OverlaySlot>() {
+        slot.shown();
+    }
     if !was_live {
         window.emit_to(OVERLAY_LABEL, OVERLAY_EVENT, OverlayState { state: LIVE_STATE })?;
     }
     if !window.is_visible().unwrap_or(false) {
         window.show()?;
-        window.set_always_on_top(true)?;
     }
+    keep_on_top(app, &window);
     Ok(())
 }
 
@@ -222,12 +261,102 @@ fn show_fixed<R: Runtime>(app: &AppHandle<R>, state: &'static str, placement: Ov
     let Some((x, y)) = anchor(app, placement) else { return Ok(()) };
     window.set_position(tauri::LogicalPosition::new(x, y))?;
     remember(app, state);
+    if let Some(slot) = app.try_state::<OverlaySlot>() {
+        slot.shown();
+    }
     window.emit_to(OVERLAY_LABEL, OVERLAY_EVENT, OverlayState { state })?;
     if !window.is_visible().unwrap_or(false) {
         window.show()?;
-        window.set_always_on_top(true)?;
     }
+    keep_on_top(app, &window);
     Ok(())
+}
+
+/// What keeps the pill above the other windows (docs/dictation.md §32; managed state): on Windows
+/// the keeper of the pill on screen; on Linux the X11 connection the restacking goes through and
+/// the keeper of the pill on screen.
+#[derive(Debug, Default)]
+pub struct PillStacking {
+    #[cfg(target_os = "windows")]
+    keeper: Mutex<Option<voltip_overlay::windows::Keeper>>,
+    #[cfg(target_os = "linux")]
+    x11: voltip_overlay::x11::Stacker,
+    #[cfg(target_os = "linux")]
+    x11_keeper: Mutex<Option<voltip_overlay::x11::Keeper>>,
+}
+
+/// Put the pill on screen back above the other windows, on every show and every phase of a take,
+/// without taking the focus. Windows: the top of the topmost windows, kept there while it shows.
+/// macOS: the status window level, ordered to the front without activating the app (another
+/// application's full-screen Space takes only a non-activating panel, docs/dictation.md §32.3).
+/// Linux: on top of the X11 stacking order, kept there while it shows (pure Wayland: the
+/// compositor's choice). A failure is logged and the pill shows wherever it is.
+fn keep_on_top<R: Runtime>(app: &AppHandle<R>, window: &tauri::WebviewWindow<R>) {
+    let Some(stacking) = app.try_state::<PillStacking>() else { return };
+    #[cfg(target_os = "windows")]
+    {
+        let Ok(hwnd) = window.hwnd() else { return };
+        let hwnd = hwnd.0 as isize;
+        if !voltip_overlay::windows::raise(hwnd) {
+            tracing::warn!("overlay raise refused");
+        }
+        let mut keeper = stacking.keeper.lock();
+        if keeper.is_none() {
+            match voltip_overlay::windows::Keeper::start(hwnd) {
+                Ok(started) => *keeper = Some(started),
+                Err(e) => tracing::warn!(error = %e, "overlay keeper not started"),
+            }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = &stacking;
+        let target = window.clone();
+        if let Err(e) = window.run_on_main_thread(move || match target.ns_window() {
+            Ok(ns_window) => voltip_overlay::macos::raise(ns_window),
+            Err(e) => tracing::warn!(error = %e, "overlay window handle unavailable"),
+        }) {
+            tracing::warn!(error = %e, "overlay raise not scheduled");
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
+        // tao's keep-above request again (`_NET_WM_STATE_ABOVE`), for a window manager that let it go.
+        if let Err(e) = window.set_always_on_top(true) {
+            tracing::debug!(error = %e, "overlay keep-above request failed");
+        }
+        let xid = window.window_handle().ok().and_then(|handle| match handle.as_raw() {
+            RawWindowHandle::Xlib(xlib) => u32::try_from(xlib.window).ok(),
+            _ => None,
+        });
+        if let Some(xid) = xid {
+            if let Err(e) = stacking.x11.raise(xid) {
+                tracing::debug!(error = %e, "overlay restack failed");
+            }
+            let mut keeper = stacking.x11_keeper.lock();
+            if keeper.is_none() {
+                match voltip_overlay::x11::Keeper::start(xid) {
+                    Ok(started) => *keeper = started,
+                    Err(e) => tracing::debug!(error = %e, "overlay keeper not started"),
+                }
+            }
+        }
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    let _ = (stacking, window);
+}
+
+/// The pill is hidden: nothing keeps it on top any more (the Windows keeper's hooks and the X11
+/// keeper's connection go).
+fn let_go<R: Runtime>(app: &AppHandle<R>) {
+    let Some(stacking) = app.try_state::<PillStacking>() else { return };
+    #[cfg(target_os = "windows")]
+    drop(stacking.keeper.lock().take());
+    #[cfg(target_os = "linux")]
+    drop(stacking.x11_keeper.lock().take());
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    let _ = stacking;
 }
 
 /// Keep the pill in step with `UiEvent::Dictation` for as long as the bridge lives.
@@ -307,6 +436,19 @@ mod tests {
         assert!(!copied_flash_wanted(&DictationPhase::Idle, OverlayPlacement::Off));
         assert!(!copied_flash_wanted(&DictationPhase::Listening { started_at: 1, ready: true, live: None, locked: false }, OverlayPlacement::Bottom));
         assert!(!copied_flash_wanted(&DictationPhase::CANCELLED, OverlayPlacement::Bottom), "a finished take is still on screen");
+    }
+
+    /// 2026-11-01: hiding waits a frame; a take that showed the pill in that frame (its first phase
+    /// right after the previous take's idle) must keep it, and a hide with no show since still hides.
+    #[test]
+    fn regression_a_show_after_a_hide_began_keeps_the_pill() {
+        let slot = OverlaySlot::default();
+        let ticket = slot.hide_ticket();
+        assert!(slot.may_hide(ticket), "nothing was shown since the hide began");
+        let ticket = slot.hide_ticket();
+        slot.shown();
+        assert!(!slot.may_hide(ticket), "the next take showed the pill while the hide waited");
+        assert!(slot.may_hide(slot.hide_ticket()), "a later hide, with no show after it, hides");
     }
 
     /// Settings › 外观 › 悬浮胶囊 (2026-09-27): the saved placement decides where the shell puts

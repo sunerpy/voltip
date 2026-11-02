@@ -1674,6 +1674,7 @@ pub fn attach_bridge<R: Runtime>(
     app.manage(options);
     app.manage(hub);
     app.manage(overlay::OverlaySlot::default());
+    app.manage(overlay::PillStacking::default());
     app.manage(feedback::Attachments::default());
     app.manage(paste_probe);
     Ok(())

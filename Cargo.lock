@@ -7780,6 +7780,7 @@ dependencies = [
  "objc2-app-kit",
  "objc2-foundation",
  "parking_lot",
+ "raw-window-handle",
  "security-framework",
  "security-framework-sys",
  "serde",
@@ -7812,6 +7813,7 @@ dependencies = [
  "voltip-mcp",
  "voltip-media",
  "voltip-net",
+ "voltip-overlay",
  "voltip-pairing",
  "voltip-platform",
  "voltip-refine",
@@ -7991,6 +7993,19 @@ dependencies = [
  "tracing",
  "url",
  "windows-registry",
+]
+
+[[package]]
+name = "voltip-overlay"
+version = "0.0.0"
+dependencies = [
+ "block2",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "tracing",
+ "windows-sys 0.61.2",
+ "x11rb 0.14.0",
 ]
 
 [[package]]

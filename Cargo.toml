@@ -21,6 +21,7 @@ members = [
     "crates/voltip-platform",
     "crates/voltip-hooks",
     "crates/voltip-focus",
+    "crates/voltip-overlay",
     "crates/voltip-serve",
     "crates/voltip-mcp",
     "crates/voltip-media",
