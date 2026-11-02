@@ -1,21 +1,25 @@
-// Runs in every window's document as it is created (`ui_guard.rs`, docs/dictation.md §33.4). A
-// document whose module scripts are not all among the ones this program carries runs the interface
-// of another build, and it reloads once. `ui_guard.rs` puts the paths of the scripts the program
-// carries in place of the placeholder below. The once is kept in the window's session storage: a
-// window that still runs other code after its reload stays as it is, and says so in its console.
+// Runs in every window's document as it is created (`ui_guard.rs`, docs/dictation.md §33.4). The
+// interface a window runs must be this program's: every module script among the ones the program
+// carries, and the build the bundle declares (`window.voltipUiBuild`, apps/desktop/src/
+// ui-build.ts) the one the program's bundle carries. A document that fails either runs another
+// build's interface. It is replaced once by a document at a URL this webview has never asked for,
+// which no cache can answer, so the program serves it; should that one still run other code, the
+// window is cleared rather than left with it. `ui_guard.rs` puts the program's script paths and
+// builds in place of the two placeholders below.
 (() => {
   const carried = __VOLTIP_UI_SCRIPTS__;
-  const key = "voltip.ui-guard.reloaded";
+  const builds = __VOLTIP_UI_BUILDS__;
+  const marker = "voltip-ui-reload";
   // The program's own pages only: tauri://localhost (macOS, Linux), http://tauri.localhost
   // (Windows).
   if (location.protocol !== "tauri:" && location.hostname !== "tauri.localhost") return;
-  const store = (() => {
-    try {
-      return window.sessionStorage;
-    } catch {
-      return undefined;
-    }
-  })();
+  // A document the check reloaded carries the marker; it leaves the URL before the interface reads it.
+  const here = new URL(location.href);
+  const reloaded = here.searchParams.has(marker);
+  if (reloaded) {
+    here.searchParams.delete(marker);
+    history.replaceState(history.state, "", here.pathname + here.search + here.hash);
+  }
   const path = (src) => {
     const raw = new URL(src, location.href).pathname;
     try {
@@ -30,18 +34,18 @@
     );
     // Not the interface (a blank page, an error page).
     if (running.length === 0) return;
-    if (running.every((p) => carried.includes(p))) {
-      store?.removeItem(key);
+    const build = window.voltipUiBuild;
+    const scripts = running.every((p) => carried.includes(p));
+    if (scripts && (builds.length === 0 || builds.includes(build))) return;
+    if (!reloaded) {
+      console.warn("voltip: this window runs interface code the program does not carry; reloading", running, build);
+      const next = new URL(location.href);
+      next.searchParams.set(marker, String(Date.now()));
+      location.replace(next.href);
       return;
     }
-    const once = carried.join(" ");
-    if (store === undefined || store.getItem(key) === once) {
-      console.warn("voltip: this window runs interface code the program does not carry", running);
-      return;
-    }
-    store.setItem(key, once);
-    console.warn("voltip: this window runs interface code the program does not carry; reloading", running);
-    location.reload();
+    console.error("voltip: the reloaded window still runs interface code the program does not carry; clearing it", running, build);
+    location.replace("about:blank");
   };
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", check, { once: true });

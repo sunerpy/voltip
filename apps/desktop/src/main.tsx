@@ -1,3 +1,5 @@
+// First: the build this bundle is, before any of it runs (docs/dictation.md §33.4).
+import "./ui-build";
 import { isTauri } from "@tauri-apps/api/core";
 import { type Backend, TauriBackend } from "@voltip/shared";
 import { StrictMode } from "react";
