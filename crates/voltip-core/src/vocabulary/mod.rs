@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 pub use backtest::{BACKTEST_LIMIT, BACKTEST_SNIPPET_CHARS, Backtest, BacktestDraft, BacktestExample, MAX_BACKTEST_EXAMPLES, MAX_BACKTEST_LIMIT, backtest};
-pub use ignored::{IGNORED_FILE_NAME, IGNORED_SCHEMA, IgnoreStore, IgnoredBatch, IgnoredPair, MAX_IGNORED, validate_pair};
+pub use ignored::{IGNORED_FILE_NAME, IGNORED_SCHEMA, IgnoreStore, IgnoredBatch, IgnoredPair, MAX_IGNORED, PlacedPair, validate_pair};
 use matcher::LiteralMatcher;
 pub use matcher::is_word_char;
 pub use store::{DICTIONARY_FILE_NAME, DictionaryStore, RULES_FILE_NAME, RuleStore, VOCABULARY_SCHEMA};

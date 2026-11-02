@@ -348,6 +348,37 @@ async fn regression_undo_of_a_batch_ignore_on_a_full_list_puts_back_the_pairs_it
     node.handle.send(CoreCommand::Shutdown).await.unwrap();
 }
 
+/// docs/dictation.md §16.10 (completion review, round 2): two batches 忽略 on a full list, the
+/// older taken back first. The pairs each pushed out go back where they were, oldest first, so the
+/// next pair past the cap pushes out the oldest one.
+#[tokio::test]
+async fn regression_batches_ignored_on_a_full_list_and_taken_back_out_of_order_keep_the_oldest_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let full: Vec<serde_json::Value> = (0..MAX_IGNORED).map(|i| serde_json::json!({ "heard": format!("听成{i}"), "polished": "正确", "at_ms": 1 })).collect();
+    std::fs::write(dir.path().join(IGNORED_FILE_NAME), serde_json::to_vec(&serde_json::json!({ "schema": 1, "pairs": full })).unwrap()).unwrap();
+    let mut node = start(dir.path(), Arc::new(FakeInjector::paste()));
+    let before = ignored(&mut node).await;
+    let mut undos = Vec::new();
+    for heard in ["新A", "新B"] {
+        let (reply, rx) = Reply::channel();
+        node.handle.send(CoreCommand::SuggestionsIgnore { pairs: vec![pair(heard, "正确")], reply }).await.unwrap();
+        let BatchIgnoreOutcome::Ignored { undo } = answer(rx).await else { panic!("ignored") };
+        undos.push(undo);
+        ignored(&mut node).await;
+    }
+    for undo in undos {
+        let (reply, rx) = Reply::channel();
+        node.handle.send(CoreCommand::SuggestionsUndo { id: undo, reply }).await.unwrap();
+        assert_eq!(answer(rx).await, BatchUndoOutcome::Undone);
+        ignored(&mut node).await;
+    }
+    node.handle.send(CoreCommand::SuggestionIgnore { heard: "再忽略".into(), polished: "正确".into() }).await.unwrap();
+    let after = ignored(&mut node).await;
+    assert_eq!(after[..MAX_IGNORED - 1], before[1..], "the oldest went, the rest in their order");
+    assert_eq!(after[MAX_IGNORED - 1].heard, "再忽略");
+    node.handle.send(CoreCommand::Shutdown).await.unwrap();
+}
+
 fn pick(heard: &str, polished: &str) -> SuggestionPick {
     SuggestionPick { heard: heard.into(), polished: polished.into(), history_id: uuid::Uuid::new_v4() }
 }

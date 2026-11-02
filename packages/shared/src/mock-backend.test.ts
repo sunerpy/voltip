@@ -4365,6 +4365,30 @@ describe("MockBackend learning suggestions (docs/dictation.md section 16.10)", (
     expect(backend.peek().vocabulary_ignored).toEqual(full);
     backend.destroy();
   });
+
+  it("regression: two batches 忽略 on a full list taken back out of order keep the oldest first", async () => {
+    const full = Array.from({ length: MAX_IGNORED }, (_, i) => ({
+      heard: `听成${i}`,
+      polished: "正确",
+      at_ms: 1,
+    }));
+    const backend = new MockBackend({ now: () => T, history: rows, vocabularyIgnored: full });
+    const undos: string[] = [];
+    for (const said of ["新A", "新B"]) {
+      const outcome = await backend.vocabularySuggestionsIgnore([
+        { heard: said, polished: "正确" },
+      ]);
+      if (outcome.kind !== "ignored") throw new Error(JSON.stringify(outcome));
+      undos.push(outcome.undo);
+    }
+    for (const undo of undos) {
+      expect(await backend.vocabularySuggestionsUndo(undo)).toEqual({ kind: "undone" });
+    }
+    expect(backend.peek().vocabulary_ignored).toEqual(full);
+    await backend.invoke("vocabulary_suggestion_ignore", { heard: "再忽略", polished: "正确" });
+    expect(backend.peek().vocabulary_ignored.slice(0, MAX_IGNORED - 1)).toEqual(full.slice(1));
+    backend.destroy();
+  });
 });
 
 describe("MockBackend local service (docs/dictation.md section 23.6)", () => {

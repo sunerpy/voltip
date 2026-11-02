@@ -1260,6 +1260,10 @@ export class MockBackend implements Backend {
     string,
     { before?: DictionaryEntry; after: DictionaryEntry }
   >();
+  /** Each ignored pair's place in the order the pairs came onto the list, lower is older (the
+   *  core's `PlacedPair`): a pair 撤销 puts back goes to its place again. */
+  private readonly ignoredPlaces = new WeakMap<IgnoredPair, number>();
+  private nextIgnoredPlace = 0;
   /** The batches of suggestions 撤销 can still take back, oldest first. A batch 忽略 keeps the
    *  pairs it added and the oldest pairs it pushed out, as stored (the core's `IgnoredBatch`). */
   private readonly suggestionBatches = new Map<
@@ -1416,6 +1420,7 @@ export class MockBackend implements Backend {
     this.state.engines = this.resolveEngines(settings.engines);
     this.state.models = this.modelsFor(settings.engines);
     this.state.scenes = this.withBuiltinScenes(this.state.scenes);
+    for (const pair of this.state.vocabulary_ignored) this.placed(pair);
   }
 
   getState(): Promise<UiState> {
@@ -1563,6 +1568,21 @@ export class MockBackend implements Backend {
     return { kind: "undone" };
   }
 
+  /** `pair` with the next place: it is the newest on the ignored list. */
+  private placed(pair: IgnoredPair): IgnoredPair {
+    this.ignoredPlaces.set(pair, this.nextIgnoredPlace);
+    this.nextIgnoredPlace += 1;
+    return pair;
+  }
+
+  /** `pair`'s place: every pair on the list has one; one without counts as the newest. */
+  private placeOf(pair: IgnoredPair): number {
+    const place = this.ignoredPlaces.get(pair);
+    if (place !== undefined) return place;
+    this.placed(pair);
+    return this.nextIgnoredPlace - 1;
+  }
+
   /** Remember a batch for 撤销, keeping the newest `MAX_SUGGESTION_UNDOS` as the core does. */
   private rememberBatch(
     batch:
@@ -1609,7 +1629,7 @@ export class MockBackend implements Backend {
     const added: IgnoredPair[] = [];
     for (const [heard, polished] of wanted) {
       if (list.some((i) => i.heard === heard && i.polished === polished)) continue;
-      const pair = { heard, polished, at_ms: this.now() };
+      const pair = this.placed({ heard, polished, at_ms: this.now() });
       list.push(pair);
       added.push(pair);
     }
@@ -1632,21 +1652,20 @@ export class MockBackend implements Backend {
     if (batch === undefined) return { kind: "expired" };
     this.suggestionBatches.delete(id);
     if (batch.kind === "ignored") {
-      // The batch's pairs come off and the ones it pushed out go back in front with their times; a
-      // pair taken off or ignored again since stays as it is now.
+      // The batch's pairs come off and the ones it pushed out go back to their places with their
+      // times, whichever order the batches are taken back in; a pair taken off or ignored again
+      // since stays as it is now.
       const now = this.state.vocabulary_ignored;
-      const kept = now.filter((i) => !batch.added.some((a) => sameIgnored(a, i)));
-      const back = batch.dropped.filter(
-        (d) => !now.some((i) => i.heard === d.heard && i.polished === d.polished),
-      );
-      const pairs = [...back, ...kept].slice(-MAX_IGNORED);
-      const changed =
-        pairs.length !== now.length ||
-        pairs.some((p, i) => {
-          const was = now[i];
-          return was === undefined || !sameIgnored(p, was);
-        });
-      if (changed) this.emit({ type: "vocabulary_ignored", pairs });
+      const pairs = now.filter((i) => !batch.added.includes(i));
+      for (const back of batch.dropped) {
+        if (pairs.some((i) => i.heard === back.heard && i.polished === back.polished)) continue;
+        const place = this.placeOf(back);
+        const at = pairs.findIndex((i) => this.placeOf(i) > place);
+        pairs.splice(at === -1 ? pairs.length : at, 0, back);
+      }
+      const list = pairs.slice(-MAX_IGNORED);
+      const changed = list.length !== now.length || list.some((p, i) => p !== now[i]);
+      if (changed) this.emit({ type: "vocabulary_ignored", pairs: list });
       return { kind: "undone" };
     }
     const result = undoSuggestions(this.state.dictionary, batch.changes);
@@ -2928,7 +2947,8 @@ export class MockBackend implements Backend {
       const { heard, polished } = required(args);
       const [h, p] = validateSuggestionPair(heard, polished);
       const others = this.state.vocabulary_ignored.filter((i) => i.heard !== h || i.polished !== p);
-      const pairs = [...others, { heard: h, polished: p, at_ms: this.now() }].slice(-MAX_IGNORED);
+      const pair = this.placed({ heard: h, polished: p, at_ms: this.now() });
+      const pairs = [...others, pair].slice(-MAX_IGNORED);
       this.emit({ type: "vocabulary_ignored", pairs });
     },
     vocabulary_suggestion_unignore: (args) => {
@@ -6353,11 +6373,6 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** `voltip_core::vocabulary::MAX_UNDOS`: the accepted suggestions 撤销 can still take back (and
  *  the batches, each a record of its own). */
 const MAX_SUGGESTION_UNDOS = 100;
-
-/** Whether two ignored pairs are the same stored pair, time included. */
-function sameIgnored(a: IgnoredPair, b: IgnoredPair): boolean {
-  return a.heard === b.heard && a.polished === b.polished && a.at_ms === b.at_ms;
-}
 
 /** A batch of learning suggestions holds 1–`MAX_SUGGESTION_BATCH` pairs, as the bridge checks. */
 function batchSize(command: string, length: number): void {

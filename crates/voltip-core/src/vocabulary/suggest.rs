@@ -634,7 +634,7 @@ impl<T> std::fmt::Debug for Reply<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vocabulary::{RuleKind, VocabularyHits};
+    use crate::vocabulary::{PlacedPair, RuleKind, VocabularyHits};
 
     fn take(raw: &str, text: &str, at_ms: u64) -> HistoryText {
         HistoryText { id: Uuid::new_v4(), at_ms, raw_text: raw.into(), text: text.into(), refined: true, vocabulary: VocabularyHits::default() }
@@ -1073,7 +1073,8 @@ mod tests {
     #[test]
     fn the_batch_log_gives_each_batch_once_and_keeps_the_newest() {
         let mut log = BatchLog::default();
-        let batch = IgnoredBatch { added: vec![IgnoredPair { heard: "非".into(), polished: "飞".into(), at_ms: 1 }], dropped: vec![] };
+        let pair = IgnoredPair { heard: "非".into(), polished: "飞".into(), at_ms: 1 };
+        let batch = IgnoredBatch { added: vec![PlacedPair { place: 0, pair }], dropped: vec![] };
         let ignored = log.push(Batch::Ignored(batch.clone()));
         let accepted = log.push(Batch::Accepted(vec![]));
         assert_ne!(ignored, accepted);
