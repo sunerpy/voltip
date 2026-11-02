@@ -113,8 +113,8 @@ function Stop-Voltip {
     [void]$p.WaitForExit(30000)
   }
   # The profile's WebView2 processes leave by themselves once their host is gone.
-  try { Wait-Until { (WebView-Processes).Count -eq 0 } 60 'the WebView2 processes to exit' | Out-Null }
-  catch { Note "WebView2 processes still running; stopped: $((WebView-Processes).ProcessId -join ', ')"; WebView-Processes | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } }
+  try { Wait-Until { @(WebView-Processes).Count -eq 0 } 60 'the WebView2 processes to exit' | Out-Null }
+  catch { Note "WebView2 processes still running; stopped: $(@(WebView-Processes | ForEach-Object { $_.ProcessId }) -join ', ')"; WebView-Processes | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } }
 }
 
 function Clear-Voltip {
@@ -167,8 +167,10 @@ function Port-Owner {
   [ordered]@{ pid = [int]$listen.OwningProcess; parent = if ($owner) { [int]$owner.ParentProcessId } else { $null } }
 }
 
+# The page targets on the debugging port. Invoke-RestMethod passes a JSON array on as one object.
 function Pages {
-  try { @(Invoke-RestMethod -Uri "http://127.0.0.1:$Port/json/list" -TimeoutSec 5 | Where-Object { $_.type -eq 'page' }) } catch { @() }
+  try { $targets = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/json/list" -TimeoutSec 5 } catch { return @() }
+  @($targets | Where-Object { $_.type -eq 'page' })
 }
 
 # Waits for one running Voltip that is not in `$before`, then for two windows on the debugging
@@ -177,11 +179,11 @@ function Pages {
 function Wait-Voltip([int[]] $before, [string] $what) {
   $proc = Wait-Until { Voltip-Processes | Where-Object { $before -notcontains $_.Id } | Select-Object -First 1 } $TimeoutSec "Voltip to run ($what)"
   try {
-    Wait-Until { $o = Port-Owner; $o -and $o.parent -eq $proc.Id -and (Pages).Count -ge 2 } $TimeoutSec "the windows of pid $($proc.Id) on the debugging port ($what)" | Out-Null
+    Wait-Until { $o = Port-Owner; $o -and $o.parent -eq $proc.Id -and @(Pages).Count -ge 2 } $TimeoutSec "the windows of pid $($proc.Id) on the debugging port ($what)" | Out-Null
   } catch {
     $o = Port-Owner
-    Note "${what}: the debugging port is served by $(if ($o) { "pid $($o.pid), started by pid $($o.parent)" } else { 'nothing' }), not by a browser process of Voltip pid $($proc.Id); $((Pages).Count) page(s)"
-    Wait-Until { (Pages).Count -ge 2 } $TimeoutSec "two windows on the debugging port ($what)" | Out-Null
+    Note "${what}: the debugging port is served by $(if ($o) { "pid $($o.pid), started by pid $($o.parent)" } else { 'nothing' }), not by a browser process of Voltip pid $($proc.Id); $(@(Pages).Count) page(s)"
+    Wait-Until { @(Pages).Count -ge 2 } $TimeoutSec "two windows on the debugging port ($what)" | Out-Null
   }
   $proc
 }
@@ -282,18 +284,18 @@ try {
           $quit = Start-Process -FilePath $exePath -ArgumentList '--quit' -PassThru
           [void]$quit.WaitForExit(30000)
           if (-not $old.WaitForExit(30000)) { Stop-Process -Id $old.Id -Force }
-          Wait-Until { (WebView-Processes).Count -eq 0 } 60 'the WebView2 processes after --quit' | Out-Null
+          Wait-Until { @(WebView-Processes).Count -eq 0 } 60 'the WebView2 processes after --quit' | Out-Null
         }
       }
 
       # The update, while 0.2.1 runs: the installer ends it and opens the new one (`/R`).
-      $before = @((Voltip-Processes).Id)
+      $before = @(Voltip-Processes | ForEach-Object { $_.Id })
       Run-Setup $NewSetup @('/S', '/UPDATE', '/R') "round ${round}: the update"
       $new = Wait-Voltip $before 'after the update'
       Probe 'after the update' $round $new $true
 
       # The same version over itself.
-      $before = @((Voltip-Processes).Id)
+      $before = @(Voltip-Processes | ForEach-Object { $_.Id })
       Run-Setup $NewSetup @('/S', '/UPDATE', '/R') "round ${round}: the same version again"
       $again = Wait-Voltip $before 'after the same version again'
       Probe 'after the same version again' $round $again $true
