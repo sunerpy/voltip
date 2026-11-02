@@ -14,7 +14,8 @@
 // `--guard-check 1`: afterwards, try the main window's interface check (docs/dictation.md §33.4)
 // on the running program, counting the documents the window goes through: a first document that
 // names an entry script the program does not carry; a first document whose bundle declares
-// another build; every document naming that script; then the window back at its own address.
+// another build; every document naming that script (the check replaces the first and keeps the
+// second); then the window back at its own address.
 // Node 22 or later (global fetch and WebSocket). Never writes to the page except to open the
 // dictionary page in the main window and, for the guard check, to reload it.
 
@@ -157,6 +158,8 @@ const DESCRIBE = `
     build: window.voltipUiBuild ?? null,
     // Left in the URL only while the interface check is about to replace the document.
     reloadMarker: new URL(location.href).searchParams.has(${JSON.stringify(RELOAD_MARKER)}),
+    // What the interface check found in this document; 0.2.1 has no check.
+    uiCheck: window.voltipUiCheck ?? null,
   };
 `;
 
@@ -231,6 +234,7 @@ const SETTLED = `
     href: location.href,
     entry: [...document.querySelectorAll("script[type=module][src]")].map((s) => path(s.getAttribute("src"))),
     build: window.voltipUiBuild ?? null,
+    uiCheck: window.voltipUiCheck ?? null,
     navigation: performance.getEntriesByType("navigation")[0]?.type ?? null,
   };
 `;

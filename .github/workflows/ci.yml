@@ -1517,11 +1517,14 @@ jobs:
 
       # The desktop around the app (scripts/smoke-tray-macos.sh): the title bar's left end keeps
       # the brand clear of the traffic lights (user feedback 2026-09-29), and the menu bar item, its
-      # menu and every entry work. A CI build has no update source, so no Check for Updates.
+      # menu and every entry work. A CI build has no update source, so no Check for Updates. The
+      # interface check (docs/dictation.md §33.4) must report the program's interface in both
+      # windows, with none replaced.
       - name: The traffic lights, the menu bar item and its entries on the desktop
         env:
           VOLTIP_NO_UPDATER: "1"
           VOLTIP_CHECK_CHROME: "1"
+          VOLTIP_CHECK_UI_GUARD: "1"
         run: scripts/smoke-tray-macos.sh "$APP" "smoke-tray-macos-${{ matrix.arch }}"
 
       - name: Archive the app

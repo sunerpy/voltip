@@ -27,9 +27,10 @@
        debugging port: a first document naming an entry script the program does not carry, and
        a first document whose bundle declares another build, each go through two documents (the
        stale one, then the program's at a fresh address) and end on the program's interface; a
-       window naming that script in every document goes through three and ends cleared
-       (about:blank); back at its address the window runs the program's interface. Every window
-       read must run the build the program's bundle declares.
+       window naming that script in every document goes through two as well and is kept as it is,
+       its console saying why; back at its address the window runs the program's interface. Every
+       window read must run the build the program's bundle declares, and its check must have run
+       and found the program's interface without replacing it.
   A window whose entry script the installed program does not carry, a dictionary page without the
   tab, a relay card that never reads connected, a main window shown or hidden against the variant,
   a window running another build, or an interface check that ends anywhere but stated in step 6
@@ -285,8 +286,9 @@ function Show-Main([System.Diagnostics.Process] $running, [string] $what) {
 # `$guard`: run the interface check (step 6); judged only for this build, a control for 0.2.1.
 # `$window`: 'shown' or 'hidden', what Voltip's main window must be; '' leaves it unjudged.
 function Probe([string] $stage, [int] $round, [System.Diagnostics.Process] $proc, [bool] $judge, [bool] $guard = $false, [string] $window = '') {
-  $entries = Embedded-Entries $exePath
-  $builds = Embedded-Builds $exePath
+  # @(): a function's empty or one-element array arrives as $null or a lone string.
+  $entries = @(Embedded-Entries $exePath)
+  $builds = @(Embedded-Builds $exePath)
   $shown = Main-Shown $proc
   $out = & node $probeScript --port $Port --wait-ms ($TimeoutSec * 1000) --relay-connected-ms ($RelayConnectedSec * 1000) `
     --guard-check $(if ($guard) { '1' } else { '0' })
@@ -319,7 +321,8 @@ function Probe([string] $stage, [int] $round, [System.Diagnostics.Process] $proc
       "($(if ($carried) { 'carried by the program' } else { 'NOT carried by the program, which carries ' + ($entries -join ' ') })); " +
       "document $(if ($older) { 'OLDER than' } else { 'newer than' }) the process ($([long]$origin - $started) ms); " +
       "navigation $(Field $w 'navigation.type')/$(Field $w 'navigation.deliveryType') $(Field $w 'navigation.transferSize') B; rendered $(Field $w 'rendered'); $(Field $w 'visibility'); " +
-      "build $(if (Field $w 'build') { Field $w 'build' } else { 'none' })$(if ($builds.Count -gt 0) { if ($builds -contains (Field $w 'build')) { ' (the program''s)' } else { ' (NOT the program''s)' } })"
+      "build $(if (Field $w 'build') { Field $w 'build' } else { 'none' })$(if ($builds.Count -gt 0) { if ($builds -contains (Field $w 'build')) { ' (the program''s)' } else { ' (NOT the program''s)' } }); " +
+      "interface check $(if ($null -ne (Field $w 'uiCheck')) { "$(Field $w 'uiCheck.verdict')$(if (Field $w 'uiCheck.replaced') { ' after one replacement' })" } else { 'none' })"
     $main = $null -ne (Field $w 'dictionary')
     if ($main) {
       $mainSeen = $true
@@ -334,6 +337,9 @@ function Probe([string] $stage, [int] $round, [System.Diagnostics.Process] $proc
     $build = Field $w 'build'
     if ($builds.Count -gt 0 -and $builds -notcontains $build) { $failures.Add("round $round ${stage}: the $label window runs build '$build', the program carries $($builds -join ' ')") }
     if (Field $w 'reloadMarker') { $failures.Add("round $round ${stage}: the $label window's address still carries the interface check's marker") }
+    # The check ran in this document and found the program's interface, without replacing it.
+    if ($null -eq (Field $w 'uiCheck')) { $failures.Add("round $round ${stage}: the interface check did not run in the $label window") }
+    elseif ((Field $w 'uiCheck.verdict') -ne 'ok' -or (Field $w 'uiCheck.replaced')) { $failures.Add("round $round ${stage}: the interface check in the $label window says $(Field $w 'uiCheck.verdict')$(if (Field $w 'uiCheck.replaced') { ' after one replacement' })") }
     if ($main) {
       if (-not (Field $w 'dictionary.suggestionsTab')) { $failures.Add("round $round ${stage}: the dictionary page has no 学习建议 tab") }
       if ($null -eq (Field $w 'relayCard.connectedMs')) { $failures.Add("round $round ${stage}: the relay card reads '$(Field $w 'relayCard.text')' after ${RelayConnectedSec}s (the core says $(Field $w 'core.relay'))") }
@@ -360,7 +366,8 @@ function Judge-Guard($g, [string] $stage, [int] $round, [bool] $judge, [string[]
     return
   }
   $parts = foreach ($mode in 'stale-once', 'build-once', 'stale-always', 'home') {
-    "$mode -> $(Field $g "$mode.documents") document(s), at $(Field $g "$mode.href"), entry $(@(Field $g "$mode.entry") -join ' '), build $(Field $g "$mode.build"), console [$(@(Field $g "$mode.warnings") -join ' | ')]"
+    "$mode -> $(Field $g "$mode.documents") document(s), at $(Field $g "$mode.href"), entry $(@(Field $g "$mode.entry") -join ' '), build $(Field $g "$mode.build"), " +
+      "check $(Field $g "$mode.uiCheck.verdict")/$(Field $g "$mode.uiCheck.replaced"), console [$(@(Field $g "$mode.warnings") -join ' | ')]"
   }
   Note "round $round ${stage}: interface check: $($parts -join '; ')"
   if (-not $judge) { return }
@@ -375,13 +382,19 @@ function Judge-Guard($g, [string] $stage, [int] $round, [bool] $judge, [string[]
     $docs = Field $g "$mode.documents"
     if ($docs -ne 2) { $failures.Add("round $round ${stage}: interface check ${mode}: $docs document(s), not 2 (the stale one, then the program's)") }
     if (-not (& $own $mode)) { $failures.Add("round $round ${stage}: interface check ${mode}: the window ended on $(Field $g "$mode.href") running $(@(Field $g "$mode.entry") -join ' ') build $(Field $g "$mode.build")") }
+    if ((Field $g "$mode.uiCheck.verdict") -ne 'ok' -or -not (Field $g "$mode.uiCheck.replaced")) { $failures.Add("round $round ${stage}: interface check ${mode}: the window's check says $(Field $g "$mode.uiCheck.verdict")/$(Field $g "$mode.uiCheck.replaced"), not ok after one replacement") }
   }
-  # Still other code after the replacement: cleared, not kept.
+  # Still other code after the replacement: kept as it is, no further reload, the reason logged.
   $docs = Field $g 'stale-always.documents'
-  if ($docs -ne 3) { $failures.Add("round $round ${stage}: interface check stale-always: $docs document(s), not 3 (stale, stale again, cleared)") }
-  if ((Field $g 'stale-always.href') -ne 'about:blank') { $failures.Add("round $round ${stage}: interface check stale-always: the window ended on $(Field $g 'stale-always.href'), not cleared") }
+  if ($docs -ne 2) { $failures.Add("round $round ${stage}: interface check stale-always: $docs document(s), not 2 (stale, then stale again and kept)") }
+  $href = "$(Field $g 'stale-always.href')"
+  if ($href -eq 'about:blank' -or $href -match 'voltip-ui-reload') { $failures.Add("round $round ${stage}: interface check stale-always: the window ended on $href, not kept at its address") }
+  if (@(Field $g 'stale-always.entry') -notcontains '/assets/index-STALE000.js') { $failures.Add("round $round ${stage}: interface check stale-always: the window runs $(@(Field $g 'stale-always.entry') -join ' '), not the document it kept") }
+  if ((Field $g 'stale-always.uiCheck.verdict') -ne 'kept') { $failures.Add("round $round ${stage}: interface check stale-always: the window's check says $(Field $g 'stale-always.uiCheck.verdict'), not kept") }
+  if (-not @(Field $g 'stale-always.warnings' | Where-Object { "$_" -match 'it is kept as it is' }).Count) { $failures.Add("round $round ${stage}: interface check stale-always: the console does not say why the window was kept") }
   $docs = Field $g 'home.documents'
   if ($docs -ne 1 -or -not (& $own 'home')) { $failures.Add("round $round ${stage}: interface check: back home the window went through $docs document(s) and runs $(@(Field $g 'home.entry') -join ' ')") }
+  if ((Field $g 'home.uiCheck.verdict') -ne 'ok' -or (Field $g 'home.uiCheck.replaced')) { $failures.Add("round $round ${stage}: interface check: back home the window's check says $(Field $g 'home.uiCheck.verdict')/$(Field $g 'home.uiCheck.replaced')") }
 }
 
 $relayProc = $null

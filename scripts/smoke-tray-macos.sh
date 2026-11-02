@@ -23,6 +23,10 @@
 # (scripts/tray-ax.swift, compiled here and granted both permissions in the runner's writable TCC
 # database, as ci.yml does for the event tap test).
 #
+# With VOLTIP_CHECK_UI_GUARD=1 (CI, for the build under test) the log must also show that the
+# interface check (docs/dictation.md §33.4) ran in the main window and in the pill window and found
+# the program's interface in both, with no window replaced; releases without the check fail it.
+#
 # Usage: scripts/smoke-tray-macos.sh [app bundle (default /Applications/Voltip.app)] [out dir]
 #        VOLTIP_NO_UPDATER=1 for a build without an update source; VOLTIP_CHECK_CHROME=1 to fail
 #        when the traffic lights crowd the title bar (releases before 0.0.6 do).
@@ -111,6 +115,11 @@ expected+=("$quit_label")
 wait_for 60 'the main window' window_shown
 # The window is mapped before its webview draws: wait for the brand's text, then for pixels.
 ax wait-text Voltip Voltip >/dev/null
+ui_guard_ok='the window runs the interface the program carries window='
+if [ "${VOLTIP_CHECK_UI_GUARD:-0}" = 1 ]; then
+  wait_for 30 "the main window's interface check" log_has "${ui_guard_ok}\"main\""
+  note "interface check: $(log_text | grep -E -o "${ui_guard_ok}\"main\"[^[:cntrl:]]*" | head -1)"
+fi
 read -r wx wy ww wh zoom_right <<<"$(ax chrome Voltip)"
 strip_w=$((ww < 480 ? ww : 480))
 measure_strip() {
@@ -257,4 +266,10 @@ wait "$pid" || status=$?
 log_has 'tray menu action=Quit' || fail 'the process ended without the Quit entry in the log'
 note "Quit: process exited with $status"
 [ "$status" = 0 ] || fail "exit code $status"
+if [ "${VOLTIP_CHECK_UI_GUARD:-0}" = 1 ]; then
+  log_has "${ui_guard_ok}\"overlay\"" || fail "the pill window's interface check reported no program interface"
+  ! log_has 'ui_guard: ' || [ "$(log_count 'ui_guard: ')" = "$(log_count "ui_guard: ${ui_guard_ok}")" ] ||
+    fail "the interface check: $(log_text | grep -F 'ui_guard: ' | grep -vF "$ui_guard_ok" | head -3)"
+  note "interface check: both windows run the program's interface, none replaced"
+fi
 note OK
