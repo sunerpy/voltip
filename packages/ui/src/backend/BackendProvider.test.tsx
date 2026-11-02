@@ -1,4 +1,13 @@
-import { notApplicablePermissions, uncheckedPreflight } from "@voltip/shared";
+import {
+  type ConnectionState,
+  type TauriTransport,
+  type UiEvent,
+  type UiState,
+  TauriBackend,
+  applyEvent,
+  notApplicablePermissions,
+  uncheckedPreflight,
+} from "@voltip/shared";
 import { MockBackend, sampleDevices } from "@voltip/shared/mock";
 import { act, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { BackendProvider, useBackend, useUiState } from "./BackendProvider";
@@ -39,7 +48,7 @@ describe("BackendProvider", () => {
     expect(onEvent).toHaveBeenCalledTimes(1);
   });
 
-  it("applies a full state event before core_state resolves and ignores partial ones", async () => {
+  it("waits for core_state while only partial events have come, then shows its answer", async () => {
     let resolve: ((s: Awaited<ReturnType<MockBackend["getState"]>>) => void) | undefined;
     const inner = new MockBackend();
     const backend = {
@@ -125,6 +134,167 @@ describe("BackendProvider", () => {
       await Promise.resolve();
     });
     expect(screen.getByTestId("name")).toHaveTextContent("Surface-Laptop");
+  });
+
+  describe("regression: the relay a window shows once the relay is up (user report 2026-11-02)", () => {
+    // A window opened while the relay connected showed 认证中 until Voltip was restarted, though
+    // the connection was up: the change fell between the window's first state and its events.
+
+    /** The shell as a window meets it through Tauri: `core_state` answers with the core's state
+     *  when it is asked, an event reaches only a listener whose registration the shell has
+     *  finished, and both `listen` and `core_state` answer after a round trip, here when the test
+     *  says so. */
+    function shell(relay: ConnectionState) {
+      let state: UiState = { ...new MockBackend().peek(), relay: relayAt(relay) };
+      const live = new Set<(e: { payload: unknown }) => void>();
+      const registrations: (() => void)[] = [];
+      const answers: (() => void)[] = [];
+      let holding = false;
+      const transport: Partial<TauriTransport> = {
+        invoke: (command) => {
+          if (command !== "core_state") return Promise.resolve(null);
+          const snapshot = structuredClone(state);
+          if (!holding) return Promise.resolve(snapshot);
+          return new Promise((resolve) => {
+            answers.push(() => {
+              resolve(snapshot);
+            });
+          });
+        },
+        listen: (_event, handler) =>
+          new Promise((resolve) => {
+            registrations.push(() => {
+              live.add(handler);
+              resolve(() => {
+                live.delete(handler);
+              });
+            });
+          }),
+      };
+      return {
+        backend: new TauriBackend(transport),
+        /** The core folds `event` into its state, and the shell sends it to the live listeners. */
+        emit(event: UiEvent) {
+          state = applyEvent(state, event);
+          for (const handler of [...live]) handler({ payload: event });
+        },
+        /** The registrations on their way reach the shell. */
+        register() {
+          for (const done of registrations.splice(0)) done();
+        },
+        /** From now on `core_state` waits for `answer`. */
+        hold() {
+          holding = true;
+        },
+        answer() {
+          for (const done of answers.splice(0)) done();
+        },
+      };
+    }
+
+    function relayAt(state: ConnectionState) {
+      return { state, attempts: 0, source: "user" as const, endpoint: "ws://127.0.0.1:47830" };
+    }
+
+    function relayEvent(state: ConnectionState): UiEvent {
+      return { type: "relay", ...relayAt(state) };
+    }
+
+    function Relay() {
+      return <span data-testid="relay">{useBackend().state?.relay.state ?? "loading"}</span>;
+    }
+
+    async function flush() {
+      await act(async () => {
+        for (let i = 0; i < 10; i += 1) await Promise.resolve();
+      });
+    }
+
+    it("a window opened before the relay connects", async () => {
+      const s = shell("connecting");
+      render(
+        <BackendProvider backend={s.backend}>
+          <Relay />
+        </BackendProvider>,
+      );
+      s.register();
+      await flush();
+      expect(screen.getByTestId("relay")).toHaveTextContent("connecting");
+      act(() => {
+        s.emit(relayEvent("authenticating"));
+        s.emit(relayEvent("connected"));
+      });
+      expect(screen.getByTestId("relay")).toHaveTextContent("connected");
+    });
+
+    it("a window opened as the relay connects, before its listener is registered", async () => {
+      const s = shell("authenticating");
+      render(
+        <BackendProvider backend={s.backend}>
+          <Relay />
+        </BackendProvider>,
+      );
+      await flush();
+      // Connected while the window's listener is still on its way: the event cannot reach it.
+      act(() => {
+        s.emit(relayEvent("connected"));
+      });
+      s.register();
+      await flush();
+      expect(screen.getByTestId("relay")).toHaveTextContent("connected");
+    });
+
+    it("a window opened as the relay connects, while its first state is on its way", async () => {
+      const s = shell("authenticating");
+      s.hold();
+      render(
+        <BackendProvider backend={s.backend}>
+          <Relay />
+        </BackendProvider>,
+      );
+      s.register();
+      await flush();
+      // The state was taken before the relay connected; the event overtakes it.
+      act(() => {
+        s.emit(relayEvent("connected"));
+      });
+      s.answer();
+      await flush();
+      expect(screen.getByTestId("relay")).toHaveTextContent("connected");
+    });
+
+    it("a window opened after the relay connected", async () => {
+      const s = shell("connected");
+      render(
+        <BackendProvider backend={s.backend}>
+          <Relay />
+        </BackendProvider>,
+      );
+      s.register();
+      await flush();
+      expect(screen.getByTestId("relay")).toHaveTextContent("connected");
+    });
+
+    it("a full state that comes after the first one replaces it, events after it still fold in", async () => {
+      const s = shell("authenticating");
+      s.hold();
+      render(
+        <BackendProvider backend={s.backend}>
+          <Relay />
+        </BackendProvider>,
+      );
+      s.register();
+      await flush();
+      act(() => {
+        s.emit({ type: "state", ...new MockBackend().peek(), relay: relayAt("reconnecting") });
+        s.emit(relayEvent("connected"));
+      });
+      // The full state shows at once; the first state's answer is older than both.
+      expect(screen.getByTestId("relay")).toHaveTextContent("connected");
+      s.answer();
+      await flush();
+      expect(screen.getByTestId("relay")).toHaveTextContent("connected");
+    });
   });
 
   it("surfaces getState failures and guards hook usage", async () => {

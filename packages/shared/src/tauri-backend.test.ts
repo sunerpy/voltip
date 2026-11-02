@@ -74,6 +74,41 @@ describe("TauriBackend", () => {
     expect(t.unlisten).toHaveBeenCalled();
   });
 
+  it("regression: core_state is asked for only once every event listener is live", async () => {
+    // Tauri's `listen` registers the listener with the shell in an IPC round trip; an event sent
+    // before it is registered never reaches it. A state taken before then could miss a change
+    // the listener never hears of: the relay shown 认证中 for good while it was connected
+    // (user report 2026-11-02).
+    const t = fakeTransport();
+    let register: (() => void) | undefined;
+    const backend = new TauriBackend({
+      ...t.transport,
+      listen: () =>
+        new Promise((resolve) => {
+          register = () => {
+            resolve(t.unlisten);
+          };
+        }),
+    });
+    backend.on(() => undefined);
+    const state = backend.getState();
+    for (let i = 0; i < 5; i += 1) await Promise.resolve();
+    expect(t.calls.map((c) => c.command)).toEqual([]);
+    register?.();
+    await expect(state).resolves.toMatchObject({ secret_backend: "keyring" });
+    expect(t.calls.map((c) => c.command)).toEqual(["core_state"]);
+  });
+
+  it("asks for core_state even when a listener's registration failed", async () => {
+    const t = fakeTransport();
+    const backend = new TauriBackend({
+      ...t.transport,
+      listen: () => Promise.reject(new Error("no event plugin")),
+    });
+    backend.on(() => undefined);
+    await expect(backend.getState()).resolves.toMatchObject({ secret_backend: "keyring" });
+  });
+
   it("rejects a malformed core_state instead of rendering garbage", async () => {
     const backend = new TauriBackend({
       invoke: () => Promise.resolve({ identity: null }),

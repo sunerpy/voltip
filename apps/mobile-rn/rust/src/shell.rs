@@ -7,7 +7,6 @@ use std::sync::Arc;
 
 use serde_json::Value;
 use tokio::runtime::Handle;
-use tokio::sync::broadcast::error::RecvError;
 use voltip_cloud::feedback;
 use voltip_core::CoreConfig;
 use voltip_core::dictation::DictationPorts;
@@ -114,26 +113,22 @@ impl Shell {
             let _entered = runtime.enter();
             Bridge::start_subscribed(config, store, ports)
         };
-        let (bridge, mut events) = started.map_err(String::from)?;
+        let (bridge, events) = started.map_err(String::from)?;
         let pump = host.clone();
+        let forwarding = bridge.clone();
+        // An event the app missed is followed by the whole state (docs/dictation.md §33.2).
         runtime.spawn(async move {
-            loop {
-                match events.recv().await {
-                    Ok(ev) => match serde_json::to_string(&ev) {
-                        // Why a take ended without text, by its code only: the message can carry
-                        // an endpoint, which never goes into a log line (AGENTS.md).
-                        Ok(json) => {
-                            if let Some(code) = failed_take(&ev) {
-                                tracing::warn!(?code, "take failed");
-                            }
-                            pump.event(&json);
-                        }
-                        Err(e) => tracing::warn!(error = %e, "event does not serialize; dropped"),
-                    },
-                    Err(RecvError::Lagged(n)) => tracing::warn!(skipped = n, "the app lagged behind the events"),
-                    Err(RecvError::Closed) => break,
-                }
-            }
+            forwarding
+                .forward(events, |ev| {
+                    let json = serde_json::to_string(ev).map_err(|e| format!("the event does not serialize: {e}"))?;
+                    // Why a take ended without text, by its code only: the message can carry an
+                    // endpoint, which never goes into a log line (AGENTS.md).
+                    if let Some(code) = failed_take(ev) {
+                        tracing::warn!(?code, "take failed");
+                    }
+                    pump.event(&json)
+                })
+                .await;
         });
         bridge.publish(UiEvent::Update(updater.status()));
         crate::update::start(&runtime, bridge.clone(), updater.clone(), host.clone());

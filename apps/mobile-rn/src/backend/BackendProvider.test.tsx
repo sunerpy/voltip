@@ -1,7 +1,7 @@
 // The provider every screen reads the core through: `core_state` first, each event folded in after,
 // and a state event that overtakes the first answer.
 import { act, render, screen } from "@testing-library/react-native";
-import { type Backend, type UiEvent, type UiState } from "@voltip/shared";
+import { type Backend, type RelayStatus, type UiEvent, type UiState } from "@voltip/shared";
 import { MockBackend } from "@voltip/shared/mock";
 import { Component, type ReactNode } from "react";
 import { Text } from "react-native";
@@ -93,6 +93,59 @@ describe("BackendProvider", () => {
       await Promise.resolve();
     });
     expect(screen.getByTestId("version")).toHaveTextContent("从事件");
+  });
+
+  describe("regression: the relay the app shows once the relay is up (user report 2026-11-02)", () => {
+    // The desktop's window showed 认证中 until a restart while the relay was connected: a change
+    // that arrived while the first state was on its way was dropped, and the older state stayed.
+    const relayAt = (state: RelayStatus["state"]): RelayStatus => ({
+      state,
+      attempts: 0,
+      source: "user",
+      endpoint: "ws://127.0.0.1:47830",
+    });
+
+    function Relay() {
+      return <Text testID="relay">{useBackend().state?.relay.state ?? "loading"}</Text>;
+    }
+
+    it("a change that arrives while the first state is on its way is folded onto it", async () => {
+      const core = fake();
+      await render(<Relay />, { wrapper: wrap(core.backend) });
+      await act(async () => {
+        core.send({ type: "relay", ...relayAt("connected") });
+        await Promise.resolve();
+      });
+      // The state was taken before the relay connected.
+      await act(async () => {
+        core.answer({ ...EMPTY, relay: relayAt("authenticating") });
+        await Promise.resolve();
+      });
+      expect(screen.getByTestId("relay")).toHaveTextContent("connected");
+    });
+
+    it("opened before the relay connects, and after", async () => {
+      const before = fake();
+      const view = await render(<Relay />, { wrapper: wrap(before.backend) });
+      await act(async () => {
+        before.answer({ ...EMPTY, relay: relayAt("connecting") });
+        await Promise.resolve();
+      });
+      await act(async () => {
+        before.send({ type: "relay", ...relayAt("authenticating") });
+        before.send({ type: "relay", ...relayAt("connected") });
+        await Promise.resolve();
+      });
+      expect(screen.getByTestId("relay")).toHaveTextContent("connected");
+      await view.unmount();
+      const after = fake();
+      await render(<Relay />, { wrapper: wrap(after.backend) });
+      await act(async () => {
+        after.answer({ ...EMPTY, relay: relayAt("connected") });
+        await Promise.resolve();
+      });
+      expect(screen.getByTestId("relay")).toHaveTextContent("connected");
+    });
   });
 
   it("says why core_state failed, an Error or anything else", async () => {

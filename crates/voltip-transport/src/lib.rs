@@ -20,7 +20,7 @@ mod secure;
 mod state;
 
 pub use endpoint::{DEFAULT_DEV_RELAY, RelayEndpoint};
-pub use link::{FailureKind, LinkConfig, LinkEvent, LinkFailure, ProbeFailure, RelayLink, probe};
+pub use link::{FailureKind, LINK_EVENT_QUEUE, LinkConfig, LinkEvent, LinkFailure, ProbeFailure, RelayLink, probe};
 pub use reconnect::ReconnectPolicy;
 pub use secure::SecureChannel;
 pub use state::{ConnectionMachine, ConnectionState, StateChange};

@@ -92,10 +92,8 @@ impl ForeignHost {
 }
 
 impl Host for ForeignHost {
-    fn event(&self, json: &str) {
-        if let Err(e) = self.current().event(json.to_owned()) {
-            tracing::warn!(error = %e, "an event did not reach the app");
-        }
+    fn event(&self, json: &str) -> Result<(), String> {
+        self.current().event(json.to_owned()).map_err(|e| e.to_string())
     }
 
     fn channel(&self, channel: u64, json: &str) {

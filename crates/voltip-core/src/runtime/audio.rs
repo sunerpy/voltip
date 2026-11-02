@@ -211,7 +211,7 @@ impl Runtime {
             let view = trial::run(job).await;
             // Free before the answer: a trial asked for once it is shown is not refused.
             busy.store(false, Ordering::SeqCst);
-            if evt.send(CoreEvent::RecognitionTrial(view)).await.is_err() {
+            if evt.send(CoreEvent::RecognitionTrial(view)).is_err() {
                 tracing::debug!("the recognition trial ended after the UI went away");
             }
         });

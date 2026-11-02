@@ -10,8 +10,9 @@ use std::sync::Mutex;
 
 /// The platform around the shell.
 pub trait Host: Send + Sync + 'static {
-    /// One `UiEvent`, serialized, for `voltip://event`.
-    fn event(&self, json: &str);
+    /// One `UiEvent`, serialized, for `voltip://event`; an error when it did not reach the app
+    /// (the whole state follows, docs/dictation.md §33.2).
+    fn event(&self, json: &str) -> Result<(), String>;
     /// One frame of the stream `channel` (the level meter's `onFrame`), serialized.
     fn channel(&self, channel: u64, json: &str);
     /// The text on the clipboard; `None` when it holds none.
@@ -124,8 +125,9 @@ impl RecordingHost {
 }
 
 impl Host for RecordingHost {
-    fn event(&self, json: &str) {
+    fn event(&self, json: &str) -> Result<(), String> {
         self.record(HostCall::Event(json.to_owned()));
+        Ok(())
     }
 
     fn channel(&self, channel: u64, json: &str) {

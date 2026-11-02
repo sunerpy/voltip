@@ -1161,21 +1161,11 @@ pub fn attach_bridge<R: Runtime>(
     // Tauri runs `setup` on the UI thread, outside any Tokio context; the core spawns its tasks
     // with `tokio::spawn`, so it has to be started from Tauri's own runtime.
     // Subscribed before the core starts so the first `state` event reaches the webview bus.
-    let (bridge, mut events) = tauri::async_runtime::block_on(async { Bridge::start_subscribed(config, store, ports) })?;
+    let (bridge, events) = tauri::async_runtime::block_on(async { Bridge::start_subscribed(config, store, ports) })?;
     let handle = app.clone();
-    tauri::async_runtime::spawn(async move {
-        loop {
-            match events.recv().await {
-                Ok(ev) => {
-                    if let Err(e) = handle.emit(UI_EVENT_NAME, &ev) {
-                        tracing::warn!(error = %e, "emit failed");
-                    }
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => tracing::warn!(skipped = n, "webview lagged"),
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-            }
-        }
-    });
+    let forwarding = bridge.clone();
+    // A webview that missed events gets the whole state (docs/dictation.md §33.2).
+    tauri::async_runtime::spawn(async move { forwarding.forward(events, |ev| handle.emit(UI_EVENT_NAME, ev)).await });
     app.manage(bridge);
     app.manage(feedback::Attachments::default());
     Ok(())

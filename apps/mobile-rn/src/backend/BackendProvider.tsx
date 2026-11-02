@@ -38,7 +38,9 @@ export interface BackendProviderProps {
   onEvent?: (event: UiEvent) => void;
 }
 
-/** Loads `core_state`, folds every `voltip://event` into it and shares both via context. */
+/** Loads `core_state`, folds every `voltip://event` into it and shares both via context. The
+ *  events that arrive before `core_state` answers are folded onto the answer in arrival order, as
+ *  in `@voltip/ui`'s provider (docs/dictation.md §33.2). */
 export function BackendProvider({ backend, children, onEvent }: BackendProviderProps) {
   const [state, setState] = useState<UiState | undefined>(undefined);
   const [lastEvent, setLastEvent] = useState<UiEvent | undefined>(undefined);
@@ -46,8 +48,11 @@ export function BackendProvider({ backend, children, onEvent }: BackendProviderP
 
   useEffect(() => {
     let alive = true;
+    /** The events since the listener started, until `core_state` answers. */
+    let early: UiEvent[] | undefined = [];
     const off = backend.on((event) => {
       if (!alive) return;
+      early?.push(event);
       setState((prev) => {
         if (prev) return applyEvent(prev, event);
         return event.type === "state" ? applyEvent(EMPTY, event) : prev;
@@ -58,9 +63,13 @@ export function BackendProvider({ backend, children, onEvent }: BackendProviderP
     backend
       .getState()
       .then((s) => {
-        if (alive) setState((prev) => prev ?? s);
+        if (!alive) return;
+        const kept = early ?? [];
+        early = undefined;
+        setState(kept.reduce(applyEvent, s));
       })
       .catch((e: unknown) => {
+        early = undefined;
         if (alive) setError(e instanceof Error ? e.message : String(e));
       });
     return () => {

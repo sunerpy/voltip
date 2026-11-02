@@ -108,12 +108,18 @@ const defaultTransport: TauriTransport = {
 /** Real backend over `@tauri-apps/api`. Payloads are validated with zod before they reach the UI. */
 export class TauriBackend implements Backend {
   private readonly transport: TauriTransport;
+  /** `on` listeners whose registration is still on its way to the shell. */
+  private readonly registering = new Set<Promise<unknown>>();
 
   constructor(transport: Partial<TauriTransport> = {}) {
     this.transport = { ...defaultTransport, ...transport };
   }
 
+  /** Taken once every `on` listener asked for before is live (docs/dictation.md §33.2): the shell
+   *  sends an event only to the listeners it has registered, so a state taken earlier could miss
+   *  a change that no listener hears of either. */
   async getState() {
+    await Promise.allSettled([...this.registering]);
     const raw = await this.transport.invoke("core_state");
     return uiStateSchema.parse(raw);
   }
@@ -453,11 +459,22 @@ export class TauriBackend implements Backend {
       if (parsed.success) listener(parsed.data);
       else warn("voltip://event dropped: payload failed validation", parsed.error.issues);
     });
+    const registered = ready.then(
+      () => undefined,
+      (e: unknown) => {
+        warn("voltip://event listener could not be registered", e);
+      },
+    );
+    this.registering.add(registered);
+    void registered.then(() => this.registering.delete(registered));
     return () => {
       disposed = true;
-      void ready.then((unlisten) => {
-        unlisten();
-      });
+      void ready.then(
+        (unlisten) => {
+          unlisten();
+        },
+        () => undefined,
+      );
     };
   }
 }
