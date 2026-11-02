@@ -73,10 +73,7 @@ mod tests {
             "\\assets\\chunk-Zz9.js",
             "/assets/index-BBjVjT-j.js",
         ];
-        assert_eq!(
-            carried_scripts(assets.iter()),
-            ["/assets/chunk-Zz9.js", "/assets/index-BBjVjT-j.js", "/assets/worker-Ab12Cd34.mjs"],
-        );
+        assert_eq!(carried_scripts(assets.iter()), ["/assets/chunk-Zz9.js", "/assets/index-BBjVjT-j.js", "/assets/worker-Ab12Cd34.mjs"]);
         assert!(carried_scripts(["/index.html", "/assets/index.css"].iter()).is_empty());
     }
 
