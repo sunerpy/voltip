@@ -147,7 +147,7 @@ describe("BackendProvider", () => {
     function shell(relay: ConnectionState) {
       let state: UiState = { ...new MockBackend().peek(), relay: relayAt(relay) };
       const live = new Set<(e: { payload: unknown }) => void>();
-      const registrations: (() => void)[] = [];
+      const registrations: { done: () => void; refuse: () => void }[] = [];
       const answers: (() => void)[] = [];
       let holding = false;
       const transport: Partial<TauriTransport> = {
@@ -162,12 +162,17 @@ describe("BackendProvider", () => {
           });
         },
         listen: (_event, handler) =>
-          new Promise((resolve) => {
-            registrations.push(() => {
-              live.add(handler);
-              resolve(() => {
-                live.delete(handler);
-              });
+          new Promise((resolve, reject) => {
+            registrations.push({
+              done: () => {
+                live.add(handler);
+                resolve(() => {
+                  live.delete(handler);
+                });
+              },
+              refuse: () => {
+                reject(new Error("IPC not ready"));
+              },
             });
           }),
       };
@@ -180,7 +185,11 @@ describe("BackendProvider", () => {
         },
         /** The registrations on their way reach the shell. */
         register() {
-          for (const done of registrations.splice(0)) done();
+          for (const r of registrations.splice(0)) r.done();
+        },
+        /** The registrations on their way are refused. */
+        refuse() {
+          for (const r of registrations.splice(0)) r.refuse();
         },
         /** From now on `core_state` waits for `answer`. */
         hold() {
@@ -273,6 +282,34 @@ describe("BackendProvider", () => {
       s.register();
       await flush();
       expect(screen.getByTestId("relay")).toHaveTextContent("connected");
+    });
+
+    it("a window whose listener registration is refused once (gate 2026-11-02)", async () => {
+      vi.useFakeTimers();
+      try {
+        const s = shell("authenticating");
+        render(
+          <BackendProvider backend={s.backend}>
+            <Relay />
+          </BackendProvider>,
+        );
+        s.refuse();
+        await flush();
+        expect(screen.getByTestId("relay")).toHaveTextContent("authenticating");
+        // Connected while the window has no listener at all.
+        act(() => {
+          s.emit(relayEvent("connected"));
+        });
+        // The backend registers again, and this time the shell takes it.
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(250);
+        });
+        s.register();
+        await flush();
+        expect(screen.getByTestId("relay")).toHaveTextContent("connected");
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("a full state that comes after the first one replaces it, events after it still fold in", async () => {

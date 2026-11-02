@@ -23,6 +23,8 @@ import {
   type SuggestionAcceptArgs,
   type SuggestionPair,
   type SuggestionPick,
+  type UiEvent,
+  type UiState,
   type VocabularyBacktestArgs,
   UI_EVENT_NAME,
   acceptOutcomeSchema,
@@ -104,6 +106,11 @@ const defaultTransport: TauriTransport = {
   listen: (event, handler) => tauriListen<unknown>(event, handler),
   channel: newChannel,
 };
+
+/** How long a refused `voltip://event` registration waits before it is tried again, doubling up to
+ *  `LISTEN_RETRY_MAX_MS` while the listener lives (docs/dictation.md §33.2). */
+const LISTEN_RETRY_FIRST_MS = 250;
+const LISTEN_RETRY_MAX_MS = 5_000;
 
 /** Real backend over `@tauri-apps/api`. Payloads are validated with zod before they reach the UI. */
 export class TauriBackend implements Backend {
@@ -450,31 +457,70 @@ export class TauriBackend implements Backend {
     );
   }
 
+  /** Events reach `listener` from the moment the shell has registered it. A registration the shell
+   *  refused is tried again until it lands (docs/dictation.md §33.2); the listener then missed
+   *  whatever was sent before, so it first gets the whole state, then the events that came while
+   *  that state was on its way, in order. */
   on(listener: EventListener): Unsubscribe {
     let disposed = false;
+    let unlisten: (() => void) | undefined;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    /** While a late registration waits for its whole state: the events since. */
+    let held: UiEvent[] | undefined;
     const warn = this.warn();
-    const ready = this.transport.listen(UI_EVENT_NAME, ({ payload }) => {
+    const handler = ({ payload }: { payload: unknown }) => {
       if (disposed) return;
       const parsed = uiEventSchema.safeParse(payload);
-      if (parsed.success) listener(parsed.data);
-      else warn("voltip://event dropped: payload failed validation", parsed.error.issues);
-    });
-    const registered = ready.then(
-      () => undefined,
-      (e: unknown) => {
-        warn("voltip://event listener could not be registered", e);
-      },
-    );
-    this.registering.add(registered);
-    void registered.then(() => this.registering.delete(registered));
+      if (!parsed.success) {
+        warn("voltip://event dropped: payload failed validation", parsed.error.issues);
+        return;
+      }
+      if (held) held.push(parsed.data);
+      else listener(parsed.data);
+    };
+    const catchUp = () => {
+      held = [];
+      const release = (state?: UiState) => {
+        const since = held ?? [];
+        held = undefined;
+        if (disposed) return;
+        if (state) listener({ ...state, type: "state" });
+        for (const event of since) listener(event);
+      };
+      this.getState().then(release, (e: unknown) => {
+        warn("core_state for a late voltip://event listener failed", e);
+        release();
+      });
+    };
+    const register = (attempt: number): Promise<void> =>
+      this.transport.listen(UI_EVENT_NAME, handler).then(
+        (off) => {
+          if (disposed) {
+            off();
+            return;
+          }
+          unlisten = off;
+          if (attempt > 0) catchUp();
+        },
+        (e: unknown) => {
+          if (attempt === 0)
+            warn("voltip://event listener could not be registered; trying again", e);
+          if (disposed) return;
+          const delay = Math.min(LISTEN_RETRY_MAX_MS, LISTEN_RETRY_FIRST_MS * 2 ** attempt);
+          retry = setTimeout(() => {
+            retry = undefined;
+            void register(attempt + 1);
+          }, delay);
+        },
+      );
+    // `getState` waits for the first attempt only: a refused one is caught up as above.
+    const first = register(0);
+    this.registering.add(first);
+    void first.then(() => this.registering.delete(first));
     return () => {
       disposed = true;
-      void ready.then(
-        (unlisten) => {
-          unlisten();
-        },
-        () => undefined,
-      );
+      if (retry !== undefined) clearTimeout(retry);
+      unlisten?.();
     };
   }
 }
