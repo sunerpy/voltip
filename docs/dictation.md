@@ -3000,3 +3000,60 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 - `crates/voltip-overlay/tests/stacking_macos.rs`（CI 两台 Mac，自带 `main`）：悬浮窗按 tao 的方式显示后，另一个进程的浮动窗口到前台，先确认它盖住 tao 那一级的悬浮窗（对照）；`raise` 之后悬浮窗是点在它中心会落到的窗口；显示期间又一个应用的浮动窗口到前台，悬浮窗仍在最上面；另一个应用一直是活动应用（`regression_the_pill_stays_above_floating_windows_of_another_application_brought_to_the_front`）。全屏应用：tao 的窗口在两种激活策略下都不在它的 Space 上，不激活的面板在它之上（`full_screen_spaces_take_a_non_activating_panel_and_not_tao_s_window`，固定 §32.3 的结论）。
 - 单元测试：`contest.rs`（500 ms 内回到上面时到时再看一次、那时仍在上面就抬，过后同一个窗口再被置顶照常抬，到前台后重新算，每秒至多 8 次），`x11.rs`（没有显示服务器、连接不上，`Keeper` 同样），`overlay.rs` 的 `regression_a_show_after_a_hide_began_keeps_the_pill`。
 - 修复前失败：`8f2adf2d`（CI 41313709532）`hooks-windows` 与 `windows-native`，悬浮窗在置顶窗口和置顶全屏窗口下面；`742ba101`（临时分支，CI 41321219255）显示期间被激活、被钉在最上面、不激活地出现的窗口都盖住悬浮窗，真实应用同样，X11 测试在 Xvfb 上失败；macOS 浮动窗口测试在只为证明修复前失败的提交 `6d2fb225`（临时分支，CI 41322859067）上两台 Mac 都失败。这些提交的 `raise`、`Keeper`、`Stacker` 什么也不做，等于修复前的行为。显示期间的规则：同一个窗口取消置顶、过一会儿又钉上，以及 X11 显示期间映射到悬浮窗上面的窗口，在旧规则（同一窗口到下一个窗口到前台之前只抬一次）和不叠放的 X11 keeper 上失败（`0dbaf435`，临时分支，CI 41330001090）；取消置顶后立刻又钉上、X11 随即又叠上来的同一个窗口，在不再看一次的 500 ms 规则上失败（`0a96a3de`，临时分支，CI 41337186406，Windows 仿制与真实应用、Xvfb）。
+
+## 33. 窗口的状态与升级后的界面（2026-11-02）
+
+**问题**（用户 2026-11-02 在 0.3.0 候选版上报告，Windows）：装上候选版后第一次运行，中继其实已经连上，窗口里的中继状态却一直是「认证中」；词典页没有「学习建议」标签。重启 Voltip 之后两者都正常。
+
+### 33.1 窗口的状态怎么丢掉变化
+
+窗口的状态是 `core_state` 的回答，加上之后的每个 `voltip://event` 事件按到达顺序折叠（`applyEvent`；除了整块的 `state`，每个事件只替换它那一块字段）。这条链上有六处会丢掉变化；丢掉的是「已连接」这样之后不再变化的值时，窗口就一直显示旧值，直到重启。用户的电脑上没有日志，不能确定是哪一处，前两处在窗口随程序启动、中继同时连上时最容易出现，与用户的情形一致。
+
+- **监听生效之前取状态**（`packages/shared/src/tauri-backend.ts`）：`listen` 要经过一次 IPC 往返才生效，`getState()` 不等它就调用 `core_state`。这期间壳发出的事件只送给已经生效的监听，窗口收不到，而它拿到的状态又早于这些事件。
+- **状态回来之前的事件被丢弃**（`packages/ui/src/backend/BackendProvider.tsx`、`apps/mobile-rn/src/backend/BackendProvider.tsx`）：`core_state` 回答之前到达的事件，除了整块的 `state`，都被忽略；回答到达时整个替换窗口的状态，而回答可能比这些事件旧。
+- **核心的事件队列满了就丢**（`crates/voltip-core/src/runtime.rs`）：核心给壳的事件进 512 个的队列，放不下就丢弃，只记一条日志。壳读得慢时（启动时事件集中），丢掉的事件既改不了壳缓存的状态，也到不了任何窗口。
+- **壳只记下窗口跟不上**（`apps/desktop/src-tauri/src/lib.rs`、`apps/mobile/src-tauri/src/lib.rs`、`apps/mobile-rn/rust/src/shell.rs`）：转发读广播落后（`Lagged`，最早的事件已经没有了）时只记日志，事件没能送到窗口（`emit` 失败）也不管，漏掉的不再补。
+- **中继连接的状态报告满了就丢**（`crates/voltip-transport/src/link.rs`）：`RelayLink` 的状态变化、失败和告警用 `try_send` 报告，核心读得慢时「已连接」这一条被丢掉，核心以为还在认证。
+- **壳自己的事件抢在整块状态前面**（`crates/voltip-tauri-bridge/src/lib.rs`）：核心的事件在状态锁里折叠，锁放开之后才广播；壳自己的事件（`Bridge::publish`：快捷键、更新、硬件）也一样。核心启动时的整块状态（`Ready`）带着壳的那几块，壳的事件若在两者之间折叠并先发出，窗口先收到它，再从整块状态里拿到较旧的值。
+
+### 33.2 修复
+
+- `TauriBackend.getState()` 先等之前要求的所有监听都生效（或失败）再调用 `core_state`，之后的事件一个也不漏。
+- 两个 `BackendProvider`：`core_state` 回答之前到达的事件留下来，回答到达时按到达顺序折叠到它上面；整块的 `state` 照旧立即显示。事件都替换整块字段，所以折叠的结果与核心的状态一致。
+- 核心：运行时和它的任务把事件放进不会满的队列，不等待；一个转发任务再按顺序交给壳读取的 512 个队列，壳读得慢时只有这个任务等待。
+- `Bridge::forward`：电脑端、Tauri 手机端和 RN 手机端共用的转发。广播落后或某个事件没能送到窗口时，紧接着把整个状态作为 `state` 事件发给窗口；整块状态也没送出去时，下一个事件之后再试。RN 壳的 `Host::event` 为此改为返回是否送达。
+- `RelayLink` 的状态变化、失败和告警都等队列有空位再报告（帧本来就这样）；断开时先更新 `RelayLink::state`，再报告失败和状态。
+- `pump` 与 `Bridge::publish` 在状态锁里折叠并广播，窗口收到事件的顺序就是缓存折叠它们的顺序。
+
+### 33.3 升级后第一次启动：在托管 Windows 上复现
+
+**用户电脑上的线索**（协调会话 2026-11-02 读取；之后不再在那台电脑上查）：09:54:32 安装包以 `/S /UPDATE /R` 把一个 0.3.0 候选版升级为另一个并重新打开 Voltip，新进程到中继的一条 TCP 连接从 09:54:37 一直保持到 11:05；WebView2 的代码缓存里有这次启动时写下的两条 `index-BBjVjT-j.js` 记录（候选版的入口脚本，含「学习建议」标签），0.2.1 的 `index-BiheABMD.js` 最后一次是 2026-10-29；HTTP 缓存里没有 `tauri.localhost` 的条目；Tauri 2.11.6 的响应不带 `Cache-Control`、`ETag`、`Last-Modified`。升级前的候选版带的是同一个 `index-BBjVjT-j.js`。所以「窗口运行了上一版的界面代码」只是一种猜测，没有证据。
+
+**复现**（CI `windows-native`，按需 `-f upgrade_probe=true`，`scripts/windows-upgrade-probe.ps1` 与 `scripts/webview-probe.mjs`）：windows-2025 上每一轮从没有 Voltip、没有数据和 WebView2 配置开始，静默安装 GitHub 发布的 0.2.1（核对 `SHA256SUMS`），写好设置（中继指向本机的 `voltip-relay`、不自动更新）后启动两次，再用这个构建的安装包升级，之后同一个安装包再装一次（同版本）。每次升级之后经 WebView2 的调试端口读每个窗口：文档加载的入口脚本是否在安装的程序里，文档是否早于进程，主窗口的中继卡片是否在 30 秒内显示已连接，词典页有没有「学习建议」标签。调试端口由本机级策略 `HKLM\SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments` 打开（runner 以管理员运行，WebView2 忽略用户级策略和 `WEBVIEW2_*` 环境变量）；防火墙规则挡住 Voltip 到本机以外的连接，Voltip 不连任何服务。升级的方式轮流为：Voltip 运行时直接运行安装包（`/S /UPDATE /R`，安装包结束 Voltip）；按应用内更新的做法（tauri-plugin-updater 启动 `/S /UPDATE /R /ARGS <参数>` 后立即结束程序）；同样做法但 0.2.1 以 `--start-hidden` 启动，升级后先读隐藏的窗口（确认没有显示窗口），再由第二次启动打开主窗口读一遍。这个分支的版本号还是 0.2.1（0.3.0 的发版 PR 没有合并），所以从 0.2.1 升级也是同一版本号的两个构建之间的升级，与用户从一个 0.3.0 候选版升级到另一个相同。每次升级之后还在真实程序的主窗口上检查 §33.4：调试协议在文档创建时把入口脚本改成程序不带的路径，再重新加载，数窗口经过的文档；0.2.1 的第一次启动上做同样的检查作为对照。
+
+合计：修复前 3 轮 6 次升级，修复后 27 轮 54 次升级，界面检查 27 次，都没有复现。
+
+| CI | 提交 | 结果 |
+|---|---|---|
+| 41389454842 | `59d4bcc7` | 脚本在严格模式下出错，没有读到窗口 |
+| 41390710001 | `f6a63654` | 调试端口没有打开（当时用的是用户级策略）；中继地址少了 `/ws`。没有读到窗口 |
+| 41393315506 | `50701011`（修复前） | 3 轮，6 次升级（从 0.2.1 3 次、同版本 3 次），都是直接运行安装包：两个窗口都运行程序自带的 `/assets/index-BBjVjT-j.js`，文档比进程晚 439–929 ms，调试端口上的浏览器进程由新的 Voltip 启动，词典页有「学习建议」标签（runner 的系统语言是英文，显示为 Suggestions），中继卡片显示已连接，Voltip 到本机以外的连接 0 个。0.2.1 的窗口运行它自带的 `index-BiheABMD.js`，没有这个标签。没有复现 |
+| 41403315877 | `417d131a`（修复后，有 §33.4） | 9 轮，三种方式各 3 轮，18 次升级（从 0.2.1 9 次、同版本 9 次），48 次读窗口：都运行程序自带的 `/assets/index-Dp6DiJ1d.js`，文档比进程晚 366–1124 ms；主窗口 24 次读到中继已连接、词典页有「学习建议」。界面检查 9 次：引用程序不带的入口时经过两个文档后停住，改回自己的入口后经过一个文档并清掉记号；0.2.1 上的对照 9 次都只经过一个文档。Voltip 到本机以外的连接 0 个。这次没有核对 `--start-hidden` 的窗口是否真的没显示（WebView2 对隐藏窗口的页面也报告 `visible`）。没有复现 |
+| 41406841691 | `b78e5686` | 9 轮，18 次升级：48 次读窗口都运行程序自带的 `/assets/index-t6n1uXfB.js`，文档比进程晚 407–2303 ms；主窗口 24 次读到中继已连接、词典页有「学习建议」；界面检查与对照同上。`--start-hidden` 那 3 轮判为失败（6 处）：判断用的是 .NET 的 `MainWindowHandle`，而单实例插件的窗口和 tao 的事件窗口也是「可见」的顶层窗口，主窗口隐藏时它也不为空。没有复现 |
+| 41409396380 | `7aa7fd7c` | 9 轮，18 次升级：48 次读窗口都运行程序自带的 `/assets/index-t6n1uXfB.js`，文档比进程晚 284–916 ms；主窗口 24 次读到中继已连接、词典页有「学习建议」。按标题找主窗口（`Voltip`）：`--start-hidden` 的 3 轮升级后与同版本重装后主窗口都没有显示（6 次），第二次启动后显示；其余 12 次升级后主窗口显示。界面检查 9 次、0.2.1 上的对照 9 次，结果同上。Voltip 到本机以外的连接 0 个。没有复现 |
+
+### 33.4 保护：窗口运行的界面代码不是程序自带的时重新加载一次
+
+`apps/desktop/src-tauri/src/ui_guard.rs` 与 `ui_guard.js`：一个 Tauri 插件，给每个窗口的文档在创建时（主框架的初始化脚本）注入程序自带的脚本路径（程序资源里所有 `.js`、`.mjs`，即这个构建实际提供的脚本）。文档解析完（`DOMContentLoaded`）时，`<script type="module" src>` 中有任何一个解析出的路径不在其中，窗口就 `location.reload()`；会话存储里的 `voltip.ui-guard.reloaded` 记下这一次，重新加载后仍是程序不带的代码时窗口保持原样，只在控制台说明，不再循环；之后运行程序自带代码的文档清掉这个记号。只检查程序自己的页面（`tauri://localhost`、`tauri.localhost`），开发构建（`tauri::is_dev()`，界面来自 Vite）和不带脚本的程序（测试的模拟上下文）不检查；没有会话存储时只在控制台说明。用户能看到的只是这种情况下窗口打开后马上重新加载一次。只在电脑端：手机端（RN）的界面打包在安装包里，Tauri 版手机端已不发布。
+
+### 33.5 限制
+
+- 不知道用户电脑上的词典页为什么缺「学习建议」：托管 Windows 上的升级都没有出现（§33.3），用户电脑上前后两个候选版的入口脚本相同。§33.4 只针对「文档运行了程序不带的脚本」这一种情况；脚本相同而界面不对时它看不出来。
+- 重新加载发生在旧文档的脚本已经运行之后（模块脚本在 `DOMContentLoaded` 之前执行），旧界面会短暂出现，并可能在这期间发出它那一版的命令（新版本不认识的格式由桥拒绝）。
+- 重新加载只做一次。Voltip 的日志只写到 stderr，检查的说明只在窗口的控制台里（WebView2 的调试工具可以看到）。
+- 状态同步的修复不改变事件的内容和协议：窗口收到的事件与之前相同，只是不再丢失或乱序；落后时多一个整块的 `state`。
+
+### 33.6 门禁
+
+- 状态同步（修复前在本地失败，修复后通过）：`packages/shared/src/tauri-backend.test.ts` 的 `regression: core_state is asked for only once every event listener is live`（修复前 `core_state` 在监听生效前就被调用）；`packages/ui/src/backend/BackendProvider.test.tsx` 的 `regression: the relay a window shows once the relay is up` 一组（窗口在中继连上之前、监听生效之前、第一次状态在路上时、之后打开，以及之后又来一个整块状态；修复前两种情形停在 `authenticating`）；`apps/mobile-rn/src/backend/BackendProvider.test.tsx`（第一次状态在路上时到达的变化，修复前丢失；中继连上之前和之后打开）；`crates/voltip-core/tests/ui_events.rs`（壳不读时核心先发 2000 个设置变化再连上真实的本地中继：修复前只收到 493 个设置事件，中继停在 `Disconnected`）；`crates/voltip-transport/tests/link.rs` 的 `regression_a_state_change_while_the_owner_is_behind_waits_for_room`（修复前「重新连接」的状态报告丢失，测试超时）；`crates/voltip-tauri-bridge/tests/forward.rs`（落后的窗口与没能送到的事件之后都收到整块状态，修复前都失败）；`crates/voltip-tauri-bridge/src/lib.rs` 的 `regression_a_shell_event_never_passes_the_whole_state_on_its_way_to_the_windows`（2 万个整块状态与 2 万个硬件事件同时折叠：修复前 679 个整块状态晚于窗口已有的硬件值到达）。涉及线程与计时的四个（`ui_events.rs`、`link.rs` 的回归测试、`forward.rs`、事件顺序）在 32 个忙循环占满全部逻辑核时各运行 200 次，全部通过。
+- 界面检查：`apps/desktop/src/ui-guard.test.ts` 在测试的文档上运行 `ui_guard.js` 原文（程序自带的入口不重新加载、程序不带的重新加载一次且不循环、解析中的文档等解析完、相对路径与两种协议、编码的路径、别的页面和空白页、没有会话存储）；去掉 `location.reload()` 时其中 4 个失败。`ui_guard.rs` 的单元测试（从资源路径得出脚本列表、占位符只出现一次、没有脚本时不检查）。托管 Windows 上的 §33.3 每次升级后在真实程序上检查：调试协议让文档引用程序不带的入口，窗口经过两个文档（自己的重新加载和检查的那一次）后停住并留下记号，改回自己的入口后经过一个文档并清掉记号；0.2.1 做同样的检查只经过一个文档（它没有这项检查）。
