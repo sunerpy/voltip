@@ -3029,7 +3029,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 
 **用户电脑上的线索**（协调会话 2026-11-02 读取；之后不再在那台电脑上查）：09:54:32 安装包以 `/S /UPDATE /R` 把一个 0.3.0 候选版升级为另一个并重新打开 Voltip，新进程到中继的一条 TCP 连接从 09:54:37 一直保持到 11:05；WebView2 的代码缓存里有这次启动时写下的两条 `index-BBjVjT-j.js` 记录（候选版的入口脚本，含「学习建议」标签），0.2.1 的 `index-BiheABMD.js` 最后一次是 2026-10-29；HTTP 缓存里没有 `tauri.localhost` 的条目；Tauri 2.11.6 的响应不带 `Cache-Control`、`ETag`、`Last-Modified`。升级前的候选版带的是同一个 `index-BBjVjT-j.js`。所以「窗口运行了上一版的界面代码」只是一种猜测，没有证据。
 
-**复现**（CI `windows-native`，按需 `-f upgrade_probe=true`，`scripts/windows-upgrade-probe.ps1` 与 `scripts/webview-probe.mjs`）：windows-2025 上每一轮从没有 Voltip、没有数据和 WebView2 配置开始，静默安装 GitHub 发布的 0.2.1（核对 `SHA256SUMS`），写好设置（中继指向本机的 `voltip-relay`、不自动更新）后启动两次，再用这个构建的安装包升级，之后同一个安装包再装一次（同版本）。每次升级之后经 WebView2 的调试端口读每个窗口：文档加载的入口脚本是否在安装的程序里，文档是否早于进程，主窗口的中继卡片是否在 30 秒内显示已连接，词典页有没有「学习建议」标签。调试端口由本机级策略 `HKLM\SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments` 打开（runner 以管理员运行，WebView2 忽略用户级策略和 `WEBVIEW2_*` 环境变量）；防火墙规则挡住 Voltip 到本机以外的连接，Voltip 不连任何服务。升级的方式轮流为：Voltip 运行时直接运行安装包（`/S /UPDATE /R`，安装包结束 Voltip）；按应用内更新的做法（tauri-plugin-updater 启动 `/S /UPDATE /R /ARGS <参数>` 后立即结束程序）；同样做法但 0.2.1 以 `--start-hidden` 启动，升级后先读隐藏的窗口（确认没有显示窗口），再由第二次启动打开主窗口读一遍。这个分支的版本号还是 0.2.1（0.3.0 的发版 PR 没有合并），所以从 0.2.1 升级也是同一版本号的两个构建之间的升级，与用户从一个 0.3.0 候选版升级到另一个相同。每次升级之后还在真实程序的主窗口上检查 §33.4：调试协议在文档创建时把入口脚本改成程序不带的路径，再重新加载，数窗口经过的文档；0.2.1 的第一次启动上做同样的检查作为对照。
+**复现**（CI `windows-native`，按需 `-f upgrade_probe=true`，`scripts/windows-upgrade-probe.ps1` 与 `scripts/webview-probe.mjs`）：windows-2025 上每一轮从没有 Voltip、没有数据和 WebView2 配置开始，静默安装 GitHub 发布的 0.2.1（核对 `SHA256SUMS`），写好设置（中继指向本机的 `voltip-relay`、不自动更新）后启动两次，再用这个构建的安装包升级，之后同一个安装包再装一次（同版本）。每次升级之后经 WebView2 的调试端口读每个窗口：文档加载的入口脚本是否在安装的程序里，文档是否早于进程，主窗口的中继卡片是否在 30 秒内显示已连接，词典页有没有「学习建议」标签。调试端口由本机级策略 `HKLM\SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments` 打开（runner 以管理员运行，WebView2 忽略用户级策略和 `WEBVIEW2_*` 环境变量）；防火墙规则挡住 Voltip 到本机以外的连接，Voltip 不连任何服务。升级的方式轮流为：Voltip 运行时直接运行安装包（`/S /UPDATE /R`，安装包结束 Voltip）；按应用内更新的做法（tauri-plugin-updater 启动 `/S /UPDATE /R /ARGS <参数>` 后立即结束程序）；同样做法但 0.2.1 以 `--start-hidden` 启动，升级后先读隐藏的窗口（确认没有显示窗口），再由第二次启动打开主窗口读一遍。这个分支的版本号还是 0.2.1（0.3.0 的发版 PR 没有合并），所以从 0.2.1 升级也是同一版本号的两个构建之间的升级，与用户从一个 0.3.0 候选版升级到另一个相同。每次升级之后还在真实程序的主窗口上检查 §33.4（§33.6 的三种模拟），0.2.1 的第一次启动上做同样的模拟作为对照。
 
 合计：修复前 3 轮 6 次升级，修复后 27 轮 54 次升级，界面检查 27 次，都没有复现。
 
@@ -3042,18 +3042,24 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 | 41406841691 | `b78e5686` | 9 轮，18 次升级：48 次读窗口都运行程序自带的 `/assets/index-t6n1uXfB.js`，文档比进程晚 407–2303 ms；主窗口 24 次读到中继已连接、词典页有「学习建议」；界面检查与对照同上。`--start-hidden` 那 3 轮判为失败（6 处）：判断用的是 .NET 的 `MainWindowHandle`，而单实例插件的窗口和 tao 的事件窗口也是「可见」的顶层窗口，主窗口隐藏时它也不为空。没有复现 |
 | 41409396380 | `7aa7fd7c` | 9 轮，18 次升级：48 次读窗口都运行程序自带的 `/assets/index-t6n1uXfB.js`，文档比进程晚 284–916 ms；主窗口 24 次读到中继已连接、词典页有「学习建议」。按标题找主窗口（`Voltip`）：`--start-hidden` 的 3 轮升级后与同版本重装后主窗口都没有显示（6 次），第二次启动后显示；其余 12 次升级后主窗口显示。界面检查 9 次、0.2.1 上的对照 9 次，结果同上。Voltip 到本机以外的连接 0 个。没有复现 |
 
-### 33.4 保护：窗口运行的界面代码不是程序自带的时重新加载一次
+### 33.4 保护：窗口运行的界面代码不是程序自带的时换一次文档
 
-`apps/desktop/src-tauri/src/ui_guard.rs` 与 `ui_guard.js`：一个 Tauri 插件，给每个窗口的文档在创建时（主框架的初始化脚本）注入程序自带的脚本路径（程序资源里所有 `.js`、`.mjs`，即这个构建实际提供的脚本）。文档解析完（`DOMContentLoaded`）时，`<script type="module" src>` 中有任何一个解析出的路径不在其中，窗口就 `location.reload()`；会话存储里的 `voltip.ui-guard.reloaded` 记下这一次，重新加载后仍是程序不带的代码时窗口保持原样，只在控制台说明，不再循环；之后运行程序自带代码的文档清掉这个记号。只检查程序自己的页面（`tauri://localhost`、`tauri.localhost`），开发构建（`tauri::is_dev()`，界面来自 Vite）和不带脚本的程序（测试的模拟上下文）不检查；没有会话存储时只在控制台说明。用户能看到的只是这种情况下窗口打开后马上重新加载一次。只在电脑端：手机端（RN）的界面打包在安装包里，Tauri 版手机端已不发布。
+`apps/desktop/src-tauri/src/ui_guard.rs` 与 `ui_guard.js`：一个 Tauri 插件，给每个窗口的文档在创建时（主框架的初始化脚本）注入程序自带的东西：程序资源里所有 `.js`、`.mjs` 的路径，以及这些脚本声明的构建号。每次 `vite build` 给界面起一个新的构建号（`apps/desktop/vite.config.ts` 的 `__VOLTIP_UI_BUILD__`：`voltip-ui-build-` 加 32 位十六进制，随机生成），打进脚本里；界面运行时最先把它放到 `window.voltipUiBuild`（`apps/desktop/src/ui-build.ts`，`main.tsx` 的第一个导入）。文档解析完（`DOMContentLoaded`，这时模块脚本已经执行）时，模块脚本里有路径不在程序资源中，或界面声明的构建号不是程序脚本里的那个（同一路径的另一个构建、没有声明构建号的旧界面都算），这个窗口运行的就是别的构建的界面：
+
+- 窗口用 `location.replace` 换成同一地址加上 `voltip-ui-reload=<时间>` 的文档。这是这个窗口从没请求过的地址，任何缓存都答不了，文档由程序提供；新文档在界面读地址之前去掉这个参数（`history.replaceState`，路由、哈希和其他参数不变）。不依赖会话存储。
+- 换过一次的文档如果仍是别的代码（程序自己的文档引用了它不带的脚本，或同一路径给出了别的构建），窗口换成 `about:blank`，不让旧界面继续运行，控制台说明原因；这时退出并重新打开 Voltip。
+
+只检查程序自己的页面（`tauri://localhost`、`tauri.localhost`）；开发构建（`tauri::is_dev()`，界面来自 Vite）和不带脚本的程序（测试的模拟上下文）不检查；程序的脚本没有声明构建号时只比较路径。用户能看到的只是这种情况下窗口打开后马上重新加载一次。只在电脑端：手机端（RN）的界面打包在安装包里，Tauri 版手机端已不发布。
 
 ### 33.5 限制
 
-- 不知道用户电脑上的词典页为什么缺「学习建议」：托管 Windows 上的升级都没有出现（§33.3），用户电脑上前后两个候选版的入口脚本相同。§33.4 只针对「文档运行了程序不带的脚本」这一种情况；脚本相同而界面不对时它看不出来。
+- 不知道用户电脑上的词典页为什么缺「学习建议」：托管 Windows 上的升级都没有出现（§33.3），用户电脑上前后两个候选版的入口脚本相同。§33.4 比较的是窗口运行的脚本路径和界面声明的构建号；两者都是程序的、界面却不对时（原因不在界面代码），它看不出来。
 - 重新加载发生在旧文档的脚本已经运行之后（模块脚本在 `DOMContentLoaded` 之前执行），旧界面会短暂出现，并可能在这期间发出它那一版的命令（新版本不认识的格式由桥拒绝）。
-- 重新加载只做一次。Voltip 的日志只写到 stderr，检查的说明只在窗口的控制台里（WebView2 的调试工具可以看到）。
+- 换文档只做一次；换过之后仍不对时窗口是空白的，要退出并重新打开 Voltip。Voltip 的日志只写到 stderr，检查的说明只在窗口的控制台里（WebView2 的调试工具可以看到）。
+- 构建号每次构建随机生成：同一份源码构建两次，构建号不同。程序比较的是它自己带的那份，所以只影响一个窗口运行另一次构建的界面时（会换一次文档）。
 - 状态同步的修复不改变事件的内容和协议：窗口收到的事件与之前相同，只是不再丢失或乱序；落后时多一个整块的 `state`。
 
 ### 33.6 门禁
 
 - 状态同步（修复前在本地失败，修复后通过）：`packages/shared/src/tauri-backend.test.ts` 的 `regression: core_state is asked for only once every event listener is live`（修复前 `core_state` 在监听生效前就被调用）；`packages/ui/src/backend/BackendProvider.test.tsx` 的 `regression: the relay a window shows once the relay is up` 一组（窗口在中继连上之前、监听生效之前、第一次状态在路上时、之后打开，以及之后又来一个整块状态；修复前两种情形停在 `authenticating`）；`apps/mobile-rn/src/backend/BackendProvider.test.tsx`（第一次状态在路上时到达的变化，修复前丢失；中继连上之前和之后打开）；`crates/voltip-core/tests/ui_events.rs`（壳不读时核心先发 2000 个设置变化再连上真实的本地中继：修复前只收到 493 个设置事件，中继停在 `Disconnected`）；`crates/voltip-transport/tests/link.rs` 的 `regression_a_state_change_while_the_owner_is_behind_waits_for_room`（修复前「重新连接」的状态报告丢失，测试超时）；`crates/voltip-tauri-bridge/tests/forward.rs`（落后的窗口与没能送到的事件之后都收到整块状态，修复前都失败）；`crates/voltip-tauri-bridge/src/lib.rs` 的 `regression_a_shell_event_never_passes_the_whole_state_on_its_way_to_the_windows`（2 万个整块状态与 2 万个硬件事件同时折叠：修复前 679 个整块状态晚于窗口已有的硬件值到达）。涉及线程与计时的四个（`ui_events.rs`、`link.rs` 的回归测试、`forward.rs`、事件顺序）在 32 个忙循环占满全部逻辑核时各运行 200 次，全部通过。
-- 界面检查：`apps/desktop/src/ui-guard.test.ts` 在测试的文档上运行 `ui_guard.js` 原文（程序自带的入口不重新加载、程序不带的重新加载一次且不循环、解析中的文档等解析完、相对路径与两种协议、编码的路径、别的页面和空白页、没有会话存储）；去掉 `location.reload()` 时其中 4 个失败。`ui_guard.rs` 的单元测试（从资源路径得出脚本列表、占位符只出现一次、没有脚本时不检查）。托管 Windows 上的 §33.3 每次升级后在真实程序上检查：调试协议让文档引用程序不带的入口，窗口经过两个文档（自己的重新加载和检查的那一次）后停住并留下记号，改回自己的入口后经过一个文档并清掉记号；0.2.1 做同样的检查只经过一个文档（它没有这项检查）。
+- 界面检查：`apps/desktop/src/ui-guard.test.ts` 在测试的文档上运行 `ui_guard.js` 原文：程序自带的界面不动；程序不带的脚本、同一路径的另一个构建、没有声明构建号的旧界面都换一次文档，新地址带唯一的参数、保留路由和其他参数；换过的文档去掉参数、留在程序的界面上；换过之后仍是别的代码时清空为 `about:blank`；解析中的文档等解析完；相对路径、两种协议、编码的路径；别的页面和空白页不动。换成没有任何检查的脚本（与基线相同）或第一版检查（只比较路径、用会话存储记一次、`location.reload`）时，9 个测试中 7 个失败。`apps/desktop/src/ui-build.test.ts`（界面声明构建号）；`ui_guard.rs` 的单元测试（脚本列表、从脚本里读出构建号、两个占位符、没有脚本时不检查）。托管 Windows 上 §33.3 的每轮在真实程序上用调试协议模拟三种情况：第一个文档引用程序不带的入口、第一个文档声明另一个构建（同一路径）、每个文档都引用程序不带的入口；前两种各经过两个文档后停在程序的界面上，第三种经过三个文档后是 `about:blank`，回到原地址后运行程序的界面；0.2.1 做同样的模拟都只经过一个文档（它没有检查）。每次读窗口还核对窗口声明的构建号是程序的。
