@@ -1269,6 +1269,41 @@ export const en: Messages = {
         undo: "Undo: {heard} → {polished}",
         details: "Details: {heard} → {polished}",
       },
+      filter: { label: "Show", repeated: "Seen twice or more", all: "All" },
+      select: { all: "Select all", row: "Select: {heard} → {polished}" },
+      selection: {
+        count: "{n} selected",
+        acceptLabel: {
+          one: "Add the selected pair to the dictionary",
+          other: "Add the {n} selected pairs to the dictionary",
+        },
+        ignoreLabel: { one: "Ignore the selected pair", other: "Ignore the {n} selected pairs" },
+        clear: "Clear selection",
+      },
+      ignoreAll: "Ignore all ({n})",
+      batch: {
+        accepted: {
+          one: "Added 1 pair to the dictionary.",
+          other: "Added {n} pairs to the dictionary.",
+        },
+        acceptedSome: {
+          one: "Added 1 pair to the dictionary; {refused} could not be added, see their rows.",
+          other: "Added {n} pairs to the dictionary; {refused} could not be added, see their rows.",
+        },
+        refused: {
+          one: "The selected pair could not be added to the dictionary; the reason is under its row.",
+          other:
+            "None of the {n} selected pairs could be added to the dictionary; the reasons are under their rows.",
+        },
+        ignored: { one: "Ignored 1 pair.", other: "Ignored {n} pairs." },
+        undo: "Undo: {what}",
+        undoFailed: {
+          expired: "Cannot undo: the undo is no longer available.",
+          gone: "Cannot undo: the entry “{term}” was deleted.",
+          changed: "Cannot undo: the entry “{term}” was changed.",
+          failed: "Cannot undo: {message}",
+        },
+      },
       examples: "In the recognised text",
       willCreate: "Creates the entry “{term}”, heard as “{heard}”.",
       willAdd: "Adds “{heard}” to the heard-as forms of “{term}” ({n} now).",
@@ -1318,6 +1353,12 @@ export const en: Messages = {
           one: "The last polished entry has nothing new for the dictionary.",
           other: "The last {n} polished entries have nothing new for the dictionary.",
         },
+        noneRepeatedTitle: "No pair was seen twice or more",
+        noneRepeated: {
+          one: "1 more pair was seen once.",
+          other: "{n} more pairs were seen once.",
+        },
+        showAll: "Show all",
       },
       footer: {
         one: "The last entry · {refined} polished",
@@ -1325,6 +1366,11 @@ export const en: Messages = {
       },
       skipped: "{n} too long to compare",
       more: "Showing the first {shown} of {total}",
+      shown: { one: "Showing 1 pair", other: "Showing {n} pairs" },
+      hiddenOnce: {
+        one: "1 pair seen once is hidden",
+        other: "{n} pairs seen once are hidden",
+      },
       ignoredList: {
         title: "Ignored ({n})",
         table: "Ignored",

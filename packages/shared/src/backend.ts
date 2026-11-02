@@ -36,7 +36,12 @@ import type {
   SegmentText,
   RuleWarning,
   SuggestionAcceptArgs,
+  SuggestionPair,
+  SuggestionPick,
   SuggestionsAnswer,
+  BatchAcceptOutcome,
+  BatchIgnoreOutcome,
+  BatchUndoOutcome,
   UndoOutcome,
   PermissionReport,
   GuidePage,
@@ -135,6 +140,15 @@ export interface Backend {
   vocabularySuggestionAccept(args: SuggestionAcceptArgs): Promise<AcceptOutcome>;
   /** 撤销 of an accepted suggestion (`vocabulary_suggestion_undo`), by the undo's `id`. */
   vocabularySuggestionUndo(id: string): Promise<UndoOutcome>;
+  /** 加入词典 for 1–`MAX_SUGGESTION_BATCH` suggestions at once (`vocabulary_suggestions_accept`):
+   *  in order, picks with one right spelling into one entry, with one write; resolves with what
+   *  became of each pick and what 撤销 sends back. Rejects, nothing changed, when a pair is not one. */
+  vocabularySuggestionsAccept(pairs: SuggestionPick[]): Promise<BatchAcceptOutcome>;
+  /** 忽略 for 1–`MAX_SUGGESTION_BATCH` suggestions at once (`vocabulary_suggestions_ignore`), with
+   *  one write; resolves with what 撤销 sends back, or why nothing changed. */
+  vocabularySuggestionsIgnore(pairs: SuggestionPair[]): Promise<BatchIgnoreOutcome>;
+  /** 撤销 of a batch (`vocabulary_suggestions_undo`), by its undo id. */
+  vocabularySuggestionsUndo(id: string): Promise<BatchUndoOutcome>;
   /** The rules page's hints (`rules_warnings`, §16.10): duplicate rules, rules that turn each
    *  other back, rules that undo a dictionary entry. */
   rulesWarnings(): Promise<RuleWarning[]>;

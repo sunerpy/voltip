@@ -1044,6 +1044,66 @@ fn learning_suggestions_run_through_the_command_layer() {
     });
 }
 
+/// docs/dictation.md §16.10, batches through the command layer: the answer counts the suggestions
+/// seen twice or more; a batch 加入词典 answers for each pair in order and with what 撤销 sends
+/// back; a batch 忽略 likewise; 撤销 of each puts the lists back, once; an empty batch, a pair that
+/// is not one and an id that is not a UUID are the command's error.
+#[test]
+fn batches_of_suggestions_run_through_the_command_layer() {
+    let refiner = Arc::new(fakes::FakeRefiner::ok("你好，World"));
+    let ports = fakes::ports_with(
+        Arc::new(fakes::FakeAudio::speech()),
+        Arc::new(fakes::FakeTranscriber::ok(fakes::FAKE_TRANSCRIPT)),
+        Some(refiner),
+        Arc::new(fakes::FakeInjector::paste()),
+    );
+    with_running_app_on(ports, |_, webview, _| {
+        wait_state(webview, |s| s.identity.is_some());
+        assert_eq!(invoke(webview, "dictation_start", json!({})), Ok(Value::Null));
+        wait_state(webview, |s| matches!(s.dictation.phase, DictationPhase::Listening { .. }));
+        assert_eq!(invoke(webview, "dictation_stop", json!({})), Ok(Value::Null));
+        let take = wait_state(webview, |s| s.history_recent.len() == 1).history_recent[0].clone();
+        let answer = invoke(webview, "vocabulary_suggestions", json!({})).unwrap();
+        assert_eq!((answer["total"].as_u64(), answer["repeated"].as_u64()), (Some(1), Some(0)), "seen once: {answer}");
+
+        let pair = json!({ "heard": "世界", "polished": "World", "history_id": take.id });
+        let accepted = invoke(webview, "vocabulary_suggestions_accept", json!({ "pairs": [pair, pair] })).unwrap();
+        let items = accepted["items"].as_array().cloned().unwrap_or_default();
+        assert_eq!(
+            items.iter().map(|i| i["kind"].as_str().unwrap_or_default()).collect::<Vec<_>>(),
+            ["accepted", "refused"],
+            "the second finds the pair there: {accepted}"
+        );
+        assert_eq!((items[0]["term"].as_str(), items[0]["created"].as_bool()), (Some("World"), Some(true)));
+        assert_eq!(items[1]["refusal"]["clash"].as_str(), Some("heard_taken"));
+        let st = wait_state(webview, |s| s.dictionary.len() == 1);
+        assert_eq!(items[0]["entry_id"], st.dictionary[0].id.to_string());
+        let undo = accepted["undo"].clone();
+        assert_eq!(invoke(webview, "vocabulary_suggestions_undo", json!({ "id": undo })), Ok(json!({ "kind": "undone" })));
+        wait_state(webview, |s| s.dictionary.is_empty());
+        assert_eq!(invoke(webview, "vocabulary_suggestions_undo", json!({ "id": undo })), Ok(json!({ "kind": "expired" })));
+
+        let ignored = invoke(webview, "vocabulary_suggestions_ignore", json!({ "pairs": [{ "heard": "世界", "polished": "World" }] })).unwrap();
+        assert_eq!(ignored["kind"].as_str(), Some("ignored"), "{ignored}");
+        wait_state(webview, |s| s.vocabulary_ignored.len() == 1);
+        assert_eq!(invoke(webview, "vocabulary_suggestions", json!({})).unwrap()["total"], 0);
+        assert_eq!(invoke(webview, "vocabulary_suggestions_undo", json!({ "id": ignored["undo"] })), Ok(json!({ "kind": "undone" })));
+        wait_state(webview, |s| s.vocabulary_ignored.is_empty());
+        assert_eq!(invoke(webview, "vocabulary_suggestions", json!({})).unwrap()["total"], 1);
+
+        let err = invoke(webview, "vocabulary_suggestions_accept", json!({ "pairs": [] })).unwrap_err();
+        assert!(err.as_str().unwrap().starts_with("vocabulary_suggestions_accept: pairs 1–200"), "{err}");
+        let err = invoke(webview, "vocabulary_suggestions_ignore", json!({ "pairs": [] })).unwrap_err();
+        assert!(err.as_str().unwrap().starts_with("vocabulary_suggestions_ignore: pairs 1–200"), "{err}");
+        let err = invoke(webview, "vocabulary_suggestions_ignore", json!({ "pairs": [{ "heard": "同", "polished": "同" }] })).unwrap_err();
+        assert!(err.as_str().unwrap().contains("前后相同"), "{err}");
+        assert!(
+            invoke(webview, "vocabulary_suggestions_accept", json!({ "pairs": [{ "heard": "世界", "polished": "World", "history_id": "nope" }] })).is_err()
+        );
+        assert!(invoke(webview, "vocabulary_suggestions_undo", json!({ "id": "nope" })).is_err(), "the id is a UUID");
+    });
+}
+
 /// Scenes and context (docs/dictation.md §18) through the command layer: a draft wrong on its own
 /// is the command's error, a name clash an `error` event; the list rides on `scenes` events and
 /// `core_state`; the context switch persists; a take on the fakes with a probe carries the scene on
@@ -1730,6 +1790,9 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
             "vocabulary_suggestions",
             "vocabulary_suggestion_accept",
             "vocabulary_suggestion_undo",
+            "vocabulary_suggestions_accept",
+            "vocabulary_suggestions_ignore",
+            "vocabulary_suggestions_undo",
             "rules_warnings",
             "recent_apps",
             "history_query",

@@ -579,6 +579,30 @@ pub enum CoreCommand {
         /// What the polished text has instead.
         polished: String,
     },
+    /// Add several learning suggestions to the dictionary at once (docs/dictation.md §16.10): in
+    /// order, with one write and one new list; `reply` gets what became of each pick and what
+    /// 撤销 needs.
+    SuggestionsAccept {
+        /// The picks, in the order the page lists them.
+        picks: Vec<crate::vocabulary::SuggestionPick>,
+        /// Where the answer goes.
+        reply: crate::vocabulary::Reply<crate::vocabulary::BatchAcceptOutcome>,
+    },
+    /// Leave several pairs out of the learning suggestions at once (忽略), with one write.
+    SuggestionsIgnore {
+        /// The pairs.
+        pairs: Vec<crate::vocabulary::SuggestionPair>,
+        /// Where the answer goes.
+        reply: crate::vocabulary::Reply<crate::vocabulary::BatchIgnoreOutcome>,
+    },
+    /// Take a batch back (撤销): the entries it made or added to, while they are as it left them,
+    /// or the pairs it ignored.
+    SuggestionsUndo {
+        /// The batch (`BatchAcceptOutcome::undo`, `BatchIgnoreOutcome::Ignored::undo`).
+        id: Uuid,
+        /// Where the answer goes.
+        reply: crate::vocabulary::Reply<crate::vocabulary::BatchUndoOutcome>,
+    },
     /// Append a replacement rule.
     RuleAdd(RuleDraft),
     /// Replace a rule (id and position stay).
@@ -1041,6 +1065,7 @@ impl AppCore {
             rules,
             ignored,
             suggestion_undos: crate::vocabulary::UndoLog::default(),
+            suggestion_batches: crate::vocabulary::BatchLog::default(),
             scenes,
             presets,
             startup_notices: [dictionary_notice, rules_notice, ignored_notice, scenes_notice, presets_notice, proxy_notice, mcp_notice]
@@ -1294,6 +1319,8 @@ struct Runtime {
     ignored: crate::vocabulary::IgnoreStore,
     /// The accepted suggestions 撤销 can still take back, in memory only.
     suggestion_undos: crate::vocabulary::UndoLog,
+    /// The batches of suggestions 撤销 can still take back, in memory only.
+    suggestion_batches: crate::vocabulary::BatchLog,
     /// `scenes.json` (docs/dictation.md §18).
     scenes: SceneStore,
     presets: PresetStore,
@@ -1758,6 +1785,18 @@ impl Runtime {
             CoreCommand::SuggestionUnignore { heard, polished } => {
                 let result = self.ignored.remove(&heard, &polished);
                 self.ignored_changed(result)
+            }
+            CoreCommand::SuggestionsAccept { picks, reply } => {
+                reply.send(self.accept_suggestions(&picks));
+                Ok(())
+            }
+            CoreCommand::SuggestionsIgnore { pairs, reply } => {
+                reply.send(self.ignore_suggestions(&pairs));
+                Ok(())
+            }
+            CoreCommand::SuggestionsUndo { id, reply } => {
+                reply.send(self.undo_suggestions(id));
+                Ok(())
             }
             CoreCommand::RuleAdd(draft) => {
                 let result = self.rules.add(&draft, now_ms()).map(drop);
@@ -2636,6 +2675,61 @@ impl Runtime {
         result?;
         self.emit(CoreEvent::VocabularyIgnored(self.ignored.list().to_vec()));
         Ok(())
+    }
+
+    /// A batch 加入词典 (docs/dictation.md §16.10): one write and one new list for the whole batch,
+    /// remembered for 撤销 when anything went in.
+    fn accept_suggestions(&mut self, picks: &[crate::vocabulary::SuggestionPick]) -> crate::vocabulary::BatchAcceptOutcome {
+        use crate::vocabulary::{Batch, BatchAcceptOutcome};
+        let batch = crate::vocabulary::accept_batch(&mut self.dictionary, self.rules.rules(), picks, now_ms());
+        if batch.changes.is_empty() {
+            return BatchAcceptOutcome { items: batch.items, undo: None };
+        }
+        let undo = self.suggestion_batches.push(Batch::Accepted(batch.changes));
+        self.emit(CoreEvent::Dictionary(self.dictionary.entries().to_vec()));
+        self.recompile_vocabulary();
+        BatchAcceptOutcome { items: batch.items, undo: Some(undo) }
+    }
+
+    /// A batch 忽略: one write and one new ignored list, remembered for 撤销.
+    fn ignore_suggestions(&mut self, pairs: &[crate::vocabulary::SuggestionPair]) -> crate::vocabulary::BatchIgnoreOutcome {
+        use crate::vocabulary::{Batch, BatchIgnoreOutcome};
+        match self.ignored.add_batch(pairs, now_ms()) {
+            Ok(batch) => {
+                if batch.added > 0 {
+                    self.emit(CoreEvent::VocabularyIgnored(self.ignored.list().to_vec()));
+                }
+                BatchIgnoreOutcome::Ignored { undo: self.suggestion_batches.push(Batch::Ignored(batch)) }
+            }
+            Err(e) => BatchIgnoreOutcome::Failed { message: e.to_string() },
+        }
+    }
+
+    /// 撤销 of a batch: once; a batch 加入词典 only while its entries are as it left it.
+    fn undo_suggestions(&mut self, id: Uuid) -> crate::vocabulary::BatchUndoOutcome {
+        use crate::vocabulary::{Batch, BatchUndoOutcome};
+        match self.suggestion_batches.take(id) {
+            None => BatchUndoOutcome::Expired,
+            Some(Batch::Accepted(changes)) => {
+                let outcome = crate::vocabulary::undo_batch(&mut self.dictionary, &changes);
+                if outcome == BatchUndoOutcome::Undone && !changes.is_empty() {
+                    self.emit(CoreEvent::Dictionary(self.dictionary.entries().to_vec()));
+                    self.recompile_vocabulary();
+                }
+                outcome
+            }
+            Some(Batch::Ignored(batch)) => match self.ignored.remove_batch(&batch) {
+                Ok(Some(changed)) => {
+                    if changed {
+                        self.emit(CoreEvent::VocabularyIgnored(self.ignored.list().to_vec()));
+                    }
+                    BatchUndoOutcome::Undone
+                }
+                // Too old for the ignored list's journal ([`crate::vocabulary::IgnoreStore`]).
+                Ok(None) => BatchUndoOutcome::Expired,
+                Err(e) => BatchUndoOutcome::Failed { message: e.to_string() },
+            },
+        }
     }
 
     // ---------------- scenes (docs/dictation.md §18) ----------------

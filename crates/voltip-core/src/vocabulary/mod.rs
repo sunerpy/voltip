@@ -25,13 +25,14 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 pub use backtest::{BACKTEST_LIMIT, BACKTEST_SNIPPET_CHARS, Backtest, BacktestDraft, BacktestExample, MAX_BACKTEST_EXAMPLES, MAX_BACKTEST_LIMIT, backtest};
-pub use ignored::{IGNORED_FILE_NAME, IGNORED_SCHEMA, IgnoreStore, IgnoredPair, MAX_IGNORED, validate_pair};
+pub use ignored::{IGNORED_FILE_NAME, IGNORED_SCHEMA, IgnoreStore, IgnoredBatch, IgnoredPair, MAX_IGNORED, validate_pair};
 use matcher::LiteralMatcher;
 pub use matcher::is_word_char;
 pub use store::{DICTIONARY_FILE_NAME, DictionaryStore, RULES_FILE_NAME, RuleStore, VOCABULARY_SCHEMA};
 pub use suggest::{
-    AcceptOutcome, Accepted, EntryClash, MAX_SUGGESTIONS, MAX_UNDOS, Refusal, Reply, Suggestion, SuggestionUndo, Suggestions, SuggestionsAnswer, UndoLog,
-    UndoOutcome, accept, suggestions, undo,
+    AcceptOutcome, Accepted, AcceptedBatch, Batch, BatchAcceptOutcome, BatchIgnoreOutcome, BatchItem, BatchLog, BatchUndoOutcome, EntryClash, MAX_BATCH,
+    MAX_SUGGESTIONS, MAX_UNDOS, REPEATED_MIN, Refusal, Reply, Suggestion, SuggestionPair, SuggestionPick, SuggestionUndo, Suggestions, SuggestionsAnswer,
+    UndoLog, UndoOutcome, accept, accept_batch, suggestions, undo, undo_batch,
 };
 pub use toml_io::{RULES_TOML_VERSION, export_rules_toml, parse_rules_toml};
 

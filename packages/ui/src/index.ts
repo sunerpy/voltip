@@ -11,6 +11,7 @@ export * from "./components/Card";
 export * from "./components/Panel";
 export * from "./components/Badge";
 export * from "./components/Chip";
+export * from "./components/Checkbox";
 export * from "./components/Button";
 export * from "./components/ConnectivityCheck";
 export * from "./components/IconButton";

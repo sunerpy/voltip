@@ -25,7 +25,8 @@ use voltip_core::presets::{MAX_PRESET_TRY_CHARS, PresetDraft, PresetId, PresetTr
 use voltip_core::scenes::{MAX_RECENT_APPS, validate_scene_draft_with};
 use voltip_core::ui::{UiEvent, UiState};
 use voltip_core::vocabulary::{
-    AcceptOutcome, MAX_SUGGESTIONS, Reply, RuleWarning, Suggestions, SuggestionsAnswer, UndoOutcome, rule_warnings, suggestions, validate_pair,
+    AcceptOutcome, BatchAcceptOutcome, BatchIgnoreOutcome, BatchUndoOutcome, MAX_BATCH, MAX_SUGGESTIONS, Reply, RuleWarning, SuggestionPair, SuggestionPick,
+    Suggestions, SuggestionsAnswer, UndoOutcome, rule_warnings, suggestions, validate_pair,
 };
 use voltip_core::vocabulary::{BACKTEST_LIMIT, Backtest, BacktestDraft, MAX_BACKTEST_LIMIT, backtest};
 use voltip_core::vocabulary::{export_rules_toml, parse_rules_toml, preview, validate_dictionary_draft, validate_rule_draft};
@@ -790,6 +791,11 @@ impl UiCommand {
     }
 }
 
+/// A batch of learning suggestions holds 1–[`MAX_BATCH`] pairs (docs/dictation.md §16.10).
+fn batch_size(command: &str, len: usize) -> Result<(), BridgeError> {
+    if (1..=MAX_BATCH).contains(&len) { Ok(()) } else { Err(BridgeError::BadArgument(format!("{command}: pairs 1–{MAX_BATCH}"))) }
+}
+
 fn bad(e: voltip_core::VocabularyError) -> BridgeError {
     BridgeError::BadArgument(e.to_string())
 }
@@ -1159,6 +1165,42 @@ impl Bridge {
     pub async fn vocabulary_suggestion_undo(&self, id: Uuid, within: Duration) -> Result<UndoOutcome, BridgeError> {
         let (reply, answer) = Reply::channel();
         self.handle.send(CoreCommand::SuggestionUndo { id, reply }).await?;
+        Self::answer(answer, within).await
+    }
+
+    /// `vocabulary_suggestions_accept` (docs/dictation.md §16.10): add 1–[`MAX_BATCH`] suggestions
+    /// to the dictionary at once, in order, and wait at most `within` for the core's answer. A batch
+    /// with a pair that is not one is refused here, whole.
+    pub async fn vocabulary_suggestions_accept(&self, picks: Vec<SuggestionPick>, within: Duration) -> Result<BatchAcceptOutcome, BridgeError> {
+        batch_size("vocabulary_suggestions_accept", picks.len())?;
+        let picks = picks
+            .into_iter()
+            .map(|p| validate_pair(&p.heard, &p.polished).map(|(heard, polished)| SuggestionPick { heard, polished, history_id: p.history_id }))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(bad)?;
+        let (reply, answer) = Reply::channel();
+        self.handle.send(CoreCommand::SuggestionsAccept { picks, reply }).await?;
+        Self::answer(answer, within).await
+    }
+
+    /// `vocabulary_suggestions_ignore`: leave 1–[`MAX_BATCH`] pairs out of the suggestions at once,
+    /// waiting at most `within`. A batch with a pair that is not one is refused here, whole.
+    pub async fn vocabulary_suggestions_ignore(&self, pairs: Vec<SuggestionPair>, within: Duration) -> Result<BatchIgnoreOutcome, BridgeError> {
+        batch_size("vocabulary_suggestions_ignore", pairs.len())?;
+        let pairs = pairs
+            .into_iter()
+            .map(|p| validate_pair(&p.heard, &p.polished).map(|(heard, polished)| SuggestionPair { heard, polished }))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(bad)?;
+        let (reply, answer) = Reply::channel();
+        self.handle.send(CoreCommand::SuggestionsIgnore { pairs, reply }).await?;
+        Self::answer(answer, within).await
+    }
+
+    /// `vocabulary_suggestions_undo`: take the batch `id` names back, waiting at most `within`.
+    pub async fn vocabulary_suggestions_undo(&self, id: Uuid, within: Duration) -> Result<BatchUndoOutcome, BridgeError> {
+        let (reply, answer) = Reply::channel();
+        self.handle.send(CoreCommand::SuggestionsUndo { id, reply }).await?;
         Self::answer(answer, within).await
     }
 
@@ -1964,6 +2006,91 @@ mod tests {
         bridge.dispatch(UiCommand::SettingsSetHistory { enabled: false, keep: voltip_core::HistorySettings::default().keep }).unwrap();
         until(&bridge, &mut rx, |s| !s.settings.history.enabled).await;
         assert_eq!(bridge.vocabulary_suggestions(None).unwrap(), SuggestionsAnswer::HistoryOff);
+        bridge.shutdown();
+    }
+
+    /// docs/dictation.md §16.10, batches: the answer counts the suggestions seen twice or more; a
+    /// batch 加入词典 and a batch 忽略 go through the core and answer, the cached suggestions follow
+    /// both and their 撤销; a batch is 1–[`MAX_BATCH`] pairs, each a pair, or it is refused here.
+    #[tokio::test]
+    async fn batches_of_suggestions_follow_the_lists() {
+        use voltip_core::vocabulary::{BatchIgnoreOutcome, BatchItem, BatchUndoOutcome, MAX_BATCH, SuggestionPair, SuggestionPick, SuggestionsAnswer};
+        async fn until(bridge: &Bridge, rx: &mut broadcast::Receiver<UiEvent>, done: impl Fn(&UiState) -> bool) {
+            for _ in 0..60 {
+                if done(&bridge.state()) {
+                    return;
+                }
+                let _ = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await;
+            }
+            panic!("the state never got there");
+        }
+        let dir = tempfile::tempdir().unwrap();
+        voltip_core::SettingsStore::new(dir.path())
+            .save(&voltip_core::Settings { relay_enabled: false, engines: voltip_core::dictation::fakes::fake_engines(), ..Default::default() })
+            .unwrap();
+        let takes =
+            [("发到非书群", "发到飞书群。"), ("又是非书", "又是飞书。"), ("用维他命测了一下", "用 Voltip 测了一下。"), ("库伯内特斯部署", "Kubernetes 部署")];
+        let ids: Vec<Uuid> = takes.iter().map(|_| Uuid::new_v4()).collect();
+        {
+            let mut store = voltip_core::history::HistoryStore::open(dir.path());
+            for (i, (raw, text)) in takes.iter().enumerate().rev() {
+                let entry: HistoryEntry = serde_json::from_value(serde_json::json!({
+                    "id": ids[i], "at_ms": 1_758_700_000_000_u64 - i as u64, "raw_text": raw, "text": text, "refined": true,
+                    "asr_model": "fake", "duration_ms": 1000, "asr_ms": 100, "outcome": { "kind": "inserted", "via": "paste" },
+                }))
+                .unwrap();
+                store.push(entry, voltip_core::history::MAX_ENTRIES).unwrap();
+            }
+        }
+        let bridge = Bridge::start(CoreConfig::new(dir.path().to_path_buf()), Arc::new(MemorySecretStore::new())).unwrap();
+        let mut rx = bridge.events();
+        until(&bridge, &mut rx, |s| s.identity.is_some() && s.history_total == 4).await;
+        let ready = |bridge: &Bridge| match bridge.vocabulary_suggestions(None).unwrap() {
+            SuggestionsAnswer::Ready(s) => s,
+            other => panic!("{other:?}"),
+        };
+        let heard = |bridge: &Bridge| ready(bridge).pairs.into_iter().map(|p| p.heard).collect::<Vec<_>>();
+        let first = ready(&bridge);
+        assert_eq!((first.total, first.repeated), (3, 1), "非 → 飞 twice, the other two once");
+        assert_eq!(heard(&bridge), ["非", "维他命", "库伯内特斯"]);
+
+        let wait = Duration::from_secs(20);
+        let pick = |heard: &str, polished: &str, at: usize| SuggestionPick { heard: heard.into(), polished: polished.into(), history_id: ids[at] };
+        let accepted = bridge.vocabulary_suggestions_accept(vec![pick("维他命", "Voltip", 2), pick(" 库伯内特斯 ", "Kubernetes", 3)], wait).await.unwrap();
+        assert!(accepted.items.iter().all(|i| matches!(i, BatchItem::Accepted { created: true, .. })), "{accepted:?}");
+        until(&bridge, &mut rx, |s| s.dictionary.len() == 2).await;
+        assert_eq!(bridge.state().dictionary[1].heard_as, ["库伯内特斯"], "checked and trimmed here");
+        assert_eq!(heard(&bridge), ["非"]);
+        let undo = accepted.undo.expect("an undo");
+        assert_eq!(bridge.vocabulary_suggestions_undo(undo, wait).await.unwrap(), BatchUndoOutcome::Undone);
+        until(&bridge, &mut rx, |s| s.dictionary.is_empty()).await;
+        assert_eq!(heard(&bridge), ["非", "维他命", "库伯内特斯"]);
+        assert_eq!(bridge.vocabulary_suggestions_undo(undo, wait).await.unwrap(), BatchUndoOutcome::Expired, "once");
+
+        let pair = |heard: &str, polished: &str| SuggestionPair { heard: heard.into(), polished: polished.into() };
+        let BatchIgnoreOutcome::Ignored { undo } = bridge.vocabulary_suggestions_ignore(vec![pair("非", "飞"), pair("维他命", "Voltip")], wait).await.unwrap()
+        else {
+            panic!("ignored")
+        };
+        until(&bridge, &mut rx, |s| s.vocabulary_ignored.len() == 2).await;
+        assert_eq!(heard(&bridge), ["库伯内特斯"]);
+        assert_eq!(bridge.vocabulary_suggestions_undo(undo, wait).await.unwrap(), BatchUndoOutcome::Undone);
+        until(&bridge, &mut rx, |s| s.vocabulary_ignored.is_empty()).await;
+        assert_eq!(heard(&bridge), ["非", "维他命", "库伯内特斯"]);
+
+        // Refused here, nothing sent to the core.
+        let err = String::from(bridge.vocabulary_suggestions_accept(Vec::new(), wait).await.unwrap_err());
+        assert!(err.starts_with("vocabulary_suggestions_accept: pairs 1–"), "{err}");
+        let many: Vec<SuggestionPick> = (0..=MAX_BATCH).map(|i| pick(&format!("听成{i}"), "写成", 0)).collect();
+        let err = String::from(bridge.vocabulary_suggestions_accept(many, wait).await.unwrap_err());
+        assert!(err.starts_with("vocabulary_suggestions_accept: pairs 1–"), "{err}");
+        let err = String::from(bridge.vocabulary_suggestions_accept(vec![pick("维他命", "Voltip", 2), pick("同", "同", 0)], wait).await.unwrap_err());
+        assert!(err.contains("前后相同"), "{err}");
+        let err = String::from(bridge.vocabulary_suggestions_ignore(Vec::new(), wait).await.unwrap_err());
+        assert!(err.starts_with("vocabulary_suggestions_ignore: pairs 1–"), "{err}");
+        let err = String::from(bridge.vocabulary_suggestions_ignore(vec![pair("非", "飞"), pair(" ", "x")], wait).await.unwrap_err());
+        assert!(err.contains("不能为空"), "{err}");
+        assert!(bridge.state().dictionary.is_empty() && bridge.state().vocabulary_ignored.is_empty());
         bridge.shutdown();
     }
 

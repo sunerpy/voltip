@@ -1,24 +1,28 @@
 // The dictionary's learning suggestions (docs/dictation.md §16.10) on the TypeScript side: where
 // 加入词典 adds a pair and what its backtest tries (the page), and the core's answers for the
-// in-memory backend — the suggestions, 加入词典's checks and the rules page's hints — with the
-// semantics of `voltip_core::vocabulary::{suggest, rule_warnings}`.
+// in-memory backend — the suggestions, 加入词典's checks, a batch of them and its 撤销, and the
+// rules page's hints — with the semantics of `voltip_core::vocabulary::{suggest, rule_warnings}`.
 
 import { diffTokens } from "./refine";
 import { MAX_PAIR_DIFF_CELLS, takePolishPairs } from "./quick-fix";
 import {
   type BacktestDraft,
+  type BatchItem,
+  type BatchUndoOutcome,
   type DictionaryEntry,
   type HistoryEntry,
   type IgnoredPair,
   type ReplacementRule,
   type RuleWarning,
   type Suggestion,
+  type SuggestionPick,
   type SuggestionRefusal,
   type SuggestionsAnswer,
   BACKTEST_SNIPPET_CHARS,
   MAX_DICTIONARY_ENTRIES,
   MAX_HEARD_AS,
   MAX_SUGGESTIONS,
+  SUGGESTION_REPEATED_MIN,
 } from "./schema";
 import { Vocabulary, validateDictionaryDraft } from "./vocabulary";
 
@@ -170,6 +174,7 @@ export function suggestVocabulary(
     refined: takes.slice(0, scanned).filter((t) => t.refined).length,
     skipped,
     total: pairs.length,
+    repeated: pairs.filter((p) => p.count >= SUGGESTION_REPEATED_MIN).length,
     pairs: pairs.slice(0, limit),
   };
 }
@@ -237,6 +242,86 @@ export function acceptSuggestion(
     updated_at_ms: nowMs,
   };
   return { dictionary: [...dictionary, after], after };
+}
+
+/** An entry a batch 加入词典 made (`before` absent) or added to, as it was before the batch and as
+ *  the batch left it. */
+export interface BatchChange {
+  before?: DictionaryEntry;
+  after: DictionaryEntry;
+}
+
+/** What a batch 加入词典 did: the new dictionary, one item per pick in their order, and every entry
+ *  it changed, once, in the order first changed (none: nothing to save). */
+export interface AcceptedBatch {
+  dictionary: DictionaryEntry[];
+  items: BatchItem[];
+  changes: BatchChange[];
+}
+
+/** A batch 加入词典 as the core does it: each pick in order with `acceptSuggestion`'s checks, against
+ *  the dictionary as the picks before it left it, so picks with one right spelling go into one
+ *  entry and a pick past a cap is refused on its own. */
+export function acceptSuggestions(
+  dictionary: readonly DictionaryEntry[],
+  rules: readonly ReplacementRule[],
+  picks: readonly SuggestionPick[],
+  nowMs: number,
+  newId: () => string,
+): AcceptedBatch {
+  let working = [...dictionary];
+  const items: BatchItem[] = [];
+  const touched = new Map<string, DictionaryEntry | undefined>();
+  for (const pick of picks) {
+    const result = acceptSuggestion(
+      working,
+      rules,
+      pick.heard,
+      pick.polished,
+      pick.history_id,
+      nowMs,
+      newId,
+    );
+    if ("kind" in result) {
+      items.push({ kind: "refused", refusal: result });
+      continue;
+    }
+    working = result.dictionary;
+    if (!touched.has(result.after.id)) touched.set(result.after.id, result.before);
+    items.push({
+      kind: "accepted",
+      entry_id: result.after.id,
+      term: result.after.term,
+      created: result.before === undefined,
+    });
+  }
+  const changes: BatchChange[] = [];
+  for (const [id, before] of touched) {
+    const after = working.find((e) => e.id === id);
+    if (after !== undefined) changes.push(before === undefined ? { after } : { before, after });
+  }
+  return { dictionary: working, items, changes };
+}
+
+/** 撤销 of a batch 加入词典 as the core does it: the dictionary with every entry in `changes` back as
+ *  it was (the ones the batch made gone), while each is exactly as the batch left it; otherwise the
+ *  first entry deleted or changed since, nothing undone. */
+export function undoSuggestions(
+  dictionary: readonly DictionaryEntry[],
+  changes: readonly BatchChange[],
+): DictionaryEntry[] | Extract<BatchUndoOutcome, { kind: "gone" | "changed" }> {
+  for (const { after } of changes) {
+    const current = dictionary.find((e) => e.id === after.id);
+    if (current === undefined) return { kind: "gone", term: after.term };
+    if (JSON.stringify(current) !== JSON.stringify(after)) {
+      return { kind: "changed", term: after.term };
+    }
+  }
+  const made = new Set(changes.filter((c) => c.before === undefined).map((c) => c.after.id));
+  const back = new Map(
+    changes.flatMap((c) => (c.before === undefined ? [] : [[c.before.id, c.before]])),
+  );
+  return dictionary.filter((e) => !made.has(e.id)).map((e) => back.get(e.id) ?? e);
 }
 
 /** `rules_warnings` as the core answers it: for each rule that runs, in order, the first other one

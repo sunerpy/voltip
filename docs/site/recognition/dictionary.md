@@ -106,12 +106,15 @@ To let AI tools such as Claude Code or Codex analyse the history with your proje
 **Suggestions**, at the top of the Dictionary page, lists the spellings AI polish corrected in your recent history: what was recognised, what it was polished to, how many times and when last, the most frequent first. Spellings the dictionary already corrects and pairs you ignored are left out. Voltip compares the recognised text with the polished text character by character; no AI is used and nothing is sent anywhere.
 
 <ScreenFigure src="/screens/dictionary-suggestions-en-light.webp" width="1440" height="900"
-  alt="Suggestions on the Dictionary page: two pairs AI polish changed. One row is expanded and shows the recognised text it came from, the entry it would create and how many entries adding it would change; the other is ignored and listed below under Ignored (1), with when it was ignored and Stop ignoring."
-  caption="Expand a row to see what adding it would change before you add it; an ignored pair can be brought back from Ignored." />
+  alt="Suggestions on the Dictionary page, showing the four pairs seen twice or more. The first two were added to the dictionary together: the line above the list says “Added 2 pairs to the dictionary.” and has Undo. The other two are checked, the bar above the list adds or ignores them at once, and Ignore all (2) is next to the view switch. The line under the list says 4 pairs are shown and 4 pairs seen once are hidden."
+  caption="Check several rows to add them to the dictionary or ignore them at once; Undo takes back the whole batch." />
 
+- By default the list shows the pairs seen twice or more; choose **All** above the list to include the ones seen once. The number after **Suggestions** counts the pairs left to decide in the current view, and the line under the list says how many pairs are shown and how many seen once are hidden.
 - **Add to dictionary** adds the recognised spelling as a heard-as form: to the entry that already has the right spelling, or to a new entry. When a replacement rule would change the right spelling, or the spelling belongs to another entry, Voltip says why and saves nothing.
 - **Ignore** keeps the pair off the list and moves it to **Ignored** below.
-- After adding or ignoring, the row stays where it was, and **Undo** takes it back. Once you leave the dictionary page, adding can no longer be undone; an ignored pair can be brought back from **Ignored**.
+- Check several rows, or **Select all** in the header, to add them all to the dictionary or ignore them at once. Pairs with the same right spelling go into one entry; when a pair cannot be added, the reason is under its row and the others are added.
+- **Ignore all** ignores every pair the list shows, and the button says how many.
+- After adding or ignoring, the row stays where it was, and **Undo** takes it back; when several pairs were handled at once, the result is shown above the list and its **Undo** takes back the whole batch. Once you leave the dictionary page, adding can no longer be undone; an ignored pair can be brought back from **Ignored**.
 - Expand a row to see the recognised text it appeared in, and how many of your recent entries adding it would change. Voltip warns when the spelling is a single character, which can change other words by mistake.
 - **Ignored (n)** lists the pairs you ignored, the most recent first, with when you ignored each. **Stop ignoring** puts a pair back among the suggestions. The list stays after you leave the page or restart Voltip.
 

@@ -3304,12 +3304,16 @@ fn vocabulary_backtest_fixture_matches_serde_output() {
 #[test]
 fn vocabulary_suggestions_fixture_matches_serde_output() {
     use voltip_core::mcp::candidates::PairExample;
-    use voltip_core::vocabulary::{AcceptOutcome, EntryClash, Refusal, RuleWarning, Suggestion, SuggestionUndo, Suggestions, SuggestionsAnswer, UndoOutcome};
+    use voltip_core::vocabulary::{
+        AcceptOutcome, BatchAcceptOutcome, BatchIgnoreOutcome, BatchItem, BatchUndoOutcome, EntryClash, Refusal, RuleWarning, Suggestion, SuggestionUndo,
+        Suggestions, SuggestionsAnswer, UndoOutcome,
+    };
     let ready = SuggestionsAnswer::Ready(Suggestions {
         scanned: 2000,
         refined: 1480,
         skipped: 3,
         total: 41,
+        repeated: 9,
         pairs: vec![
             Suggestion {
                 heard: "维他命".into(),
@@ -3353,6 +3357,26 @@ fn vocabulary_suggestions_fixture_matches_serde_output() {
             UndoOutcome::Gone,
             UndoOutcome::Changed,
             UndoOutcome::Failed { message: "vocabulary: dictionary.json：磁盘已满".into() },
+        ],
+        "batch_accepted": BatchAcceptOutcome {
+            items: vec![
+                BatchItem::Accepted { entry_id: uuid(DICT_ID_2), term: "飞书".into(), created: true },
+                BatchItem::Accepted { entry_id: uuid(DICT_ID_2), term: "飞书".into(), created: false },
+                BatchItem::Refused { refusal: Refusal::Entry { entry_id: uuid(DICT_ID), term: "Voltip".into(), clash: EntryClash::TooMany } },
+            ],
+            undo: Some(uuid(HISTORY_ID_4)),
+        },
+        "batch_refused": BatchAcceptOutcome { items: vec![BatchItem::Refused { refusal: Refusal::Full { max: 500 } }], undo: None },
+        "batch_ignored": [
+            BatchIgnoreOutcome::Ignored { undo: uuid(HISTORY_ID_4) },
+            BatchIgnoreOutcome::Failed { message: "vocabulary: vocabulary-ignored.json：磁盘已满".into() },
+        ],
+        "batch_undo": [
+            BatchUndoOutcome::Undone,
+            BatchUndoOutcome::Expired,
+            BatchUndoOutcome::Gone { term: "飞书".into() },
+            BatchUndoOutcome::Changed { term: "Voltip".into() },
+            BatchUndoOutcome::Failed { message: "vocabulary: dictionary.json：磁盘已满".into() },
         ],
         "rule_warnings": [
             RuleWarning::Duplicate { rule_id: uuid(RULE_ID), other_id: uuid(RULE_ID_2), other_name: "非书 → 飞书 (2)".into() },

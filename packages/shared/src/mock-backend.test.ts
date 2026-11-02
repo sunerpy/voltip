@@ -78,6 +78,7 @@ import {
   mockMirrorProfile,
   sampleDevices,
   sampleHistory,
+  sampleSuggestionTakes,
   seededRandom,
   startOfLocalDay,
 } from "./mock-backend";
@@ -101,6 +102,7 @@ import {
   type SceneDraft,
   type LevelFrame,
   MAX_ACTIVATION_MS,
+  MAX_IGNORED,
   type UiEvent,
   type UpdateStatus,
   defaultEngineSettings,
@@ -4220,6 +4222,195 @@ describe("MockBackend learning suggestions (docs/dictation.md section 16.10)", (
     expect((await backend.rulesWarnings()).map((w) => w.kind)).toEqual(["duplicate", "duplicate"]);
     await backend.invoke("settings_set_history", { enabled: false, keep: 20_000 });
     expect(await backend.vocabularySuggestions()).toEqual({ status: "history_off" });
+    backend.destroy();
+  });
+
+  it("counts the suggestions seen twice or more; a batch 加入词典 answers for each pick with one new dictionary, and 撤销 puts it back", async () => {
+    const backend = new MockBackend({ now: () => T, history: rows });
+    expect(await backend.vocabularySuggestions()).toMatchObject({ total: 2, repeated: 1 });
+    const events = collect(backend);
+    const id = rows[1]?.id ?? "";
+    const outcome = await backend.vocabularySuggestionsAccept([
+      { heard: "非书", polished: "飞书", history_id: id },
+      { heard: " 维他命 ", polished: "Voltip", history_id: id },
+      { heard: "飞输", polished: "飞书", history_id: id },
+      { heard: "非书", polished: "飞书", history_id: id },
+    ]);
+    const dictionary = backend.peek().dictionary;
+    expect(dictionary.map((e) => [e.term, e.heard_as])).toEqual([
+      ["飞书", ["非书", "飞输"]],
+      ["Voltip", ["维他命"]],
+    ]);
+    expect(outcome.items.map((i) => (i.kind === "accepted" ? i.term : i.refusal))).toEqual([
+      "飞书",
+      "Voltip",
+      "飞书",
+      { kind: "entry", entry_id: dictionary[0]?.id, term: "飞书", clash: "heard_taken" },
+    ]);
+    expect(events.filter((e) => e.type === "dictionary")).toHaveLength(1);
+    if (outcome.undo === null) throw new Error("no undo");
+    expect(await backend.vocabularySuggestionsUndo(outcome.undo)).toEqual({ kind: "undone" });
+    expect(backend.peek().dictionary).toEqual([]);
+    expect(await backend.vocabularySuggestionsUndo(outcome.undo)).toEqual({ kind: "expired" });
+    // An entry the batch made, changed since: nothing is undone and the answer names it.
+    const again = await backend.vocabularySuggestionsAccept([
+      { heard: "非书", polished: "飞书", history_id: id },
+    ]);
+    const made = backend.peek().dictionary[0];
+    if (again.undo === null || made === undefined) throw new Error("not accepted");
+    await backend.invoke("dictionary_update", {
+      id: made.id,
+      entry: { term: "飞书", heard_as: ["非书", "飞输"], enabled: true },
+    });
+    expect(await backend.vocabularySuggestionsUndo(again.undo)).toEqual({
+      kind: "changed",
+      term: "飞书",
+    });
+    expect(backend.peek().dictionary).toHaveLength(1);
+    const none = await backend.vocabularySuggestionsAccept([
+      { heard: "非书", polished: "飞书", history_id: id },
+    ]);
+    expect([none.items[0]?.kind, none.undo]).toEqual(["refused", null]);
+    for (const pairs of [
+      [],
+      Array.from({ length: 201 }, (_, i) => ({
+        heard: `听成${i}`,
+        polished: "写成",
+        history_id: id,
+      })),
+    ]) {
+      await expect(backend.vocabularySuggestionsAccept(pairs)).rejects.toThrow(
+        "vocabulary_suggestions_accept: pairs 1–200",
+      );
+    }
+    await expect(
+      backend.vocabularySuggestionsAccept([{ heard: "同", polished: "同", history_id: id }]),
+    ).rejects.toThrow(/前后相同/);
+    await expect(
+      backend.vocabularySuggestionsAccept([{ heard: "a", polished: "b", history_id: "nope" }]),
+    ).rejects.toThrow(/UUID/);
+    await expect(backend.vocabularySuggestionsUndo("nope")).rejects.toThrow(/UUID/);
+    backend.destroy();
+  });
+
+  it("the sample takes for screenshots give suggestions seen twice or more and some seen once", async () => {
+    const takes = [...sampleHistory(T), ...sampleSuggestionTakes(T)];
+    const times = takes.map((t) => t.at_ms);
+    // Newest first, as the history store keeps them.
+    expect(times.every((t, i) => i === 0 || (times[i - 1] ?? 0) >= t)).toBe(true);
+    expect(new Set(takes.map((t) => t.id)).size).toBe(takes.length);
+    const backend = new MockBackend({ now: () => T, history: takes });
+    const answer = await backend.vocabularySuggestions();
+    if (answer.status !== "ready") throw new Error(answer.status);
+    expect(answer.pairs.map((p) => [p.heard, p.polished, p.count]).slice(0, 4)).toEqual([
+      ["维他命", "Voltip", 4],
+      ["库伯内提斯", "Kubernetes", 3],
+      ["瑞迪斯", "Redis", 2],
+      ["泰普斯克瑞普特", "TypeScript", 2],
+    ]);
+    expect([answer.repeated, answer.total]).toEqual([4, 8]);
+    backend.destroy();
+  });
+
+  it("a batch 忽略 puts its pairs on the list once, with one new list, and 撤销 takes them off again", async () => {
+    const earlier = { heard: "集成", polished: "继承", at_ms: T - 60_000 };
+    const backend = new MockBackend({ now: () => T, history: rows, vocabularyIgnored: [earlier] });
+    const events = collect(backend);
+    const outcome = await backend.vocabularySuggestionsIgnore([
+      { heard: "非", polished: "飞" },
+      { heard: "集成", polished: "继承" },
+      { heard: " 维他命 ", polished: "Voltip" },
+    ]);
+    if (outcome.kind !== "ignored") throw new Error(JSON.stringify(outcome));
+    expect(backend.peek().vocabulary_ignored).toEqual([
+      earlier,
+      { heard: "非", polished: "飞", at_ms: T },
+      { heard: "维他命", polished: "Voltip", at_ms: T },
+    ]);
+    expect(events.filter((e) => e.type === "vocabulary_ignored")).toHaveLength(1);
+    expect(await heard(backend)).toEqual([]);
+    expect(await backend.vocabularySuggestionsUndo(outcome.undo)).toEqual({ kind: "undone" });
+    expect(backend.peek().vocabulary_ignored).toEqual([earlier]);
+    expect(await heard(backend)).toEqual(["非", "维他命"]);
+    expect(await backend.vocabularySuggestionsUndo(outcome.undo)).toEqual({ kind: "expired" });
+    await expect(backend.vocabularySuggestionsIgnore([])).rejects.toThrow(
+      "vocabulary_suggestions_ignore: pairs 1–200",
+    );
+    await expect(
+      backend.vocabularySuggestionsIgnore([
+        { heard: "非", polished: "飞" },
+        { heard: "", polished: "x" },
+      ]),
+    ).rejects.toThrow(/不能为空/);
+    expect(backend.peek().vocabulary_ignored).toEqual([earlier]);
+    backend.destroy();
+  });
+
+  it("regression: 撤销 of a batch 忽略 on a full ignored list puts back the pairs it pushed out", async () => {
+    const full = Array.from({ length: MAX_IGNORED }, (_, i) => ({
+      heard: `听成${i}`,
+      polished: "正确",
+      at_ms: 1 + i,
+    }));
+    const backend = new MockBackend({ now: () => T, history: rows, vocabularyIgnored: full });
+    const outcome = await backend.vocabularySuggestionsIgnore([
+      { heard: "非", polished: "飞" },
+      { heard: "维他命", polished: "Voltip" },
+    ]);
+    if (outcome.kind !== "ignored") throw new Error(JSON.stringify(outcome));
+    const during = backend.peek().vocabulary_ignored;
+    expect(during).toHaveLength(MAX_IGNORED);
+    expect(during[0]?.heard).toBe("听成2");
+    expect(await backend.vocabularySuggestionsUndo(outcome.undo)).toEqual({ kind: "undone" });
+    expect(backend.peek().vocabulary_ignored).toEqual(full);
+    backend.destroy();
+  });
+
+  it("regression: two batches 忽略 on a full list taken back out of order keep the oldest first", async () => {
+    const full = Array.from({ length: MAX_IGNORED }, (_, i) => ({
+      heard: `听成${i}`,
+      polished: "正确",
+      at_ms: 1,
+    }));
+    const backend = new MockBackend({ now: () => T, history: rows, vocabularyIgnored: full });
+    const undos: string[] = [];
+    for (const said of ["新A", "新B"]) {
+      const outcome = await backend.vocabularySuggestionsIgnore([
+        { heard: said, polished: "正确" },
+      ]);
+      if (outcome.kind !== "ignored") throw new Error(JSON.stringify(outcome));
+      undos.push(outcome.undo);
+    }
+    for (const undo of undos) {
+      expect(await backend.vocabularySuggestionsUndo(undo)).toEqual({ kind: "undone" });
+    }
+    expect(backend.peek().vocabulary_ignored).toEqual(full);
+    await backend.invoke("vocabulary_suggestion_ignore", { heard: "再忽略", polished: "正确" });
+    expect(backend.peek().vocabulary_ignored.slice(0, MAX_IGNORED - 1)).toEqual(full.slice(1));
+    backend.destroy();
+  });
+
+  it("regression: eleven batches of 200 on a full list taken back as 1, 11, 10, …, 2 leave the list as before", async () => {
+    const full = Array.from({ length: MAX_IGNORED }, (_, i) => ({
+      heard: `听成${i}`,
+      polished: "正确",
+      at_ms: 1,
+    }));
+    const backend = new MockBackend({ now: () => T, history: rows, vocabularyIgnored: full });
+    const undos: string[] = [];
+    for (let b = 0; b < 11; b += 1) {
+      const batch = Array.from({ length: 200 }, (_, i) => ({
+        heard: `批${b}-${i}`,
+        polished: "正确",
+      }));
+      const outcome = await backend.vocabularySuggestionsIgnore(batch);
+      if (outcome.kind !== "ignored") throw new Error(JSON.stringify(outcome));
+      undos.push(outcome.undo);
+    }
+    for (const b of [0, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]) {
+      expect(await backend.vocabularySuggestionsUndo(undos[b] ?? "")).toEqual({ kind: "undone" });
+    }
+    expect(backend.peek().vocabulary_ignored).toEqual(full);
     backend.destroy();
   });
 });

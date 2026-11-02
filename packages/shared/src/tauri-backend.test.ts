@@ -167,7 +167,15 @@ describe("TauriBackend", () => {
 
   it("the learning suggestions' queries (§16.10) send camelCase arguments and validate the answers", async () => {
     const calls: { command: string; args: unknown }[] = [];
-    const ready = { status: "ready", scanned: 2, refined: 1, skipped: 0, total: 0, pairs: [] };
+    const ready = {
+      status: "ready",
+      scanned: 2,
+      refined: 1,
+      skipped: 0,
+      total: 0,
+      repeated: 0,
+      pairs: [],
+    };
     const undo = { id: "u", entry_id: "e", term: "Voltip", created: true, previous_heard_as: [] };
     const answers: Record<string, unknown> = {
       vocabulary_suggestions: ready,
@@ -213,6 +221,57 @@ describe("TauriBackend", () => {
     ).rejects.toThrow(/invalid|expected/i);
     await expect(broken.vocabularySuggestionUndo("u")).rejects.toThrow(/invalid|expected/i);
     await expect(broken.rulesWarnings()).rejects.toThrow(/invalid|expected/i);
+  });
+
+  it("the learning suggestions' batches (§16.10) send their pairs as they are and validate the answers", async () => {
+    const calls: { command: string; args: unknown }[] = [];
+    const accepted = {
+      items: [
+        { kind: "accepted", entry_id: "e", term: "飞书", created: true },
+        { kind: "refused", refusal: { kind: "full", max: 500 } },
+      ],
+      undo: "b1",
+    };
+    const answers: Record<string, unknown> = {
+      vocabulary_suggestions_accept: accepted,
+      vocabulary_suggestions_ignore: { kind: "ignored", undo: "b2" },
+      vocabulary_suggestions_undo: { kind: "changed", term: "飞书" },
+    };
+    const backend = new TauriBackend({
+      ...fakeTransport().transport,
+      invoke: (command, args) => {
+        calls.push({ command, args });
+        return Promise.resolve(answers[command]);
+      },
+    });
+    const picks = [
+      { heard: "非书", polished: "飞书", history_id: "h1" },
+      { heard: "维他命", polished: "Voltip", history_id: "h2" },
+    ];
+    expect(await backend.vocabularySuggestionsAccept(picks)).toEqual(accepted);
+    expect(await backend.vocabularySuggestionsIgnore([{ heard: "非", polished: "飞" }])).toEqual({
+      kind: "ignored",
+      undo: "b2",
+    });
+    expect(await backend.vocabularySuggestionsUndo("b1")).toEqual({
+      kind: "changed",
+      term: "飞书",
+    });
+    expect(calls).toStrictEqual([
+      { command: "vocabulary_suggestions_accept", args: { pairs: picks } },
+      {
+        command: "vocabulary_suggestions_ignore",
+        args: { pairs: [{ heard: "非", polished: "飞" }] },
+      },
+      { command: "vocabulary_suggestions_undo", args: { id: "b1" } },
+    ]);
+    const broken = new TauriBackend({
+      ...fakeTransport().transport,
+      invoke: () => Promise.resolve({ kind: "accepted" }),
+    });
+    await expect(broken.vocabularySuggestionsAccept(picks)).rejects.toThrow(/invalid|expected/i);
+    await expect(broken.vocabularySuggestionsIgnore([])).rejects.toThrow(/invalid|expected/i);
+    await expect(broken.vocabularySuggestionsUndo("b1")).rejects.toThrow(/invalid|expected/i);
   });
 
   it("regression: recentApps queries recent_apps without arguments and validates the list", async () => {

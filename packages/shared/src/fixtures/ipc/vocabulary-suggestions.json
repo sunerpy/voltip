@@ -9,12 +9,81 @@
       "term": "Voltip"
     }
   },
+  "batch_accepted": {
+    "items": [
+      {
+        "created": true,
+        "entry_id": "6f1c2d3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+        "kind": "accepted",
+        "term": "飞书"
+      },
+      {
+        "created": false,
+        "entry_id": "6f1c2d3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+        "kind": "accepted",
+        "term": "飞书"
+      },
+      {
+        "kind": "refused",
+        "refusal": {
+          "clash": "too_many",
+          "entry_id": "3b241101-e2bb-4255-8caf-4136c566a962",
+          "kind": "entry",
+          "term": "Voltip"
+        }
+      }
+    ],
+    "undo": "6a0c1f5e-2b7d-4c3a-9e8f-0d1c2b3a4f56"
+  },
+  "batch_ignored": [
+    {
+      "kind": "ignored",
+      "undo": "6a0c1f5e-2b7d-4c3a-9e8f-0d1c2b3a4f56"
+    },
+    {
+      "kind": "failed",
+      "message": "vocabulary: vocabulary-ignored.json：磁盘已满"
+    }
+  ],
+  "batch_refused": {
+    "items": [
+      {
+        "kind": "refused",
+        "refusal": {
+          "kind": "full",
+          "max": 500
+        }
+      }
+    ],
+    "undo": null
+  },
+  "batch_undo": [
+    {
+      "kind": "undone"
+    },
+    {
+      "kind": "expired"
+    },
+    {
+      "kind": "gone",
+      "term": "飞书"
+    },
+    {
+      "kind": "changed",
+      "term": "Voltip"
+    },
+    {
+      "kind": "failed",
+      "message": "vocabulary: dictionary.json：磁盘已满"
+    }
+  ],
   "history_off": {
     "status": "history_off"
   },
   "nothing": {
     "pairs": [],
     "refined": 0,
+    "repeated": 0,
     "scanned": 0,
     "skipped": 0,
     "status": "ready",
@@ -52,6 +121,7 @@
       }
     ],
     "refined": 1480,
+    "repeated": 9,
     "scanned": 2000,
     "skipped": 3,
     "status": "ready",

@@ -813,6 +813,9 @@ const DESKTOP_ONLY: &[&str] = &[
     "vocabulary_suggestion_undo",
     "vocabulary_suggestion_ignore",
     "vocabulary_suggestion_unignore",
+    "vocabulary_suggestions_accept",
+    "vocabulary_suggestions_ignore",
+    "vocabulary_suggestions_undo",
     "rules_warnings",
     // The automatic backups (docs/dictation.md §4.6.1).
     "settings_set_backup",
