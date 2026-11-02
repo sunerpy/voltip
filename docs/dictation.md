@@ -3000,3 +3000,67 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 - `crates/voltip-overlay/tests/stacking_macos.rs`（CI 两台 Mac，自带 `main`）：悬浮窗按 tao 的方式显示后，另一个进程的浮动窗口到前台，先确认它盖住 tao 那一级的悬浮窗（对照）；`raise` 之后悬浮窗是点在它中心会落到的窗口；显示期间又一个应用的浮动窗口到前台，悬浮窗仍在最上面；另一个应用一直是活动应用（`regression_the_pill_stays_above_floating_windows_of_another_application_brought_to_the_front`）。全屏应用：tao 的窗口在两种激活策略下都不在它的 Space 上，不激活的面板在它之上（`full_screen_spaces_take_a_non_activating_panel_and_not_tao_s_window`，固定 §32.3 的结论）。
 - 单元测试：`contest.rs`（500 ms 内回到上面时到时再看一次、那时仍在上面就抬，过后同一个窗口再被置顶照常抬，到前台后重新算，每秒至多 8 次），`x11.rs`（没有显示服务器、连接不上，`Keeper` 同样），`overlay.rs` 的 `regression_a_show_after_a_hide_began_keeps_the_pill`。
 - 修复前失败：`8f2adf2d`（CI 41313709532）`hooks-windows` 与 `windows-native`，悬浮窗在置顶窗口和置顶全屏窗口下面；`742ba101`（临时分支，CI 41321219255）显示期间被激活、被钉在最上面、不激活地出现的窗口都盖住悬浮窗，真实应用同样，X11 测试在 Xvfb 上失败；macOS 浮动窗口测试在只为证明修复前失败的提交 `6d2fb225`（临时分支，CI 41322859067）上两台 Mac 都失败。这些提交的 `raise`、`Keeper`、`Stacker` 什么也不做，等于修复前的行为。显示期间的规则：同一个窗口取消置顶、过一会儿又钉上，以及 X11 显示期间映射到悬浮窗上面的窗口，在旧规则（同一窗口到下一个窗口到前台之前只抬一次）和不叠放的 X11 keeper 上失败（`0dbaf435`，临时分支，CI 41330001090）；取消置顶后立刻又钉上、X11 随即又叠上来的同一个窗口，在不再看一次的 500 ms 规则上失败（`0a96a3de`，临时分支，CI 41337186406，Windows 仿制与真实应用、Xvfb）。
+
+## 33. 窗口的状态与升级后的界面（2026-11-02）
+
+**问题**（用户 2026-11-02 在 0.3.0 候选版上报告，Windows）：装上候选版后第一次运行，中继其实已经连上，窗口里的中继状态却一直是「认证中」；词典页没有「学习建议」标签。重启 Voltip 之后两者都正常。
+
+### 33.1 窗口的状态怎么丢掉变化
+
+窗口的状态是 `core_state` 的回答，加上之后的每个 `voltip://event` 事件按到达顺序折叠（`applyEvent`；除了整块的 `state`，每个事件只替换它那一块字段）。这条链上有六处会丢掉变化；丢掉的是「已连接」这样之后不再变化的值时，窗口就一直显示旧值，直到重启。用户的电脑上没有日志，不能确定是哪一处，前两处在窗口随程序启动、中继同时连上时最容易出现，与用户的情形一致。
+
+- **监听生效之前取状态**（`packages/shared/src/tauri-backend.ts`）：`listen` 要经过一次 IPC 往返才生效，`getState()` 不等它就调用 `core_state`。这期间壳发出的事件只送给已经生效的监听，窗口收不到，而它拿到的状态又早于这些事件。
+- **状态回来之前的事件被丢弃**（`packages/ui/src/backend/BackendProvider.tsx`、`apps/mobile-rn/src/backend/BackendProvider.tsx`）：`core_state` 回答之前到达的事件，除了整块的 `state`，都被忽略；回答到达时整个替换窗口的状态，而回答可能比这些事件旧。
+- **核心的事件队列满了就丢**（`crates/voltip-core/src/runtime.rs`）：核心给壳的事件进 512 个的队列，放不下就丢弃，只记一条日志。壳读得慢时（启动时事件集中），丢掉的事件既改不了壳缓存的状态，也到不了任何窗口。
+- **壳只记下窗口跟不上**（`apps/desktop/src-tauri/src/lib.rs`、`apps/mobile/src-tauri/src/lib.rs`、`apps/mobile-rn/rust/src/shell.rs`）：转发读广播落后（`Lagged`，最早的事件已经没有了）时只记日志，事件没能送到窗口（`emit` 失败）也不管，漏掉的不再补。
+- **中继连接的状态报告满了就丢**（`crates/voltip-transport/src/link.rs`）：`RelayLink` 的状态变化、失败和告警用 `try_send` 报告，核心读得慢时「已连接」这一条被丢掉，核心以为还在认证。
+- **壳自己的事件抢在整块状态前面**（`crates/voltip-tauri-bridge/src/lib.rs`）：核心的事件在状态锁里折叠，锁放开之后才广播；壳自己的事件（`Bridge::publish`：快捷键、更新、硬件）也一样。核心启动时的整块状态（`Ready`）带着壳的那几块，壳的事件若在两者之间折叠并先发出，窗口先收到它，再从整块状态里拿到较旧的值。
+
+### 33.2 修复
+
+- `TauriBackend.getState()` 先等之前要求的所有监听都生效（或失败）再调用 `core_state`，之后的事件一个也不漏。注册被拒的监听按 250 ms 起、加倍到最长 5 s 的间隔重试，直到它生效或监听被取消；晚到的注册漏掉了之前发出的事件，所以它先拿一次 `core_state` 作为整块的 `state` 交给监听，这期间到达的事件排在它后面按顺序交出（2026-11-02 gate 评审指出：注册失败后窗口再也收不到事件）。
+- 两个 `BackendProvider`：`core_state` 回答之前到达的事件留下来，回答到达时按到达顺序折叠到它上面；整块的 `state` 照旧立即显示。事件都替换整块字段，所以折叠的结果与核心的状态一致。
+- 核心：运行时和它的任务把事件放进不会满的队列，不等待；一个转发任务再按顺序交给壳读取的 512 个队列，壳读得慢时只有这个任务等待。
+- `Bridge::forward`：电脑端、Tauri 手机端和 RN 手机端共用的转发。广播落后或某个事件没能送到窗口时，紧接着把整个状态作为 `state` 事件发给窗口；整块状态也没送出去时，在下一个事件之后再试，没有事件时在 500 ms 后再试，仍失败时间隔加倍（1 s、2 s、4 s），之后每 5 s 一次，不靠之后还有事件（2026-11-02 gate 评审指出：最后一个变化之后没有事件时就再也不试）。Tauri 的 `emit` 依次对每个窗口执行脚本，遇到第一个失败就停；而执行脚本只在事件循环已经关闭时失败（`tauri-runtime-wry` 从非主线程发消息给事件循环），那时所有窗口一起失败，所以按整体重试即可。RN 壳的 `Host::event` 为此改为返回是否送达。
+- `RelayLink` 的状态变化、失败和告警都等队列有空位再报告（帧本来就这样）；断开时先更新 `RelayLink::state`，再报告失败和状态。
+- `pump` 与 `Bridge::publish` 在状态锁里折叠并广播，窗口收到事件的顺序就是缓存折叠它们的顺序。
+
+### 33.3 升级后第一次启动：在托管 Windows 上复现
+
+**用户电脑上的线索**（协调会话 2026-11-02 读取；之后不再在那台电脑上查）：09:54:32 安装包以 `/S /UPDATE /R` 把一个 0.3.0 候选版升级为另一个并重新打开 Voltip，新进程到中继的一条 TCP 连接从 09:54:37 一直保持到 11:05；WebView2 的代码缓存里有这次启动时写下的两条 `index-BBjVjT-j.js` 记录（候选版的入口脚本，含「学习建议」标签），0.2.1 的 `index-BiheABMD.js` 最后一次是 2026-10-29；HTTP 缓存里没有 `tauri.localhost` 的条目；Tauri 2.11.6 的响应不带 `Cache-Control`、`ETag`、`Last-Modified`。升级前的候选版带的是同一个 `index-BBjVjT-j.js`。所以「窗口运行了上一版的界面代码」只是一种猜测，没有证据。
+
+**复现**（CI `windows-native`，按需 `-f upgrade_probe=true`，`scripts/windows-upgrade-probe.ps1` 与 `scripts/webview-probe.mjs`）：windows-2025 上每一轮从没有 Voltip、没有数据和 WebView2 配置开始，静默安装 GitHub 发布的 0.2.1（核对 `SHA256SUMS`），写好设置（中继指向本机的 `voltip-relay`、不自动更新）后启动两次，再用这个构建的安装包升级，之后同一个安装包再装一次（同版本）。每次升级之后经 WebView2 的调试端口读每个窗口：文档加载的入口脚本是否在安装的程序里，文档是否早于进程，主窗口的中继卡片是否在 30 秒内显示已连接，词典页有没有「学习建议」标签。调试端口由本机级策略 `HKLM\SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments` 打开（runner 以管理员运行，WebView2 忽略用户级策略和 `WEBVIEW2_*` 环境变量）；防火墙规则挡住 Voltip 到本机以外的连接，Voltip 不连任何服务。升级的方式轮流为：Voltip 运行时直接运行安装包（`/S /UPDATE /R`，安装包结束 Voltip）；按应用内更新的做法（tauri-plugin-updater 启动 `/S /UPDATE /R /ARGS <参数>` 后立即结束程序）；同样做法但 0.2.1 以 `--start-hidden` 启动，升级后先读隐藏的窗口（确认没有显示窗口），再由第二次启动打开主窗口读一遍。这个分支的版本号还是 0.2.1（0.3.0 的发版 PR 没有合并），所以从 0.2.1 升级也是同一版本号的两个构建之间的升级，与用户从一个 0.3.0 候选版升级到另一个相同。每次升级之后还在真实程序的主窗口上检查 §33.4（§33.6 的三种模拟），0.2.1 的第一次启动上做同样的模拟作为对照。
+
+合计：修复前 3 轮 6 次升级，修复后 27 轮 54 次升级，界面检查 27 次，都没有复现。
+
+| CI | 提交 | 结果 |
+|---|---|---|
+| 41389454842 | `59d4bcc7` | 脚本在严格模式下出错，没有读到窗口 |
+| 41390710001 | `f6a63654` | 调试端口没有打开（当时用的是用户级策略）；中继地址少了 `/ws`。没有读到窗口 |
+| 41393315506 | `50701011`（修复前） | 3 轮，6 次升级（从 0.2.1 3 次、同版本 3 次），都是直接运行安装包：两个窗口都运行程序自带的 `/assets/index-BBjVjT-j.js`，文档比进程晚 439–929 ms，调试端口上的浏览器进程由新的 Voltip 启动，词典页有「学习建议」标签（runner 的系统语言是英文，显示为 Suggestions），中继卡片显示已连接，Voltip 到本机以外的连接 0 个。0.2.1 的窗口运行它自带的 `index-BiheABMD.js`，没有这个标签。没有复现 |
+| 41403315877 | `417d131a`（修复后，有 §33.4） | 9 轮，三种方式各 3 轮，18 次升级（从 0.2.1 9 次、同版本 9 次），48 次读窗口：都运行程序自带的 `/assets/index-Dp6DiJ1d.js`，文档比进程晚 366–1124 ms；主窗口 24 次读到中继已连接、词典页有「学习建议」。界面检查 9 次：引用程序不带的入口时经过两个文档后停住，改回自己的入口后经过一个文档并清掉记号；0.2.1 上的对照 9 次都只经过一个文档。Voltip 到本机以外的连接 0 个。这次没有核对 `--start-hidden` 的窗口是否真的没显示（WebView2 对隐藏窗口的页面也报告 `visible`）。没有复现 |
+| 41406841691 | `b78e5686` | 9 轮，18 次升级：48 次读窗口都运行程序自带的 `/assets/index-t6n1uXfB.js`，文档比进程晚 407–2303 ms；主窗口 24 次读到中继已连接、词典页有「学习建议」；界面检查与对照同上。`--start-hidden` 那 3 轮判为失败（6 处）：判断用的是 .NET 的 `MainWindowHandle`，而单实例插件的窗口和 tao 的事件窗口也是「可见」的顶层窗口，主窗口隐藏时它也不为空。没有复现 |
+| 41409396380 | `7aa7fd7c` | 9 轮，18 次升级：48 次读窗口都运行程序自带的 `/assets/index-t6n1uXfB.js`，文档比进程晚 284–916 ms；主窗口 24 次读到中继已连接、词典页有「学习建议」。按标题找主窗口（`Voltip`）：`--start-hidden` 的 3 轮升级后与同版本重装后主窗口都没有显示（6 次），第二次启动后显示；其余 12 次升级后主窗口显示。界面检查 9 次、0.2.1 上的对照 9 次，结果同上。Voltip 到本机以外的连接 0 个。没有复现 |
+
+### 33.4 保护：窗口运行的界面代码不是程序自带的时换一次文档
+
+`apps/desktop/src-tauri/src/ui_guard.rs` 与 `ui_guard.js`：一个 Tauri 插件，给每个窗口的文档在创建时（主框架的初始化脚本）注入程序自带的东西：程序资源里所有 `.js`、`.mjs` 的路径，以及这些脚本声明的构建号。每次 `vite build` 给界面起一个新的构建号（`apps/desktop/vite.config.ts` 的 `__VOLTIP_UI_BUILD__`：`voltip-ui-build-` 加 32 位十六进制，随机生成），打进脚本里；界面运行时最先把它放到 `window.voltipUiBuild`（`apps/desktop/src/ui-build.ts`，`main.tsx` 的第一个导入）。文档解析完（`DOMContentLoaded`，这时模块脚本已经执行）时，模块脚本里有路径不在程序资源中，或界面声明的构建号不是程序脚本里的那个（同一路径的另一个构建、没有声明构建号的旧界面都算），这个窗口运行的就是别的构建的界面：
+
+- 窗口用 `location.replace` 换成同一地址加上 `voltip-ui-reload=<时间>` 的文档。这是这个窗口从没请求过的地址，任何缓存都答不了，文档由程序提供；新文档在界面读地址之前去掉这个参数（`history.replaceState`，路由、哈希和其他参数不变）。不依赖会话存储。
+- 换过一次的文档如果仍是别的代码（程序自己的文档引用了它不带的脚本，或同一路径给出了别的构建），窗口不再重载，保留这个文档，控制台写明原因（运行的脚本和声明的构建号），Voltip 的日志记一行 ERROR。换过一次任何缓存都答不了的文档之后仍不一致，更可能是检查本身在某个平台或某个 WebView 版本上判断错了（`script[type=module][src]` 或构建号与预期不符）；清空或反复重载窗口会让每次启动都不可用（协调会话 2026-11-02 修订的目标原文：保留窗口并记下原因，不把窗口清成空白）。
+- 每个文档的检查结果放在 `window.voltipUiCheck`（`verdict` 是 `ok`、`replacing` 或 `kept`，`replaced` 表示这是换过一次的文档），并用事件 `voltip://ui-guard` 交给程序（`core:default` 已允许窗口发事件）：`ui_guard.rs` 把它写进日志，正常时每个窗口一行 INFO（`the window runs the interface the program carries window="main"`），换过文档时 WARN，换过仍不一致时 ERROR；页面写来的字段先截短。报告送不到时检查照常进行。
+
+只检查程序自己的页面（`tauri://localhost`、`tauri.localhost`）；开发构建（`tauri::is_dev()`，界面来自 Vite）和不带脚本的程序（测试的模拟上下文）不检查；程序的脚本没有声明构建号时只比较路径。用户能看到的只是这种情况下窗口打开后马上重新加载一次。只在电脑端：手机端（RN）的界面打包在安装包里，Tauri 版手机端已不发布。
+
+### 33.5 限制
+
+- 不知道用户电脑上的词典页为什么缺「学习建议」：托管 Windows 上的升级都没有出现（§33.3），用户电脑上前后两个候选版的入口脚本相同。§33.4 比较的是窗口运行的脚本路径和界面声明的构建号；两者都是程序的、界面却不对时（原因不在界面代码），它看不出来。
+- 重新加载发生在旧文档的脚本已经运行之后（模块脚本在 `DOMContentLoaded` 之前执行），旧界面会短暂出现，并可能在这期间发出它那一版的命令（新版本不认识的格式由桥拒绝）。
+- 换文档只做一次；换过之后仍不一致时窗口留着那份界面，直到重新打开 Voltip，原因在控制台和 Voltip 的日志里。Voltip 的日志只写到 stderr（WebView2 的调试工具也能看到控制台）。
+- 构建号每次构建随机生成：同一份源码构建两次，构建号不同。程序比较的是它自己带的那份，所以只影响一个窗口运行另一次构建的界面时（会换一次文档）。
+- 状态同步的修复不改变事件的内容和协议：窗口收到的事件与之前相同，只是不再丢失或乱序；落后时多一个整块的 `state`。
+
+### 33.6 门禁
+
+- 状态同步（修复前在本地失败，修复后通过）：`packages/shared/src/tauri-backend.test.ts` 的 `regression: core_state is asked for only once every event listener is live`（修复前 `core_state` 在监听生效前就被调用）；`packages/ui/src/backend/BackendProvider.test.tsx` 的 `regression: the relay a window shows once the relay is up` 一组（窗口在中继连上之前、监听生效之前、第一次状态在路上时、之后打开，以及之后又来一个整块状态；修复前两种情形停在 `authenticating`）；`apps/mobile-rn/src/backend/BackendProvider.test.tsx`（第一次状态在路上时到达的变化，修复前丢失；中继连上之前和之后打开）；`crates/voltip-core/tests/ui_events.rs`（壳不读时核心先发 2000 个设置变化再连上真实的本地中继：修复前窗口的状态里中继停在 `Disconnected`）；`crates/voltip-transport/tests/link.rs` 的 `regression_a_state_change_while_the_owner_is_behind_waits_for_room`（修复前「重新连接」的状态报告丢失，测试超时）；`crates/voltip-tauri-bridge/tests/forward.rs`（落后的窗口与没能送到的事件之后都收到整块状态，修复前都失败；整块状态也发不出去、之后没有事件时照样再发，修复前 10 秒内等不到）；`packages/shared/src/tauri-backend.test.ts` 的 `regression: a listener whose registration was refused (gate 2026-11-02)` 一组与 `packages/ui/src/backend/BackendProvider.test.tsx` 的 `a window whose listener registration is refused once (gate 2026-11-02)`（注册被拒一次后重新注册、补上整块状态，窗口显示已连接；修复前监听再也没有注册，窗口停在 `authenticating`）；`crates/voltip-tauri-bridge/src/lib.rs` 的 `regression_a_shell_event_never_passes_the_whole_state_on_its_way_to_the_windows`（2 万个整块状态与 2 万个硬件事件同时折叠：修复前的一次运行中有 726 个整块状态晚于窗口已有的硬件值到达）。涉及线程与计时的四个（`ui_events.rs`、`link.rs` 的回归测试、`forward.rs`、事件顺序）在 32 个忙循环占满全部逻辑核时各运行 200 次，全部通过；`forward.rs` 加上补发重试的测试后又这样跑了 200 次，全部通过。
+- 界面检查：`apps/desktop/src/ui-guard.test.ts` 在测试的文档上运行 `ui_guard.js` 原文：程序自带的界面不动，并报告 `ok`；程序不带的脚本、同一路径的另一个构建、没有声明构建号的旧界面都换一次文档，新地址带唯一的参数、保留路由和其他参数；换过的文档去掉参数、留在程序的界面上；换过之后仍是别的代码时不再重载、也不清空，窗口保留原样，控制台说明原因并报告 `kept`；没有 Tauri 的 IPC 或报告送不到时照样检查和换文档；解析中的文档等解析完；相对路径、两种协议、编码的路径；别的页面和空白页不动。换成没有任何检查的脚本（与基线相同）时 10 个测试中 9 个失败；换回清成空白的上一版时 4 个失败，其中有保留窗口的那个；换回第一版（只比较路径、用会话存储记一次、`location.reload`）时 9 个失败。`apps/desktop/src/ui-build.test.ts`（界面声明构建号）；`ui_guard.rs` 的单元测试（脚本列表、从脚本里读出构建号、两个占位符、没有脚本时不检查、报告的解析、每种结果的日志级别、截短、插件把收到的报告交给日志）。真实程序上：托管 Windows 上 §33.3 的每轮用调试协议模拟三种情况：第一个文档引用程序不带的入口、第一个文档声明另一个构建（同一路径）、每个文档都引用程序不带的入口；前两种各经过两个文档后停在程序的界面上（报告 `ok`、换过一次），第三种也经过两个文档后停住，窗口留在那个文档上（报告 `kept`，控制台说明原因），回到原地址后运行程序的界面；0.2.1 做同样的模拟都只经过一个文档（它没有检查）。每次读窗口还核对窗口声明的构建号是程序的，检查在这个文档里运行过、报告 `ok` 且没有换过文档。Linux 的 Xvfb 冒烟（`scripts/smoke-desktop-linux.sh`，WebKitGTK）和两台 Mac 的菜单栏冒烟（`scripts/smoke-tray-macos.sh`，CI 设 `VOLTIP_CHECK_UI_GUARD=1`，WKWebView）在真实程序的日志里核对主窗口和悬浮窗都报告了程序的界面，没有别的检查记录。

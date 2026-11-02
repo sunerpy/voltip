@@ -74,6 +74,193 @@ describe("TauriBackend", () => {
     expect(t.unlisten).toHaveBeenCalled();
   });
 
+  it("regression: core_state is asked for only once every event listener is live", async () => {
+    // Tauri's `listen` registers the listener with the shell in an IPC round trip; an event sent
+    // before it is registered never reaches it. A state taken before then could miss a change
+    // the listener never hears of: the relay shown 认证中 for good while it was connected
+    // (user report 2026-11-02).
+    const t = fakeTransport();
+    let register: (() => void) | undefined;
+    const backend = new TauriBackend({
+      ...t.transport,
+      listen: () =>
+        new Promise((resolve) => {
+          register = () => {
+            resolve(t.unlisten);
+          };
+        }),
+    });
+    backend.on(() => undefined);
+    const state = backend.getState();
+    for (let i = 0; i < 5; i += 1) await Promise.resolve();
+    expect(t.calls.map((c) => c.command)).toEqual([]);
+    register?.();
+    await expect(state).resolves.toMatchObject({ secret_backend: "keyring" });
+    expect(t.calls.map((c) => c.command)).toEqual(["core_state"]);
+  });
+
+  it("unlistens a registration that lands after its listener is gone", async () => {
+    const t = fakeTransport();
+    let land: (() => void) | undefined;
+    const backend = new TauriBackend({
+      ...t.transport,
+      listen: () =>
+        new Promise((resolve) => {
+          land = () => {
+            resolve(t.unlisten);
+          };
+        }),
+    });
+    const listener = vi.fn();
+    backend.on(listener)();
+    land?.();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(t.unlisten).toHaveBeenCalledTimes(1);
+    t.fire({ type: "error", message: "late" });
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it("asks for core_state even when a listener's registration failed", async () => {
+    const t = fakeTransport();
+    const backend = new TauriBackend({
+      ...t.transport,
+      listen: () => Promise.reject(new Error("no event plugin")),
+    });
+    backend.on(() => undefined);
+    await expect(backend.getState()).resolves.toMatchObject({ secret_backend: "keyring" });
+  });
+
+  describe("regression: a listener whose registration was refused (gate 2026-11-02)", () => {
+    // A refused registration used to leave the listener without events for good: a window that took
+    // its first state while the relay authenticated showed 认证中 after the relay had connected.
+    function refusedOnce() {
+      const t = fakeTransport();
+      let attempts = 0;
+      let relay = "authenticating";
+      let answer: (() => void) | undefined;
+      let holding = false;
+      const backend = new TauriBackend({
+        ...t.transport,
+        invoke: (command: string, args?: Record<string, unknown>) => {
+          if (command !== "core_state") return t.transport.invoke(command, args);
+          const snapshot = t.transport
+            .invoke(command, args)
+            .then((state) => ({ ...(state as object), relay: { state: relay, attempts: 0 } }));
+          if (!holding) return snapshot;
+          return new Promise((resolve) => {
+            answer = () => {
+              resolve(snapshot);
+            };
+          });
+        },
+        listen: (event: string, h: (e: { payload: unknown }) => void) => {
+          attempts += 1;
+          return attempts === 1
+            ? Promise.reject(new Error("IPC not ready"))
+            : t.transport.listen(event, h);
+        },
+      });
+      return {
+        t,
+        backend,
+        attempts: () => attempts,
+        connect() {
+          relay = "connected";
+        },
+        hold() {
+          holding = true;
+        },
+        answer: () => answer?.(),
+      };
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("registers it again and hands it the whole state it missed", async () => {
+      const r = refusedOnce();
+      const seen: unknown[] = [];
+      r.backend.on((e) => seen.push(e));
+      await expect(r.backend.getState()).resolves.toMatchObject({
+        relay: { state: "authenticating" },
+      });
+      // The relay connects while nothing listens.
+      r.connect();
+      expect(r.t.warn).toHaveBeenCalledWith(
+        "voltip://event listener could not be registered; trying again",
+        expect.any(Error),
+      );
+      await vi.advanceTimersByTimeAsync(250);
+      expect(r.attempts()).toBe(2);
+      expect(seen).toEqual([
+        expect.objectContaining({
+          type: "state",
+          relay: expect.objectContaining({ state: "connected" }),
+        }),
+      ]);
+      // From then on its events arrive as before.
+      r.t.fire({ type: "error", message: "relay refused" });
+      expect(seen.at(-1)).toEqual({ type: "error", message: "relay refused" });
+    });
+
+    it("hands it the events that came while that state was on its way after the state", async () => {
+      const r = refusedOnce();
+      const seen: unknown[] = [];
+      r.backend.on((e) => seen.push(e));
+      await r.backend.getState();
+      r.hold();
+      await vi.advanceTimersByTimeAsync(250);
+      r.t.fire({ type: "error", message: "after the state was taken" });
+      expect(seen).toEqual([]);
+      r.answer();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(seen.map((e) => (e as { type: string }).type)).toEqual(["state", "error"]);
+    });
+
+    it("still hands it the events when the whole state cannot be had", async () => {
+      const t = fakeTransport();
+      let attempts = 0;
+      const backend = new TauriBackend({
+        ...t.transport,
+        invoke: () => Promise.reject(new Error("core_state refused")),
+        listen: (event: string, h: (e: { payload: unknown }) => void) => {
+          attempts += 1;
+          return attempts === 1
+            ? Promise.reject(new Error("IPC not ready"))
+            : t.transport.listen(event, h);
+        },
+      });
+      const seen: unknown[] = [];
+      backend.on((e) => seen.push(e));
+      await vi.advanceTimersByTimeAsync(250);
+      t.fire({ type: "error", message: "relay refused" });
+      expect(seen).toEqual([{ type: "error", message: "relay refused" }]);
+      expect(t.warn).toHaveBeenCalledWith(
+        "core_state for a late voltip://event listener failed",
+        expect.any(Error),
+      );
+    });
+
+    it("stops trying once the listener is gone", async () => {
+      const t = fakeTransport();
+      const listen = vi.fn(() => Promise.reject(new Error("IPC not ready")));
+      const backend = new TauriBackend({ ...t.transport, listen });
+      const off = backend.on(() => undefined);
+      await vi.advanceTimersByTimeAsync(250 + 500);
+      expect(listen).toHaveBeenCalledTimes(3);
+      off();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(listen).toHaveBeenCalledTimes(3);
+      // The first failure is the one that warns.
+      expect(t.warn).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("rejects a malformed core_state instead of rendering garbage", async () => {
     const backend = new TauriBackend({
       invoke: () => Promise.resolve({ identity: null }),

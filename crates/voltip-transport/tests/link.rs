@@ -8,7 +8,7 @@ use voltip_protocol::ProtocolVersion;
 use voltip_protocol::relay::RelayFrame;
 use voltip_relay::RelayConfig;
 use voltip_relay::server::RelayHandle;
-use voltip_transport::{ConnectionState, LinkConfig, LinkEvent, ReconnectPolicy, RelayEndpoint, RelayLink, TransportError};
+use voltip_transport::{ConnectionState, LINK_EVENT_QUEUE, LinkConfig, LinkEvent, ReconnectPolicy, RelayEndpoint, RelayLink, TransportError};
 
 async fn next_state(rx: &mut mpsc::Receiver<LinkEvent>, want: ConnectionState) {
     loop {
@@ -153,6 +153,68 @@ async fn silent_relay() -> RelayEndpoint {
         }
     });
     RelayEndpoint::parse(&format!("ws://{addr}/ws")).unwrap()
+}
+
+/// A relay that answers `hello`, sends `frames` frames and goes away.
+async fn chatty_relay(frames: usize) -> RelayEndpoint {
+    use futures_util::{SinkExt as _, StreamExt as _};
+    use tokio_tungstenite::tungstenite::Message;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let Ok((stream, _)) = listener.accept().await else { return };
+        let Ok(mut ws) = tokio_tungstenite::accept_async(stream).await else { return };
+        if let Some(Ok(Message::Text(t))) = ws.next().await
+            && t.contains(r#""type":"hello""#)
+        {
+            let ack = RelayFrame::HelloAck {
+                version: ProtocolVersion::CURRENT,
+                relay_version: "chatty".into(),
+                limits: voltip_protocol::relay::RelayLimits { code_attempts_per_connection: 5, code_attempts_per_session: 10, session_ttl_secs: 120 },
+            };
+            let _ = ws.send(Message::Text(ack.encode().unwrap().into())).await;
+            let frame = RelayFrame::Bye { version: ProtocolVersion::CURRENT }.encode().unwrap();
+            for _ in 0..frames {
+                let _ = ws.send(Message::Text(frame.clone().into())).await;
+            }
+            let _ = ws.close(None).await;
+        }
+    });
+    RelayEndpoint::parse(&format!("ws://{addr}/ws")).unwrap()
+}
+
+/// Regression (user report 2026-11-02, the relay shown 认证中 for good while it was connected): a
+/// change of state that came while the link's owner was behind was dropped once the owner's queue
+/// was full, and the owner kept the state from before. Here the queue is full exactly when the
+/// relay goes away: the reason and the `Reconnecting` transition wait for room instead.
+#[tokio::test]
+async fn regression_a_state_change_while_the_owner_is_behind_waits_for_room() {
+    use voltip_transport::FailureKind;
+    // Connecting, Authenticating and Connected, then frames up to the queue's last place.
+    let mut cfg = LinkConfig::new(chatty_relay(LINK_EVENT_QUEUE - 3).await);
+    cfg.reconnect = ReconnectPolicy { base: Duration::from_secs(600), max: Duration::from_secs(600), jitter: 0.0, max_attempts: None };
+    let (link, mut ev) = RelayLink::spawn(cfg);
+    // Nothing is read until the link has taken the loss in.
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while link.state() != ConnectionState::Reconnecting {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the link reconnects within 10 s");
+    let mut frames = 0;
+    let mut failed = None;
+    loop {
+        match tokio::time::timeout(Duration::from_secs(10), ev.recv()).await.expect("the link's reports within 10 s").expect("channel open") {
+            LinkEvent::Frame(_) => frames += 1,
+            LinkEvent::Failed(failure) => failed = Some(failure.kind),
+            LinkEvent::State(change) if change.to == ConnectionState::Reconnecting => break,
+            LinkEvent::State(_) | LinkEvent::Warning(_) => {}
+        }
+    }
+    assert_eq!(frames, LINK_EVENT_QUEUE - 3);
+    assert_eq!(failed, Some(FailureKind::Lost), "why the connection went down comes before the transition");
+    link.close().await;
 }
 
 /// A relay that answers `hello` but never pongs must be detected by the heartbeat.

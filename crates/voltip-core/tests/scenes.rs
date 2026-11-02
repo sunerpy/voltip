@@ -81,10 +81,17 @@ fn draft(name: &str, apps: &[&str], overrides: SceneOverrides) -> SceneDraft {
     }
 }
 
-/// One take: start, wait for listening, stop, return the terminal status and the new history.
+/// One take: start, wait until it listens and the probe has answered, stop, return the terminal
+/// status and the new history. A release before the answer runs without a scene (docs/dictation.md
+/// §30.2), and when no scene changes the output mode the device opens alongside the probe, so the
+/// first ready status can come before the answer (make verify, 2026-11-02: two takes ran without
+/// their scene). These probes all name an application, so the context always arrives.
 async fn take(node: &mut Node) -> (DictationStatus, Vec<HistoryEntry>) {
     node.handle.send(CoreCommand::DictationStart).await.unwrap();
-    wait(node, |e| matches!(e, CoreEvent::Dictation(s) if matches!(s.phase, DictationPhase::Listening { ready: true, .. })).then_some(())).await;
+    wait(node, |e| {
+        matches!(e, CoreEvent::Dictation(s) if matches!(s.phase, DictationPhase::Listening { ready: true, .. }) && s.context.is_some()).then_some(())
+    })
+    .await;
     node.handle.send(CoreCommand::DictationStop).await.unwrap();
     let done = wait(node, |e| match e {
         CoreEvent::Dictation(s) if s.phase.is_terminal() => Some(s.clone()),

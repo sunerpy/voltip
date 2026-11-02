@@ -64,6 +64,12 @@ app_pid=$!
 if ! timeout "$window_timeout" sh -c "until DISPLAY=$display xdotool search --name '^Voltip$' >/dev/null 2>&1; do sleep 1; done"; then
   echo "smoke-desktop-linux: window did not appear within ${window_timeout}s"; cat "$data/app.log"; exit 1
 fi
+# The interface check (docs/dictation.md §33.4) ran in the main window and found the program's
+# interface: its report is in the log once the document is parsed.
+ui_guard_ok='the window runs the interface the program carries window='
+if ! timeout 30 sh -c 'until sed -E "s/\x1b\[[0-9;]*m//g" "$1" | grep -qF "$2\"main\""; do sleep 0.5; done' _ "$data/app.log" "$ui_guard_ok"; then
+  echo "smoke-desktop-linux: the main window's interface check reported no program interface"; voltip_smoke_plain "$data/app.log" | grep -F 'ui_guard' | tail -6; exit 1
+fi
 # First paint of the React app after the window maps; the WebView gives no event we can wait on.
 sleep 3
 win=$(DISPLAY=$display xdotool search --name '^Voltip$' | head -1)
@@ -182,6 +188,12 @@ fi
 echo "smoke-desktop-linux: window $geometry"
 grep -E "identity|error" "$data/app.log" | sed -E 's/\x1b\[[0-9;]*m//g' | head -3 || true
 grep -iE "global hotkey registered|overlay window prewarmed" "$data/app.log" | sed -E 's/\x1b\[[0-9;]*m//g' | head -2 || true
+# Both windows ran the interface check and neither was replaced: every report is the one above.
+ui_guard=$(voltip_smoke_plain "$data/app.log" | grep -F 'ui_guard: ' || true)
+if ! grep -qF "${ui_guard_ok}\"overlay\"" <<<"$ui_guard" || grep -vF "$ui_guard_ok" <<<"$ui_guard" | grep -q .; then
+  echo "smoke-desktop-linux: the interface check reported:"; echo "$ui_guard"; exit 1
+fi
+echo "smoke-desktop-linux: the interface check found the program's interface in both windows, none replaced"
 # The title bar's × quits on Linux (no tray, docs/dictation.md §15.4). Before 2026-09-28 it destroyed
 # the window while the prewarmed pill window kept the process running with nothing left to show.
 # The close button is the right-most 46 px of the 40 px title bar. `ps` sees an exited child as a

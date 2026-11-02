@@ -49,8 +49,7 @@ impl Runtime {
         tracing::info!(request_id, chars = text.chars().count(), "processing a history entry with a preset");
         let task = tokio::spawn(async move {
             let progress = |done: u32, total: u32| {
-                // Progress may be dropped when the UI lags; the end never is.
-                let _ = evt.try_send(CoreEvent::HistoryProcess { request_id, id, state: ProcessState::Running { done, total } });
+                let _ = evt.send(CoreEvent::HistoryProcess { request_id, id, state: ProcessState::Running { done, total } });
             };
             let result = process::run(refiner.as_ref(), &hints, &text, progress).await.map_err(|e| e.to_string());
             let _ = done.send(Processed { request_id, id, preset: preset.to_ref(), result }).await;

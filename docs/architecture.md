@@ -37,6 +37,7 @@ apps/server              无头服务端 voltip-server（Linux x64 tar.gz）：�
 - **凡是系统能力都在 Rust 里做**：全局热键、音频设备与电平、文本注入、窗口管理、剪贴板、文件。webview 只渲染与收集输入；浏览器 API（`getUserMedia`、`navigator.keyboard`…）不作为正式实现，只能是浏览器预览的降级。
 - **Rust → webview 的通道按语义选**：离散状态变化（设置、设备列表、配对、热键注册结果）走 `voltip://event` 事件总线并折叠进 `UiState`；**连续流**（电平帧、进度、识别流）走 `tauri::ipc::Channel`，由发起该流的 command 返还，随 command 生命周期结束；一次性查询走 command 返回值。事件总线不承载 30 Hz 以上的数据。
 - **shell 自己产生的状态**（热键注册 / 按下 / 录制态）经 `Bridge::publish` 并入 `UiState`，`core_state` 与事件流始终一致；webview 不维护第二份真相。
+- **窗口的状态不丢变化**（docs/dictation.md §33）：窗口先让事件监听生效再取 `core_state`，回答之前到达的事件按到达顺序折叠到回答上；核心的事件与 `Bridge::publish` 的事件都在状态锁里折叠并广播，窗口收到的顺序与缓存一致；转发落后或某个事件没能送到窗口时，`Bridge::forward` 紧接着发整个状态。
 - **录制快捷键时挂起自己的热键**（`hotkey_capture`）：`RegisterHotKey` 会吞掉已注册的组合键，不挂起就永远录不到同一个键。
 - **悬浮胶囊窗口**启动即预热（隐藏，`state=blank`），之后只 show / hide；状态经窗口事件 `voltip://overlay` 下发而非导航；隐藏前先画空一帧。窗口不取焦点，因此取消键只能是「监听期间临时注册」的热键（尚未实现）。
 - 客户端禁用浏览器右键菜单（可编辑控件除外），主窗口无原生装饰，40 px 标题栏即工具栏。

@@ -922,6 +922,12 @@ impl std::fmt::Debug for Bridge {
     }
 }
 
+/// Where [`Bridge::forward`]'s wait before it tries a whole state that could not be sent again
+/// starts, when no event comes first. Each failed try doubles the wait before the next one, so the
+/// tries again come 500 ms, 1 s, 2 s and 4 s apart, and then every `RESYNC_RETRY_MAX`.
+const RESYNC_RETRY_FIRST: Duration = Duration::from_millis(250);
+/// The longest wait between two tries of a whole state in [`Bridge::forward`].
+const RESYNC_RETRY_MAX: Duration = Duration::from_secs(5);
 impl Bridge {
     /// [`Bridge::start_with`] on the in-memory dictation fakes (`voltip_core::dictation::fakes`):
     /// for tests and for shells without a native pipeline. The desktop passes its real ports.
@@ -1016,6 +1022,55 @@ impl Bridge {
         self.events.subscribe()
     }
 
+    /// Hand every event of `events` to the windows with `emit`, in order, until the bridge stops
+    /// (docs/dictation.md §33.2). A window folds them into the state it took from `core_state`, so
+    /// one it never gets leaves its copy behind for good. When `events` fell behind the fan-out
+    /// (`Lagged`: the oldest events are gone) or an `emit` failed, the whole state goes out next,
+    /// and every window takes it in place of its own; the events still queued after it change
+    /// nothing it does not already hold. A whole state that could not be sent either is sent again
+    /// with the next event, or when none comes 500 ms later, then 1 s, 2 s and 4 s after that, and
+    /// then every 5 s. Until 2026-11-02 the shells only logged the lag.
+    pub async fn forward<E: std::fmt::Display>(&self, mut events: broadcast::Receiver<UiEvent>, mut emit: impl FnMut(&UiEvent) -> Result<(), E>) {
+        let mut behind = false;
+        let mut retry = RESYNC_RETRY_FIRST;
+        loop {
+            let next = if behind {
+                // Behind still: the next event, or the time to try the whole state again.
+                tokio::time::timeout(retry, events.recv()).await.ok()
+            } else {
+                Some(events.recv().await)
+            };
+            match next {
+                Some(Ok(event)) => {
+                    if let Err(e) = emit(&event) {
+                        tracing::warn!(error = %e, "an event could not be sent to the windows; the whole state follows");
+                        behind = true;
+                    }
+                }
+                Some(Err(broadcast::error::RecvError::Lagged(skipped))) => {
+                    tracing::warn!(skipped, "the windows fell behind the events; the whole state follows");
+                    behind = true;
+                }
+                Some(Err(broadcast::error::RecvError::Closed)) => return,
+                None => {}
+            }
+            if behind {
+                match emit(&UiEvent::State(Box::new(self.state()))) {
+                    Ok(()) => {
+                        behind = false;
+                        retry = RESYNC_RETRY_FIRST;
+                    }
+                    Err(e) => {
+                        if retry == RESYNC_RETRY_FIRST {
+                            tracing::warn!(error = %e, "the whole state could not be sent to the windows; trying again");
+                        }
+                        retry = (retry * 2).min(RESYNC_RETRY_MAX);
+                    }
+                }
+            }
+        }
+    }
+
     /// Input levels while a dictation capture runs (see [`CoreHandle::levels`]).
     pub fn levels(&self) -> broadcast::Receiver<LevelFrame> {
         self.handle.levels()
@@ -1079,9 +1134,11 @@ impl Bridge {
 
     /// Publish an event the shell produced itself (global hotkey registration / presses): folded
     /// into the cached state and broadcast like a core event, so `core_state` and the event stream
-    /// agree.
+    /// agree. Sent before the lock is let go, as [`pump`] sends: the windows get the events in the
+    /// order the cache took them (docs/dictation.md §33.2).
     pub fn publish(&self, event: UiEvent) {
-        let event = self.state.lock().apply_shell(event);
+        let mut state = self.state.lock();
+        let event = state.apply_shell(event);
         let _ = self.events.send(event);
     }
 
@@ -1399,14 +1456,20 @@ impl Bridge {
 async fn pump(mut core_events: mpsc::Receiver<CoreEvent>, state: Arc<Mutex<UiState>>, tx: broadcast::Sender<UiEvent>, suggestions: Arc<SuggestionsCache>) {
     while let Some(ev) = core_events.recv().await {
         let changes_suggestions = matches!(ev, CoreEvent::Dictionary(_) | CoreEvent::Rules(_) | CoreEvent::History { .. } | CoreEvent::VocabularyIgnored(_));
-        let ui = state.lock().apply(ev);
+        let mut cached = state.lock();
+        let ui = cached.apply(ev);
         // After the state holds the change: a computation that reads the new count reads the new
         // lists too.
         if changes_suggestions {
             suggestions.generation.fetch_add(1, Ordering::AcqRel);
         }
-        // No subscribers yet is fine: the webview asks for `core_state` when it mounts.
+        // Sent before the lock is let go, as `Bridge::publish` sends (docs/dictation.md §33.2): the
+        // windows get the events in the order the cache took them. Sent after it, a shell event
+        // folded in between went out first, and a window then took the older value from the
+        // core's whole state, which carries the shell's parts too. No subscribers yet is fine: the
+        // webview asks for `core_state` when it mounts.
         let _ = tx.send(ui);
+        drop(cached);
     }
 }
 
@@ -2590,6 +2653,77 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         assert_eq!(injector.clipboard_copies(), vec![FAKE_TRANSCRIPT.to_owned(), FAKE_TRANSCRIPT.to_owned()]);
+        bridge.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn regression_a_shell_event_never_passes_the_whole_state_on_its_way_to_the_windows() {
+        // The core's whole state (`Ready`) carries the shell's parts too. Folded under the lock but
+        // sent after it, a shell event folded in between went out first: a window took it, then
+        // the older value from the whole state, and kept that while the cache had the new one.
+        const ROUNDS: u32 = 20_000;
+        let dir = tempfile::tempdir().unwrap();
+        let bridge = Bridge::start(CoreConfig::new(dir.path().to_path_buf()), Arc::new(MemorySecretStore::new())).unwrap();
+        let mut up = bridge.events();
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while bridge.state().identity.is_none() {
+                let _ = up.recv().await;
+            }
+        })
+        .await
+        .expect("the core is up within 10 s");
+        let ready = {
+            let state = bridge.state();
+            move || CoreEvent::Ready {
+                identity: state.identity.clone().unwrap(),
+                settings: state.settings.clone(),
+                secret_backend: "memory",
+                app_version: state.app_version.clone(),
+            }
+        };
+        // A second pump on the bridge's own cache and fan-out, fed whole states as fast as it takes
+        // them, while a thread publishes ever higher hardware counts; the window reads all along.
+        let (core_tx, core_rx) = mpsc::channel(64);
+        let pumping = tokio::spawn(pump(core_rx, bridge.state.clone(), bridge.events.clone(), bridge.suggestions.clone()));
+        let mut windows = bridge.events();
+        let window = tokio::spawn(async move {
+            // A window folds what it gets: no whole state may come after a newer hardware count.
+            let (mut newest, mut passed, mut read) = (0, 0, 0usize);
+            loop {
+                match windows.recv().await {
+                    Ok(UiEvent::Hardware(h)) if h.cpu_threads == u32::MAX => return (passed, read),
+                    Ok(UiEvent::Hardware(h)) => newest = newest.max(h.cpu_threads),
+                    Ok(UiEvent::State(s)) if s.hardware.cpu_threads < newest => passed += 1,
+                    Ok(_) => {}
+                    // Behind: what it skipped cannot reorder what it gets.
+                    Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(broadcast::error::RecvError::Closed) => return (passed, read),
+                }
+                read += 1;
+            }
+        });
+        let states = tokio::spawn(async move {
+            for _ in 0..ROUNDS {
+                core_tx.send(ready()).await.unwrap();
+            }
+        });
+        let shell = bridge.clone();
+        let publisher = tokio::task::spawn_blocking(move || {
+            for cpu_threads in 1..=ROUNDS {
+                shell.publish(UiEvent::Hardware(voltip_core::ui::HardwareStatus { cpu_threads, gpus: Vec::new() }));
+            }
+        });
+        // Both sides done and the pump drained (its sender went with `states`): this is the last event.
+        tokio::time::timeout(Duration::from_secs(120), async {
+            publisher.await.unwrap();
+            states.await.unwrap();
+            pumping.await.unwrap();
+        })
+        .await
+        .expect("both sides done within 120 s");
+        bridge.publish(UiEvent::Hardware(voltip_core::ui::HardwareStatus { cpu_threads: u32::MAX, gpus: Vec::new() }));
+        let (passed, read) = tokio::time::timeout(Duration::from_secs(30), window).await.expect("the window reads to the end within 30 s").unwrap();
+        assert_eq!(passed, 0, "whole states older than a hardware count the window already had ({read} events read)");
         bridge.shutdown();
     }
 }

@@ -1029,7 +1029,8 @@ impl AppCore {
         dictation.set_keep_audio(keeps_audio(&config, &settings));
         dictation.set_result_cards(config.result_cards);
         let (cmd_tx, cmd_rx) = mpsc::channel(64);
-        let (evt_tx, evt_rx) = mpsc::channel(512);
+        let (evt_tx, evt_rx) = mpsc::unbounded_channel();
+        let evt_rx = forward_events(evt_rx);
         let (link_tx, link_rx) = mpsc::channel(1024);
         let (model_tx, model_rx) = mpsc::channel(64);
         let (act_tx, act_rx) = mpsc::channel(16);
@@ -1129,6 +1130,26 @@ impl AppCore {
             Inbox { cmd_rx, link_rx, dict_rx, model_rx, act_rx, phone_rx, check_rx, process_rx, listed_rx, mcp_rx, recover_rx, usage_rx, import_rx, auto_rx };
         Ok((rt, inbox, CoreHandle { cmd: cmd_tx, levels: levels_tx }, evt_rx))
     }
+}
+
+/// Events waiting in the receiver [`AppCore::start_with`] returns before the forwarding task waits.
+const EVENT_QUEUE: usize = 512;
+
+/// The core's events to the shell in the order they were sent, none dropped (docs/dictation.md
+/// §33.2): the runtime and its tasks send without waiting and the shell may read late. Until
+/// 2026-11-02 they went into a queue of 512 that dropped what did not fit, and the shell's state,
+/// with every window's, kept what the lost events would have changed (the relay at 认证中 while it
+/// was connected, user report 2026-11-02). The shell still reads a bounded channel.
+fn forward_events(mut from: mpsc::UnboundedReceiver<CoreEvent>) -> mpsc::Receiver<CoreEvent> {
+    let (to, events) = mpsc::channel(EVENT_QUEUE);
+    tokio::spawn(async move {
+        while let Some(event) = from.recv().await {
+            if to.send(event).await.is_err() {
+                break;
+            }
+        }
+    });
+    events
 }
 
 /// An endpoint the user entered must be an http(s) URL with a host.
@@ -1340,7 +1361,8 @@ struct Runtime {
     activation: ActivationState,
     /// Activation timers report here.
     act_tx: mpsc::Sender<ActivationTimer>,
-    evt: mpsc::Sender<CoreEvent>,
+    /// The interface's events: never full, so none is dropped ([`forward_events`]).
+    evt: mpsc::UnboundedSender<CoreEvent>,
     /// Every link forwards its events here, tagged with its id.
     link_tx: mpsc::Sender<(LinkId, LinkEvent)>,
     relay: Option<(RelayLink, RelayEndpoint)>,
@@ -1432,9 +1454,8 @@ impl Runtime {
             }
             _ => {}
         }
-        if self.evt.try_send(event).is_err() {
-            tracing::warn!("core event queue full; UI is not draining events");
-        }
+        // An error means the shell stopped listening: nobody is left to tell.
+        let _ = self.evt.send(event);
     }
 
     fn now() -> Now {
@@ -2563,7 +2584,7 @@ impl Runtime {
                 Ok(models) => ProbeOutcome::Ok { models, latency_ms },
                 Err(ProbeError { reason, status, detail }) => ProbeOutcome::Failed { reason, status, detail },
             };
-            if evt.send(CoreEvent::ProviderProbe(ProbeReport { provider, kind, outcome })).await.is_err() {
+            if evt.send(CoreEvent::ProviderProbe(ProbeReport { provider, kind, outcome })).is_err() {
                 tracing::debug!("provider probe answered after the UI went away");
             }
         });
@@ -2773,7 +2794,7 @@ impl Runtime {
                 Ok(out) => PresetTryOutcome::Ok { text: out.text, latency_ms: out.latency_ms, model: out.model },
                 Err(e) => PresetTryOutcome::Failed { reason: e.to_string() },
             };
-            if evt.send(CoreEvent::PresetTry { id, outcome }).await.is_err() {
+            if evt.send(CoreEvent::PresetTry { id, outcome }).is_err() {
                 tracing::debug!("preset trial answered after the UI went away");
             }
         });

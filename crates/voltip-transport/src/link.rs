@@ -202,6 +202,9 @@ fn refusal_kind(code: voltip_protocol::relay::RelayErrorCode) -> FailureKind {
     }
 }
 
+/// How many reports ([`LinkEvent`]) wait for the link's owner before the link waits for room.
+pub const LINK_EVENT_QUEUE: usize = 256;
+
 /// What the owner of a link observes.
 #[derive(Debug)]
 pub enum LinkEvent {
@@ -240,7 +243,7 @@ impl RelayLink {
     /// Start connecting in the background. Events arrive on the returned receiver.
     pub fn spawn(config: LinkConfig) -> (Self, mpsc::Receiver<LinkEvent>) {
         let (cmd_tx, cmd_rx) = mpsc::channel(64);
-        let (evt_tx, evt_rx) = mpsc::channel(256);
+        let (evt_tx, evt_rx) = mpsc::channel(LINK_EVENT_QUEUE);
         let state = Arc::new(Mutex::new(ConnectionMachine::new()));
         let task = tokio::spawn(run(config, cmd_rx, evt_tx, state.clone()));
         (Self { cmd: cmd_tx, state, task: Mutex::new(Some(task)) }, evt_rx)
@@ -286,34 +289,44 @@ impl RelayLink {
     }
 }
 
+/// Hand the owner a report, waiting for room in its queue: a report the owner never gets leaves
+/// it with what it knew before, a transition among them (the relay shown 认证中 for good while it
+/// was connected, user report 2026-11-02). Frames wait the same way. An owner that is gone gets
+/// nothing.
+async fn report(evt: &mpsc::Sender<LinkEvent>, event: LinkEvent) {
+    let _ = evt.send(event).await;
+}
+
+async fn report_state(evt: &mpsc::Sender<LinkEvent>, change: Option<StateChange>) {
+    if let Some(c) = change {
+        tracing::debug!(from = ?c.from, to = ?c.to, "link state");
+        report(evt, LinkEvent::State(c)).await;
+    }
+}
+
 async fn run(config: LinkConfig, mut cmd_rx: mpsc::Receiver<Cmd>, evt: mpsc::Sender<LinkEvent>, state: Arc<Mutex<ConnectionMachine>>) {
-    let emit_state = |change: Option<StateChange>, evt: &mpsc::Sender<LinkEvent>| {
-        if let Some(c) = change {
-            tracing::debug!(from = ?c.from, to = ?c.to, "link state");
-            let _ = evt.try_send(LinkEvent::State(c));
-        }
-    };
     loop {
         let change = state.lock().connecting();
-        emit_state(change, &evt);
+        report_state(&evt, change).await;
         if state.lock().state().is_closed() {
             return;
         }
         match connect_and_run(&config, &mut cmd_rx, &evt, &state).await {
             Outcome::Closed => {
                 let change = state.lock().closed();
-                emit_state(change, &evt);
+                report_state(&evt, change).await;
                 return;
             }
             Outcome::Lost(failure) => {
                 let too_old = failure.kind == FailureKind::TooOld;
-                let _ = evt.try_send(LinkEvent::Failed(failure));
+                // The state first: `RelayLink::state` is the truth while the reports wait for room.
                 let (change, attempts) = {
                     let mut m = state.lock();
                     let c = m.reconnecting();
                     (c, m.attempts())
                 };
-                emit_state(change, &evt);
+                report(&evt, LinkEvent::Failed(failure)).await;
+                report_state(&evt, change).await;
                 // Below the relay's minimum only an update helps (docs/pairing.md 「最低版本」).
                 let delay = match config.reconnect.delay_for(attempts) {
                     Some(_) if too_old => Some(config.too_old_retry),
@@ -329,7 +342,7 @@ async fn run(config: LinkConfig, mut cmd_rx: mpsc::Receiver<Cmd>, evt: mpsc::Sen
                                 cmd = cmd_rx.recv() => match cmd {
                                     Some(Cmd::Close) | None => {
                                         let change = state.lock().closed();
-                                        emit_state(change, &evt);
+                                        report_state(&evt, change).await;
                                         return;
                                     }
                                     Some(Cmd::Now) => {
@@ -345,7 +358,7 @@ async fn run(config: LinkConfig, mut cmd_rx: mpsc::Receiver<Cmd>, evt: mpsc::Sen
                     }
                     None => {
                         let change = state.lock().closed();
-                        emit_state(change, &evt);
+                        report_state(&evt, change).await;
                         return;
                     }
                 }
@@ -425,9 +438,7 @@ async fn connect_and_run(
     };
     let (mut sink, mut stream) = ws.split();
     let change = state.lock().authenticating();
-    if let Some(c) = change {
-        let _ = evt.try_send(LinkEvent::State(c));
-    }
+    report_state(evt, change).await;
     let hello = RelayFrame::hello(config.client_version.clone());
     let Ok(text) = hello.encode() else { return Outcome::Lost(LinkFailure::new(FailureKind::Other, "encode hello")) };
     if let Err(e) = sink.send(Message::Text(text.into())).await {
@@ -457,9 +468,7 @@ async fn connect_and_run(
         Err(_) => return Outcome::Lost(LinkFailure::new(FailureKind::Timeout, "hello_ack timed out")),
     }
     let change = state.lock().connected();
-    if let Some(c) = change {
-        let _ = evt.try_send(LinkEvent::State(c));
-    }
+    report_state(evt, change).await;
 
     let mut ping = tokio::time::interval(config.ping_interval);
     ping.tick().await; // first tick is immediate; skip it
@@ -509,7 +518,7 @@ async fn connect_and_run(
                             return Outcome::Closed;
                         }
                     }
-                    Err(e) => { let _ = evt.try_send(LinkEvent::Warning(format!("bad frame: {e}"))); }
+                    Err(e) => report(evt, LinkEvent::Warning(format!("bad frame: {e}"))).await,
                 },
                 Some(Ok(Message::Pong(p))) => {
                     if p.as_ref() == pings.to_be_bytes() {

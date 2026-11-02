@@ -35,6 +35,7 @@ pub mod paste;
 pub mod platform;
 pub mod restart;
 pub mod solo_key;
+pub mod ui_guard;
 pub mod update;
 
 use tauri::{Emitter as _, Manager as _, Runtime};
@@ -1638,21 +1639,11 @@ pub fn attach_bridge<R: Runtime>(
     // with `tokio::spawn`, so it has to be started from Tauri's own runtime.
     // Subscribed before the core starts: the first `state` event must reach the webview bus even
     // when the core is ready before this thread gets to subscribe (broadcast drops earlier events).
-    let (bridge, mut events) = tauri::async_runtime::block_on(async { Bridge::start_subscribed(config, store, ports) })?;
+    let (bridge, events) = tauri::async_runtime::block_on(async { Bridge::start_subscribed(config, store, ports) })?;
     let handle = app.clone();
-    tauri::async_runtime::spawn(async move {
-        loop {
-            match events.recv().await {
-                Ok(ev) => {
-                    if let Err(e) = handle.emit(UI_EVENT_NAME, &ev) {
-                        tracing::warn!(error = %e, "emit failed");
-                    }
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => tracing::warn!(skipped = n, "webview lagged; events dropped"),
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-            }
-        }
-    });
+    let forwarding = bridge.clone();
+    // A window that missed events gets the whole state (docs/dictation.md §33.2).
+    tauri::async_runtime::spawn(async move { forwarding.forward(events, |ev| handle.emit(UI_EVENT_NAME, ev)).await });
     // What the local models can run on (docs/dictation.md §10.6), off the UI thread: the first
     // enumeration initialises the build's GPU backends.
     {
@@ -1969,7 +1960,10 @@ pub fn run() {
     // docs/dictation.md §4.6.1: the weekly automatic backup, and the backups' state in the settings.
     config.auto_backup = true;
     let ports = dictation::production_ports(config.models_root.clone(), &config.network);
-    let mut app = match build_app(tauri::Builder::default(), config, secret_store(), ShellOptions::PRODUCTION.hidden(start_hidden), ports).build(context) {
+    // docs/dictation.md §33.4: a window running interface code this program does not carry reloads.
+    let guard = ui_guard::init(context.assets());
+    let builder = build_app(tauri::Builder::default(), config, secret_store(), ShellOptions::PRODUCTION.hidden(start_hidden), ports);
+    let mut app = match builder.plugin(guard).build(context) {
         Ok(app) => app,
         Err(e) => {
             tracing::error!(error = %e, "tauri failed to build");
