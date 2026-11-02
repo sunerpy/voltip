@@ -19,6 +19,8 @@ interface Page {
   builds?: string[];
   /** The document is still being parsed when the check runs. */
   loading?: boolean;
+  /** How Tauri's IPC answers the check's report; `"absent"` leaves Tauri's internals out. */
+  invoke?: "resolves" | "rejects" | "throws" | "absent";
 }
 
 function open(page: Page) {
@@ -52,7 +54,21 @@ function open(page: Page) {
       location.href = new URL(to, location.href).href;
     }),
   };
-  const fakeWindow = { voltipUiBuild: page.build === null ? undefined : (page.build ?? BUILD) };
+  const invoke = vi.fn<(cmd: string, args: unknown) => Promise<unknown>>(() => {
+    if (page.invoke === "throws") throw new Error("no IPC");
+    return page.invoke === "rejects" ? Promise.reject(new Error("refused")) : Promise.resolve();
+  });
+  const fakeWindow: {
+    voltipUiBuild?: string;
+    voltipUiCheck?: unknown;
+    __TAURI_INTERNALS__?: unknown;
+  } = {
+    voltipUiBuild: page.build === null ? undefined : (page.build ?? BUILD),
+    __TAURI_INTERNALS__:
+      page.invoke === "absent"
+        ? undefined
+        : { metadata: { currentWebview: { label: "main" } }, invoke },
+  };
   const warn = vi.fn();
   const error = vi.fn();
   const check = source
@@ -71,6 +87,14 @@ function open(page: Page) {
     history,
     warn,
     error,
+    window: fakeWindow,
+    /** What the check reported to the program, in order. */
+    reports: () =>
+      invoke.mock.calls.map(([cmd, args]) => {
+        expect(cmd).toBe("plugin:event|emit");
+        expect(args).toMatchObject({ event: "voltip://ui-guard" });
+        return (args as { payload: unknown }).payload;
+      }),
     parsed: () => {
       for (const listener of ready) listener();
     },
@@ -90,6 +114,17 @@ describe("ui_guard.js", () => {
       expect(page.location.replace).not.toHaveBeenCalled();
       expect(page.history.replaceState).not.toHaveBeenCalled();
       expect(page.warn).not.toHaveBeenCalled();
+      // It says so, on the window and to the program's log.
+      expect(page.window.voltipUiCheck).toEqual({ verdict: "ok", replaced: false });
+      expect(page.reports()).toEqual([
+        {
+          window: "main",
+          verdict: "ok",
+          replaced: false,
+          scripts: ["/assets/index-NEW00001.js"],
+          build: BUILD,
+        },
+      ]);
     }
   });
 
@@ -104,10 +139,19 @@ describe("ui_guard.js", () => {
     expect(to.searchParams.get("voltip-ui-reload")).toBe("1762000000000");
     expect(to.hash).toBe("#/overlay?state=listening");
     expect(stale.warn).toHaveBeenCalledWith(
-      "voltip: this window runs interface code the program does not carry; reloading",
+      "voltip: this window runs interface code the program does not carry; replacing its document once",
       ["/assets/index-OLD00001.js"],
       undefined,
     );
+    expect(stale.reports()).toEqual([
+      {
+        window: "main",
+        verdict: "replacing",
+        replaced: false,
+        scripts: ["/assets/index-OLD00001.js"],
+        build: null,
+      },
+    ]);
 
     // The program's document at that address: the marker leaves the URL before the interface
     // reads it, the router's state and the route kept, and the window keeps the program's code.
@@ -119,6 +163,8 @@ describe("ui_guard.js", () => {
     );
     expect(fresh.location.href).toBe(PILL);
     expect(fresh.location.replace).not.toHaveBeenCalled();
+    expect(fresh.window.voltipUiCheck).toEqual({ verdict: "ok", replaced: true });
+    expect(fresh.reports()).toMatchObject([{ verdict: "ok", replaced: true }]);
   });
 
   it("regression: a window whose bundle is another build at the same path is replaced too", () => {
@@ -134,25 +180,50 @@ describe("ui_guard.js", () => {
     expect(unnamed.location.replace).not.toHaveBeenCalled();
   });
 
-  it("regression: a reloaded window that still runs other code is cleared, not left with it", () => {
+  it("a replaced window that still runs other code is kept as it is, with the reason", () => {
+    // Coordinator's goal text, 2026-11-02: after one replacement no cache can answer, a mismatch more
+    // likely means the check misjudges this webview; a blank or reloading window would make every
+    // start unusable. The window stays, the console and the program's log say why.
     const again = open({
       scripts: ["/assets/index-OLD00001.js"],
       href: `${APP}?voltip-ui-reload=1762000000000`,
     });
-    expect(again.location.replace).toHaveBeenCalledWith("about:blank");
-    expect(again.location.replace).toHaveBeenCalledTimes(1);
+    expect(again.location.replace).not.toHaveBeenCalled();
+    // Only the check's own marker leaves the address, as in every replaced document.
+    expect(again.history.replaceState).toHaveBeenCalledTimes(1);
+    expect(again.location.href).toBe(APP);
     expect(again.error).toHaveBeenCalledWith(
-      "voltip: the reloaded window still runs interface code the program does not carry; clearing it",
+      "voltip: the window still runs interface code the program does not carry after its document was replaced once; it is kept as it is",
       ["/assets/index-OLD00001.js"],
       BUILD,
     );
+    expect(again.window.voltipUiCheck).toEqual({ verdict: "kept", replaced: true });
+    expect(again.reports()).toEqual([
+      {
+        window: "main",
+        verdict: "kept",
+        replaced: true,
+        scripts: ["/assets/index-OLD00001.js"],
+        build: BUILD,
+      },
+    ]);
     // The same for another build at the program's path.
     const build = open({
       scripts: ["/assets/index-NEW00001.js"],
       build: OTHER_BUILD,
       href: `${APP}?voltip-ui-reload=1`,
     });
-    expect(build.location.replace).toHaveBeenCalledWith("about:blank");
+    expect(build.location.replace).not.toHaveBeenCalled();
+    expect(build.window.voltipUiCheck).toEqual({ verdict: "kept", replaced: true });
+  });
+
+  it("checks and replaces whether or not the program hears of it", () => {
+    for (const invoke of ["absent", "throws", "rejects"] as const) {
+      const ok = open({ scripts: ["/assets/index-NEW00001.js"], invoke });
+      expect(ok.window.voltipUiCheck).toEqual({ verdict: "ok", replaced: false });
+      const stale = open({ scripts: ["/assets/index-OLD00001.js"], invoke });
+      expect(stale.location.replace).toHaveBeenCalledTimes(1);
+    }
   });
 
   it("keeps the page's own query when it adds and removes the marker", () => {

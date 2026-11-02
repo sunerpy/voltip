@@ -7,16 +7,19 @@
 //! what the program carries (`ui_guard.js`): the paths of its scripts and the build its bundle
 //! declares (`apps/desktop/src/ui-build.ts`, from `apps/desktop/vite.config.ts`). A document
 //! running other code is replaced once by one the program serves; one that still runs other code
-//! is cleared.
+//! is kept as it is. Each document reports what the check found ([`EVENT`]), and the program logs
+//! it ([`log`]).
 //!
 //! Both lists are read from the program's assets, so they are the ones this build serves. A
 //! development build (`tauri dev`, the interface from Vite) and a program that carries no script
 //! (the tests' mock context) get no check; a bundle that declares no build is checked by its
 //! scripts alone.
 
+use serde::Deserialize;
 use tauri::plugin::TauriPlugin;
 use tauri::utils::assets::AssetKey;
-use tauri::{Assets, Runtime};
+use tauri::{Assets, Listener, Runtime};
+use tracing::Level;
 
 /// The check, with [`SCRIPTS`] and [`BUILDS`] standing for what the program carries.
 const CHECK: &str = include_str!("ui_guard.js");
@@ -25,6 +28,8 @@ const BUILDS: &str = "__VOLTIP_UI_BUILDS__";
 /// How a bundle names its build: this, then 32 lowercase hex digits (`apps/desktop/vite.config.ts`).
 const BUILD_PREFIX: &[u8] = b"voltip-ui-build-";
 const BUILD_DIGITS: usize = 32;
+/// The event every checked document reports what it found on (`ui_guard.js`).
+const EVENT: &str = "voltip://ui-guard";
 
 /// The plugin that checks every window's interface against what `assets` carries.
 pub fn init<R: Runtime>(assets: &dyn Assets<R>) -> TauriPlugin<R> {
@@ -52,8 +57,65 @@ fn carried<R: Runtime>(assets: &dyn Assets<R>) -> Carried {
 fn plugin<R: Runtime>(carried: &Carried) -> TauriPlugin<R> {
     let builder = tauri::plugin::Builder::new("ui-guard");
     match check(carried) {
-        Some(check) => builder.js_init_script(check).build(),
+        Some(check) => builder
+            .js_init_script(check)
+            .setup(|app, _api| {
+                app.listen_any(EVENT, |event| log(event.payload()));
+                Ok(())
+            })
+            .build(),
         None => builder.build(),
+    }
+}
+
+/// What one document's check found, as `ui_guard.js` reports it. Written by the page, so every
+/// field is bounded before it reaches the log ([`bounded`]).
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+struct Report {
+    window: Option<String>,
+    verdict: String,
+    #[serde(default)]
+    replaced: bool,
+    #[serde(default)]
+    scripts: Vec<String>,
+    build: Option<String>,
+}
+
+/// How a report reads in the program's log. A window that runs the program's interface is one
+/// line at startup; any replacement is a warning, and a window kept with other code an error.
+fn classify(report: &Report) -> (Level, &'static str) {
+    match (report.verdict.as_str(), report.replaced) {
+        ("ok", false) => (Level::INFO, "the window runs the interface the program carries"),
+        ("ok", true) => (Level::WARN, "the window ran interface code the program does not carry; its document was replaced once and now runs the program's"),
+        ("replacing", _) => (Level::WARN, "the window runs interface code the program does not carry; replacing its document once"),
+        ("kept", _) => (Level::ERROR, "the window still runs interface code the program does not carry after its document was replaced once; it is kept as it is"),
+        _ => (Level::WARN, "the interface check reported something it never reports"),
+    }
+}
+
+/// At most `max` characters of `text`, as the log shows it.
+fn bounded(text: &str, max: usize) -> String {
+    match text.char_indices().nth(max) {
+        Some((at, _)) => format!("{}…", &text[..at]),
+        None => text.to_owned(),
+    }
+}
+
+/// Log one document's report (docs/dictation.md §33.4): which window, what the check found, the
+/// scripts it runs and the build it declared.
+fn log(payload: &str) {
+    let Ok(report) = serde_json::from_str::<Report>(payload) else {
+        tracing::warn!(payload = %bounded(payload, 200), "the interface check sent a report that does not parse");
+        return;
+    };
+    let window = bounded(report.window.as_deref().unwrap_or("?"), 32);
+    let verdict = bounded(&report.verdict, 16);
+    let build = bounded(report.build.as_deref().unwrap_or("none"), 48);
+    let scripts = report.scripts.iter().take(8).map(|s| bounded(s, 120)).collect::<Vec<_>>().join(" ");
+    match classify(&report) {
+        (Level::INFO, line) => tracing::info!(window, build, "{line}"),
+        (Level::WARN, line) => tracing::warn!(window, verdict, replaced = report.replaced, build, scripts, "{line}"),
+        (_, line) => tracing::error!(window, verdict, replaced = report.replaced, build, scripts, "{line}"),
     }
 }
 
@@ -169,6 +231,80 @@ mod tests {
         let with = Carried { scripts: vec!["/assets/index-BBjVjT-j.js".to_owned()], builds: vec![BUILD.to_owned()] };
         let _with: TauriPlugin<tauri::test::MockRuntime> = plugin(&with);
         let _without: TauriPlugin<tauri::test::MockRuntime> = plugin(&Carried::default());
+    }
+
+    #[test]
+    fn a_report_reads_as_ui_guard_js_sends_it() {
+        // As `ui_guard.js` emits it, with the window's label from Tauri's metadata.
+        let payload = format!(r#"{{"window":"main","verdict":"ok","replaced":false,"scripts":["/assets/index-BBjVjT-j.js"],"build":"{BUILD}"}}"#);
+        let report: Report = serde_json::from_str(&payload).unwrap();
+        assert_eq!(
+            report,
+            Report { window: Some("main".to_owned()), verdict: "ok".to_owned(), replaced: false, scripts: vec!["/assets/index-BBjVjT-j.js".to_owned()], build: Some(BUILD.to_owned()) }
+        );
+        // A bundle that declares no build, and a window Tauri named no label for.
+        let bare: Report = serde_json::from_str(r#"{"window":null,"verdict":"replacing","replaced":false,"scripts":[],"build":null}"#).unwrap();
+        assert_eq!((bare.window, bare.build), (None, None));
+        // The log line for anything else says so; it never panics.
+        log("not json");
+        log(&payload);
+    }
+
+    #[test]
+    fn each_verdict_has_its_own_line_and_weight() {
+        let report = |verdict: &str, replaced| Report { window: None, verdict: verdict.to_owned(), replaced, scripts: Vec::new(), build: None };
+        assert_eq!(classify(&report("ok", false)).0, Level::INFO);
+        assert_eq!(classify(&report("ok", true)).0, Level::WARN);
+        assert_eq!(classify(&report("replacing", false)).0, Level::WARN);
+        assert_eq!(classify(&report("kept", true)), (Level::ERROR, "the window still runs interface code the program does not carry after its document was replaced once; it is kept as it is"));
+        assert_eq!(classify(&report("something", false)).0, Level::WARN);
+        // Every verdict ui_guard.js sends has its own line.
+        let lines: std::collections::BTreeSet<_> = [report("ok", false), report("ok", true), report("replacing", false), report("kept", true)].iter().map(|r| classify(r).1).collect();
+        assert_eq!(lines.len(), 4);
+        for verdict in ["\"ok\"", "\"replacing\"", "\"kept\""] {
+            assert!(CHECK.contains(&format!("report({verdict}")), "ui_guard.js reports {verdict}");
+        }
+        assert!(CHECK.contains(EVENT), "ui_guard.js reports on {EVENT}");
+    }
+
+    #[test]
+    fn the_plugin_logs_what_each_window_reports() {
+        use std::io::Write;
+        use std::sync::{Arc, Mutex};
+        use tauri::Emitter;
+
+        #[derive(Clone, Default)]
+        struct Lines(Arc<Mutex<Vec<u8>>>);
+        impl Write for Lines {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let lines = Lines::default();
+        let writer = lines.clone();
+        let subscriber = tracing_subscriber::fmt().with_ansi(false).with_writer(move || writer.clone()).finish();
+        tracing::subscriber::with_default(subscriber, || {
+            let with = Carried { scripts: vec!["/assets/index-BBjVjT-j.js".to_owned()], builds: vec![BUILD.to_owned()] };
+            let app = tauri::test::mock_builder().plugin(plugin(&with)).build(tauri::test::mock_context(tauri::test::noop_assets())).unwrap();
+            let report = |verdict: &str, replaced: bool| serde_json::json!({ "window": "main", "verdict": verdict, "replaced": replaced, "scripts": ["/assets/index-OLD00001.js"], "build": null });
+            app.emit(EVENT, report("ok", false)).unwrap();
+            app.emit(EVENT, report("kept", true)).unwrap();
+        });
+        let logged = String::from_utf8(lines.0.lock().unwrap().clone()).unwrap();
+        assert!(logged.contains("INFO") && logged.contains(r#"the window runs the interface the program carries window="main""#), "{logged}");
+        assert!(logged.contains("ERROR") && logged.contains("it is kept as it is") && logged.contains("/assets/index-OLD00001.js"), "{logged}");
+    }
+
+    #[test]
+    fn what_a_page_reports_is_bounded_before_the_log() {
+        assert_eq!(bounded("main", 32), "main");
+        assert_eq!(bounded(&"x".repeat(40), 32), format!("{}…", "x".repeat(32)));
+        // Characters, not bytes: a cut never splits one.
+        assert_eq!(bounded("学习建议学习建议", 4), "学习建议…");
     }
 
     fn check_for(scripts: &[&str], builds: &[&str]) -> String {
