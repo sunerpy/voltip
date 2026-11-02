@@ -922,6 +922,11 @@ impl std::fmt::Debug for Bridge {
     }
 }
 
+/// How long [`Bridge::forward`] waits before it sends a whole state that could not be sent again,
+/// when no event comes first; it doubles up to `RESYNC_RETRY_MAX`.
+const RESYNC_RETRY_FIRST: Duration = Duration::from_millis(250);
+/// The longest wait between two tries of a whole state in [`Bridge::forward`].
+const RESYNC_RETRY_MAX: Duration = Duration::from_secs(5);
 impl Bridge {
     /// [`Bridge::start_with`] on the in-memory dictation fakes (`voltip_core::dictation::fakes`):
     /// for tests and for shells without a native pipeline. The desktop passes its real ports.
@@ -1021,31 +1026,46 @@ impl Bridge {
     /// one it never gets leaves its copy behind for good. When `events` fell behind the fan-out
     /// (`Lagged`: the oldest events are gone) or an `emit` failed, the whole state goes out next,
     /// and every window takes it in place of its own; the events still queued after it change
-    /// nothing it does not already hold. Until 2026-11-02 the shells only logged the lag.
+    /// nothing it does not already hold. A whole state that could not be sent either is sent again
+    /// with the next event, or after 250 ms (doubling up to 5 s) when none comes. Until 2026-11-02
+    /// the shells only logged the lag.
     pub async fn forward<E: std::fmt::Display>(&self, mut events: broadcast::Receiver<UiEvent>, mut emit: impl FnMut(&UiEvent) -> Result<(), E>) {
         let mut behind = false;
+        let mut retry = RESYNC_RETRY_FIRST;
         loop {
-            match events.recv().await {
-                Ok(event) => {
+            let next = if behind {
+                // Behind still: the next event, or the time to try the whole state again.
+                tokio::time::timeout(retry, events.recv()).await.ok()
+            } else {
+                Some(events.recv().await)
+            };
+            match next {
+                Some(Ok(event)) => {
                     if let Err(e) = emit(&event) {
                         tracing::warn!(error = %e, "an event could not be sent to the windows; the whole state follows");
                         behind = true;
                     }
                 }
-                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                Some(Err(broadcast::error::RecvError::Lagged(skipped))) => {
                     tracing::warn!(skipped, "the windows fell behind the events; the whole state follows");
                     behind = true;
                 }
-                Err(broadcast::error::RecvError::Closed) => return,
+                Some(Err(broadcast::error::RecvError::Closed)) => return,
+                None => {}
             }
             if behind {
-                behind = match emit(&UiEvent::State(Box::new(self.state()))) {
-                    Ok(()) => false,
-                    Err(e) => {
-                        tracing::warn!(error = %e, "the whole state could not be sent to the windows; trying again with the next event");
-                        true
+                match emit(&UiEvent::State(Box::new(self.state()))) {
+                    Ok(()) => {
+                        behind = false;
+                        retry = RESYNC_RETRY_FIRST;
                     }
-                };
+                    Err(e) => {
+                        if retry == RESYNC_RETRY_FIRST {
+                            tracing::warn!(error = %e, "the whole state could not be sent to the windows; trying again");
+                        }
+                        retry = (retry * 2).min(RESYNC_RETRY_MAX);
+                    }
+                }
             }
         }
     }

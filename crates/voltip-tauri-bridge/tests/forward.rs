@@ -114,3 +114,49 @@ async fn regression_an_event_a_window_could_not_get_is_followed_by_the_whole_sta
     task.abort();
     bridge.shutdown();
 }
+
+#[tokio::test]
+async fn regression_a_whole_state_that_could_not_be_sent_is_tried_again_without_another_event() {
+    // Gate review 2026-11-02: when the whole state could not be sent either, it was tried again
+    // only with the next event, and a last change that no event followed stayed lost for good.
+    let dir = tempfile::tempdir().unwrap();
+    SettingsStore::new(dir.path()).save(&Settings { relay_enabled: false, ..Settings::default() }).unwrap();
+    let bridge = Bridge::start(CoreConfig::new(dir.path().to_path_buf()), Arc::new(MemorySecretStore::new())).unwrap();
+    // The windows' events come from a fan-out the test alone sends on: nothing follows the change.
+    let (fan_out, events) = tokio::sync::broadcast::channel(16);
+    let window = Arc::new(Mutex::new(Vec::<UiEvent>::new()));
+    let seen = Arc::clone(&window);
+    let forwarding = bridge.clone();
+    let task = tokio::spawn(async move {
+        // The change and the first whole state after it both fail; the window takes what follows.
+        let mut failures = 0;
+        forwarding
+            .forward(events, |event| {
+                let change = match event {
+                    UiEvent::Hardware(h) => h.cpu_threads == 7,
+                    UiEvent::State(state) => state.hardware.cpu_threads == 7,
+                    _ => false,
+                };
+                if change && failures < 2 {
+                    failures += 1;
+                    return Err("the event loop is busy".to_owned());
+                }
+                seen.lock().push(event.clone());
+                Ok(())
+            })
+            .await;
+    });
+    let change = UiEvent::Hardware(HardwareStatus { cpu_threads: 7, gpus: Vec::new() });
+    bridge.publish(change.clone());
+    fan_out.send(change).unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !window.lock().iter().any(|e| matches!(e, UiEvent::State(state) if state.hardware.cpu_threads == 7)) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the whole state, with the change, within 10 s though no event followed it");
+    drop(fan_out);
+    task.abort();
+    bridge.shutdown();
+}
