@@ -44,9 +44,9 @@ on:
         description: Measure the insert check on the Windows and Apple silicon desktops
         type: boolean
         default: false
-      # The update from the last release on Windows (docs/dictation.md §9.4): 0.2.1 installed and
-      # running, this build's installer over it, then which interface code each window runs. Off by
-      # default; `-f upgrade_probe=true`.
+      # The update from the last release on Windows (docs/dictation.md §33.3): 0.2.1 installed and
+      # running, this build's installer over it, then which interface code each window runs and the
+      # interface check of §33.4. Off by default; `-f upgrade_probe=true`.
       upgrade_probe:
         description: Update 0.2.1 to this build on Windows and read the interface each window runs
         type: boolean
@@ -541,12 +541,14 @@ jobs:
           name: voltip-windows-x64
           path: dist-windows
 
-      # On demand (`upgrade_probe`, docs/dictation.md §9.4): the update a user makes. Voltip 0.2.1
+      # On demand (`upgrade_probe`, docs/dictation.md §33.3): the update a user makes. Voltip 0.2.1
       # from its release, installed and running against this build's relay on the runner, then this
-      # build's installer over it (`/S /UPDATE /R`) and over itself; every window is read over
-      # WebView2's debugging port (scripts/windows-upgrade-probe.ps1). First, while the runner has
-      # had no Voltip; the script removes what it installed. Voltip reaches no server: a firewall
-      # rule blocks its connections off this machine.
+      # build's installer over it and over itself, in turn as an installer run while Voltip runs, as
+      # the in-app updater runs it and as the updater does for a Voltip started hidden; every window
+      # is read over WebView2's debugging port and the main window's interface check (§33.4) is run
+      # (scripts/windows-upgrade-probe.ps1). First, while the runner has had no Voltip; the script
+      # removes what it installed. Voltip reaches no server: a firewall rule blocks its connections
+      # off this machine.
       - name: Upgrade probe — the 0.2.1 installer from its release
         if: github.event_name == 'workflow_dispatch' && inputs.upgrade_probe
         env:
@@ -580,7 +582,7 @@ jobs:
         run: |
           $setup = Get-ChildItem dist-windows -Filter '*-setup.exe' | Select-Object -First 1
           if (-not $setup) { throw 'no NSIS installer in the artifact' }
-          ./scripts/windows-upgrade-probe.ps1 -OldSetup old-release/Voltip_0.2.1_x64-setup.exe -NewSetup $setup.FullName -Relay target/debug/voltip-relay.exe -OutDir upgrade-probe -Rounds 3
+          ./scripts/windows-upgrade-probe.ps1 -OldSetup old-release/Voltip_0.2.1_x64-setup.exe -NewSetup $setup.FullName -Relay target/debug/voltip-relay.exe -OutDir upgrade-probe -Rounds 9
 
       - name: Upload the upgrade probe
         if: always() && github.event_name == 'workflow_dispatch' && inputs.upgrade_probe
