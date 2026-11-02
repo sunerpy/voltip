@@ -2696,7 +2696,7 @@ impl Runtime {
         use crate::vocabulary::{Batch, BatchIgnoreOutcome};
         match self.ignored.add_batch(pairs, now_ms()) {
             Ok(batch) => {
-                if !batch.added.is_empty() {
+                if batch.added > 0 {
                     self.emit(CoreEvent::VocabularyIgnored(self.ignored.list().to_vec()));
                 }
                 BatchIgnoreOutcome::Ignored { undo: self.suggestion_batches.push(Batch::Ignored(batch)) }
@@ -2719,12 +2719,14 @@ impl Runtime {
                 outcome
             }
             Some(Batch::Ignored(batch)) => match self.ignored.remove_batch(&batch) {
-                Ok(changed) => {
+                Ok(Some(changed)) => {
                     if changed {
                         self.emit(CoreEvent::VocabularyIgnored(self.ignored.list().to_vec()));
                     }
                     BatchUndoOutcome::Undone
                 }
+                // Too old for the ignored list's journal ([`crate::vocabulary::IgnoreStore`]).
+                Ok(None) => BatchUndoOutcome::Expired,
                 Err(e) => BatchUndoOutcome::Failed { message: e.to_string() },
             },
         }

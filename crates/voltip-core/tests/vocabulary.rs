@@ -379,6 +379,44 @@ async fn regression_batches_ignored_on_a_full_list_and_taken_back_out_of_order_k
     node.handle.send(CoreCommand::Shutdown).await.unwrap();
 }
 
+/// docs/dictation.md §16.10 (completion review, round 3): eleven batches of 200 on a full list,
+/// the eleventh pushing out the first one's pairs, taken back in the order 1, 11, 10, …, 2. No
+/// batch taken back comes back with a later one's 撤销: the list ends as it was before them.
+#[tokio::test]
+async fn regression_eleven_full_batches_taken_back_out_of_order_leave_the_list_as_before() {
+    let dir = tempfile::tempdir().unwrap();
+    let full: Vec<serde_json::Value> = (0..MAX_IGNORED).map(|i| serde_json::json!({ "heard": format!("听成{i}"), "polished": "正确", "at_ms": 1 })).collect();
+    std::fs::write(dir.path().join(IGNORED_FILE_NAME), serde_json::to_vec(&serde_json::json!({ "schema": 1, "pairs": full })).unwrap()).unwrap();
+    let mut node = start(dir.path(), Arc::new(FakeInjector::paste()));
+    let before = ignored(&mut node).await;
+    let mut undos = Vec::new();
+    for b in 0..11 {
+        let pairs = (0..200).map(|i| pair(&format!("批{b}-{i}"), "正确")).collect();
+        let (reply, rx) = Reply::channel();
+        node.handle.send(CoreCommand::SuggestionsIgnore { pairs, reply }).await.unwrap();
+        let BatchIgnoreOutcome::Ignored { undo } = answer(rx).await else { panic!("ignored") };
+        undos.push(undo);
+        ignored(&mut node).await;
+    }
+    for b in std::iter::once(0).chain((1..11).rev()) {
+        let (reply, rx) = Reply::channel();
+        node.handle.send(CoreCommand::SuggestionsUndo { id: undos[b], reply }).await.unwrap();
+        assert_eq!(answer(rx).await, BatchUndoOutcome::Undone, "batch {b}");
+    }
+    // The first 撤销 changes nothing (the eleventh batch pushed its pairs out already), so the
+    // list's announcements are read after the last one, through a sentinel change.
+    node.handle.send(CoreCommand::SuggestionIgnore { heard: "收尾".into(), polished: "正确".into() }).await.unwrap();
+    let after = wait(&mut node, |e| match e {
+        CoreEvent::VocabularyIgnored(p) if p.last().is_some_and(|l| l.heard == "收尾") => Some(p.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(after[..MAX_IGNORED - 1], before[1..], "as before the batches, then the sentinel pushed out the oldest");
+    let (reread, _) = IgnoreStore::open(dir.path());
+    assert_eq!(reread.list(), after.as_slice(), "on disk");
+    node.handle.send(CoreCommand::Shutdown).await.unwrap();
+}
+
 fn pick(heard: &str, polished: &str) -> SuggestionPick {
     SuggestionPick { heard: heard.into(), polished: polished.into(), history_id: uuid::Uuid::new_v4() }
 }

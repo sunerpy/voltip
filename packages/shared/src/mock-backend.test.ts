@@ -4389,6 +4389,30 @@ describe("MockBackend learning suggestions (docs/dictation.md section 16.10)", (
     expect(backend.peek().vocabulary_ignored.slice(0, MAX_IGNORED - 1)).toEqual(full.slice(1));
     backend.destroy();
   });
+
+  it("regression: eleven batches of 200 on a full list taken back as 1, 11, 10, …, 2 leave the list as before", async () => {
+    const full = Array.from({ length: MAX_IGNORED }, (_, i) => ({
+      heard: `听成${i}`,
+      polished: "正确",
+      at_ms: 1,
+    }));
+    const backend = new MockBackend({ now: () => T, history: rows, vocabularyIgnored: full });
+    const undos: string[] = [];
+    for (let b = 0; b < 11; b += 1) {
+      const batch = Array.from({ length: 200 }, (_, i) => ({
+        heard: `批${b}-${i}`,
+        polished: "正确",
+      }));
+      const outcome = await backend.vocabularySuggestionsIgnore(batch);
+      if (outcome.kind !== "ignored") throw new Error(JSON.stringify(outcome));
+      undos.push(outcome.undo);
+    }
+    for (const b of [0, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]) {
+      expect(await backend.vocabularySuggestionsUndo(undos[b] ?? "")).toEqual({ kind: "undone" });
+    }
+    expect(backend.peek().vocabulary_ignored).toEqual(full);
+    backend.destroy();
+  });
 });
 
 describe("MockBackend local service (docs/dictation.md section 23.6)", () => {
