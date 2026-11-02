@@ -55,12 +55,17 @@ fn carried<R: Runtime>(assets: &dyn Assets<R>) -> Carried {
 }
 
 fn plugin<R: Runtime>(carried: &Carried) -> TauriPlugin<R> {
+    plugin_reporting_to(carried, log)
+}
+
+/// [`plugin`], with every document's report handed to `report` (the program's is [`log`]).
+fn plugin_reporting_to<R: Runtime>(carried: &Carried, report: fn(&str)) -> TauriPlugin<R> {
     let builder = tauri::plugin::Builder::new("ui-guard");
     match check(carried) {
         Some(check) => builder
             .js_init_script(check)
-            .setup(|app, _api| {
-                app.listen_any(EVENT, |event| log(event.payload()));
+            .setup(move |app, _api| {
+                app.listen_any(EVENT, move |event| report(event.payload()));
                 Ok(())
             })
             .build(),
@@ -88,7 +93,9 @@ fn classify(report: &Report) -> (Level, &'static str) {
         ("ok", false) => (Level::INFO, "the window runs the interface the program carries"),
         ("ok", true) => (Level::WARN, "the window ran interface code the program does not carry; its document was replaced once and now runs the program's"),
         ("replacing", _) => (Level::WARN, "the window runs interface code the program does not carry; replacing its document once"),
-        ("kept", _) => (Level::ERROR, "the window still runs interface code the program does not carry after its document was replaced once; it is kept as it is"),
+        ("kept", _) => {
+            (Level::ERROR, "the window still runs interface code the program does not carry after its document was replaced once; it is kept as it is")
+        }
         _ => (Level::WARN, "the interface check reported something it never reports"),
     }
 }
@@ -240,7 +247,13 @@ mod tests {
         let report: Report = serde_json::from_str(&payload).unwrap();
         assert_eq!(
             report,
-            Report { window: Some("main".to_owned()), verdict: "ok".to_owned(), replaced: false, scripts: vec!["/assets/index-BBjVjT-j.js".to_owned()], build: Some(BUILD.to_owned()) }
+            Report {
+                window: Some("main".to_owned()),
+                verdict: "ok".to_owned(),
+                replaced: false,
+                scripts: vec!["/assets/index-BBjVjT-j.js".to_owned()],
+                build: Some(BUILD.to_owned())
+            }
         );
         // A bundle that declares no build, and a window Tauri named no label for.
         let bare: Report = serde_json::from_str(r#"{"window":null,"verdict":"replacing","replaced":false,"scripts":[],"build":null}"#).unwrap();
@@ -256,10 +269,14 @@ mod tests {
         assert_eq!(classify(&report("ok", false)).0, Level::INFO);
         assert_eq!(classify(&report("ok", true)).0, Level::WARN);
         assert_eq!(classify(&report("replacing", false)).0, Level::WARN);
-        assert_eq!(classify(&report("kept", true)), (Level::ERROR, "the window still runs interface code the program does not carry after its document was replaced once; it is kept as it is"));
+        assert_eq!(
+            classify(&report("kept", true)),
+            (Level::ERROR, "the window still runs interface code the program does not carry after its document was replaced once; it is kept as it is")
+        );
         assert_eq!(classify(&report("something", false)).0, Level::WARN);
         // Every verdict ui_guard.js sends has its own line.
-        let lines: std::collections::BTreeSet<_> = [report("ok", false), report("ok", true), report("replacing", false), report("kept", true)].iter().map(|r| classify(r).1).collect();
+        let lines: std::collections::BTreeSet<_> =
+            [report("ok", false), report("ok", true), report("replacing", false), report("kept", true)].iter().map(|r| classify(r).1).collect();
         assert_eq!(lines.len(), 4);
         for verdict in ["\"ok\"", "\"replacing\"", "\"kept\""] {
             assert!(CHECK.contains(&format!("report({verdict}")), "ui_guard.js reports {verdict}");
@@ -268,35 +285,25 @@ mod tests {
     }
 
     #[test]
-    fn the_plugin_logs_what_each_window_reports() {
-        use std::io::Write;
-        use std::sync::{Arc, Mutex};
+    fn the_plugin_hands_every_report_to_the_log() {
+        use std::sync::Mutex;
         use tauri::Emitter;
 
-        #[derive(Clone, Default)]
-        struct Lines(Arc<Mutex<Vec<u8>>>);
-        impl Write for Lines {
-            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-                self.0.lock().unwrap().extend_from_slice(bytes);
-                Ok(bytes.len())
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
+        static HEARD: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        fn hear(payload: &str) {
+            HEARD.lock().unwrap().push(payload.to_owned());
         }
-        let lines = Lines::default();
-        let writer = lines.clone();
-        let subscriber = tracing_subscriber::fmt().with_ansi(false).with_writer(move || writer.clone()).finish();
-        tracing::subscriber::with_default(subscriber, || {
-            let with = Carried { scripts: vec!["/assets/index-BBjVjT-j.js".to_owned()], builds: vec![BUILD.to_owned()] };
-            let app = tauri::test::mock_builder().plugin(plugin(&with)).build(tauri::test::mock_context(tauri::test::noop_assets())).unwrap();
-            let report = |verdict: &str, replaced: bool| serde_json::json!({ "window": "main", "verdict": verdict, "replaced": replaced, "scripts": ["/assets/index-OLD00001.js"], "build": null });
-            app.emit(EVENT, report("ok", false)).unwrap();
-            app.emit(EVENT, report("kept", true)).unwrap();
-        });
-        let logged = String::from_utf8(lines.0.lock().unwrap().clone()).unwrap();
-        assert!(logged.contains("INFO") && logged.contains(r#"the window runs the interface the program carries window="main""#), "{logged}");
-        assert!(logged.contains("ERROR") && logged.contains("it is kept as it is") && logged.contains("/assets/index-OLD00001.js"), "{logged}");
+        let app = |carried: &Carried| {
+            tauri::test::mock_builder().plugin(plugin_reporting_to(carried, hear)).build(tauri::test::mock_context(tauri::test::noop_assets())).unwrap()
+        };
+        let report = serde_json::json!({ "window": "main", "verdict": "kept", "replaced": true, "scripts": ["/assets/index-OLD00001.js"], "build": null });
+        let with = Carried { scripts: vec!["/assets/index-BBjVjT-j.js".to_owned()], builds: vec![BUILD.to_owned()] };
+        app(&with).emit(EVENT, &report).unwrap();
+        let heard: Vec<serde_json::Value> = HEARD.lock().unwrap().iter().map(|p| serde_json::from_str(p).unwrap()).collect();
+        assert_eq!(heard, std::slice::from_ref(&report));
+        // A program without the check listens for nothing.
+        app(&Carried::default()).emit(EVENT, &report).unwrap();
+        assert_eq!(HEARD.lock().unwrap().len(), 1);
     }
 
     #[test]
