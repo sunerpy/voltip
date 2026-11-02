@@ -119,7 +119,7 @@ export class TauriBackend implements Backend {
    *  sends an event only to the listeners it has registered, so a state taken earlier could miss
    *  a change that no listener hears of either. */
   async getState() {
-    await Promise.allSettled([...this.registering]);
+    await Promise.allSettled(this.registering);
     const raw = await this.transport.invoke("core_state");
     return uiStateSchema.parse(raw);
   }

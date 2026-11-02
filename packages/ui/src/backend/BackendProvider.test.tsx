@@ -176,7 +176,7 @@ describe("BackendProvider", () => {
         /** The core folds `event` into its state, and the shell sends it to the live listeners. */
         emit(event: UiEvent) {
           state = applyEvent(state, event);
-          for (const handler of [...live]) handler({ payload: event });
+          for (const handler of live) handler({ payload: event });
         },
         /** The registrations on their way reach the shell. */
         register() {
