@@ -259,8 +259,13 @@ async function settle(session, seen, options, go) {
 }
 
 /** The interface check on the running program (docs/dictation.md §33.4), in the main window:
- *  each simulation reloads the window with it in place, then the window goes back to `home`. */
-async function guardCheck(target, home, options) {
+ *  each simulation loads the window's address afresh with it in place, then once more without. The
+ *  address goes without its fragment: an earlier probe of the same process left the window on
+ *  `#/dictionary`, and navigating to the address it shows, fragment and all, stays in the document. */
+async function guardCheck(target, address, options) {
+  const start = new URL(address);
+  start.hash = "";
+  const home = start.href;
   const session = await connect(target.webSocketDebuggerUrl);
   const seen = { documents: [], warnings: [] };
   try {
