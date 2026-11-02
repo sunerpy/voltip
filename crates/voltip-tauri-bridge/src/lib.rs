@@ -922,8 +922,9 @@ impl std::fmt::Debug for Bridge {
     }
 }
 
-/// How long [`Bridge::forward`] waits before it sends a whole state that could not be sent again,
-/// when no event comes first; it doubles up to `RESYNC_RETRY_MAX`.
+/// Where [`Bridge::forward`]'s wait before it tries a whole state that could not be sent again
+/// starts, when no event comes first. Each failed try doubles the wait before the next one, so the
+/// tries again come 500 ms, 1 s, 2 s and 4 s apart, and then every `RESYNC_RETRY_MAX`.
 const RESYNC_RETRY_FIRST: Duration = Duration::from_millis(250);
 /// The longest wait between two tries of a whole state in [`Bridge::forward`].
 const RESYNC_RETRY_MAX: Duration = Duration::from_secs(5);
@@ -1027,8 +1028,8 @@ impl Bridge {
     /// (`Lagged`: the oldest events are gone) or an `emit` failed, the whole state goes out next,
     /// and every window takes it in place of its own; the events still queued after it change
     /// nothing it does not already hold. A whole state that could not be sent either is sent again
-    /// with the next event, or after 250 ms (doubling up to 5 s) when none comes. Until 2026-11-02
-    /// the shells only logged the lag.
+    /// with the next event, or when none comes 500 ms later, then 1 s, 2 s and 4 s after that, and
+    /// then every 5 s. Until 2026-11-02 the shells only logged the lag.
     pub async fn forward<E: std::fmt::Display>(&self, mut events: broadcast::Receiver<UiEvent>, mut emit: impl FnMut(&UiEvent) -> Result<(), E>) {
         let mut behind = false;
         let mut retry = RESYNC_RETRY_FIRST;
