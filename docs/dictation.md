@@ -1034,7 +1034,7 @@ Wayland 剪贴板：arboard `wayland-data-control`（wl-clipboard-rs；KDE 与 w
 
 ## 15. macOS 与 Windows 原生（2026-09-26）
 
-叶子 crate `crates/voltip-platform`（纯 Rust、`#![forbid(unsafe_code)]`、只依赖 `serde`，不依赖 `voltip-core`）只放决策表：权限判定、轮询计划、激活策略时机、Cmd+V 键码回退、完整性级别比较、麦克风同意存储优先级、托盘字形；在所有主机编译与单测。操作系统查询在 `apps/desktop/src-tauri/src/platform/`（`mod.rs` 跨平台；`macos.rs` / `windows.rs` / `tray.rs` 按 `cfg`），把原始事实喂给这些表。
+叶子 crate `crates/voltip-platform`（纯 Rust、`#![forbid(unsafe_code)]`、只依赖 `serde`，不依赖 `voltip-core`）只放决策表：权限判定、轮询计划、激活策略时机、Cmd+V 键码回退、完整性级别比较、麦克风同意存储优先级、托盘字形、系统钥匙串不可用时的说明与它的语言（§34）；在所有主机编译与单测。操作系统查询在 `apps/desktop/src-tauri/src/platform/`（`mod.rs` 跨平台；`macos.rs` / `windows.rs` / `tray.rs` 按 `cfg`），把原始事实喂给这些表。
 
 ### 15.1 权限查询、首页提示与设置向导第 1 步
 
@@ -3065,3 +3065,49 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 
 - 状态同步（修复前在本地失败，修复后通过）：`packages/shared/src/tauri-backend.test.ts` 的 `regression: core_state is asked for only once every event listener is live`（修复前 `core_state` 在监听生效前就被调用）；`packages/ui/src/backend/BackendProvider.test.tsx` 的 `regression: the relay a window shows once the relay is up` 一组（窗口在中继连上之前、监听生效之前、第一次状态在路上时、之后打开，以及之后又来一个整块状态；修复前两种情形停在 `authenticating`）；`apps/mobile-rn/src/backend/BackendProvider.test.tsx`（第一次状态在路上时到达的变化，修复前丢失；中继连上之前和之后打开）；`crates/voltip-core/tests/ui_events.rs`（壳不读时核心先发 2000 个设置变化再连上真实的本地中继：修复前窗口的状态里中继停在 `Disconnected`）；`crates/voltip-transport/tests/link.rs` 的 `regression_a_state_change_while_the_owner_is_behind_waits_for_room`（修复前「重新连接」的状态报告丢失，测试超时）；`crates/voltip-tauri-bridge/tests/forward.rs`（落后的窗口与没能送到的事件之后都收到整块状态，修复前都失败；整块状态也发不出去、之后没有事件时照样再发，修复前 10 秒内等不到）；`packages/shared/src/tauri-backend.test.ts` 的 `regression: a listener whose registration was refused (gate 2026-11-02)` 一组与 `packages/ui/src/backend/BackendProvider.test.tsx` 的 `a window whose listener registration is refused once (gate 2026-11-02)`（注册被拒一次后重新注册、补上整块状态，窗口显示已连接；修复前监听再也没有注册，窗口停在 `authenticating`）；`crates/voltip-tauri-bridge/src/lib.rs` 的 `regression_a_shell_event_never_passes_the_whole_state_on_its_way_to_the_windows`（2 万个整块状态与 2 万个硬件事件同时折叠：修复前的一次运行中有 726 个整块状态晚于窗口已有的硬件值到达）。涉及线程与计时的四个（`ui_events.rs`、`link.rs` 的回归测试、`forward.rs`、事件顺序）在 32 个忙循环占满全部逻辑核时各运行 200 次，全部通过；`forward.rs` 加上补发重试的测试后又这样跑了 200 次，全部通过。
 - 界面检查：`apps/desktop/src/ui-guard.test.ts` 在测试的文档上运行 `ui_guard.js` 原文：程序自带的界面不动，并报告 `ok`；程序不带的脚本、同一路径的另一个构建、没有声明构建号的旧界面都换一次文档，新地址带唯一的参数、保留路由和其他参数；换过的文档去掉参数、留在程序的界面上；换过之后仍是别的代码时不再重载、也不清空，窗口保留原样，控制台说明原因并报告 `kept`；没有 Tauri 的 IPC 或报告送不到时照样检查和换文档；解析中的文档等解析完；相对路径、两种协议、编码的路径；别的页面和空白页不动。换成没有任何检查的脚本（与基线相同）时 10 个测试中 9 个失败；换回清成空白的上一版时 4 个失败，其中有保留窗口的那个；换回第一版（只比较路径、用会话存储记一次、`location.reload`）时 9 个失败。`apps/desktop/src/ui-build.test.ts`（界面声明构建号）；`ui_guard.rs` 的单元测试（脚本列表、从脚本里读出构建号、两个占位符、没有脚本时不检查、报告的解析、每种结果的日志级别、截短、插件把收到的报告交给日志）。真实程序上：托管 Windows 上 §33.3 的每轮用调试协议模拟三种情况：第一个文档引用程序不带的入口、第一个文档声明另一个构建（同一路径）、每个文档都引用程序不带的入口；前两种各经过两个文档后停在程序的界面上（报告 `ok`、换过一次），第三种也经过两个文档后停住，窗口留在那个文档上（报告 `kept`，控制台说明原因），回到原地址后运行程序的界面；0.2.1 做同样的模拟都只经过一个文档（它没有检查）。每次读窗口还核对窗口声明的构建号是程序的，检查在这个文档里运行过、报告 `ok` 且没有换过文档。Linux 的 Xvfb 冒烟（`scripts/smoke-desktop-linux.sh`，WebKitGTK）和两台 Mac 的菜单栏冒烟（`scripts/smoke-tray-macos.sh`，CI 设 `VOLTIP_CHECK_UI_GUARD=1`，WKWebView）在真实程序的日志里核对主窗口和悬浮窗都报告了程序的界面，没有别的检查记录。
+
+## 34. 系统钥匙串不可用时的启动说明（2026-11-04）
+
+**问题**（AppImage/appimage.github.io#10813 的目录测试，2026-10-29）：Linux 会话里没有 Secret Service 时，核心既读不到也建不了设备身份，`IdentityError::StoreUnavailable` 经 setup hook 返回，Tauri 在事件循环里 panic（`Failed to setup app`，退出码 101），没有任何窗口。
+
+### 34.1 决定
+
+- 不降级（`docs/threat-model.md`「已知缺口」）：release 版不改用内存存储或明文文件；`VOLTIP_DEV_SECRET_STORE=memory` 仍只在 debug 构建生效。
+- 用户决定（2026-11-04）：三个平台都显示说明框，不再崩溃。Linux 写 Secret Service（GNOME Keyring 或 KWallet），macOS 写「钥匙串」，Windows 写「凭据管理器」；关闭后都以非零码退出。
+
+### 34.2 哪些失败走这条路径
+
+`KeyringSecretStore` 把 `keyring` 的错误除 `NoEntry` 外都报成 `StoreUnavailable`（`keyring_unavailable`）。Linux 上 `keyring` 4.2.0 经 zbus-secret-service-keyring-store 1.0.1 访问 Secret Service：会话总线上没有 Secret Service、或者没有会话总线时，默认存储建不起来（`NoDefaultStore`）；集合被锁、解锁提示被关掉（`SS error: prompt dismissed`）时是 `NoStorageAccess`；提示没完成连接就断开时是 `PlatformFailure`。这些本来就是 `StoreUnavailable`，映射不用改，单元测试把它固定下来。macOS（`PerBuildStore`、`KeyringSecretStore`）和 Windows 凭据管理器的失败同样是 `StoreUnavailable`。启动时只有设备身份的读写会让核心起不来（`IdentityManager::load_or_create`，`CoreError::Identity`）；服务商密钥和代理密码读不到时只记日志。其他启动失败不在这条路径上，照旧由 Tauri 报错。
+
+### 34.3 说明框（`apps/desktop/src-tauri/src/keychain_notice.rs`）
+
+- setup hook 里 `attach_bridge` 返回 `BridgeError::Core(CoreError::Identity(IdentityError::StoreUnavailable(_)))` 时，`KeychainUnavailable::for_error` 选出这台电脑的说明（`voltip_platform::keychain::KeychainNotice`），记一行 ERROR 日志（带 `keyring` 的原话），hook 返回 `Ok`。
+- 已注册的 tauri-plugin-dialog 弹出原生消息框：警告图标，标题与正文如下，一个按钮「退出 Voltip / Quit Voltip」（与托盘菜单的退出相同）。setup hook 在事件循环的线程上运行，插件的 `blocking_show` 不能在这里调用（插件文档写明会卡住应用：它等待的回答要靠这个线程画出对话框），所以用 `show`：hook 立即返回，事件循环继续，对话框（GTK 上是模态的 GtkMessageDialog）显示出来。按按钮、按 Esc 或关闭窗口都会回调，回调回到事件循环的线程调用 `exit::exit_process(1)`；退出码 1 表示启动失败，与 `voltip-server` 相同（§23.5）。
+- 说明框显示期间核心没有启动，主窗口保持隐藏：`KeychainUnavailable` 作为 Tauri 状态管理，`show_main_window` 看到它就什么也不做，第二次启动和 macOS 的 Dock 都不会打开空的主窗口。
+- `ShellOptions::shows_notices`：生产为开；mock runtime（`ShellOptions::HEADLESS`）为关，只管理状态、记日志，测试不弹窗也不结束测试进程。
+
+| 平台 | 中文 | English |
+|---|---|---|
+| Linux 及其他 | Voltip 需要系统钥匙串 · Voltip 把密钥和设备身份保存在系统钥匙串中。请启动并解锁 GNOME Keyring 或 KWallet（Secret Service），然后重新打开 Voltip。 | Voltip needs the system keychain · Voltip keeps your keys and this device's identity in the system keychain. Start and unlock GNOME Keyring or KWallet (Secret Service), then open Voltip again. |
+| macOS | Voltip 需要钥匙串 · Voltip 把密钥和设备身份保存在钥匙串中。请解锁钥匙串，并在系统询问时允许 Voltip 访问，然后重新打开 Voltip。 | Voltip needs the keychain · Voltip keeps your keys and this device's identity in the keychain. Unlock the keychain and allow Voltip to use it when macOS asks, then open Voltip again. |
+| Windows | Voltip 需要凭据管理器 · Voltip 把密钥和设备身份保存在 Windows 凭据管理器中。请确认凭据管理器服务正在运行，然后重新打开 Voltip。 | Voltip needs Credential Manager · Voltip keeps your keys and this device's identity in Windows Credential Manager. Make sure the Credential Manager service is running, then open Voltip again. |
+
+### 34.4 语言
+
+说明框在核心读设置之前出现，所以跟随系统语言，不看 `settings.locale`（`platform::system_locale`）。Windows 和 macOS 与托盘相同（`GetUserDefaultUILanguage`、`NSLocale.preferredLanguages`）；Linux 按 GNU gettext 的规则读环境（`voltip_platform::keychain::posix_message_language`）：`LC_ALL`、`LC_MESSAGES`、`LANG` 中第一个有值的是 locale；它是 `C` / `POSIX`（含 `C.UTF-8`）或三个都没有时显示英文，不管 `LANGUAGE`；否则 `LANGUAGE` 的第一项优先。以 `zh` 开头的显示中文，其他显示英文，系统说不出语言时也是英文。
+
+AppImage 目录在 C locale 下运行应用，并对截图做 OCR（`code/check-screenshot.sh`）：命中 HARD 词表（traceback、fatal、cannot open display、failed to … 等）判为失败，命中 SOFT 词表（error、failed、failure、could not、cannot、unable to、not found）给出警告，屏幕上的文字主要不是英文也判为失败。英文文案避开这两组词，单元测试逐词检查。
+
+### 34.5 门禁
+
+- 修复前失败、修复后通过：`apps/desktop/src-tauri/tests/ipc.rs` 的 `regression_an_unavailable_keychain_shows_the_notice_instead_of_panicking`（mock runtime 上注入读写都返回 `StoreUnavailable` 的存储，原因依次是没有 Secret Service、解锁提示被关掉、条目被锁：修复前在 `app.run` 里 panic「Failed to setup app: … secret store unavailable」；修复后管理的状态是这台电脑在系统语言下的说明，退出码不是 0，核心没有启动）；`keychain_notice.rs` 的 `only_an_unavailable_keychain_is_explained`（只有 `StoreUnavailable` 走说明，`Corrupt`、设置错误和参数错误不走）。
+- `crates/voltip-platform/src/keychain.rs`：三个平台、两种语言的文案（各自的钥匙串名称，按钮与托盘的退出相同）；`regression_the_english_notice_has_no_word_the_appimage_catalog_reads_as_an_error`（HARD 与 SOFT 词表，英文全是 ASCII，中文不是）；与界面词典相同的用词检查；`the_message_language_is_read_the_way_gettext_reads_it`（C、`C.UTF-8`、`POSIX`、没有 locale、`LANGUAGE` 只在非 C locale 时优先、`LC_ALL` > `LC_MESSAGES` > `LANG`）。
+- `crates/voltip-identity/src/secret_store.rs` 的 `every_way_the_secret_service_refuses_is_an_unavailable_store`（`keyring` 对上述几种情况的报法都是 `StoreUnavailable`，`NoEntry` 不是）。
+- 真实入口（2026-11-04，Linux，本分支的 debug 构建带打包的前端，Xvfb 800×600，临时数据目录）：C locale、没有 Secret Service 的私有会话总线：英文说明框，按 Return 后退出码 1，没有 panic；说明框显示期间再启动一次，交给第一个实例后以 0 退出，主窗口没有出现。没有会话总线、`LANG=C.UTF-8`：英文说明框，按 Esc 后退出码 1。`LANG=zh_CN.UTF-8`：中文说明框，退出码 1。私有会话总线上的真实 gnome-keyring（私有的 XDG 目录）：未锁时正常启动并把身份存进钥匙串；锁上后启动，gcr 的解锁提示（Unlock Login Keyring）被 Esc 关掉，说明框出现（日志：`SS error: prompt dismissed`），按 Return 后退出码 1。截图用目录自己的 `code/check-screenshot.sh` 检查（临时容器，Ubuntu 22.04，tesseract 4.1.1，ImageMagick 6.9.11，与目录的 CI 相同）：三张英文截图都通过，没有命中错误词，OCR 读到 114 个拉丁字母、0 个汉字，只有黑色根窗口带来的「大部分是暗色」警告；中文截图按预期判为「主要不是英文」，目录在 C locale 下运行，看到的是英文。
+
+### 34.6 限制
+
+- 测试只在 mock runtime 上验证选择与状态；真实的对话框、关闭和退出码在 Linux 的真实入口上验证，macOS 和 Windows 由用户在自己的电脑上确认。
+- 对话框没有父窗口（主窗口隐藏），位置由窗口管理器决定；没有窗口管理器时在屏幕左上角。macOS 菜单栏启动（`--start-hidden`，没有 Dock 图标）时它是否在其他窗口前面没有验证。
+- Secret Service 的解锁提示由 gnome-keyring 或 KWallet 自己显示，Voltip 等它结束才继续启动（与之前相同）；提示一直不关时 Voltip 一直等。
+- 截图在根窗口为黑色的环境里大部分是暗色，目录脚本的「默认深色主题」检查只给警告。

@@ -19,6 +19,7 @@ pub mod windows;
 use tauri::{AppHandle, Manager as _, Runtime};
 use voltip_core::ui::UiState;
 use voltip_core::{BuiltinPreset, DictationPhase, EngineSettings, ForegroundApp, ForegroundProbe, Locale, PresetId};
+use voltip_platform::keychain::posix_message_language;
 use voltip_platform::tray::{CloseAction, TrayGlyph, TrayLocale, TrayPolish, TrayPolishAction, TrayPreset, builtin_preset_label, main_window_close};
 use voltip_tauri_bridge::Bridge;
 
@@ -49,6 +50,15 @@ pub fn tray_locale(locale: Locale) -> TrayLocale {
         Locale::En => TrayLocale::En,
         Locale::System => system_tray_locale().unwrap_or_default(),
     }
+}
+
+/// The OS display language for what the shell shows before the core has read the settings (the
+/// keychain notice, docs/dictation.md §34): Windows' and macOS' as for the tray, elsewhere the
+/// environment's message locale as gettext reads it ([`posix_message_language`]); English when the
+/// OS names none, as in the C locale.
+pub fn system_locale() -> TrayLocale {
+    system_tray_locale()
+        .unwrap_or_else(|| posix_message_language(|name| std::env::var(name).ok()).map_or(TrayLocale::En, |language| TrayLocale::for_language(&language)))
 }
 
 fn system_tray_locale() -> Option<TrayLocale> {

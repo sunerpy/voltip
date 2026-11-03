@@ -21,11 +21,15 @@ use voltip_core::{
     Activation, ContextSharing, CoreConfig, DictationPhase, EdgeSource, FailureCode, InjectMode, Locale, ModelInstallState, SecretSource, Settings,
     SettingsStore, TakeKind, ThemeId,
 };
+use voltip_desktop_lib::keychain_notice::KeychainUnavailable;
 use voltip_desktop_lib::update::{NOT_CONFIGURED, UpdateSlot};
 use voltip_desktop_lib::{COMMANDS, DEV_SECRET_STORE_ENV, KEYCHAIN_SERVICE, ShellOptions, build_app, data_dir, dev_memory_store_requested, secret_store};
-use voltip_identity::MemorySecretStore;
+use voltip_identity::{IdentityError, MemorySecretStore, SecretStore};
 use voltip_pairing::PairingState;
+use voltip_platform::HostOs;
+use voltip_platform::keychain::KeychainNotice;
 use voltip_tauri_bridge::Bridge;
+use zeroize::Zeroizing;
 
 /// Per-step wait. 15 s was enough for a plain `cargo test`, but under `cargo llvm-cov` with all 17
 /// tests booting a core each in parallel the first `state` event once took longer (make verify,
@@ -195,6 +199,67 @@ fn run_app(
     app.run(|_, _| {});
     if let Err(panic) = driver.join().unwrap() {
         std::panic::resume_unwind(panic);
+    }
+}
+
+/// A system keychain that cannot be opened: every call answers `StoreUnavailable` with `reason`.
+struct UnavailableStore(&'static str);
+
+impl SecretStore for UnavailableStore {
+    fn get(&self, _entry: &str) -> Result<Option<Zeroizing<Vec<u8>>>, IdentityError> {
+        Err(IdentityError::StoreUnavailable(self.0.into()))
+    }
+    fn set(&self, _entry: &str, _value: &[u8]) -> Result<(), IdentityError> {
+        Err(IdentityError::StoreUnavailable(self.0.into()))
+    }
+    fn delete(&self, _entry: &str) -> Result<(), IdentityError> {
+        Err(IdentityError::StoreUnavailable(self.0.into()))
+    }
+    fn backend_name(&self) -> &'static str {
+        "secret-service"
+    }
+}
+
+/// Regression (AppImage/appimage.github.io#10813, 2026-10-29): on a Linux session without the
+/// Secret Service the core cannot read or create the device identity, the setup hook returned the
+/// error and Tauri panicked (exit code 101, no window). Now the start shows the keychain notice
+/// (docs/dictation.md §34) for this host in the system language, the code it quits with is not 0,
+/// the core is not started, and nothing panics. The reasons are what `keyring` reports on Linux:
+/// no Secret Service on the session bus, a dismissed unlock prompt, an item still locked.
+#[test]
+fn regression_an_unavailable_keychain_shows_the_notice_instead_of_panicking() {
+    for reason in [
+        "No default store has been set, so cannot search or create entries",
+        "Couldn't access platform storage: SS error: prompt dismissed",
+        "Couldn't access platform storage: SS Error: object locked",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let app = build_app(
+            mock_builder(),
+            offline_config(dir.path()),
+            Arc::new(UnavailableStore(reason)),
+            ShellOptions::HEADLESS,
+            voltip_desktop_lib::dictation::ShellPorts::headless(fakes::ports()),
+        )
+        .build(mock_context(noop_assets()))
+        .unwrap();
+        let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
+        let handle = app.handle().clone();
+        let driver = std::thread::spawn(move || {
+            let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                let shown = wait_for(|| handle.try_state::<KeychainUnavailable>().map(|state| *state.inner()));
+                assert_eq!(shown.notice, KeychainNotice::new(HostOs::current(), voltip_desktop_lib::platform::system_locale()), "{reason}");
+                assert_ne!(shown.exit_code, 0, "{reason}");
+                assert!(handle.try_state::<Bridge>().is_none(), "{reason}: the core did not start");
+            }));
+            webview.close().unwrap();
+            outcome
+        });
+        // Before the fix this panicked: "Failed to setup app: secret store unavailable: …".
+        app.run(|_, _| {});
+        if let Err(panic) = driver.join().unwrap() {
+            std::panic::resume_unwind(panic);
+        }
     }
 }
 
@@ -1664,10 +1729,12 @@ fn a_second_instance_forwards_toggle_and_cancel_to_the_running_core() {
         std::thread::sleep(Duration::from_millis(100));
         assert!(core_state(webview).dictation.phase.is_terminal(), "still in the dwell: nothing was dispatched");
         assert_eq!(voltip_desktop_lib::MAIN_WINDOW, "main");
-        assert_eq!(ShellOptions::PRODUCTION.hidden(true), ShellOptions { global_hotkey: true, start_hidden: true, opens_folders: true });
+        assert_eq!(ShellOptions::PRODUCTION.hidden(true), ShellOptions { global_hotkey: true, start_hidden: true, opens_folders: true, shows_notices: true });
         const { assert!(!ShellOptions::HEADLESS.start_hidden && !ShellOptions::PRODUCTION.start_hidden) };
         // The tests call every command: on the mock runtime no folder opens on the desktop.
         const { assert!(!ShellOptions::HEADLESS.opens_folders) };
+        // Nor does the keychain notice (docs/dictation.md §34): a test run keeps its process.
+        const { assert!(!ShellOptions::HEADLESS.shows_notices) };
     });
 }
 

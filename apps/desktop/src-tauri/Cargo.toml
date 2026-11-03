@@ -185,6 +185,9 @@ voltip-pairing.workspace = true
 # start one in the process.
 voltip-relay = { workspace = true, features = ["server"] }
 wiremock.workspace = true
+# tests/ipc.rs: a secret store the system cannot open (docs/dictation.md §34) implements the trait,
+# whose reads return `Zeroizing`; the version voltip-identity already uses.
+zeroize.workspace = true
 
 [features]
 # Enabled by `tauri build`: serve the bundled frontend instead of the dev server URL.
