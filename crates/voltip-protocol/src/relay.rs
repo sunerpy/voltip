@@ -31,6 +31,12 @@ pub const CHANNEL_HEX_LEN: usize = 64;
 /// in another way it already understands (docs/pairing.md 「最低版本」).
 pub const FEATURE_CLIENT_TOO_OLD: &str = "client_too_old";
 
+/// A `hello.features` and `hello_ack.features` entry: the client authenticates with a device
+/// ticket ([`RelayFrame::Auth`]); in `hello_ack`, the relay checks tickets (docs/pairing.md
+/// 「设备票据」). A client sends `auth` only to its build's own relay, and only when the relay
+/// lists the feature.
+pub const FEATURE_TICKET: &str = "ticket";
+
 /// Validate a channel label: exactly 64 lower-case hex characters.
 pub fn validate_channel(channel: &str) -> Result<(), CodecError> {
     let ok = channel.len() == CHANNEL_HEX_LEN && channel.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
@@ -66,6 +72,14 @@ pub enum RelayErrorCode {
     /// The client is older than the lowest version the relay serves; `min_version` names it. Sent
     /// only to a client whose `hello` lists [`FEATURE_CLIENT_TOO_OLD`].
     ClientTooOld,
+    /// The relay serves only authenticated devices and this connection has not authenticated.
+    /// Sent only to a client whose `hello` lists [`FEATURE_TICKET`].
+    TicketRequired,
+    /// The ticket in `auth` was not one the relay accepts (forged, expired or for another scope).
+    /// The connection stays, unauthenticated.
+    TicketInvalid,
+    /// The connection's ticket ran out and no new one came; the relay closes the connection.
+    TicketExpired,
 }
 
 /// Every frame the relay sends or receives.
@@ -92,6 +106,25 @@ pub enum RelayFrame {
         relay_version: String,
         /// Advertised limits.
         limits: RelayLimits,
+        /// What the relay understands beyond the frames ([`FEATURE_TICKET`]); relays before
+        /// 0.3.1 send none, and older clients ignore the field.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        features: Vec<String>,
+    },
+    /// The client's device ticket (docs/pairing.md 「设备票据」), sent after `hello_ack` lists
+    /// [`FEATURE_TICKET`] and again with every new ticket.
+    Auth {
+        /// Protocol version.
+        version: ProtocolVersion,
+        /// The ticket as `voltip-auth` issued it; opaque to the client.
+        ticket: String,
+    },
+    /// The relay accepted the ticket; the connection is authenticated until `exp`.
+    AuthAck {
+        /// Protocol version.
+        version: ProtocolVersion,
+        /// Unix seconds when the ticket runs out.
+        exp: u64,
     },
     /// Initiator asks for a pairing session.
     CreateSession {
@@ -225,6 +258,8 @@ impl RelayFrame {
         match self {
             Self::Hello { version, .. }
             | Self::HelloAck { version, .. }
+            | Self::Auth { version, .. }
+            | Self::AuthAck { version, .. }
             | Self::CreateSession { version, .. }
             | Self::SessionCreated { version, .. }
             | Self::JoinByCode { version, .. }
@@ -262,7 +297,16 @@ impl RelayFrame {
 
     /// This build's `hello`: `client_version` and every feature it understands.
     pub fn hello(client_version: impl Into<String>) -> Self {
-        Self::Hello { version: ProtocolVersion::CURRENT, client_version: client_version.into(), features: vec![FEATURE_CLIENT_TOO_OLD.to_owned()] }
+        Self::Hello {
+            version: ProtocolVersion::CURRENT,
+            client_version: client_version.into(),
+            features: vec![FEATURE_CLIENT_TOO_OLD.to_owned(), FEATURE_TICKET.to_owned()],
+        }
+    }
+
+    /// An `auth` frame carrying `ticket`.
+    pub fn auth(ticket: impl Into<String>) -> Self {
+        Self::Auth { version: ProtocolVersion::CURRENT, ticket: ticket.into() }
     }
 
     /// Convenience constructor for an error frame.
@@ -348,7 +392,19 @@ mod tests {
             version: v,
             relay_version: "relay 2.0".into(),
             limits: RelayLimits { code_attempts_per_connection: 5, code_attempts_per_session: 10, session_ttl_secs: 120 },
+            features: Vec::new(),
         });
+        roundtrip(RelayFrame::HelloAck {
+            version: v,
+            relay_version: "relay 2.0".into(),
+            limits: RelayLimits { code_attempts_per_connection: 5, code_attempts_per_session: 10, session_ttl_secs: 120 },
+            features: vec![FEATURE_TICKET.into()],
+        });
+        roundtrip(RelayFrame::auth("e30.c2ln"));
+        roundtrip(RelayFrame::AuthAck { version: v, exp: 1_800_000_000 });
+        roundtrip(RelayFrame::error(RelayErrorCode::TicketRequired));
+        roundtrip(RelayFrame::error(RelayErrorCode::TicketInvalid));
+        roundtrip(RelayFrame::error(RelayErrorCode::TicketExpired));
         roundtrip(RelayFrame::CreateSession { version: v, ttl_secs: Some(90) });
         roundtrip(RelayFrame::CreateSession { version: v, ttl_secs: None });
         roundtrip(RelayFrame::SessionCreated { version: v, session_id: sid, code: PairCode::new("000123").unwrap(), expires_at: 1_800_000_000 });
@@ -395,7 +451,7 @@ mod tests {
             RelayFrame::Hello { version: ProtocolVersion::CURRENT, client_version: "voltip/0.1.9".into(), features: Vec::new() }
         );
         let text = RelayFrame::hello("voltip/0.1.10").encode().unwrap();
-        assert_eq!(text, r#"{"type":"hello","version":1,"client_version":"voltip/0.1.10","features":["client_too_old"]}"#);
+        assert_eq!(text, r#"{"type":"hello","version":1,"client_version":"voltip/0.1.10","features":["client_too_old","ticket"]}"#);
         let text = RelayFrame::client_too_old("0.2.0").encode().unwrap();
         assert_eq!(text, r#"{"type":"error","version":1,"code":"client_too_old","min_version":"0.2.0"}"#);
         assert!(!RelayFrame::error(RelayErrorCode::UnsupportedVersion).encode().unwrap().contains("min_version"));
@@ -405,6 +461,22 @@ mod tests {
             RelayFrame::client_too_old("0.2.0").for_channel(&ch),
             RelayFrame::Error { code: RelayErrorCode::ClientTooOld, min_version: Some(m), channel: Some(c), .. } if m == "0.2.0" && c == ch
         ));
+    }
+
+    /// docs/pairing.md 「设备票据」: a relay before 0.3.1 sends `hello_ack` without `features` and
+    /// a client before 0.3.1 reads one with them; only a relay that lists `ticket` is sent `auth`.
+    #[test]
+    fn the_ticket_fields_are_optional_both_ways() {
+        let older = r#"{"type":"hello_ack","version":1,"relay_version":"r","limits":{"code_attempts_per_connection":5,"code_attempts_per_session":10,"session_ttl_secs":120}}"#;
+        assert!(matches!(RelayFrame::decode(older).unwrap(), RelayFrame::HelloAck { features, .. } if features.is_empty()));
+        let limits = RelayLimits { code_attempts_per_connection: 5, code_attempts_per_session: 10, session_ttl_secs: 120 };
+        let plain = RelayFrame::HelloAck { version: ProtocolVersion::CURRENT, relay_version: "r".into(), limits, features: Vec::new() };
+        assert_eq!(plain.encode().unwrap(), older, "a relay without tickets answers as before");
+        let text = RelayFrame::HelloAck { version: ProtocolVersion::CURRENT, relay_version: "r".into(), limits, features: vec![FEATURE_TICKET.into()] }.encode().unwrap();
+        assert!(text.ends_with(r#""features":["ticket"]}"#), "{text}");
+        assert_eq!(RelayFrame::auth("p.m").encode().unwrap(), r#"{"type":"auth","version":1,"ticket":"p.m"}"#);
+        assert_eq!(RelayFrame::AuthAck { version: ProtocolVersion::CURRENT, exp: 7 }.encode().unwrap(), r#"{"type":"auth_ack","version":1,"exp":7}"#);
+        assert_eq!(RelayFrame::error(RelayErrorCode::TicketRequired).encode().unwrap(), r#"{"type":"error","version":1,"code":"ticket_required"}"#);
     }
 
     #[test]

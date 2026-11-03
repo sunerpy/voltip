@@ -12,10 +12,15 @@
 //! With [`RelayHandle::watch_policy`] the policy files are read at once and every
 //! [`POLICY_CHECK`] after (docs/pairing.md 「最低版本」); `GET /stats` answers the admin console's
 //! counts. The listener is on loopback behind nginx, which forwards `/ws` only.
+//!
+//! A close the core asks for happens in two steps. Reading stops at once (a per-connection
+//! [`CancellationToken`], which no full queue can hold up); the writer then sends what is queued,
+//! the reason before the close, for up to [`CLOSE_GRACE`], and is aborted if it is still stuck on
+//! a client that does not read. Either way the socket is gone soon after.
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use axum::Router;
@@ -25,18 +30,20 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use axum::routing::get;
-use futures_util::{SinkExt as _, StreamExt as _};
+use futures_util::{Sink, SinkExt as _, StreamExt as _};
 use ipnet::IpNet;
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 use voltip_protocol::relay::RelayFrame;
 
 use crate::policy::PolicyFiles;
 use crate::stats::StatsReport;
 use crate::{ConnId, Delivery, RelayConfig, RelayCore, RelayStats, forwarded};
 
-/// Outbound queue depth per connection before we consider the client stuck.
-const OUTBOUND_QUEUE: usize = 64;
+/// How long a closing connection's writer may take to send what is queued.
+pub const CLOSE_GRACE: Duration = Duration::from_secs(2);
 /// Housekeeping cadence.
 const TICK: Duration = Duration::from_secs(1);
 /// How often the policy files are looked at.
@@ -58,10 +65,20 @@ struct Shared {
     policy: Mutex<Option<PolicyFiles>>,
     /// `RelayConfig::trusted_proxies`, read on every upgrade without taking the core's lock.
     trusted_proxies: Vec<IpNet>,
-    outbound: Mutex<std::collections::HashMap<ConnId, mpsc::Sender<Outbound>>>,
+    outbound: Mutex<std::collections::HashMap<ConnId, Slot>>,
+    /// `RelayConfig::outbound_queue`.
+    queue: usize,
     next_id: AtomicU64,
     /// Frames dropped on a full outbound queue.
     dropped: AtomicU64,
+    /// Connection tasks still running (tests).
+    live: AtomicUsize,
+}
+
+/// A connection's outbound queue and the token that stops its reading.
+struct Slot {
+    tx: mpsc::Sender<Outbound>,
+    stop: CancellationToken,
 }
 
 enum Outbound {
@@ -73,16 +90,24 @@ impl RelayHandle {
     /// New handle around a fresh core.
     pub fn new(config: RelayConfig) -> Self {
         let trusted_proxies = config.trusted_proxies.clone();
+        let queue = config.outbound_queue.max(1);
         Self {
             inner: Arc::new(Shared {
                 core: Mutex::new(RelayCore::new(config)),
                 policy: Mutex::new(None),
                 trusted_proxies,
                 outbound: Mutex::new(Default::default()),
+                queue,
                 next_id: AtomicU64::new(1),
                 dropped: AtomicU64::new(0),
+                live: AtomicUsize::new(0),
             }),
         }
+    }
+
+    /// Connection tasks still running, writer included (tests watch a closed one end).
+    pub fn live_connections(&self) -> usize {
+        self.inner.live.load(Ordering::Relaxed)
     }
 
     /// Counters.
@@ -158,23 +183,27 @@ impl RelayHandle {
     /// Send a WebSocket close to every live connection (shutdown).
     pub fn close_all(&self) {
         let outbound = self.inner.outbound.lock();
-        for tx in outbound.values() {
-            let _ = tx.try_send(Outbound::Close);
+        for slot in outbound.values() {
+            let _ = slot.tx.try_send(Outbound::Close);
+            slot.stop.cancel();
         }
     }
 
     fn dispatch(&self, deliveries: Vec<Delivery>) {
         let outbound = self.inner.outbound.lock();
         for d in deliveries {
-            let (conn, item) = match d {
-                Delivery::Send(c, f) => (c, Outbound::Frame(f)),
-                Delivery::Close(c) => (c, Outbound::Close),
+            let (conn, item, closing) = match d {
+                Delivery::Send(c, f) => (c, Outbound::Frame(f), false),
+                Delivery::Close(c) => (c, Outbound::Close, true),
             };
-            if let Some(tx) = outbound.get(&conn)
-                && tx.try_send(item).is_err()
-            {
+            let Some(slot) = outbound.get(&conn) else { continue };
+            if slot.tx.try_send(item).is_err() {
                 self.inner.dropped.fetch_add(1, Ordering::Relaxed);
                 tracing::warn!(?conn, "outbound queue full; dropping frame");
+            }
+            // The close itself cannot be lost to a full queue: reading stops here.
+            if closing {
+                slot.stop.cancel();
             }
         }
     }
@@ -182,7 +211,14 @@ impl RelayHandle {
 
 async fn healthz(State(h): State<RelayHandle>) -> impl IntoResponse {
     let s = h.stats();
-    axum::Json(serde_json::json!({ "connections": s.connections, "sessions": s.sessions, "channels": s.channels, "forwarded": s.forwarded }))
+    let revision = h.inner.core.lock().policy().revision;
+    axum::Json(serde_json::json!({
+        "connections": s.connections,
+        "sessions": s.sessions,
+        "channels": s.channels,
+        "forwarded": s.forwarded,
+        "policy_revision": revision,
+    }))
 }
 
 async fn stats(State(h): State<RelayHandle>) -> impl IntoResponse {
@@ -197,52 +233,44 @@ async fn ws_upgrade(ws: WebSocketUpgrade, ConnectInfo(addr): ConnectInfo<SocketA
     ws.max_message_size(128 * 1024).on_upgrade(move |socket| handle_socket(socket, addr, client, h))
 }
 
+/// Counts a connection task for [`RelayHandle::live_connections`] until it is dropped.
+struct LiveGuard(Arc<Shared>);
+
+impl Drop for LiveGuard {
+    fn drop(&mut self) {
+        self.0.live.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 async fn handle_socket(socket: WebSocket, addr: SocketAddr, client: IpAddr, h: RelayHandle) {
+    h.inner.live.fetch_add(1, Ordering::Relaxed);
+    let _live = LiveGuard(h.inner.clone());
     let conn = ConnId(h.inner.next_id.fetch_add(1, Ordering::Relaxed));
-    let (tx, mut rx) = mpsc::channel::<Outbound>(OUTBOUND_QUEUE);
-    h.inner.outbound.lock().insert(conn, tx);
-    let (ping_interval, idle_timeout) = {
+    let (tx, rx) = mpsc::channel::<Outbound>(h.inner.queue);
+    let stop = CancellationToken::new();
+    h.inner.outbound.lock().insert(conn, Slot { tx, stop: stop.clone() });
+    let (ping_interval, idle_timeout, refused) = {
         let mut core = h.inner.core.lock();
-        core.on_connect(conn, client);
-        (core.config().ping_interval, core.config().idle_timeout)
+        let refused = core.on_connect(conn, client);
+        (core.config().ping_interval, core.config().idle_timeout, refused)
     };
     tracing::debug!(?conn, %addr, %client, "connection opened");
 
-    let (mut sink, mut stream) = socket.split();
-    let writer = tokio::spawn(async move {
-        let mut ping = tokio::time::interval(ping_interval);
-        ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        ping.tick().await; // the first tick is immediate
-        loop {
-            tokio::select! {
-                item = rx.recv() => match item {
-                    Some(Outbound::Frame(f)) => {
-                        let Ok(text) = f.encode() else { continue };
-                        if sink.send(Message::Text(text.into())).await.is_err() {
-                            break;
-                        }
-                    }
-                    Some(Outbound::Close) => {
-                        let _ = sink.send(Message::Close(None)).await;
-                        break;
-                    }
-                    None => break,
-                },
-                _ = ping.tick() => {
-                    if sink.send(Message::Ping(Vec::new().into())).await.is_err() {
-                        break;
-                    }
-                }
-            }
-        }
-    });
+    let (sink, mut stream) = socket.split();
+    let writer = tokio::spawn(write_loop(sink, rx, ping_interval));
+    h.dispatch(refused);
 
     let mut first = true;
     loop {
         // Any message counts as a sign of life, a pong included.
         let wait = if first { HELLO_TIMEOUT.min(idle_timeout) } else { idle_timeout };
         first = false;
-        let next = match tokio::time::timeout(wait, stream.next()).await {
+        let next = tokio::select! {
+            biased;
+            () = stop.cancelled() => break,
+            next = tokio::time::timeout(wait, stream.next()) => next,
+        };
+        let next = match next {
             Ok(next) => next,
             Err(_) => {
                 tracing::info!(?conn, %addr, silent_for = ?wait, "connection silent; closing it");
@@ -265,9 +293,110 @@ async fn handle_socket(socket: WebSocket, addr: SocketAddr, client: IpAddr, h: R
 
     let deliveries = h.inner.core.lock().on_disconnect(conn, Instant::now());
     // Dropping our sender lets the writer drain whatever is queued (an error frame followed by
-    // a close, typically) and then exit on its own; never abort it mid-flush.
+    // a close, typically) and then exit on its own, for up to the grace period.
     h.inner.outbound.lock().remove(&conn);
     h.dispatch(deliveries);
-    let _ = tokio::time::timeout(Duration::from_secs(2), writer).await;
+    drop(stream);
+    if !finish_writer(writer, CLOSE_GRACE).await {
+        tracing::info!(?conn, "client not reading; dropping the connection");
+    }
     tracing::debug!(?conn, "connection closed");
+}
+
+/// Send what is queued, in order, and ping every `ping_interval`; end after a close, when the
+/// queue's senders are gone, or when sending fails.
+async fn write_loop<S>(mut sink: S, mut rx: mpsc::Receiver<Outbound>, ping_interval: Duration)
+where
+    S: Sink<Message> + Unpin,
+{
+    let mut ping = tokio::time::interval(ping_interval);
+    ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    ping.tick().await; // the first tick is immediate
+    loop {
+        tokio::select! {
+            item = rx.recv() => match item {
+                Some(Outbound::Frame(f)) => {
+                    let Ok(text) = f.encode() else { continue };
+                    if sink.send(Message::Text(text.into())).await.is_err() {
+                        break;
+                    }
+                }
+                Some(Outbound::Close) => {
+                    let _ = sink.send(Message::Close(None)).await;
+                    break;
+                }
+                None => break,
+            },
+            _ = ping.tick() => {
+                if sink.send(Message::Ping(Vec::new().into())).await.is_err() {
+                    break;
+                }
+            }
+        }
+    }
+}
+
+/// Wait up to `grace` for the writer to finish; abort it if it has not (a send stuck on a client
+/// that does not read), and wait for it to be gone either way so the socket is released. `true`
+/// when it finished by itself.
+async fn finish_writer(mut writer: JoinHandle<()>, grace: Duration) -> bool {
+    if tokio::time::timeout(grace, &mut writer).await.is_ok() {
+        return true;
+    }
+    writer.abort();
+    let _ = writer.await;
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
+
+    use super::*;
+
+    /// A sink that never takes anything: a client that stopped reading, its buffers full.
+    struct Stuck;
+
+    impl Sink<Message> for Stuck {
+        type Error = std::io::Error;
+        fn poll_ready(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Pending
+        }
+        fn start_send(self: Pin<&mut Self>, _: Message) -> Result<(), Self::Error> {
+            Ok(())
+        }
+        fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Pending
+        }
+        fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Pending
+        }
+    }
+
+    #[tokio::test]
+    async fn a_writer_stuck_on_a_send_is_aborted_after_the_grace() {
+        let (tx, rx) = mpsc::channel(4);
+        tx.send(Outbound::Frame(RelayFrame::error(voltip_protocol::relay::RelayErrorCode::TicketRequired))).await.unwrap();
+        tx.send(Outbound::Close).await.unwrap();
+        let writer = tokio::spawn(write_loop(Stuck, rx, Duration::from_secs(3600)));
+        let started = Instant::now();
+        assert!(!finish_writer(writer, Duration::from_millis(100)).await, "aborted");
+        assert!(started.elapsed() < Duration::from_secs(5));
+        drop(tx);
+    }
+
+    #[tokio::test]
+    async fn a_writer_sends_the_reason_then_the_close_and_ends_by_itself() {
+        let (tx, rx) = mpsc::channel(4);
+        let (out_tx, mut out_rx) = mpsc::channel::<Message>(8);
+        tx.send(Outbound::Frame(RelayFrame::error(voltip_protocol::relay::RelayErrorCode::TicketRequired))).await.unwrap();
+        tx.send(Outbound::Close).await.unwrap();
+        let writer = tokio::spawn(write_loop(tokio_util::sync::PollSender::new(out_tx), rx, Duration::from_secs(3600)));
+        assert!(finish_writer(writer, CLOSE_GRACE).await, "it ended without being aborted");
+        let Some(Message::Text(text)) = out_rx.recv().await else { panic!("the reason") };
+        assert!(text.contains("ticket_required"));
+        assert!(matches!(out_rx.recv().await, Some(Message::Close(None))));
+        drop(tx);
+    }
 }
