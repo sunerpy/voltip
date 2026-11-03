@@ -1,0 +1,36 @@
+[package]
+name = "voltip-access"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Device credentials and short-lived tickets for the hosted relay and the built-in service (docs/pairing.md 「设备票据」): the build key baked in by CI, proving the version, renewing the ticket."
+
+[lints]
+workspace = true
+
+[dependencies]
+hex.workspace = true
+# proof and mac (docs/pairing.md 「设备票据」): HMAC-SHA256, as voltip-crypto.
+hmac.workspace = true
+parking_lot.workspace = true
+# The requests to voltip-auth; the shell hands in the client builder it uses for the built-in
+# service (Mozilla's roots on Android, the proxy plan).
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[build-dependencies]
+hex.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+wiremock.workspace = true

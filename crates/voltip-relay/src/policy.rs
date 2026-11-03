@@ -19,6 +19,8 @@ use serde::Deserialize;
 pub const POLICY_SCHEMA: u32 = 1;
 /// Most release versions a policy may name for the statistics.
 pub const MAX_KNOWN_VERSIONS: usize = 64;
+/// The largest number a usage limit may hold.
+pub const MAX_LIMIT: u64 = 1_000_000_000_000;
 
 /// A client release, `x.y.z`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
@@ -87,6 +89,45 @@ pub enum PolicyError {
     /// More than [`MAX_KNOWN_VERSIONS`] release versions.
     #[error("{0} known versions, more than {MAX_KNOWN_VERSIONS}")]
     TooManyVersions(usize),
+    /// A usage limit outside `1..=`[`MAX_LIMIT`].
+    #[error("limit {0} is {1}, not between 1 and {MAX_LIMIT}")]
+    Limit(&'static str, u64),
+}
+
+/// Usage limits (docs/pairing.md 「中继限额」); `None` is no limit. The relay counts every one of
+/// them whether or not it is set, so the admin console can show the distributions first.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+pub struct UsageLimits {
+    /// Decoded `forward` payload bytes one connection may send in a UTC minute.
+    #[serde(default)]
+    pub forward_bytes_per_minute: Option<u64>,
+    /// `forward` frames one connection may send in a UTC minute.
+    #[serde(default)]
+    pub forward_frames_per_minute: Option<u64>,
+    /// Live connections from one client address.
+    #[serde(default)]
+    pub connections_per_ip: Option<u64>,
+    /// Live connections in all.
+    #[serde(default)]
+    pub max_connections: Option<u64>,
+}
+
+impl UsageLimits {
+    fn check(&self) -> Result<(), PolicyError> {
+        for (name, value) in [
+            ("forward_bytes_per_minute", self.forward_bytes_per_minute),
+            ("forward_frames_per_minute", self.forward_frames_per_minute),
+            ("connections_per_ip", self.connections_per_ip),
+            ("max_connections", self.max_connections),
+        ] {
+            if let Some(v) = value
+                && !(1..=MAX_LIMIT).contains(&v)
+            {
+                return Err(PolicyError::Limit(name, v));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// What the relay enforces and how it names versions in its statistics.
@@ -99,15 +140,29 @@ pub struct RelayPolicy {
     /// The release versions the statistics count by name; any other version counts as `other`.
     /// Empty: the first 32 versions of each hour are named.
     pub known_versions: Vec<ClientVersion>,
+    /// Serve only devices with a valid ticket (docs/pairing.md 「设备票据」). It takes effect only
+    /// with a `min_version` and on a relay that holds the ticket key.
+    pub require_ticket: bool,
+    /// Usage limits.
+    pub limits: UsageLimits,
+    /// The admin console's revision of this policy, reported by `GET /healthz` so the console
+    /// can show what is in force.
+    pub revision: Option<u64>,
 }
 
 #[derive(Deserialize)]
 struct PolicyFile {
     schema: u32,
     #[serde(default)]
+    revision: Option<u64>,
+    #[serde(default)]
     min_version: Option<String>,
     #[serde(default)]
     known_versions: Vec<String>,
+    #[serde(default)]
+    require_ticket: bool,
+    #[serde(default)]
+    limits: UsageLimits,
 }
 
 impl RelayPolicy {
@@ -124,7 +179,11 @@ impl RelayPolicy {
         let mut known_versions = file.known_versions.iter().map(|v| v.parse()).collect::<Result<Vec<ClientVersion>, _>>()?;
         known_versions.sort();
         known_versions.dedup();
-        Ok(Self { min_version, known_versions })
+        file.limits.check()?;
+        if file.require_ticket && min_version.is_none() {
+            tracing::warn!("require_ticket without a min_version takes no effect");
+        }
+        Ok(Self { min_version, known_versions, require_ticket: file.require_ticket, limits: file.limits, revision: file.revision })
     }
 
     /// Whether a client of `version` is below the minimum (an unknown version never is).
@@ -180,7 +239,13 @@ impl PolicyFiles {
         if next == self.current {
             return None;
         }
-        tracing::info!(min_version = ?next.min_version.map(|v| v.to_string()), known = next.known_versions.len(), "relay policy changed");
+        tracing::info!(
+            min_version = ?next.min_version.map(|v| v.to_string()),
+            known = next.known_versions.len(),
+            require_ticket = next.require_ticket,
+            limits = ?next.limits,
+            "relay policy changed"
+        );
         self.current = next.clone();
         Some(next)
     }
@@ -247,6 +312,20 @@ mod tests {
         assert_eq!(RelayPolicy::parse(r#"{"schema":2}"#), Err(PolicyError::Schema(2)));
         assert!(matches!(RelayPolicy::parse(r#"{"schema":1,"min_version":"0.2"}"#), Err(PolicyError::Version(_))));
         assert!(matches!(RelayPolicy::parse("[]"), Err(PolicyError::Malformed(_))));
+        let policy = RelayPolicy::parse(
+            r#"{"schema":1,"min_version":"0.1.10","require_ticket":true,"limits":{"forward_bytes_per_minute":1048576,"connections_per_ip":null,"max_connections":5000},"future":1}"#,
+        )
+        .unwrap();
+        assert!(policy.require_ticket);
+        assert_eq!(policy.revision, None);
+        assert_eq!(RelayPolicy::parse(r#"{"schema":1,"revision":12}"#).unwrap().revision, Some(12));
+        assert_eq!(
+            policy.limits,
+            UsageLimits { forward_bytes_per_minute: Some(1_048_576), forward_frames_per_minute: None, connections_per_ip: None, max_connections: Some(5000) }
+        );
+        assert_eq!(RelayPolicy::parse(r#"{"schema":1,"limits":{"max_connections":0}}"#), Err(PolicyError::Limit("max_connections", 0)));
+        assert!(matches!(RelayPolicy::parse(r#"{"schema":1,"limits":{"max_connections":1000000000001}}"#), Err(PolicyError::Limit(..))));
+        assert!(matches!(RelayPolicy::parse(r#"{"schema":1,"limits":{"max_connections":-1}}"#), Err(PolicyError::Malformed(_))));
         let many = (0..=MAX_KNOWN_VERSIONS).map(|i| format!("\"0.0.{i}\"")).collect::<Vec<_>>().join(",");
         assert_eq!(RelayPolicy::parse(&format!(r#"{{"schema":1,"known_versions":[{many}]}}"#)), Err(PolicyError::TooManyVersions(MAX_KNOWN_VERSIONS + 1)));
     }

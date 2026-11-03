@@ -21,6 +21,9 @@ pub const QUOTA_HEADER: &str = "x-voltip-quota";
 /// or `edit` (a voice edit's rewrite).
 pub const PURPOSE_HEADER: &str = "x-voltip-purpose";
 
+/// Headers computed for each request.
+pub type HeaderSource = Arc<dyn Fn() -> Vec<(String, String)> + Send + Sync>;
+
 /// The built-in service's metering (docs/dictation.md §27): the headers every request carries
 /// (the device and the client), and who hears the usage report of an answer ([`QUOTA_HEADER`]),
 /// refusals included. Only the built-in service is metered; `Debug` names the headers only.
@@ -30,6 +33,9 @@ pub struct Metering {
     pub headers: Vec<(String, String)>,
     /// Called with the [`QUOTA_HEADER`] of every answer that carries one.
     pub on_report: Arc<dyn Fn(&str) + Send + Sync>,
+    /// Headers read again for every request: the device's ticket (docs/pairing.md 「设备票据」),
+    /// which is renewed while the client lives. `Debug` and equality leave them out.
+    pub per_request: Option<HeaderSource>,
 }
 
 impl PartialEq for Metering {

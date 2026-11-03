@@ -183,6 +183,9 @@ pub struct Prepared {
     /// Why recognition cannot run although it is configured: the cloud service it uses cannot be
     /// reached over HTTPS from this system ([`https_unavailable`]).
     pub unavailable: Option<String>,
+    /// The device's tickets for the built-in service (docs/pairing.md 「设备票据」), renewed once the
+    /// service runs.
+    pub tickets: Option<Arc<dyn voltip_access::TicketSource>>,
 }
 
 /// The server's own directory (`ProjectDirs` dev / voltip / voltip-server): its usage id when no
@@ -196,19 +199,31 @@ pub fn server_dir() -> PathBuf {
 /// Who the server is to the built-in service (docs/dictation.md §27): the app's usage id when the
 /// app runs on this machine (one machine, one device), read without writing to the app's
 /// directory; else the server's own under `own_dir`. It keeps no record: nothing would show it.
-pub fn server_metering(app_dir: &Path, own_dir: &Path) -> voltip_core::usage::Metering {
+pub fn server_metering(app_dir: &Path, own_dir: &Path, network: &Arc<voltip_net::Network>) -> voltip_core::usage::Metering {
     let device = voltip_core::usage::read_device_id(app_dir).unwrap_or_else(|| {
         voltip_core::usage::device_id(own_dir).unwrap_or_else(|e| {
             tracing::warn!(error = %e, "the server's usage id could not be saved; using one for this run");
             voltip_core::usage::device_id(&std::env::temp_dir().join("voltip-server")).unwrap_or_default()
         })
     });
+    // docs/pairing.md 「设备票据」: an official build shows the built-in service a ticket; its device
+    // secret is a private file of the server's own, the app's keychain being read-only from here.
+    let tickets = voltip_cloud::access::tickets_with(
+        voltip_cloud::access::AUTH_URL,
+        voltip_access::build_key(),
+        device.clone(),
+        Arc::new(voltip_access::FileStore::new(own_dir.join("serve").join("access.json"))),
+        network,
+        &format!("{}; server", std::env::consts::OS),
+    );
+    // It renews on the runtime the service serves on (`serve_with_grace`).
     voltip_core::usage::Metering::new(
         device,
         format!("voltip/{APP_VERSION} ({}; server)", std::env::consts::OS),
         voltip_core::usage::UsageOrigin::Serve,
         |_| {},
     )
+    .with_tickets(tickets)
 }
 
 /// Why this system cannot make HTTPS requests, when it cannot. Cloud recognition and clean-up (the
@@ -229,6 +244,8 @@ pub fn prepare(options: &ServeOptions, data_dir: &Path, wiring: Wiring) -> Resul
         // Names only: a key's value is never logged.
         tracing::info!(variables = ?secrets_from_env, "engine keys from the environment");
     }
+    let metering = server_metering(data_dir, &server_dir(), &network);
+    let tickets = metering.tickets().cloned();
     let config = FileSourceConfig {
         data_dir: data_dir.to_path_buf(),
         platform: voltip_protocol::Platform::current(),
@@ -240,7 +257,7 @@ pub fn prepare(options: &ServeOptions, data_dir: &Path, wiring: Wiring) -> Resul
         segmenter,
         network,
         proxy_password,
-        metering: Some(server_metering(data_dir, &server_dir())),
+        metering: Some(metering),
     };
     let (source, mut notices) = FileSource::open(config)?;
     notices.extend(secrets_notice);
@@ -257,7 +274,7 @@ pub fn prepare(options: &ServeOptions, data_dir: &Path, wiring: Wiring) -> Resul
     }
     let service = Arc::new(Service::new(Arc::new(source) as Arc<dyn StateSource>, defaults.clone()));
     let token_file = options.token_file.clone().unwrap_or_else(|| default_token_path(data_dir));
-    Ok(Prepared { service, defaults, notices, token_file, unavailable })
+    Ok(Prepared { service, defaults, notices, token_file, unavailable, tickets })
 }
 
 /// The proxy in force, as `--check` prints it (docs/dictation.md §24): the user's own settings, on
@@ -435,7 +452,11 @@ where
     let config = ListenConfig { addr: options.listen, token, concurrency: options.concurrency, max_minutes: options.max_minutes, uploads_dir: uploads.clone() };
     let service = prepared.service.clone();
     let preload = options.preload;
+    let tickets = prepared.tickets.clone();
     let code = runtime.block_on(async move {
+        if let Some(tickets) = &tickets {
+            tickets.start();
+        }
         let handle = match ServeHandle::new(&config, service.clone()) {
             Ok(h) => h,
             Err(e) => {

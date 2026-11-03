@@ -145,6 +145,7 @@ async fn silent_relay() -> RelayEndpoint {
                         version: ProtocolVersion::CURRENT,
                         relay_version: "silent".into(),
                         limits: voltip_protocol::relay::RelayLimits { code_attempts_per_connection: 5, code_attempts_per_session: 10, session_ttl_secs: 120 },
+                        features: Vec::new(),
                     };
                     let _ = ws.send(Message::Text(ack.encode().unwrap().into())).await;
                 }
@@ -171,6 +172,7 @@ async fn chatty_relay(frames: usize) -> RelayEndpoint {
                 version: ProtocolVersion::CURRENT,
                 relay_version: "chatty".into(),
                 limits: voltip_protocol::relay::RelayLimits { code_attempts_per_connection: 5, code_attempts_per_session: 10, session_ttl_secs: 120 },
+                features: Vec::new(),
             };
             let _ = ws.send(Message::Text(ack.encode().unwrap().into())).await;
             let frame = RelayFrame::Bye { version: ProtocolVersion::CURRENT }.encode().unwrap();
@@ -478,6 +480,185 @@ async fn a_minimum_raised_while_connected_turns_the_link_too_old() {
     let failure = next_failure(&mut ev).await;
     assert_eq!((failure.kind, failure.min_version.as_deref()), (FailureKind::TooOld, Some("0.2.0")), "{failure}");
     next_state(&mut ev, ConnectionState::Reconnecting).await;
+    link.close().await;
+    let _ = stop.send(());
+}
+
+// ---- device tickets (docs/pairing.md 「设备票据」) ----
+
+/// A ticket source for the tests: `refresh_now` hands out the next ticket of `queue`.
+#[derive(Debug)]
+struct FakeTickets {
+    current: parking_lot::Mutex<Option<voltip_access::Ticket>>,
+    queue: parking_lot::Mutex<Vec<String>>,
+    refreshes: std::sync::atomic::AtomicUsize,
+    tx: tokio::sync::watch::Sender<u64>,
+}
+
+impl FakeTickets {
+    fn new(current: Option<String>, queue: Vec<String>) -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self {
+            current: parking_lot::Mutex::new(current.map(voltip_access::Ticket::new)),
+            queue: parking_lot::Mutex::new(queue),
+            refreshes: std::sync::atomic::AtomicUsize::new(0),
+            tx: tokio::sync::watch::channel(0).0,
+        })
+    }
+
+    fn give(&self, ticket: String) {
+        *self.current.lock() = Some(voltip_access::Ticket::new(ticket));
+        self.tx.send_modify(|n| *n += 1);
+    }
+}
+
+impl voltip_access::TicketSource for FakeTickets {
+    fn current(&self) -> Option<voltip_access::Ticket> {
+        self.current.lock().clone()
+    }
+    fn refresh_now(&self) {
+        self.refreshes.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let next = self.queue.lock().pop();
+        if let Some(next) = next {
+            self.give(next);
+        }
+    }
+    fn subscribe(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.tx.subscribe()
+    }
+}
+
+fn ticket_key() -> voltip_relay::ticket::TicketKey {
+    voltip_relay::ticket::TicketKey::new(&[9; 32]).unwrap()
+}
+
+fn valid_ticket() -> String {
+    let exp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() + 3600;
+    ticket_key().issue(&voltip_relay::ticket::TicketPayload { v: 1, d: "dev".into(), ver: "0.3.1".into(), exp, scope: vec!["relay".into()] })
+}
+
+/// A relay with the ticket key; `policy` is its policy file's text.
+async fn ticketed_relay(policy: &str) -> (RelayHandle, RelayEndpoint, tokio::sync::oneshot::Sender<()>, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("relay-policy.json");
+    std::fs::write(&path, policy).unwrap();
+    let handle = RelayHandle::new(RelayConfig { ticket_key: Some(ticket_key()), ..RelayConfig::default() });
+    handle.watch_policy(voltip_relay::PolicyFiles::new(&path, None));
+    handle.reload_policy();
+    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+    let (addr, _task) = handle
+        .clone()
+        .serve("127.0.0.1:0".parse().unwrap(), async move {
+            let _ = stop_rx.await;
+        })
+        .await
+        .unwrap();
+    (handle, RelayEndpoint::parse(&format!("ws://{addr}/ws")).unwrap(), stop_tx, dir)
+}
+
+fn auth_ok(handle: &RelayHandle) -> u64 {
+    handle.stats_report().hours.iter().map(|h| h.auth.ok).sum()
+}
+
+const CHANNEL: &str = "abababababababababababababababababababababababababababababababab";
+
+fn attach() -> RelayFrame {
+    RelayFrame::Attach { version: ProtocolVersion::CURRENT, channel: CHANNEL.into() }
+}
+
+/// The build's own relay is shown the ticket before the link says it is connected, and a new
+/// ticket while connected; the owner never sees the relay's answers to `auth`.
+#[tokio::test]
+async fn the_builds_relay_is_shown_the_ticket_before_connected_and_on_renewal() {
+    let (handle, endpoint, stop, _dir) = ticketed_relay(r#"{"schema":1}"#).await;
+    let tickets = FakeTickets::new(Some(valid_ticket()), Vec::new());
+    let mut cfg = LinkConfig::new(endpoint);
+    cfg.ticket = Some(tickets.clone());
+    let (link, mut ev) = RelayLink::spawn(cfg);
+    next_state(&mut ev, ConnectionState::Connected).await;
+    assert_eq!(auth_ok(&handle), 1, "authenticated before Connected");
+    tickets.give(valid_ticket());
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while auth_ok(&handle) < 2 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the renewed ticket reaches the relay");
+    link.send(attach()).await.unwrap();
+    assert!(matches!(next_frame(&mut ev).await, RelayFrame::Attached { .. }), "no auth_ack in between");
+    link.close().await;
+    let _ = stop.send(());
+}
+
+/// Regression guard (plan review 2026-11-03, round 1): a relay the user entered never receives
+/// a ticket, however it asks; nor does the connectivity check.
+#[tokio::test]
+async fn regression_a_relay_without_a_ticket_source_gets_no_ticket_and_neither_does_the_probe() {
+    let (handle, endpoint, stop, _dir) = ticketed_relay(r#"{"schema":1}"#).await;
+    let (link, mut ev) = RelayLink::spawn(LinkConfig::new(endpoint.clone()));
+    next_state(&mut ev, ConnectionState::Connected).await;
+    link.send(attach()).await.unwrap();
+    assert!(matches!(next_frame(&mut ev).await, RelayFrame::Attached { .. }), "counting: served without a ticket");
+    let mut cfg = LinkConfig::new(endpoint);
+    cfg.ticket = Some(FakeTickets::new(Some(valid_ticket()), Vec::new()));
+    voltip_transport::probe(&cfg).await.unwrap();
+    let hour = handle.stats_report().hours.last().cloned().unwrap();
+    assert_eq!((hour.auth.ok, hour.auth.invalid), (0, 0), "no ticket reached the relay");
+    assert_eq!(hour.auth.unauthenticated, 1, "the link's attach was counted unauthenticated");
+    link.close().await;
+    let _ = stop.send(());
+}
+
+/// Regression (plan review 2026-11-03, round 2): `ticket_required` must lead back to a working
+/// connection. The relay refuses the first ticket and then the `attach`; the link asks for a new
+/// ticket, reconnects, authenticates, and the owner's `attach` on `Connected` succeeds.
+#[tokio::test]
+async fn regression_ticket_required_refreshes_reconnects_and_the_attach_succeeds() {
+    let (handle, endpoint, stop, _dir) = ticketed_relay(r#"{"schema":1,"min_version":"0.3.0","require_ticket":true}"#).await;
+    let tickets = FakeTickets::new(Some("forged.ticket".into()), vec![valid_ticket(), valid_ticket()]);
+    let mut cfg = LinkConfig::new(endpoint);
+    cfg.client_version = "voltip/0.3.1".into();
+    cfg.ticket = Some(tickets.clone());
+    cfg.reconnect = ReconnectPolicy { base: Duration::from_millis(50), max: Duration::from_millis(50), jitter: 0.0, max_attempts: None };
+    let (link, mut ev) = RelayLink::spawn(cfg);
+    next_state(&mut ev, ConnectionState::Connected).await;
+    // The forged ticket was refused and a new one asked for at once; this connection goes on
+    // unauthenticated, so its attach is refused and the link starts over.
+    link.send(attach()).await.unwrap();
+    let mut failed = None;
+    loop {
+        match tokio::time::timeout(Duration::from_secs(10), ev.recv()).await.expect("events").expect("open") {
+            LinkEvent::Failed(f) => failed = Some(f.kind),
+            LinkEvent::State(c) if c.to == ConnectionState::Connected => break,
+            _ => {}
+        }
+    }
+    assert_eq!(failed, Some(voltip_transport::FailureKind::Ticket));
+    link.send(attach()).await.unwrap();
+    assert!(matches!(next_frame(&mut ev).await, RelayFrame::Attached { .. }));
+    assert!(tickets.refreshes.load(std::sync::atomic::Ordering::SeqCst) >= 2, "after the refused ticket and after ticket_required");
+    assert!(auth_ok(&handle) >= 1);
+    link.close().await;
+    let _ = stop.send(());
+}
+
+/// Without a ticket the link asks for one and waits for it a moment before connecting.
+#[tokio::test]
+async fn without_a_ticket_the_link_asks_for_one_and_waits_a_moment() {
+    let (handle, endpoint, stop, _dir) = ticketed_relay(r#"{"schema":1}"#).await;
+    let tickets = FakeTickets::new(None, vec![valid_ticket()]);
+    let mut cfg = LinkConfig::new(endpoint.clone());
+    cfg.ticket = Some(tickets.clone());
+    let (link, mut ev) = RelayLink::spawn(cfg);
+    next_state(&mut ev, ConnectionState::Connected).await;
+    assert_eq!(auth_ok(&handle), 1);
+    link.close().await;
+    // None comes: it connects without one once the wait is over.
+    let mut cfg = LinkConfig::new(endpoint);
+    cfg.ticket = Some(FakeTickets::new(None, Vec::new()));
+    cfg.ticket_wait = Duration::from_millis(200);
+    let (link, mut ev) = RelayLink::spawn(cfg);
+    next_state(&mut ev, ConnectionState::Connected).await;
     link.close().await;
     let _ = stop.send(());
 }

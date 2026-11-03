@@ -34,6 +34,8 @@ done
 rustup target list --installed | grep -q '^aarch64-linux-android$' || { echo "build-android-rn: run: rustup target add aarch64-linux-android" >&2; exit 2; }
 command -v cargo-ndk >/dev/null || { echo "build-android-rn: run: cargo install cargo-ndk (CI: .github/scripts/install-cargo-ndk.sh)" >&2; exit 2; }
 . scripts/lib/build-env.sh && voltip_load_build_env
+# The build key for the device tickets (docs/pairing.md 「设备票据」), when a master secret is at hand.
+. scripts/lib/build-key.sh && voltip_build_key
 . scripts/lib/require-builtin-engines.sh && voltip_require_builtin_engines
 . scripts/lib/artefact-checks.sh
 
@@ -66,6 +68,7 @@ cargo run -q -p voltip-uniffi-bindgen --bin uniffi-bindgen -- \
 [ -s "$bindings/dev/voltip/rn/uniffi/voltip_rn.kt" ] || { echo "build-android-rn: UniFFI wrote no Kotlin bindings" >&2; exit 1; }
 "$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" --strip-all "$lib"
 voltip_scan_provider_keys "$lib" build-android-rn
+voltip_scan_build_key "$lib" build-android-rn
 
 # 2. The Android project, regenerated from app.json, app.config.js and the local module, with the
 # licence texts in its assets, as the Tauri phone app carries them (the About page names the file).

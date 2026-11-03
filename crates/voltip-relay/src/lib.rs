@@ -22,6 +22,7 @@ pub mod policy;
 #[cfg(feature = "server")]
 pub mod server;
 pub mod stats;
+pub mod ticket;
 
 pub use core::{ConnId, Delivery, RelayConfig, RelayCore, RelayStats};
 pub use limits::{RateLimiter, RateWindow};

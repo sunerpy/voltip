@@ -20,6 +20,8 @@ clang_major=$(clang --version | head -1 | grep -oE '[0-9]+' | head -1)
 [ "${clang_major:-0}" -ge 19 ] || { echo "build-windows-x64: clang $clang_major is too old for the MSVC STL (need 19+; apt install clang-19 lld-19 llvm-19)"; exit 2; }
 rustup target list --installed | grep -q '^x86_64-pc-windows-msvc$' || { echo "build-windows-x64: run: rustup target add x86_64-pc-windows-msvc"; exit 2; }
 . scripts/lib/build-env.sh && voltip_load_build_env
+# The build key for the device tickets (docs/pairing.md 「设备票据」), when a master secret is at hand.
+. scripts/lib/build-key.sh && voltip_build_key
 . scripts/lib/require-builtin-engines.sh && voltip_require_builtin_engines
 # TRANSCRIBE_CMAKE_ARGS / VOLTIP_VULKAN_LIB_DIR for the Vulkan backend, and vulkan-1.dll (+ its
 # licence) staged into src-tauri/resources/windows/, and THIRD-PARTY-NOTICES.txt into
@@ -50,6 +52,7 @@ mkdir -p "$out"
 # Artefact secret scan and the Vulkan import (scripts/lib/artefact-checks.sh).
 . scripts/lib/artefact-checks.sh
 voltip_scan_provider_keys "$exe" build-windows-x64
+voltip_scan_build_key "$exe" build-windows-x64
 voltip_output_has 'Name: vulkan-1\.dll' llvm-readobj --coff-imports "$exe" || { echo "build-windows-x64: voltip-desktop.exe does not import vulkan-1.dll (built without the Vulkan backend)"; exit 1; }
 # The DLLs the exe loads from its own directory: the dynamic sherpa-onnx of the offline recogniser
 # (its build script drops them next to the exe in the target dir) and the Vulkan loader. The NSIS

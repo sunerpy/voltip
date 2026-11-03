@@ -15,6 +15,8 @@ for tool in cargo cargo-about pnpm dpkg-deb rpm2cpio cpio patchelf readelf ldd s
   command -v "$tool" >/dev/null || { echo "build-linux-x64: $tool not installed"; exit 2; }
 done
 . scripts/lib/build-env.sh && voltip_load_build_env
+# The build key for the device tickets (docs/pairing.md 「设备票据」), when a master secret is at hand.
+. scripts/lib/build-key.sh && voltip_build_key
 . scripts/lib/require-builtin-engines.sh && voltip_require_builtin_engines
 . scripts/lib/head-commit.sh
 # TRANSCRIBE_CMAKE_ARGS / VOLTIP_VULKAN_LIB_DIR for the Vulkan backend, and the loader the AppImage
@@ -38,6 +40,7 @@ done
 # Artefact secret scan and the Vulkan linkage (scripts/lib/artefact-checks.sh).
 . scripts/lib/artefact-checks.sh
 voltip_scan_provider_keys target/release/voltip-desktop build-linux-x64
+voltip_scan_build_key target/release/voltip-desktop build-linux-x64
 voltip_output_has 'NEEDED.*\[libvulkan\.so\.1\]' readelf -d target/release/voltip-desktop || { echo "build-linux-x64: voltip-desktop does not link libvulkan.so.1 (built without the Vulkan backend)"; exit 1; }
 # Every library it takes from the system is one the deb and rpm depend on.
 voltip_linux_sonames_accounted target/release/voltip-desktop build-linux-x64 || exit 1

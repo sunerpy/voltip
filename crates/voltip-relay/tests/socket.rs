@@ -321,3 +321,125 @@ async fn the_policy_file_turns_old_clients_away_and_stats_count_them() {
     assert_eq!(v["hours"][0]["hellos"], 2);
     let _ = stop.send(());
 }
+
+// ---- device tickets (docs/pairing.md 「设备票据」) ----
+
+fn ticket_key() -> voltip_relay::ticket::TicketKey {
+    voltip_relay::ticket::TicketKey::new(&[9; 32]).unwrap()
+}
+
+fn ticket() -> String {
+    let exp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() + 3600;
+    ticket_key().issue(&voltip_relay::ticket::TicketPayload { v: 1, d: "dev".into(), ver: "0.3.1".into(), exp, scope: vec!["relay".into()] })
+}
+
+async fn hello_ticketed(ws: &mut Ws, authenticate: bool) {
+    send(ws, RelayFrame::hello("voltip/0.3.1")).await;
+    assert!(matches!(recv(ws).await, RelayFrame::HelloAck { features, .. } if features == ["ticket"]));
+    if authenticate {
+        send(ws, RelayFrame::auth(ticket())).await;
+        assert!(matches!(recv(ws).await, RelayFrame::AuthAck { .. }));
+    }
+}
+
+fn write_policy(path: &std::path::Path, text: &str) {
+    std::fs::write(path, text).unwrap();
+    let file = std::fs::File::options().write(true).open(path).unwrap();
+    file.set_modified(std::time::SystemTime::now() + Duration::from_secs(5)).unwrap();
+}
+
+async fn attached(ws: &mut Ws, channel: &str) -> SessionId {
+    send(ws, RelayFrame::Attach { version: ProtocolVersion::CURRENT, channel: channel.into() }).await;
+    loop {
+        if let RelayFrame::Attached { session_id, .. } = recv(ws).await {
+            return session_id;
+        }
+    }
+}
+
+/// The reason reaches the client before the close (the two-step close keeps the queue's order).
+#[tokio::test]
+async fn under_the_gate_ticket_required_comes_before_the_close() {
+    let dir = tempfile::tempdir().unwrap();
+    let policy = dir.path().join("relay-policy.json");
+    std::fs::write(&policy, r#"{"schema":1,"min_version":"0.3.0","require_ticket":true}"#).unwrap();
+    let (handle, url, stop) = start_with(RelayConfig { ticket_key: Some(ticket_key()), ..RelayConfig::default() }).await;
+    handle.watch_policy(PolicyFiles::new(&policy, None));
+    let mut a = connect(&url).await;
+    hello_ticketed(&mut a, false).await;
+    send(&mut a, RelayFrame::Attach { version: ProtocolVersion::CURRENT, channel: "ab".repeat(32) }).await;
+    assert!(matches!(recv(&mut a).await, RelayFrame::Error { code: RelayErrorCode::TicketRequired, .. }));
+    send(&mut a, RelayFrame::forward(SessionId::random(), vec![1])).await;
+    assert!(matches!(recv(&mut a).await, RelayFrame::Error { code: RelayErrorCode::TicketRequired, .. }));
+    assert!(closed(&mut a).await);
+    let _ = stop.send(());
+}
+
+/// Regression (plan review 2026-11-03, rounds 3–6): a connection that does not read fills its
+/// queue, and the close the gate asks for could be lost behind it. It is closed anyway, its
+/// writer included, and nothing forwarded after the gate came into force reaches it.
+#[tokio::test]
+async fn regression_a_full_queue_does_not_keep_a_cut_off_connection() {
+    let dir = tempfile::tempdir().unwrap();
+    let policy = dir.path().join("relay-policy.json");
+    std::fs::write(&policy, r#"{"schema":1}"#).unwrap();
+    let config = RelayConfig { ticket_key: Some(ticket_key()), outbound_queue: 4, ..RelayConfig::default() };
+    let (handle, url, stop) = start_with(config).await;
+    handle.watch_policy(PolicyFiles::new(&policy, None));
+    let mut a = connect(&url).await;
+    let mut b = connect(&url).await;
+    hello_ticketed(&mut a, true).await;
+    hello_ticketed(&mut b, false).await;
+    let channel = "ab".repeat(32);
+    attached(&mut a, &channel).await;
+    let sid = attached(&mut b, &channel).await;
+    // A's presence notice; then B stops reading while A sends until B's queue overflows.
+    let _ = recv(&mut a).await;
+    let payload = vec![0x5a; 64 * 1024];
+    for _ in 0..2000 {
+        send(&mut a, RelayFrame::forward(sid, payload.clone())).await;
+        if handle.stats().dropped > 0 {
+            break;
+        }
+    }
+    assert!(handle.stats().dropped > 0, "B's queue overflowed");
+    let live = handle.live_connections();
+    assert_eq!(live, 2);
+
+    write_policy(&policy, r#"{"schema":1,"min_version":"0.3.0","require_ticket":true}"#);
+    handle.reload_policy();
+    let gone = tokio::time::timeout(Duration::from_secs(5), async {
+        while handle.live_connections() > 1 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    assert!(gone.is_ok(), "B's connection task and writer ended within 5 s");
+    // A is told B is offline, and what it forwards now goes nowhere.
+    loop {
+        match recv(&mut a).await {
+            RelayFrame::PeerPresence { online: false, .. } => break,
+            RelayFrame::Forward { .. } => continue,
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+    send(&mut a, RelayFrame::forward(sid, b"after the gate".to_vec())).await;
+    assert!(matches!(recv(&mut a).await, RelayFrame::Error { code: RelayErrorCode::NotJoined, .. }));
+    // B reads again: frames queued before the gate, maybe, and then the end; never the new one.
+    let ended = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            match b.next().await {
+                Some(Ok(Message::Text(t))) => {
+                    if let Ok(RelayFrame::Forward { payload, .. }) = RelayFrame::decode(&t) {
+                        assert_ne!(payload, b"after the gate".to_vec(), "a frame forwarded after the gate");
+                    }
+                }
+                Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
+                Some(Ok(_)) => {}
+            }
+        }
+    })
+    .await;
+    assert!(ended.is_ok(), "B's socket is closed");
+    let _ = stop.send(());
+}

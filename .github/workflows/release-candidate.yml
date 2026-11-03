@@ -232,10 +232,13 @@ jobs:
           VOLTIP_REFINE_API_KEY_PRESENT: ${{ secrets.VOLTIP_REFINE_API_KEY != '' }}
           VOLTIP_REFINE_MODEL_PRESENT: ${{ secrets.VOLTIP_REFINE_MODEL != '' }}
           VOLTIP_RELAY_URL_PRESENT: ${{ secrets.VOLTIP_RELAY_URL != '' }}
+          # The device tickets of the build's own relay and built-in service (docs/pairing.md 「设备票据」).
+          VOLTIP_AUTH_URL_PRESENT: ${{ secrets.VOLTIP_AUTH_URL != '' }}
+          VOLTIP_ACCESS_MASTER_PRESENT: ${{ secrets.VOLTIP_ACCESS_MASTER != '' }}
         run: |
           set -euo pipefail
           missing=0
-          for name in VOLTIP_ASR_URL VOLTIP_ASR_TOKEN VOLTIP_ASR_MODEL VOLTIP_REFINE_URL VOLTIP_REFINE_API_KEY VOLTIP_REFINE_MODEL VOLTIP_RELAY_URL; do
+          for name in VOLTIP_ASR_URL VOLTIP_ASR_TOKEN VOLTIP_ASR_MODEL VOLTIP_REFINE_URL VOLTIP_REFINE_API_KEY VOLTIP_REFINE_MODEL VOLTIP_RELAY_URL VOLTIP_AUTH_URL VOLTIP_ACCESS_MASTER; do
             present_var="${name}_PRESENT"
             if [ "${!present_var}" != true ]; then
               echo "::error::repository secret ${name} is empty; a release package must carry the built-in engines (see .github/README-secrets.md)"
@@ -368,6 +371,8 @@ jobs:
       # Compile-time defaults baked into the shell (docs/dictation.md §3); the two tokens are the
       # revocable app tokens, never provider keys (the build script scans the exe and refuses).
       VOLTIP_RELAY_URL: ${{ secrets.VOLTIP_RELAY_URL }}
+      # voltip-auth behind the gateway: where the app proves its version and renews its ticket.
+      VOLTIP_AUTH_URL: ${{ secrets.VOLTIP_AUTH_URL }}
       VOLTIP_ASR_URL: ${{ secrets.VOLTIP_ASR_URL }}
       VOLTIP_ASR_MODEL: ${{ secrets.VOLTIP_ASR_MODEL }}
       VOLTIP_ASR_TOKEN: ${{ secrets.VOLTIP_ASR_TOKEN }}
@@ -417,6 +422,16 @@ jobs:
             echo "::error title=Candidate build::checkout differs from the validated candidate identity"
             exit 1
           fi
+
+      # docs/pairing.md 「设备票据」: this version's build key, derived in the one step that holds the
+      # master secret and masked before it reaches the job's environment; the build bakes it in.
+      - name: Derive the build key (the master secret in this step only)
+        env:
+          VOLTIP_ACCESS_MASTER: ${{ secrets.VOLTIP_ACCESS_MASTER }}
+        run: |
+          set -euo pipefail
+          . .release-tooling/scripts/lib/build-key.sh
+          voltip_build_key_ci
 
       - name: Windows cross toolchain (nsis, clang, lld, llvm)
         run: |
@@ -583,6 +598,8 @@ jobs:
     timeout-minutes: 90
     env:
       VOLTIP_RELAY_URL: ${{ secrets.VOLTIP_RELAY_URL }}
+      # voltip-auth behind the gateway: where the app proves its version and renews its ticket.
+      VOLTIP_AUTH_URL: ${{ secrets.VOLTIP_AUTH_URL }}
       VOLTIP_ASR_URL: ${{ secrets.VOLTIP_ASR_URL }}
       VOLTIP_ASR_MODEL: ${{ secrets.VOLTIP_ASR_MODEL }}
       VOLTIP_ASR_TOKEN: ${{ secrets.VOLTIP_ASR_TOKEN }}
@@ -631,6 +648,16 @@ jobs:
             echo "::error title=Candidate build::checkout differs from the validated candidate identity"
             exit 1
           fi
+
+      # docs/pairing.md 「设备票据」: this version's build key, derived in the one step that holds the
+      # master secret and masked before it reaches the job's environment; the build bakes it in.
+      - name: Derive the build key (the master secret in this step only)
+        env:
+          VOLTIP_ACCESS_MASTER: ${{ secrets.VOLTIP_ACCESS_MASTER }}
+        run: |
+          set -euo pipefail
+          . .release-tooling/scripts/lib/build-key.sh
+          voltip_build_key_ci
 
       - name: Linux system dependencies (Tauri bundler, webkit2gtk, ALSA, X11)
         run: |
@@ -736,6 +763,7 @@ jobs:
           set -euo pipefail
           . .release-tooling/scripts/lib/artefact-checks.sh
           voltip_scan_provider_keys target/release/voltip-desktop release || { echo "::error::provider API key found inside voltip-desktop — refusing to ship"; exit 1; }
+          voltip_scan_build_key target/release/voltip-desktop release || { echo "::error::the build key is whole inside voltip-desktop, or missing from it"; exit 1; }
 
       # voltip-server, the headless local speech service (docs/dictation.md §23.5), from the same
       # source with this leg's env (the same built-in engines) and no signing material: the
@@ -749,6 +777,7 @@ jobs:
           scripts/build-server-linux-x64.sh dist/server-linux-x64 "$RUNNER_TEMP/server-build-info.txt"
           . .release-tooling/scripts/lib/artefact-checks.sh
           voltip_scan_provider_keys target/release/voltip-server release || { echo "::error::provider API key found inside voltip-server — refusing to ship"; exit 1; }
+          voltip_scan_build_key target/release/voltip-server release || { echo "::error::the build key is whole inside voltip-server, or missing from it"; exit 1; }
           voltip_linux_sonames_accounted target/release/voltip-server release VOLTIP_SERVER_SONAMES || { echo "::error::voltip-server links a library its package neither ships nor checks for"; exit 1; }
 
       # Phase 2: bundling and updater signatures; the only step holding the signing key. With the
@@ -828,6 +857,8 @@ jobs:
       MACOS_TARGET: ${{ matrix.target }}
       MACOS_ARCH: ${{ matrix.arch }}
       VOLTIP_RELAY_URL: ${{ secrets.VOLTIP_RELAY_URL }}
+      # voltip-auth behind the gateway: where the app proves its version and renews its ticket.
+      VOLTIP_AUTH_URL: ${{ secrets.VOLTIP_AUTH_URL }}
       VOLTIP_ASR_URL: ${{ secrets.VOLTIP_ASR_URL }}
       VOLTIP_ASR_MODEL: ${{ secrets.VOLTIP_ASR_MODEL }}
       VOLTIP_ASR_TOKEN: ${{ secrets.VOLTIP_ASR_TOKEN }}
@@ -876,6 +907,16 @@ jobs:
             echo "::error title=Candidate build::checkout differs from the validated candidate identity"
             exit 1
           fi
+
+      # docs/pairing.md 「设备票据」: this version's build key, derived in the one step that holds the
+      # master secret and masked before it reaches the job's environment; the build bakes it in.
+      - name: Derive the build key (the master secret in this step only)
+        env:
+          VOLTIP_ACCESS_MASTER: ${{ secrets.VOLTIP_ACCESS_MASTER }}
+        run: |
+          set -euo pipefail
+          . .release-tooling/scripts/lib/build-key.sh
+          voltip_build_key_ci
 
       - name: Rust toolchain (rust-toolchain.toml) + ${{ matrix.target }}
         run: |
@@ -958,6 +999,7 @@ jobs:
           set -euo pipefail
           . .release-tooling/scripts/lib/artefact-checks.sh
           voltip_scan_provider_keys "target/$MACOS_TARGET/release/voltip-desktop" release || { echo "::error::provider API key found inside voltip-desktop — refusing to ship"; exit 1; }
+          voltip_scan_build_key "target/$MACOS_TARGET/release/voltip-desktop" release || { echo "::error::the build key is whole inside voltip-desktop, or missing from it"; exit 1; }
 
       # The release certificate (docs/runbook.md 发布 · macOS 签名): the same self-signed identity for
       # every release, so a Mac keeps the app's microphone and Accessibility grants and its keychain
@@ -1063,6 +1105,8 @@ jobs:
     env:
       ANDROID_TARGET: aarch64-linux-android
       VOLTIP_RELAY_URL: ${{ secrets.VOLTIP_RELAY_URL }}
+      # voltip-auth behind the gateway: where the app proves its version and renews its ticket.
+      VOLTIP_AUTH_URL: ${{ secrets.VOLTIP_AUTH_URL }}
       VOLTIP_ASR_URL: ${{ secrets.VOLTIP_ASR_URL }}
       VOLTIP_ASR_MODEL: ${{ secrets.VOLTIP_ASR_MODEL }}
       VOLTIP_ASR_TOKEN: ${{ secrets.VOLTIP_ASR_TOKEN }}
@@ -1107,6 +1151,16 @@ jobs:
             echo "::error title=Candidate build::checkout differs from the validated candidate identity"
             exit 1
           fi
+
+      # docs/pairing.md 「设备票据」: this version's build key, derived in the one step that holds the
+      # master secret and masked before it reaches the job's environment; the build bakes it in.
+      - name: Derive the build key (the master secret in this step only)
+        env:
+          VOLTIP_ACCESS_MASTER: ${{ secrets.VOLTIP_ACCESS_MASTER }}
+        run: |
+          set -euo pipefail
+          . .release-tooling/scripts/lib/build-key.sh
+          voltip_build_key_ci
 
       - name: Android toolchain (JDK 21; SDK platform, build tools and NDK pinned)
         run: .release-tooling/.github/scripts/android-toolchain.sh

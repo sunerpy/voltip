@@ -500,6 +500,9 @@ impl RefineClient {
                 for (name, value) in &metering.headers {
                     request = request.header(name.as_str(), value.as_str());
                 }
+                for (name, value) in metering.per_request.as_ref().map(|f| f()).unwrap_or_default() {
+                    request = request.header(name, value);
+                }
                 request = request.header(PURPOSE_HEADER, purpose.as_str());
             }
             match &self.config.api_key {
@@ -1127,6 +1130,7 @@ mod tests {
         crate::Metering {
             headers: vec![("x-voltip-device".into(), "6f1c2d3e-0000-4000-8000-000000000001".into())],
             on_report: std::sync::Arc::new(move |report| reports.lock().unwrap().push(report.to_owned())),
+            per_request: Some(std::sync::Arc::new(|| vec![("x-voltip-ticket".into(), "p.m".into())])),
         }
     }
 
@@ -1148,7 +1152,8 @@ mod tests {
         assert_eq!(header(0, PURPOSE_HEADER).as_deref(), Some("refine"));
         assert_eq!(header(1, PURPOSE_HEADER).as_deref(), Some("edit"));
         assert_eq!(header(0, "x-voltip-device").as_deref(), Some("6f1c2d3e-0000-4000-8000-000000000001"));
-        assert_eq!((header(2, PURPOSE_HEADER), header(2, "x-voltip-device")), (None, None));
+        assert_eq!(header(1, "x-voltip-ticket").as_deref(), Some("p.m"), "the per-request header");
+        assert_eq!((header(2, PURPOSE_HEADER), header(2, "x-voltip-device"), header(2, "x-voltip-ticket")), (None, None, None));
 
         let server = MockServer::start().await;
         let used_up = "mode=limit; basis=device; day=2026-10-27; reset=1793116800; asr=95/3600; refine=100/100";

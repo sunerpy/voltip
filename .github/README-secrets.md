@@ -18,7 +18,7 @@ signatures before it publishes.
 # In the repository root, logged in with `gh auth login`. Paste each value when prompted, or
 # pass --body-file <(printf '%s' "$value"); keep values out of shell history.
 repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
-for name in VOLTIP_PRODUCTION_HOSTS VOLTIP_RELAY_URL VOLTIP_ASR_URL VOLTIP_ASR_MODEL VOLTIP_ASR_TOKEN \
+for name in VOLTIP_PRODUCTION_HOSTS VOLTIP_RELAY_URL VOLTIP_AUTH_URL VOLTIP_ASR_URL VOLTIP_ASR_MODEL VOLTIP_ASR_TOKEN \
             VOLTIP_REFINE_URL VOLTIP_REFINE_MODEL VOLTIP_REFINE_API_KEY CODECOV_TOKEN; do
   gh secret set "$name" --repo "$repo"
 done
@@ -64,6 +64,8 @@ no-built-in state.
 | Secret | Meaning | Source |
 |---|---|---|
 | `VOLTIP_RELAY_URL` | The relay's `wss://<relay-host>/ws` address (`voltip-transport`). | your relay deployment (`docs/runbook.md`) |
+| `VOLTIP_AUTH_URL` | `voltip-auth` behind the gateway, `https://<gateway>/auth/v1`: where an official build proves its version and renews its device ticket (`voltip-access`, `docs/pairing.md` 「设备票据」). | your gateway |
+| `VOLTIP_ACCESS_MASTER` | The master secret (64 hex characters) the build key of each version is derived from. Only the 「Derive the build key」 step of each leg reads it; the derived key is masked, baked in split, and the package's scan refuses a binary that holds it whole. Set it with `gh secret set VOLTIP_ACCESS_MASTER --repo "$repo" < ~/.config/voltip/access/master.key`. | `voltip-auth`'s `/etc/voltip/auth-keys.env` holds the same value |
 | `VOLTIP_ASR_URL` | Base URL of the built-in recognition endpoint (without `/v1`). | your ASR edge |
 | `VOLTIP_ASR_MODEL` | Model name the built-in endpoint serves. | your ASR edge |
 | `VOLTIP_ASR_TOKEN` | Application token the edge checks before forwarding. Revocable at the edge; never a provider key. | your ASR edge |

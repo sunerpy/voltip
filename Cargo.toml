@@ -7,6 +7,7 @@ members = [
     "crates/voltip-crypto",
     "crates/voltip-identity",
     "crates/voltip-pairing",
+    "crates/voltip-access",
     "crates/voltip-transport",
     "crates/voltip-relay",
     "crates/voltip-core",
@@ -197,6 +198,7 @@ voltip-net = { path = "crates/voltip-net" }
 voltip-crypto = { path = "crates/voltip-crypto" }
 voltip-identity = { path = "crates/voltip-identity" }
 voltip-pairing = { path = "crates/voltip-pairing" }
+voltip-access = { path = "crates/voltip-access" }
 voltip-transport = { path = "crates/voltip-transport" }
 voltip-relay = { path = "crates/voltip-relay", default-features = false }
 voltip-core = { path = "crates/voltip-core" }

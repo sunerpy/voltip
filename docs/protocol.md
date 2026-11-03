@@ -6,8 +6,10 @@
 
 | type | 方向 | 字段 | 说明 |
 |---|---|---|---|
-| `hello` | C→R | `client_version`, `features?` | 连接后第一帧；不携带任何设备身份。`features` 是客户端认识的新行为（0.2.0 起 `["client_too_old"]`），旧客户端不带，中继据此决定怎样拒绝过低的版本（`docs/pairing.md`「最低版本」） |
-| `hello_ack` | R→C | `relay_version`, `limits{code_attempts, session_ttl_secs}` | |
+| `hello` | C→R | `client_version`, `features?` | 连接后第一帧；不携带任何设备身份。`features` 是客户端认识的新行为（0.2.0 起 `["client_too_old"]`，0.3.0 起再加 `"ticket"`），旧客户端不带，中继据此决定怎样拒绝过低的版本（`docs/pairing.md`「最低版本」「设备票据」） |
+| `hello_ack` | R→C | `relay_version`, `limits{code_attempts, session_ttl_secs}`, `features?` | 中继配了票据密钥时 `features` 为 `["ticket"]`：客户端可以发 `auth`；旧中继不带这个字段 |
+| `auth` | C→R | `ticket` | 设备票据（`docs/pairing.md`「设备票据」），`hello_ack` 带 `ticket` 时发，之后每拿到新票再发一次；只发给构建自带的中继。票据对客户端是不透明的字符串，最长 1024 字节 |
+| `auth_ack` | R→C | `exp` | 票据有效，连接认证到 `exp`（Unix 秒）；票据无效时中继回 `error{ticket_invalid}`，连接保留、按未认证处理 |
 | `create_session` | C→R | `ttl_secs?` | 电脑端创建配对会话 |
 | `session_created` | R→C | `session_id`, `code`, `expires_at` | `code` 为 6 位数字，只发给创建者 |
 | `join_by_code` | C→R | `code` | 手机输入短码 |
@@ -19,12 +21,14 @@
 | `attach` | C→R | `channel` (64 hex) | 已配对设备重逢：`channel = hex(SHA-256("voltip rendezvous v1" ‖ min(pubA,pubB) ‖ max(pubA,pubB)))`；一条连接可 attach 多个频道（每个可信设备一个） |
 | `attached` | R→C | `session_id`, `peer_online` | 频道绑定的会话 id（`forward` 用它）与对端是否在线 |
 | `peer_presence` | R→C | `session_id`, `online` | 频道对端上线 / 下线 |
-| `error` | R→C | `code`, `retry_after_secs?`, `channel?`, `min_version?` | `invalid_code` / `session_expired` / `session_full` / `rate_limited` / `unsupported_version` / `not_joined` / `hello_required` / `session_already_active` / `invalid_channel` / `channel_full` / `malformed` / `client_too_old`。`client_too_old` 只发给 `hello.features` 带它的客户端，带上 `min_version`（`x.y.z`），之后中继关闭连接；版本过低的旧客户端改收 `unsupported_version`（`docs/pairing.md`「最低版本」） |
+| `error` | R→C | `code`, `retry_after_secs?`, `channel?`, `min_version?` | `invalid_code` / `session_expired` / `session_full` / `rate_limited` / `unsupported_version` / `not_joined` / `hello_required` / `session_already_active` / `invalid_channel` / `channel_full` / `malformed` / `client_too_old` / `ticket_required` / `ticket_invalid` / `ticket_expired`。`client_too_old` 只发给 `hello.features` 带它的客户端，带上 `min_version`（`x.y.z`），之后中继关闭连接；版本过低的旧客户端改收 `unsupported_version`（`docs/pairing.md`「最低版本」）。三个 `ticket_*` 只发给 `hello.features` 带 `ticket` 的客户端：门禁下未认证（`ticket_required`，`forward` 时随后关闭连接）、票据无效（`ticket_invalid`）、票据到期（`ticket_expired`，随后关闭）。`rate_limited` 也用于转发和连接数超限，之后关闭连接（`docs/pairing.md`「中继限额」） |
 | `bye` | 双向 | | 优雅关闭 |
 
 Relay 永远看不到：Noise 握手之后的明文、静态公钥以外的身份信息、Safety Code。
 
-未知字段一律忽略：旧客户端读到 `error.min_version`、旧中继读到 `hello.features` 都照常解码（`the_minimum_version_fields_are_optional_both_ways`）。
+未知字段一律忽略：旧客户端读到 `error.min_version` 或 `hello_ack.features`、旧中继读到 `hello.features` 都照常解码（`the_minimum_version_fields_are_optional_both_ways`、`the_ticket_fields_are_optional_both_ways`）。客户端只在 `hello_ack` 带 `ticket` 时发 `auth`，所以旧中继永远收不到它不认识的帧。
+
+票据格式（`voltip-auth` 签发，中继 `crates/voltip-relay/src/ticket.rs` 和内置服务网关验）：`base64url(payload) "." base64url(HMAC-SHA256(K_ticket, base64url(payload)))`，不补 `=`；MAC 覆盖的是 payload 的 base64url 文本，各方不必逐字节复现 JSON。`payload = {"v":1,"d":"<设备号>","ver":"<证明过的版本>","exp":<Unix 秒>,"scope":["relay","builtin"]}`。三处实现共用 `ticket.rs` 里的测试向量。
 
 ## 2. 配对票据（二维码内容）
 

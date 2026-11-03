@@ -15,6 +15,17 @@ pub const HOURS_KEPT: usize = 48;
 pub const UNLISTED_VERSION_SLOTS: usize = 32;
 /// The name of every version not counted by its own.
 pub const OTHER_VERSION: &str = "other";
+/// Bucket edges (inclusive upper bounds) of the bytes one connection forwarded in a minute; one
+/// more bucket holds what is above the last edge.
+pub const FORWARD_BYTES_EDGES: [u64; 6] = [64 << 10, 256 << 10, 1 << 20, 4 << 20, 16 << 20, 64 << 20];
+/// Bucket edges of the frames one connection forwarded in a minute.
+pub const FORWARD_FRAMES_EDGES: [u64; 4] = [60, 300, 1200, 6000];
+/// Bucket edges of one address's most connections at once in an hour.
+pub const IP_CONNECTIONS_EDGES: [u64; 6] = [1, 2, 4, 8, 16, 32];
+
+fn bucket(value: u64, edges: &[u64]) -> usize {
+    edges.iter().position(|e| value <= *e).unwrap_or(edges.len())
+}
 
 /// One hour's counts.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
@@ -44,6 +55,71 @@ pub struct HourStats {
     pub attaches: u64,
     /// Frames forwarded.
     pub forwarded: u64,
+    /// Device tickets (docs/pairing.md 「设备票据」).
+    pub auth: AuthCounts,
+    /// Minutes in which a connection forwarded, by the bytes it forwarded
+    /// ([`FORWARD_BYTES_EDGES`], plus one bucket above the last edge).
+    pub forward_bytes_hist: [u64; 7],
+    /// The same minutes by the frames forwarded ([`FORWARD_FRAMES_EDGES`]).
+    pub forward_frames_hist: [u64; 5],
+    /// Most bytes one connection forwarded in a minute.
+    pub forward_bytes_max: u64,
+    /// Most frames one connection forwarded in a minute.
+    pub forward_frames_max: u64,
+    /// Connections closed for forwarding over a limit.
+    pub limited_forward: u64,
+    /// Connections refused for a connection limit.
+    pub limited_connections: u64,
+    /// Client addresses by their most connections at once ([`IP_CONNECTIONS_EDGES`]).
+    pub ip_connections_hist: [u64; 7],
+    /// Most connections one address held at once.
+    pub ip_connections_max: u64,
+    /// Connections from addresses past the first 4096 of the hour, not in the histogram.
+    pub ip_overflow: u64,
+}
+
+/// The ticket counts of an hour.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct AuthCounts {
+    /// Tickets accepted.
+    pub ok: u64,
+    /// Tickets refused (forged, expired, another scope).
+    pub invalid: u64,
+    /// Tickets that ran out on a connection.
+    pub expired: u64,
+    /// `hello`s without the `ticket` feature (clients before 0.3.0).
+    pub no_feature: u64,
+    /// Connections with the feature that asked for a session or a channel without a ticket.
+    pub unauthenticated: u64,
+    /// Requests refused for want of a ticket (under the gate).
+    pub refused: u64,
+    /// Connections cut off (the gate, an expired ticket, a limit).
+    pub revoked: u64,
+}
+
+/// One hour's per-address connection peaks.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct IpPeaks {
+    hist: [u64; 7],
+    max: u64,
+    overflow: u64,
+}
+
+impl IpPeaks {
+    pub(crate) fn of(peaks: impl Iterator<Item = u64>, overflow: u64) -> Self {
+        let mut out = Self { overflow, ..Self::default() };
+        for peak in peaks {
+            out.hist[bucket(peak, &IP_CONNECTIONS_EDGES)] += 1;
+            out.max = out.max.max(peak);
+        }
+        out
+    }
+
+    pub(crate) fn apply(&self, hour: &mut HourStats) {
+        hour.ip_connections_hist = self.hist;
+        hour.ip_connections_max = self.max;
+        hour.ip_overflow = self.overflow;
+    }
 }
 
 /// What `GET /stats` answers (`schema` 1).
@@ -57,6 +133,19 @@ pub struct StatsReport {
     pub gauges: Gauges,
     /// The hours with any activity, oldest first.
     pub hours: Vec<HourStats>,
+    /// The histograms' bucket edges.
+    pub edges: Edges,
+}
+
+/// The bucket edges of the histograms in [`HourStats`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct Edges {
+    /// [`FORWARD_BYTES_EDGES`].
+    pub forward_bytes: [u64; 6],
+    /// [`FORWARD_FRAMES_EDGES`].
+    pub forward_frames: [u64; 4],
+    /// [`IP_CONNECTIONS_EDGES`].
+    pub ip_connections: [u64; 6],
 }
 
 /// The relay as it is now.
@@ -83,6 +172,15 @@ pub(crate) enum Count {
     OldRefused,
     Attach,
     Forward,
+    AuthOk,
+    AuthInvalid,
+    AuthExpired,
+    NoTicketFeature,
+    TicketUnauthenticated,
+    TicketRefused,
+    Revoked,
+    LimitedForward,
+    LimitedConnections,
 }
 
 /// The hours kept, newest last.
@@ -115,8 +213,40 @@ impl StatsBook {
             Count::OldRefused => &mut hour.old_refused,
             Count::Attach => &mut hour.attaches,
             Count::Forward => &mut hour.forwarded,
+            Count::AuthOk => &mut hour.auth.ok,
+            Count::AuthInvalid => &mut hour.auth.invalid,
+            Count::AuthExpired => &mut hour.auth.expired,
+            Count::NoTicketFeature => &mut hour.auth.no_feature,
+            Count::TicketUnauthenticated => &mut hour.auth.unauthenticated,
+            Count::TicketRefused => &mut hour.auth.refused,
+            Count::Revoked => &mut hour.auth.revoked,
+            Count::LimitedForward => &mut hour.limited_forward,
+            Count::LimitedConnections => &mut hour.limited_connections,
         };
         *field += 1;
+    }
+
+    /// What one connection forwarded in the minute starting at `minute_start` (nothing when it
+    /// forwarded nothing).
+    pub(crate) fn forward_sample(&mut self, minute_start: u64, bytes: u64, frames: u64) {
+        if frames == 0 {
+            return;
+        }
+        let hour = self.hour(minute_start);
+        hour.forward_bytes_hist[bucket(bytes, &FORWARD_BYTES_EDGES)] += 1;
+        hour.forward_frames_hist[bucket(frames, &FORWARD_FRAMES_EDGES)] += 1;
+        hour.forward_bytes_max = hour.forward_bytes_max.max(bytes);
+        hour.forward_frames_max = hour.forward_frames_max.max(frames);
+    }
+
+    /// The finished hour starting at `start` keeps `peaks`. An hour no longer kept, or one older
+    /// than the newest that never had an entry, is left alone.
+    pub(crate) fn ip_peaks(&mut self, start: u64, peaks: &IpPeaks) {
+        if let Some(hour) = self.hours.iter_mut().rev().find(|h| h.hour == start) {
+            peaks.apply(hour);
+        } else if self.hours.back().is_none_or(|h| h.hour < start) {
+            peaks.apply(self.hour(start));
+        }
     }
 
     pub(crate) fn connections(&mut self, open: usize, unix: u64) {
@@ -139,7 +269,13 @@ impl StatsBook {
     }
 
     pub(crate) fn report(&self, gauges: Gauges, now: u64) -> StatsReport {
-        StatsReport { schema: 1, now, gauges, hours: self.hours.iter().cloned().collect() }
+        StatsReport {
+            schema: 1,
+            now,
+            gauges,
+            hours: self.hours.iter().cloned().collect(),
+            edges: Edges { forward_bytes: FORWARD_BYTES_EDGES, forward_frames: FORWARD_FRAMES_EDGES, ip_connections: IP_CONNECTIONS_EDGES },
+        }
     }
 }
 
@@ -174,6 +310,33 @@ mod tests {
         assert_eq!(json["schema"], 1);
         assert_eq!(json["gauges"]["channels_paired"], 1);
         assert!(json["hours"][0].get("versions").is_some());
+    }
+
+    #[test]
+    fn samples_and_peaks_fall_into_their_buckets() {
+        assert_eq!(bucket(0, &FORWARD_BYTES_EDGES), 0);
+        assert_eq!(bucket(64 << 10, &FORWARD_BYTES_EDGES), 0, "an edge is inclusive");
+        assert_eq!(bucket((64 << 10) + 1, &FORWARD_BYTES_EDGES), 1);
+        assert_eq!(bucket(u64::MAX, &FORWARD_BYTES_EDGES), 6, "the overflow bucket");
+        let mut book = StatsBook::default();
+        book.forward_sample(H0, 10, 0);
+        assert!(book.report(Gauges::default(), H0).hours.is_empty(), "a minute without frames is no sample");
+        book.forward_sample(H0, 100, 2);
+        book.forward_sample(H0 + 60, 2 << 20, 700);
+        let hour = &book.report(Gauges::default(), H0).hours[0];
+        assert_eq!(hour.forward_bytes_hist, [1, 0, 0, 1, 0, 0, 0]);
+        assert_eq!(hour.forward_frames_hist, [1, 0, 1, 0, 0]);
+        assert_eq!((hour.forward_bytes_max, hour.forward_frames_max), (2 << 20, 700));
+        let peaks = IpPeaks::of([1, 1, 3, 40].into_iter(), 2);
+        book.ip_peaks(H0, &peaks);
+        let hour = &book.report(Gauges::default(), H0).hours[0];
+        assert_eq!((hour.ip_connections_hist, hour.ip_connections_max, hour.ip_overflow), ([2, 0, 1, 0, 0, 0, 1], 40, 2));
+        book.count(Count::Attach, H0 + 7200);
+        book.ip_peaks(H0 + 3600, &peaks);
+        assert_eq!(book.report(Gauges::default(), H0).hours.len(), 2, "an older hour that never had an entry is left alone");
+        let json = serde_json::to_value(book.report(Gauges::default(), H0)).unwrap();
+        assert_eq!(json["edges"]["forward_frames"], serde_json::json!([60, 300, 1200, 6000]));
+        assert_eq!(json["hours"][0]["auth"]["ok"], 0);
     }
 
     /// The version map has a bound (plan review 2026-10-27: `client_version` is whatever the

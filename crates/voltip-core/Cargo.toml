@@ -46,6 +46,8 @@ voltip-identity.workspace = true
 voltip-pairing.workspace = true
 voltip-protocol.workspace = true
 voltip-transport.workspace = true
+# The device ticket for the build's own relay and the built-in service (docs/pairing.md 「设备票据」).
+voltip-access.workspace = true
 # The proxy plan the settings put in force (docs/dictation.md §24).
 voltip-net.workspace = true
 # Encodes (phone) and decodes (desktop) a phone take's 20 ms Opus packets (docs/dictation.md §20.1).

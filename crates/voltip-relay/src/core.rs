@@ -5,13 +5,17 @@ use std::net::IpAddr;
 use std::time::{Duration, Instant};
 
 use voltip_protocol::relay::{
-    DEFAULT_SESSION_TTL_SECS, FEATURE_CLIENT_TOO_OLD, MAX_SESSION_TTL_SECS, RelayErrorCode, RelayFrame, RelayLimits, validate_channel,
+    DEFAULT_SESSION_TTL_SECS, FEATURE_CLIENT_TOO_OLD, FEATURE_TICKET, MAX_SESSION_TTL_SECS, RelayErrorCode, RelayFrame, RelayLimits, validate_channel,
 };
 use voltip_protocol::{PairCode, ProtocolVersion, SessionId};
 
 use crate::limits::{RateLimiter, RateWindow};
 use crate::policy::{ClientVersion, RelayPolicy};
-use crate::stats::{Count, Gauges, StatsBook, StatsReport};
+use crate::stats::{Count, Gauges, IpPeaks, StatsBook, StatsReport};
+use crate::ticket::{SCOPE_RELAY, TicketKey};
+
+/// Client addresses whose hourly connection peak is tracked; the rest count as overflow.
+pub const MAX_TRACKED_IPS: usize = 4096;
 
 /// Opaque connection identifier assigned by the I/O layer.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
@@ -48,6 +52,11 @@ pub struct RelayConfig {
     /// device that left without closing (another network, a frozen app) must not keep its place
     /// on a rendezvous channel, or its next connection finds the channel full.
     pub idle_timeout: Duration,
+    /// The key that checks device tickets (`--ticket-key-file`, docs/pairing.md 「设备票据」).
+    /// Without one the relay neither asks for nor reads tickets.
+    pub ticket_key: Option<TicketKey>,
+    /// Frames queued for one connection before the server drops more (the server reads it).
+    pub outbound_queue: usize,
 }
 
 impl Default for RelayConfig {
@@ -65,6 +74,8 @@ impl Default for RelayConfig {
             relay_version: format!("voltip-relay/{}", env!("CARGO_PKG_VERSION")),
             ping_interval: Duration::from_secs(10),
             idle_timeout: Duration::from_secs(25),
+            ticket_key: None,
+            outbound_queue: 64,
         }
     }
 }
@@ -99,11 +110,33 @@ struct Connection {
     /// An older client below the minimum: it may stay, but its pairing and `attach` requests are
     /// refused with `unsupported_version` (docs/pairing.md 「最低版本」).
     too_old: bool,
+    /// Its `hello` listed `ticket`: it understands `ticket_required` (docs/pairing.md 「设备票据」).
+    ticket_aware: bool,
+    /// Unix seconds its ticket runs out, once it authenticated.
+    auth_exp: Option<u64>,
+    /// It already asked for something while unauthenticated (counted once).
+    asked_unauthenticated: bool,
+    /// Cut off: its sessions and channels are gone and every frame it sends is answered with a
+    /// close, whether or not the close reaches it (a full queue).
+    revoked: bool,
+    /// It counts towards its address's live connections.
+    counted_ip: bool,
+    /// This minute's forwarding.
+    forwarding: Minute,
     failed_code_attempts: u32,
     /// Pairing session this connection created or joined.
     session: Option<SessionId>,
     /// Channel bindings this connection is attached to (one per trusted peer).
     channel_sessions: Vec<SessionId>,
+}
+
+/// What one connection forwarded in one UTC minute.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Minute {
+    /// Unix minute (seconds / 60).
+    minute: u64,
+    bytes: u64,
+    frames: u64,
 }
 
 #[derive(Debug)]
@@ -152,6 +185,16 @@ pub struct RelayCore {
     forwarded: u64,
     policy: RelayPolicy,
     book: StatsBook,
+    /// Live connections by client address.
+    live_by_ip: HashMap<IpAddr, u64>,
+    /// This hour's most connections at once by client address (at most [`MAX_TRACKED_IPS`]).
+    hour_peaks: HashMap<IpAddr, u64>,
+    /// Connections whose address could not be tracked this hour.
+    ip_overflow: u64,
+    /// The hour (Unix seconds at its start) `hour_peaks` belongs to.
+    peaks_hour: u64,
+    /// The minute the last tick saw.
+    last_minute: u64,
     /// Unix seconds, for the statistics' hours (tests turn it by hand).
     wall: fn() -> u64,
 }
@@ -178,6 +221,11 @@ impl RelayCore {
             forwarded: 0,
             policy: RelayPolicy::default(),
             book: StatsBook::default(),
+            live_by_ip: HashMap::new(),
+            hour_peaks: HashMap::new(),
+            ip_overflow: 0,
+            peaks_hour: 0,
+            last_minute: 0,
             wall: unix_now,
         }
     }
@@ -193,86 +241,84 @@ impl RelayCore {
         &self.policy
     }
 
-    /// Put `policy` in force (docs/pairing.md 「最低版本」). A connection that knows
+    /// Put `policy` in force (docs/pairing.md 「最低版本」「设备票据」). A connection that knows
     /// `client_too_old` and is now below the minimum is told so and closed, which ends its
     /// sessions and channels; an older client keeps what it has until it goes and is refused
     /// anything new; a lowered minimum lifts the refusal.
+    ///
+    /// When the ticket gate comes into force, every connection without a valid ticket is cut off
+    /// at once ([`RelayCore::revoke`]): told why where it can understand it, closed, and its
+    /// sessions and channels ended here rather than when its socket goes.
     pub fn set_policy(&mut self, policy: RelayPolicy) -> Vec<Delivery> {
-        let mut out = Vec::new();
+        let was_gated = self.gated();
+        self.policy = policy;
+        let gated = self.gated();
         let now = (self.wall)();
-        if let Some(min) = policy.min_version {
-            for (id, c) in &mut self.conns {
-                if !c.greeted {
-                    continue;
+        let mut out = Vec::new();
+        let mut ids: Vec<ConnId> = self.conns.iter().filter(|(_, c)| c.greeted && !c.revoked).map(|(id, _)| *id).collect();
+        ids.sort();
+        for id in ids {
+            let Some(c) = self.conns.get(&id) else { continue };
+            let too_old = self.policy.is_too_old(c.version) || (gated && !c.ticket_aware);
+            let cut = gated && !was_gated && !authenticated(c, now);
+            if too_old && c.gate_aware {
+                let min = self.policy.min_version.map(|v| v.to_string()).unwrap_or_default();
+                out.push(Delivery::Send(id, RelayFrame::client_too_old(min)));
+                out.push(Delivery::Close(id));
+                self.book.count(Count::TooOld, now);
+                if cut {
+                    self.revoke(id, &mut out);
                 }
-                let too_old = policy.is_too_old(c.version);
-                if too_old && c.gate_aware {
-                    out.push(Delivery::Send(*id, RelayFrame::client_too_old(min.to_string())));
-                    out.push(Delivery::Close(*id));
-                    self.book.count(Count::TooOld, now);
-                }
-                // Until its socket is gone, a connection being closed is refused like an older one.
+                continue;
+            }
+            if cut {
+                let code = if c.ticket_aware { RelayErrorCode::TicketRequired } else { RelayErrorCode::UnsupportedVersion };
+                out.push(Delivery::Send(id, RelayFrame::error(code)));
+                out.push(Delivery::Close(id));
+                self.book.count(Count::TicketRefused, now);
+                self.revoke(id, &mut out);
+                continue;
+            }
+            // Until its socket is gone, a connection being closed is refused like an older one.
+            if let Some(c) = self.conns.get_mut(&id) {
                 c.too_old = too_old;
             }
-        } else {
-            for c in self.conns.values_mut() {
-                c.too_old = false;
-            }
         }
-        // A stable order for the I/O layer and the tests.
+        if gated && !was_gated {
+            tracing::info!("the ticket gate is in force; connections without a ticket were closed");
+        }
+        // A stable order for the I/O layer and the tests; a connection's frames keep their order.
         out.sort_by_key(|d| match d {
             Delivery::Send(c, _) => (*c, 0),
             Delivery::Close(c) => (*c, 1),
         });
-        self.policy = policy;
         out
     }
 
-    /// The admin console's statistics (`GET /stats`).
-    pub fn stats_report(&self) -> StatsReport {
-        let gauges = Gauges {
-            connections: self.conns.len() as u64,
-            sessions: self.sessions.len() as u64,
-            channels: self.channels.len() as u64,
-            channels_paired: self.channels.values().filter(|ch| ch.members.len() >= 2).count() as u64,
-        };
-        self.book.report(gauges, (self.wall)())
+    /// The ticket gate is in force: the policy asks for it with a minimum version, and this relay
+    /// holds the ticket key.
+    fn gated(&self) -> bool {
+        self.policy.require_ticket && self.policy.min_version.is_some() && self.config.ticket_key.is_some()
     }
 
-    /// Configuration in use.
-    pub fn config(&self) -> &RelayConfig {
-        &self.config
+    /// Cut `conn` off: end its pairing session and its channels now (its peers are told), and
+    /// answer anything more it sends with a close. The caller queues the reason and the close.
+    fn revoke(&mut self, conn: ConnId, out: &mut Vec<Delivery>) {
+        let Some(c) = self.conns.get_mut(&conn) else { return };
+        if c.revoked {
+            return;
+        }
+        c.revoked = true;
+        let session = c.session.take();
+        let channel_sessions = std::mem::take(&mut c.channel_sessions);
+        self.book.count(Count::Revoked, (self.wall)());
+        self.release(conn, session, channel_sessions, out);
     }
 
-    /// Snapshot counters.
-    pub fn stats(&self) -> RelayStats {
-        RelayStats { connections: self.conns.len(), sessions: self.sessions.len(), channels: self.channels.len(), forwarded: self.forwarded, dropped: 0 }
-    }
-
-    /// A transport accepted a connection.
-    pub fn on_connect(&mut self, conn: ConnId, ip: IpAddr) {
-        self.conns.insert(
-            conn,
-            Connection {
-                ip,
-                greeted: false,
-                version: None,
-                gate_aware: false,
-                too_old: false,
-                failed_code_attempts: 0,
-                session: None,
-                channel_sessions: Vec::new(),
-            },
-        );
-        self.book.connections(self.conns.len(), (self.wall)());
-    }
-
-    /// A connection went away (any reason). Peers are told; sessions the connection created
-    /// are destroyed (a half-finished pairing must not be resumable by a stranger).
-    pub fn on_disconnect(&mut self, conn: ConnId, now: Instant) -> Vec<Delivery> {
-        let mut out = Vec::new();
-        let Some(c) = self.conns.remove(&conn) else { return out };
-        if let Some(sid) = c.session
+    /// Free what `conn` held: its pairing session is destroyed (a half-finished pairing must not be
+    /// resumable by a stranger) and its peers told; it leaves its channels.
+    fn release(&mut self, conn: ConnId, session: Option<SessionId>, channel_sessions: Vec<SessionId>, out: &mut Vec<Delivery>) {
+        if let Some(sid) = session
             && let Some(s) = self.sessions.get(&sid)
         {
             let other = if s.creator == conn { s.joiner } else { Some(s.creator) };
@@ -284,7 +330,7 @@ impl RelayCore {
             }
             self.remove_session(sid);
         }
-        for csid in c.channel_sessions {
+        for csid in channel_sessions {
             if let Some(name) = self.channel_by_session.get(&csid).cloned()
                 && let Some(ch) = self.channels.get_mut(&name)
             {
@@ -298,6 +344,99 @@ impl RelayCore {
                 }
             }
         }
+    }
+
+    /// The admin console's statistics (`GET /stats`).
+    pub fn stats_report(&self) -> StatsReport {
+        let gauges = Gauges {
+            connections: self.conns.len() as u64,
+            sessions: self.sessions.len() as u64,
+            channels: self.channels.len() as u64,
+            channels_paired: self.channels.values().filter(|ch| ch.members.len() >= 2).count() as u64,
+        };
+        let mut report = self.book.report(gauges, (self.wall)());
+        if let Some(hour) = report.hours.iter_mut().find(|h| h.hour == self.peaks_hour) {
+            self.peaks().apply(hour);
+        }
+        report
+    }
+
+    /// This hour's per-address peaks so far.
+    fn peaks(&self) -> IpPeaks {
+        IpPeaks::of(self.hour_peaks.values().copied(), self.ip_overflow)
+    }
+
+    /// Configuration in use.
+    pub fn config(&self) -> &RelayConfig {
+        &self.config
+    }
+
+    /// Snapshot counters.
+    pub fn stats(&self) -> RelayStats {
+        RelayStats { connections: self.conns.len(), sessions: self.sessions.len(), channels: self.channels.len(), forwarded: self.forwarded, dropped: 0 }
+    }
+
+    /// A transport accepted a connection. Over a connection limit (docs/pairing.md 「中继限额」) it
+    /// is told `rate_limited` and closed.
+    pub fn on_connect(&mut self, conn: ConnId, ip: IpAddr) -> Vec<Delivery> {
+        let now = (self.wall)();
+        let live_here = self.live_by_ip.get(&ip).copied().unwrap_or(0);
+        let live = self.live_by_ip.values().sum::<u64>();
+        let limits = self.policy.limits;
+        let refused = limits.connections_per_ip.is_some_and(|l| live_here >= l) || limits.max_connections.is_some_and(|l| live >= l);
+        self.conns.insert(
+            conn,
+            Connection {
+                ip,
+                greeted: false,
+                version: None,
+                gate_aware: false,
+                too_old: false,
+                ticket_aware: false,
+                auth_exp: None,
+                asked_unauthenticated: false,
+                revoked: refused,
+                counted_ip: !refused,
+                forwarding: Minute::default(),
+                failed_code_attempts: 0,
+                session: None,
+                channel_sessions: Vec::new(),
+            },
+        );
+        if refused {
+            self.book.count(Count::LimitedConnections, now);
+            return vec![Delivery::Send(conn, RelayFrame::rate_limited(60)), Delivery::Close(conn)];
+        }
+        let here = self.live_by_ip.entry(ip).or_default();
+        *here += 1;
+        let here = *here;
+        self.roll_hour(now);
+        if let Some(peak) = self.hour_peaks.get_mut(&ip) {
+            *peak = (*peak).max(here);
+        } else if self.hour_peaks.len() < MAX_TRACKED_IPS {
+            self.hour_peaks.insert(ip, here);
+        } else {
+            self.ip_overflow += 1;
+        }
+        self.book.connections(self.conns.len(), now);
+        Vec::new()
+    }
+
+    /// A connection went away (any reason). Peers are told; sessions the connection created
+    /// are destroyed (a half-finished pairing must not be resumable by a stranger).
+    pub fn on_disconnect(&mut self, conn: ConnId, now: Instant) -> Vec<Delivery> {
+        let mut out = Vec::new();
+        let Some(c) = self.conns.remove(&conn) else { return out };
+        if c.counted_ip
+            && let Some(n) = self.live_by_ip.get_mut(&c.ip)
+        {
+            *n -= 1;
+            if *n == 0 {
+                self.live_by_ip.remove(&c.ip);
+            }
+        }
+        self.book.forward_sample(c.forwarding.minute * 60, c.forwarding.bytes, c.forwarding.frames);
+        self.release(conn, c.session, c.channel_sessions, &mut out);
         self.expire(now, &mut out);
         out
     }
@@ -306,7 +445,59 @@ impl RelayCore {
     pub fn tick(&mut self, now: Instant) -> Vec<Delivery> {
         let mut out = Vec::new();
         self.expire(now, &mut out);
+        let wall = (self.wall)();
+        self.expire_tickets(wall, &mut out);
+        let minute = wall / 60;
+        if minute != self.last_minute {
+            self.last_minute = minute;
+            for c in self.conns.values_mut() {
+                if c.forwarding.minute < minute && c.forwarding.frames > 0 {
+                    self.book.forward_sample(c.forwarding.minute * 60, c.forwarding.bytes, c.forwarding.frames);
+                    c.forwarding = Minute::default();
+                }
+            }
+        }
+        self.roll_hour(wall);
         out
+    }
+
+    /// A new hour: the closing hour keeps its per-address peaks, and the new one starts from the
+    /// connections open now.
+    fn roll_hour(&mut self, wall: u64) {
+        let hour = wall - wall % 3600;
+        if hour == self.peaks_hour {
+            return;
+        }
+        if self.peaks_hour != 0 {
+            self.book.ip_peaks(self.peaks_hour, &self.peaks());
+        }
+        self.peaks_hour = hour;
+        self.hour_peaks = self.live_by_ip.iter().take(MAX_TRACKED_IPS).map(|(ip, n)| (*ip, *n)).collect();
+        self.ip_overflow = 0;
+        if !self.conns.is_empty() {
+            self.book.connections(self.conns.len(), wall);
+        }
+    }
+
+    /// Tickets that ran out: counted, and under the gate their connections are cut off.
+    fn expire_tickets(&mut self, wall: u64, out: &mut Vec<Delivery>) {
+        let gated = self.gated();
+        let mut ran_out: Vec<ConnId> = Vec::new();
+        for (id, c) in &mut self.conns {
+            if !c.revoked && c.auth_exp.is_some_and(|exp| exp <= wall) {
+                c.auth_exp = None;
+                ran_out.push(*id);
+            }
+        }
+        ran_out.sort();
+        for id in ran_out {
+            self.book.count(Count::AuthExpired, wall);
+            if gated {
+                out.push(Delivery::Send(id, RelayFrame::error(RelayErrorCode::TicketExpired)));
+                out.push(Delivery::Close(id));
+                self.revoke(id, out);
+            }
+        }
     }
 
     /// A text frame arrived from `conn`.
@@ -326,6 +517,10 @@ impl RelayCore {
         let mut out = Vec::new();
         self.expire(now, &mut out);
         let Some(c) = self.conns.get(&conn) else { return out };
+        if c.revoked {
+            out.push(Delivery::Close(conn));
+            return out;
+        }
         if !c.greeted && !matches!(frame, RelayFrame::Hello { .. }) {
             out.push(Delivery::Send(conn, RelayFrame::error(RelayErrorCode::HelloRequired)));
             out.push(Delivery::Close(conn));
@@ -333,6 +528,7 @@ impl RelayCore {
         }
         match frame {
             RelayFrame::Hello { client_version, features, .. } => self.hello(conn, &client_version, &features, &mut out),
+            RelayFrame::Auth { ticket, .. } => self.auth(conn, &ticket, &mut out),
             RelayFrame::CreateSession { ttl_secs, .. } => self.create_session(conn, ttl_secs, now, &mut out),
             RelayFrame::JoinByCode { code, .. } => self.join(conn, JoinKey::Code(code), now, &mut out),
             RelayFrame::JoinBySession { session_id, .. } => self.join(conn, JoinKey::Session(session_id), now, &mut out),
@@ -342,6 +538,7 @@ impl RelayCore {
             RelayFrame::Bye { .. } => out.push(Delivery::Close(conn)),
             // Server-only frames from a client are protocol misuse: ignore, log.
             RelayFrame::HelloAck { .. }
+            | RelayFrame::AuthAck { .. }
             | RelayFrame::SessionCreated { .. }
             | RelayFrame::Joined { .. }
             | RelayFrame::PeerJoined { .. }
@@ -359,9 +556,14 @@ impl RelayCore {
     fn hello(&mut self, conn: ConnId, client_version: &str, features: &[String], out: &mut Vec<Delivery>) {
         let version = ClientVersion::of_client(client_version);
         let gate_aware = features.iter().any(|f| f == FEATURE_CLIENT_TOO_OLD);
-        let too_old = self.policy.is_too_old(version);
+        let ticket_aware = features.iter().any(|f| f == FEATURE_TICKET);
+        // Under the ticket gate a client that cannot authenticate is served like one too old.
+        let too_old = self.policy.is_too_old(version) || (self.gated() && !ticket_aware);
         let wall = (self.wall)();
         self.book.hello(version, &self.policy, wall);
+        if self.config.ticket_key.is_some() && !ticket_aware {
+            self.book.count(Count::NoTicketFeature, wall);
+        }
         if too_old
             && gate_aware
             && let Some(min) = self.policy.min_version
@@ -376,12 +578,86 @@ impl RelayCore {
             c.greeted = true;
             c.version = version;
             c.gate_aware = gate_aware;
+            c.ticket_aware = ticket_aware;
             c.too_old = too_old;
         }
+        let features = if self.config.ticket_key.is_some() { vec![FEATURE_TICKET.to_owned()] } else { Vec::new() };
         out.push(Delivery::Send(
             conn,
-            RelayFrame::HelloAck { version: ProtocolVersion::CURRENT, relay_version: self.config.relay_version.clone(), limits: self.config.limits() },
+            RelayFrame::HelloAck {
+                version: ProtocolVersion::CURRENT,
+                relay_version: self.config.relay_version.clone(),
+                limits: self.config.limits(),
+                features,
+            },
         ));
+    }
+
+    /// `auth`: a valid ticket authenticates the connection until it runs out, and its proven
+    /// version stands in for the one `hello` named (docs/pairing.md 「设备票据」). An invalid one
+    /// leaves the connection as it was.
+    fn auth(&mut self, conn: ConnId, ticket: &str, out: &mut Vec<Delivery>) {
+        let Some(key) = &self.config.ticket_key else {
+            tracing::debug!(?conn, "auth on a relay without a ticket key; ignored");
+            return;
+        };
+        let wall = (self.wall)();
+        let verified = match key.verify(ticket, SCOPE_RELAY, wall) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::debug!(?conn, error = %e, "ticket refused");
+                self.book.count(Count::AuthInvalid, wall);
+                out.push(Delivery::Send(conn, RelayFrame::error(RelayErrorCode::TicketInvalid)));
+                return;
+            }
+        };
+        self.book.count(Count::AuthOk, wall);
+        let Some(c) = self.conns.get_mut(&conn) else { return };
+        c.auth_exp = Some(verified.exp);
+        if verified.version.is_some() {
+            c.version = verified.version;
+        }
+        let too_old = self.policy.is_too_old(c.version);
+        c.too_old = too_old;
+        if too_old
+            && c.gate_aware
+            && let Some(min) = self.policy.min_version
+        {
+            self.book.count(Count::TooOld, wall);
+            out.push(Delivery::Send(conn, RelayFrame::client_too_old(min.to_string())));
+            out.push(Delivery::Close(conn));
+            return;
+        }
+        out.push(Delivery::Send(conn, RelayFrame::AuthAck { version: ProtocolVersion::CURRENT, exp: verified.exp }));
+    }
+
+    /// A connection without a valid ticket asked for a session or a channel: counted once, and
+    /// under the gate refused with `ticket_required`.
+    fn refuse_unauthenticated(&mut self, conn: ConnId, channel: Option<&str>, out: &mut Vec<Delivery>) -> bool {
+        let wall = (self.wall)();
+        let has_key = self.config.ticket_key.is_some();
+        let gated = self.gated();
+        let Some(c) = self.conns.get_mut(&conn) else { return false };
+        if authenticated(c, wall) {
+            return false;
+        }
+        if has_key && c.ticket_aware && !c.asked_unauthenticated {
+            c.asked_unauthenticated = true;
+            self.book.count(Count::TicketUnauthenticated, wall);
+        }
+        if !gated {
+            return false;
+        }
+        self.book.count(Count::TicketRefused, wall);
+        let refusal = RelayFrame::error(RelayErrorCode::TicketRequired);
+        out.push(Delivery::Send(
+            conn,
+            match channel {
+                Some(ch) => refusal.for_channel(ch),
+                None => refusal,
+            },
+        ));
+        true
     }
 
     /// An older client below the minimum asked for something new: `unsupported_version`, which
@@ -415,7 +691,7 @@ impl RelayCore {
     }
 
     fn create_session(&mut self, conn: ConnId, ttl_secs: Option<u32>, now: Instant, out: &mut Vec<Delivery>) {
-        if self.refuse_old(conn, None, out) {
+        if self.refuse_old(conn, None, out) || self.refuse_unauthenticated(conn, None, out) {
             return;
         }
         let Some(c) = self.conns.get(&conn) else { return };
@@ -463,7 +739,7 @@ impl RelayCore {
     }
 
     fn join(&mut self, conn: ConnId, key: JoinKey, now: Instant, out: &mut Vec<Delivery>) {
-        if self.refuse_old(conn, None, out) {
+        if self.refuse_old(conn, None, out) || self.refuse_unauthenticated(conn, None, out) {
             return;
         }
         let Some(c) = self.conns.get(&conn) else { return };
@@ -556,6 +832,37 @@ impl RelayCore {
             out.push(Delivery::Send(conn, RelayFrame::error(RelayErrorCode::Malformed)));
             return;
         }
+        let wall = (self.wall)();
+        let gated = self.gated();
+        let limits = self.policy.limits;
+        let Some(c) = self.conns.get_mut(&conn) else { return };
+        // Under the gate only an authenticated connection forwards, whatever it holds already.
+        if gated && !authenticated(c, wall) {
+            let code = if c.ticket_aware { RelayErrorCode::TicketRequired } else { RelayErrorCode::UnsupportedVersion };
+            self.book.count(Count::TicketRefused, wall);
+            out.push(Delivery::Send(conn, RelayFrame::error(code)));
+            out.push(Delivery::Close(conn));
+            self.revoke(conn, out);
+            return;
+        }
+        let minute = wall / 60;
+        if c.forwarding.minute != minute {
+            let done = std::mem::replace(&mut c.forwarding, Minute { minute, bytes: 0, frames: 0 });
+            self.book.forward_sample(done.minute * 60, done.bytes, done.frames);
+        }
+        let Some(c) = self.conns.get_mut(&conn) else { return };
+        c.forwarding.bytes += payload.len() as u64;
+        c.forwarding.frames += 1;
+        let over = limits.forward_bytes_per_minute.is_some_and(|l| c.forwarding.bytes > l)
+            || limits.forward_frames_per_minute.is_some_and(|l| c.forwarding.frames > l);
+        if over {
+            tracing::info!(?conn, "forwarding over the per-minute limit; closing the connection");
+            self.book.count(Count::LimitedForward, wall);
+            out.push(Delivery::Send(conn, RelayFrame::rate_limited(u32::try_from(60 - wall % 60).unwrap_or(60))));
+            out.push(Delivery::Close(conn));
+            self.revoke(conn, out);
+            return;
+        }
         let target = self.peer_of(conn, session_id);
         match target {
             Some(peer) => {
@@ -592,7 +899,7 @@ impl RelayCore {
             out.push(Delivery::Send(conn, RelayFrame::error(RelayErrorCode::InvalidChannel)));
             return;
         }
-        if self.refuse_old(conn, Some(&channel), out) {
+        if self.refuse_old(conn, Some(&channel), out) || self.refuse_unauthenticated(conn, Some(&channel), out) {
             return;
         }
         let Some(c) = self.conns.get(&conn) else { return };
@@ -663,6 +970,11 @@ impl RelayCore {
 enum JoinKey {
     Code(PairCode),
     Session(SessionId),
+}
+
+/// It holds a ticket that has not run out.
+fn authenticated(c: &Connection, now: u64) -> bool {
+    c.auth_exp.is_some_and(|exp| exp > now)
 }
 
 fn secs(d: Duration) -> u32 {
@@ -984,8 +1296,17 @@ mod tests {
     fn server_only_frames_from_clients_are_ignored_and_creator_disconnect_notifies_joiner() {
         let (mut r, t0) = relay();
         assert!(
-            r.on_frame(A, RelayFrame::HelloAck { version: ProtocolVersion::CURRENT, relay_version: "x".into(), limits: RelayConfig::default().limits() }, t0)
-                .is_empty()
+            r.on_frame(
+                A,
+                RelayFrame::HelloAck {
+                    version: ProtocolVersion::CURRENT,
+                    relay_version: "x".into(),
+                    limits: RelayConfig::default().limits(),
+                    features: Vec::new()
+                },
+                t0
+            )
+            .is_empty()
         );
         assert!(r.on_frame(A, RelayFrame::error(RelayErrorCode::Malformed), t0).is_empty());
         assert!(r.on_frame(A, RelayFrame::Joined { version: ProtocolVersion::CURRENT, session_id: SessionId::random() }, t0).is_empty());
@@ -1165,6 +1486,296 @@ mod tests {
         r.on_frame(C, RelayFrame::CreateSession { version: ProtocolVersion::CURRENT, ttl_secs: Some(10) }, t0 + Duration::from_secs(61));
         r.tick(t0 + Duration::from_secs(120));
         assert_eq!(r.stats_report().hours[0].sessions_expired, 2);
+    }
+
+    // ---- device tickets (docs/pairing.md 「设备票据」) and limits (「中继限额」) ----
+
+    const T0: u64 = 1_761_552_000; // an hour's start
+    thread_local! {
+        static NOW: std::cell::Cell<u64> = const { std::cell::Cell::new(T0) };
+    }
+    fn now_wall() -> u64 {
+        NOW.with(std::cell::Cell::get)
+    }
+    fn set_wall(t: u64) {
+        NOW.with(|n| n.set(t));
+    }
+
+    fn key() -> TicketKey {
+        TicketKey::new(&[9; 32]).unwrap()
+    }
+
+    fn ticket(ver: &str, exp: u64) -> String {
+        key().issue(&crate::ticket::TicketPayload { v: 1, d: "dev-1".into(), ver: ver.into(), exp, scope: vec!["relay".into(), "builtin".into()] })
+    }
+
+    fn ticketed() -> RelayCore {
+        set_wall(T0);
+        RelayCore::new(RelayConfig { ticket_key: Some(key()), ..RelayConfig::default() }).with_wall_clock(now_wall)
+    }
+
+    fn gate(min_version: &str) -> RelayPolicy {
+        RelayPolicy { min_version: Some(min_version.parse().unwrap()), require_ticket: true, ..RelayPolicy::default() }
+    }
+
+    fn greet(r: &mut RelayCore, conn: ConnId, ip: IpAddr, client: &str, features: &[&str], t0: Instant) -> Vec<Delivery> {
+        assert!(r.on_connect(conn, ip).is_empty());
+        let hello = RelayFrame::Hello {
+            version: ProtocolVersion::CURRENT,
+            client_version: client.into(),
+            features: features.iter().map(|f| (*f).to_owned()).collect(),
+        };
+        r.on_frame(conn, hello, t0)
+    }
+
+    const NEW: &[&str] = &["client_too_old", "ticket"];
+
+    fn authenticate(r: &mut RelayCore, conn: ConnId, t0: Instant) {
+        let out = r.on_frame(conn, RelayFrame::auth(ticket("0.3.1", T0 + 3600)), t0);
+        assert_eq!(out, vec![Delivery::Send(conn, RelayFrame::AuthAck { version: ProtocolVersion::CURRENT, exp: T0 + 3600 })]);
+    }
+
+    fn attached_sid(out: &[Delivery]) -> SessionId {
+        out.iter()
+            .find_map(|d| match d {
+                Delivery::Send(_, RelayFrame::Attached { session_id, .. }) => Some(*session_id),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no attached in {out:?}"))
+    }
+
+    #[test]
+    fn a_relay_with_the_key_asks_for_tickets_and_one_without_does_not() {
+        let t0 = Instant::now();
+        let mut plain = RelayCore::new(RelayConfig::default());
+        let out = greet(&mut plain, A, IP_A, "voltip/0.3.1", NEW, t0);
+        assert!(matches!(&out[..], [Delivery::Send(A, RelayFrame::HelloAck { features, .. })] if features.is_empty()));
+        assert!(plain.on_frame(A, RelayFrame::auth("x.y"), t0).is_empty(), "a relay without the key ignores auth");
+
+        let mut r = ticketed();
+        let out = greet(&mut r, A, IP_A, "voltip/0.3.1", NEW, t0);
+        assert!(matches!(&out[..], [Delivery::Send(A, RelayFrame::HelloAck { features, .. })] if features == &["ticket".to_owned()]));
+        authenticate(&mut r, A, t0);
+        // A bad ticket is refused and the connection stays as it was.
+        assert_eq!(r.on_frame(A, RelayFrame::auth("bad.ticket"), t0), vec![Delivery::Send(A, RelayFrame::error(RelayErrorCode::TicketInvalid))]);
+        let other = TicketKey::new(&[1; 32]).unwrap().issue(&crate::ticket::TicketPayload {
+            v: 1,
+            d: "x".into(),
+            ver: "9.9.9".into(),
+            exp: T0 + 60,
+            scope: vec!["relay".into()],
+        });
+        assert_eq!(err_code(&r.on_frame(A, RelayFrame::auth(other), t0)[0]), Some(RelayErrorCode::TicketInvalid), "another key's ticket");
+        let builtin_only = key().issue(&crate::ticket::TicketPayload { v: 1, d: "x".into(), ver: "0.3.1".into(), exp: T0 + 60, scope: vec!["builtin".into()] });
+        assert_eq!(err_code(&r.on_frame(A, RelayFrame::auth(builtin_only), t0)[0]), Some(RelayErrorCode::TicketInvalid), "another scope");
+        assert!(matches!(r.on_frame(A, create(), t0)[0], Delivery::Send(A, RelayFrame::SessionCreated { .. })), "still authenticated");
+        let hour = &r.stats_report().hours[0];
+        assert_eq!((hour.auth.ok, hour.auth.invalid), (1, 3));
+    }
+
+    /// The ticket's version is the one the device proved; the `hello` may claim any.
+    #[test]
+    fn the_minimum_version_reads_the_proven_version() {
+        let t0 = Instant::now();
+        let mut r = ticketed();
+        r.set_policy(min("0.3.1"));
+        greet(&mut r, A, IP_A, "voltip/9.9.9", NEW, t0);
+        let out = r.on_frame(A, RelayFrame::auth(ticket("0.3.0", T0 + 3600)), t0);
+        assert_eq!(out, vec![Delivery::Send(A, RelayFrame::client_too_old("0.3.1")), Delivery::Close(A)]);
+    }
+
+    /// Counting first (user decision 2026-11-03): without the gate nothing is refused, and the
+    /// gate takes effect only with a minimum version and the key.
+    #[test]
+    fn without_the_gate_unauthenticated_clients_are_counted_and_served() {
+        let t0 = Instant::now();
+        let mut r = ticketed();
+        r.set_policy(RelayPolicy { require_ticket: true, ..RelayPolicy::default() });
+        greet(&mut r, A, IP_A, "voltip/0.3.1", NEW, t0);
+        greet(&mut r, B, IP_B, "voltip/0.2.0", &["client_too_old"], t0);
+        assert!(matches!(r.on_frame(A, create(), t0)[0], Delivery::Send(A, RelayFrame::SessionCreated { .. })), "no minimum: no gate");
+        r.on_frame(A, attach(&"ab".repeat(32)), t0);
+        assert!(matches!(r.on_frame(B, attach(&"cd".repeat(32)), t0)[0], Delivery::Send(B, RelayFrame::Attached { .. })));
+        let hour = &r.stats_report().hours[0];
+        assert_eq!((hour.auth.no_feature, hour.auth.unauthenticated, hour.auth.refused), (1, 1, 0), "the unauthenticated request is counted once");
+
+        let mut keyless = RelayCore::new(RelayConfig::default());
+        keyless.set_policy(gate("0.3.1"));
+        greet(&mut keyless, A, IP_A, "voltip/0.3.1", NEW, t0);
+        assert!(matches!(keyless.on_frame(A, create(), t0)[0], Delivery::Send(A, RelayFrame::SessionCreated { .. })), "a relay without the key never gates");
+    }
+
+    #[test]
+    fn under_the_gate_only_authenticated_clients_are_served() {
+        let t0 = Instant::now();
+        let mut r = ticketed();
+        r.set_policy(gate("0.2.0"));
+        // 0.2.x knows client_too_old but cannot authenticate: told and closed.
+        assert_eq!(
+            greet(&mut r, A, IP_A, "voltip/0.2.5", &["client_too_old"], t0),
+            vec![Delivery::Send(A, RelayFrame::client_too_old("0.2.0")), Delivery::Close(A)]
+        );
+        // Before 0.2.0: it may stay, and gets unsupported_version for anything new.
+        greet(&mut r, B, IP_B, "voltip/0.1.9", &[], t0);
+        assert_eq!(err_code(&r.on_frame(B, create(), t0)[0]), Some(RelayErrorCode::UnsupportedVersion));
+        // A client with tickets, not yet authenticated: ticket_required, and it may authenticate.
+        greet(&mut r, C, IP_A, "voltip/0.3.1", NEW, t0);
+        assert_eq!(r.on_frame(C, create(), t0), vec![Delivery::Send(C, RelayFrame::error(RelayErrorCode::TicketRequired))]);
+        let ch = "ab".repeat(32);
+        assert_eq!(r.on_frame(C, attach(&ch), t0), vec![Delivery::Send(C, RelayFrame::error(RelayErrorCode::TicketRequired).for_channel(&ch))]);
+        authenticate(&mut r, C, t0);
+        assert!(matches!(r.on_frame(C, attach(&ch), t0)[0], Delivery::Send(C, RelayFrame::Attached { .. })));
+        assert_eq!(r.stats_report().hours[0].auth.refused, 2);
+    }
+
+    /// A ticket that runs out: counted while counting, and under the gate the connection is cut
+    /// off, so a revoked device is gone within a ticket's lifetime.
+    #[test]
+    fn an_expired_ticket_closes_the_connection_under_the_gate() {
+        let t0 = Instant::now();
+        let mut r = ticketed();
+        greet(&mut r, A, IP_A, "voltip/0.3.1", NEW, t0);
+        authenticate(&mut r, A, t0);
+        set_wall(T0 + 3600);
+        assert!(r.tick(t0).is_empty(), "counting: nothing is closed");
+        assert_eq!(r.stats_report().hours.last().unwrap().auth.expired, 1);
+
+        let mut r = ticketed();
+        r.set_policy(gate("0.3.0"));
+        for (conn, ip) in [(A, IP_A), (B, IP_B)] {
+            greet(&mut r, conn, ip, "voltip/0.3.1", NEW, t0);
+            authenticate(&mut r, conn, t0);
+        }
+        let ch = "ab".repeat(32);
+        r.on_frame(A, attach(&ch), t0);
+        r.on_frame(B, attach(&ch), t0);
+        // B renews; A does not.
+        set_wall(T0 + 1800);
+        assert!(matches!(r.on_frame(B, RelayFrame::auth(ticket("0.3.1", T0 + 7200)), t0)[..], [Delivery::Send(B, RelayFrame::AuthAck { .. })]));
+        set_wall(T0 + 3600);
+        let out = r.tick(t0);
+        assert_eq!(out.len(), 3, "{out:?}");
+        assert_eq!(out[..2], [Delivery::Send(A, RelayFrame::error(RelayErrorCode::TicketExpired)), Delivery::Close(A)]);
+        assert!(matches!(&out[2], Delivery::Send(B, RelayFrame::PeerPresence { online: false, .. })), "{out:?}");
+        assert_eq!(r.on_frame(A, create(), t0), vec![Delivery::Close(A)], "a revoked connection gets only a close");
+    }
+
+    /// Regression (plan review 2026-11-03, rounds 2–4): connections that stayed on unauthenticated
+    /// through the counting period could keep forwarding after the gate came into force. They are
+    /// cut off the moment it does, here in the core, whether or not their close is delivered.
+    #[test]
+    fn regression_turning_the_gate_on_stops_unauthenticated_connections_forwarding() {
+        let t0 = Instant::now();
+        let mut r = ticketed();
+        greet(&mut r, A, IP_A, "voltip/0.3.1", NEW, t0);
+        authenticate(&mut r, A, t0);
+        greet(&mut r, B, IP_B, "voltip/0.3.1", NEW, t0);
+        greet(&mut r, C, IP_A, "voltip/0.1.9", &[], t0);
+        let ch = "ab".repeat(32);
+        r.on_frame(A, attach(&ch), t0);
+        let sid = attached_sid(&r.on_frame(B, attach(&ch), t0));
+        // A pairing session between the authenticated A and the older C.
+        let (psid, code, _) = created(&r.on_frame(A, create(), t0));
+        r.on_frame(C, RelayFrame::JoinByCode { version: ProtocolVersion::CURRENT, code }, t0);
+        assert_eq!(r.on_frame(B, RelayFrame::forward(sid, vec![1]), t0), vec![Delivery::Send(A, RelayFrame::forward(sid, vec![1]))], "counting: B forwards");
+
+        let out = r.set_policy(gate("0.3.0"));
+        assert!(out.contains(&Delivery::Send(B, RelayFrame::error(RelayErrorCode::TicketRequired))));
+        assert!(out.contains(&Delivery::Send(C, RelayFrame::error(RelayErrorCode::UnsupportedVersion))));
+        assert!(out.contains(&Delivery::Close(B)) && out.contains(&Delivery::Close(C)));
+        assert!(out.contains(&Delivery::Send(A, RelayFrame::PeerPresence { version: ProtocolVersion::CURRENT, session_id: sid, online: false })));
+        assert!(out.contains(&Delivery::Send(A, RelayFrame::PeerLeft { version: ProtocolVersion::CURRENT, session_id: psid })));
+        assert!(!out.iter().any(|d| matches!(d, Delivery::Send(A, RelayFrame::Error { .. }) | Delivery::Close(A))), "the authenticated device stays: {out:?}");
+        // Neither direction carries anything any more, closed socket or not.
+        assert_eq!(r.on_frame(A, RelayFrame::forward(sid, vec![2]), t0), vec![Delivery::Send(A, RelayFrame::error(RelayErrorCode::NotJoined))]);
+        assert_eq!(r.on_frame(A, RelayFrame::forward(psid, vec![2]), t0), vec![Delivery::Send(A, RelayFrame::error(RelayErrorCode::NotJoined))]);
+        assert_eq!(r.on_frame(B, RelayFrame::forward(sid, vec![3]), t0), vec![Delivery::Close(B)]);
+        assert_eq!(r.on_frame(C, RelayFrame::forward(psid, vec![3]), t0), vec![Delivery::Close(C)]);
+        // When the sockets do go, nothing is released twice.
+        assert!(r.on_disconnect(B, t0).is_empty());
+        assert!(r.on_disconnect(C, t0).is_empty());
+        assert_eq!(r.stats().channels, 1, "A's side of the channel is left");
+        assert_eq!(r.stats_report().hours[0].auth.revoked, 2);
+        // Turning the gate on again changes nothing for those already cut off or authenticated.
+        assert!(r.set_policy(gate("0.3.0")).is_empty());
+    }
+
+    /// Under the gate a connection that did not authenticate cannot forward even on what it held.
+    #[test]
+    fn under_the_gate_an_unauthenticated_forward_is_refused_and_closed() {
+        let t0 = Instant::now();
+        let mut r = ticketed();
+        r.set_policy(gate("0.3.0"));
+        greet(&mut r, A, IP_A, "voltip/0.3.1", NEW, t0);
+        let sid = SessionId::random();
+        let out = r.on_frame(A, RelayFrame::forward(sid, vec![1]), t0);
+        assert_eq!(out, vec![Delivery::Send(A, RelayFrame::error(RelayErrorCode::TicketRequired)), Delivery::Close(A)]);
+    }
+
+    #[test]
+    fn forwarding_over_a_minute_limit_closes_the_connection() {
+        let t0 = Instant::now();
+        let mut r = ticketed();
+        let limits = crate::policy::UsageLimits { forward_frames_per_minute: Some(2), forward_bytes_per_minute: Some(100), ..Default::default() };
+        r.set_policy(RelayPolicy { limits, ..RelayPolicy::default() });
+        for (conn, ip) in [(A, IP_A), (B, IP_B)] {
+            greet(&mut r, conn, ip, "voltip/0.3.1", NEW, t0);
+        }
+        let ch = "ab".repeat(32);
+        r.on_frame(A, attach(&ch), t0);
+        let sid = attached_sid(&r.on_frame(B, attach(&ch), t0));
+        set_wall(T0 + 15);
+        for _ in 0..2 {
+            assert!(matches!(r.on_frame(A, RelayFrame::forward(sid, vec![0; 10]), t0)[..], [Delivery::Send(B, RelayFrame::Forward { .. })]));
+        }
+        let out = r.on_frame(A, RelayFrame::forward(sid, vec![0; 10]), t0);
+        assert_eq!(out[..2], [Delivery::Send(A, RelayFrame::rate_limited(45)), Delivery::Close(A)]);
+        assert!(matches!(&out[2], Delivery::Send(B, RelayFrame::PeerPresence { online: false, .. })));
+        // A new minute starts the count again; bytes are a limit of their own.
+        set_wall(T0 + 60);
+        assert!(matches!(r.on_frame(B, RelayFrame::forward(sid, vec![0; 10]), t0)[..], [Delivery::Send(B, RelayFrame::Error { .. })]), "A is gone");
+        r.on_disconnect(A, t0);
+        r.on_connect(A, IP_A);
+        r.on_frame(A, hello(), t0);
+        r.on_frame(A, attach(&ch), t0);
+        let out = r.on_frame(B, RelayFrame::forward(sid, vec![0; 101]), t0);
+        assert_eq!(err_code(&out[0]), Some(RelayErrorCode::RateLimited));
+        r.on_disconnect(B, t0);
+        r.tick(t0);
+        let hour = &r.stats_report().hours[0];
+        assert_eq!(hour.limited_forward, 2);
+        assert_eq!((hour.forward_frames_max, hour.forward_bytes_max), (3, 111));
+        assert_eq!(hour.forward_frames_hist.iter().sum::<u64>(), 2, "A's first minute and B's second; a refused forward counts too");
+    }
+
+    #[test]
+    fn connection_limits_refuse_new_connections() {
+        let t0 = Instant::now();
+        let mut r = ticketed();
+        let limits = crate::policy::UsageLimits { connections_per_ip: Some(2), max_connections: Some(3), ..Default::default() };
+        r.set_policy(RelayPolicy { limits, ..RelayPolicy::default() });
+        assert!(r.on_connect(ConnId(1), IP_A).is_empty());
+        assert!(r.on_connect(ConnId(2), IP_A).is_empty());
+        assert_eq!(r.on_connect(ConnId(3), IP_A), vec![Delivery::Send(ConnId(3), RelayFrame::rate_limited(60)), Delivery::Close(ConnId(3))]);
+        assert_eq!(r.on_frame(ConnId(3), hello(), t0), vec![Delivery::Close(ConnId(3))], "a refused connection is not served");
+        r.on_disconnect(ConnId(3), t0);
+        assert!(r.on_connect(ConnId(4), IP_B).is_empty());
+        assert_eq!(err_code(&r.on_connect(ConnId(5), IP_B)[0]), Some(RelayErrorCode::RateLimited), "three in all");
+        r.on_disconnect(ConnId(5), t0);
+        r.on_disconnect(ConnId(1), t0);
+        assert!(r.on_connect(ConnId(6), IP_A).is_empty(), "a place came free");
+        let report = r.stats_report();
+        let hour = &report.hours[0];
+        assert_eq!(hour.limited_connections, 2);
+        assert_eq!((hour.ip_connections_max, hour.ip_connections_hist), (2, [1, 1, 0, 0, 0, 0, 0]), "A peaked at 2, B at 1");
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(!json.contains(&IP_A.to_string()) && !json.contains(&IP_B.to_string()));
+        // The next hour keeps this hour's peaks and starts from what is open.
+        set_wall(T0 + 3600);
+        r.tick(t0);
+        let report = r.stats_report();
+        assert_eq!(report.hours[0].ip_connections_max, 2);
+        assert_eq!(report.hours[1].ip_connections_hist, [1, 1, 0, 0, 0, 0, 0], "A with two open, B with one");
     }
 
     #[test]

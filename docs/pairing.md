@@ -66,7 +66,7 @@ Idle → Joining(code|ticket) → KeyExchange → AwaitingVerification → Trust
 - **频道被占时重试 attach**：重连后的新连接要重新 attach 到与每台已配对设备的频道上。如果中继还留着本设备那条已死的旧连接，频道两个位置都被占，中继回 `channel_full`。此前客户端只记一条日志、不再重试，两台设备一直连不上，直到某一方的应用重启；2026-10-10 用户反馈的「配对后断开」最可能就是这个原因。现在中继的 attach 答复都带上频道名（`attached.channel`、`error.channel`，0.1.0 起），客户端据此找到对应的设备，`channel_full` 时每 4 秒重试一次（`CoreConfig::attach_retry`），`rate_limited` 时按中继给出的等待时间重试，直到成功或连接断开。旧中继的答复不带频道名时，`channel_full` 和 `invalid_channel` 按顺序对应最早发出的 attach。
 - **握手重试**：上一节的握手失败重试上限从 60 秒降到 30 秒。
 - **一个名字的多个地址**（issue #193，2026-10-27）：中继的域名解析出几个地址时，直连按 RFC 8305 的做法依次尝试：先连第一个，250 ms（`voltip_net::ATTEMPT_DELAY`）内没有连上或已经失败，就同时开始下一个，最先连上的那个胜出、其余放弃，整个过程仍受 8 秒连接时限约束。此前 `TcpStream::connect` 在同一个时限内逐个尝试，第一个地址不回应时 8 秒全耗在它上面，后面的地址轮不到，下一次重试多半还是先试它。2026-10-22 内置中继的负载均衡换了节点，其中一个地址从中国大陆连不上，大陆的手机先试到它时就一直「尚未连上中继」；2026-10-27 已把这个节点所在的可用区从负载均衡移除。
-- **失败原因**：每次连接失败或连接断开，链路先报告原因的类别（`LinkEvent::Failed`，`voltip_transport::FailureKind`：`timeout` 超时、`dns` 无法解析、`refused` 被拒绝、`unreachable` 网络不通、`tls` 加密握手失败、`not_relay` 不是 Voltip 中继、`proxy` 代理失败、`version` 版本不支持、`lost` 连接中断、`other`），再报告 `Reconnecting`。核心把它记在 `RelayStatus.last_failure`（类别、时间），连上后清除；用户自己填的中继同时带上原话（`detail`），内置中继的原话可能含有地址，只报类别。
+- **失败原因**：每次连接失败或连接断开，链路先报告原因的类别（`LinkEvent::Failed`，`voltip_transport::FailureKind`：`timeout` 超时、`dns` 无法解析、`refused` 被拒绝、`unreachable` 网络不通、`tls` 加密握手失败、`not_relay` 不是 Voltip 中继、`proxy` 代理失败、`version` 版本不支持、`too_old` 版本过低、`ticket` 设备未通过验证（「设备票据」）、`lost` 连接中断、`other`），再报告 `Reconnecting`。核心把它记在 `RelayStatus.last_failure`（类别、时间），连上后清除；用户自己填的中继同时带上原话（`detail`），内置中继的原话可能含有地址，只报类别。
 
 回归测试：`crates/voltip-core/tests/e2e.rs@regression_a_path_that_breaks_without_a_word_heals_on_its_own`（手机的路径无声中断，心跳发现、重连、频道被占、中继放掉旧连接、重试 attach 后两边恢复）、`reconnect_relay_checks_the_socket_at_once_after_the_network_changed`、`crates/voltip-transport/tests/link.rs@reconnect_now_cuts_a_backoff_short`、`reconnect_now_drops_a_socket_that_no_longer_answers`。
 
@@ -92,12 +92,13 @@ Idle → Joining(code|ticket) → KeyExchange → AwaitingVerification → Trust
 - 「每 IP」指客户端的地址（`join` 20 次、`create_session` 10 次、`attach` 30 次，均为每分钟）。中继在反向代理后面时，每条连接的 TCP 对端都是代理，要用 `--trust-proxy` 让中继读代理转来的 `X-Forwarded-For`，否则所有用户共用一份额度（`docs/runbook.md`「中继部署」）。
 - 会话 TTL 默认 120 s，最大 300 s；成功 `join` 后短码立即从索引删除。
 - 所有计数与 TTL 都在 `voltip-relay::RelayState` 里，单测可直接推进时钟。
+- 转发量与连接数的上限见「中继限额」，只让官方构建使用托管中继见「设备票据」。
 
 ## 最低版本（2026-10-27）
 
 用户 2026-10-27 要求在管理台设置最低客户端版本，过低的版本连接失败时提示升级；决定：认识新错误码的版本被直接告知，0.1.9 及以前的版本「拦配对和重连」（软拦截）。
 
-- **策略文件**（`voltip_relay::policy`）：`--policy /etc/voltip/relay-policy.json`（管理台的同步程序写，`docs/runbook.md`「中继部署」）和 `--policy-override /etc/voltip/relay-policy.override.json`（运维手写），内容 `{"schema":1,"min_version":"x.y.z"|null,"known_versions":["0.1.9",…]}`（`known_versions` 最多 64 个，统计用）。读取规则与内置服务网关的额度配置相同：覆盖文件存在且有效时整份使用；存在但无效时告警并忽略它；主文件有效就使用并记为「上一份有效配置」；主文件无效或缺失时沿用上一份有效配置；从来没有有效配置时不设最低版本。中继每 30 秒（`POLICY_CHECK`）比较两个文件的修改时间与存在与否，变了就重读；管理台保存后最多约 5.5 分钟生效（同步程序 5 分钟一轮）。
+- **策略文件**（`voltip_relay::policy`）：`--policy /etc/voltip/relay-policy.json`（管理台的同步程序写，`docs/runbook.md`「中继部署」）和 `--policy-override /etc/voltip/relay-policy.override.json`（运维手写），内容 `{"schema":1,"revision":n,"min_version":"x.y.z"|null,"known_versions":["0.1.9",…],"require_ticket":false,"limits":{…}}`（`known_versions` 最多 64 个，统计用；`require_ticket` 见「设备票据」，`limits` 见「中继限额」；`revision` 由 `GET /healthz` 报告，管理台据此显示生效的设置）。读取规则与内置服务网关的额度配置相同：覆盖文件存在且有效时整份使用；存在但无效时告警并忽略它；主文件有效就使用并记为「上一份有效配置」；主文件无效或缺失时沿用上一份有效配置；从来没有有效配置时不设最低版本。中继每 30 秒（`POLICY_CHECK`）比较两个文件的修改时间与存在与否，变了就重读；管理台保存后最多约 5.5 分钟生效（同步程序 5 分钟一轮）。
 - **版本**：`hello.client_version` 里的 `voltip/x.y.z`（或不带前缀的 `x.y.z`）；读不出版本的客户端照常服务。
 - **认识新错误码的版本**（0.2.0 起，`hello.features` 带 `client_too_old`，`docs/protocol.md`）低于最低版本时，中继回 `error{code: client_too_old, min_version}` 后关闭连接。
 - **旧版本**（0.1.9 及以前，不带 `features`）低于最低版本时照常收到 `hello_ack`，但 `create_session`、`join_by_code`、`join_by_session` 和 `attach` 一律回 `unsupported_version`（`attach` 的答复带上 `channel`）。旧界面配对时显示它已有的「版本不兼容，请更新 Voltip」；0.1.9 收到 attach 被拒后不再重试这个频道。
@@ -106,6 +107,26 @@ Idle → Joining(code|ticket) → KeyExchange → AwaitingVerification → Trust
 - **界面**（Penpot「用量与额度」画板 20 / 20a）：电脑侧栏的状态卡片黄灯「中继 · 需要更新」，写明最低版本，按钮为「更新到 x」（有可用更新时，打开更新对话框）或「检查更新」；「手机」页顶部横幅，配对面板显示「无法创建配对」和错误代码。手机的配对页显示「需要更新 Voltip」卡片（Google Play 安装的写「前往 Google Play 更新」，否则走应用内更新），已配对设备行写「无法连接 · 需要更新这部手机」。
 
 回归测试：`crates/voltip-relay/src/core.rs@a_client_below_the_minimum_that_knows_the_error_is_told_and_closed`、`regression_an_older_client_below_the_minimum_may_stay_but_not_pair_or_reconnect`；`crates/voltip-relay/src/policy.rs@a_policy_parses_and_only_a_known_older_version_is_too_old`、`the_override_wins_while_valid_and_a_broken_main_file_keeps_the_last_valid_policy`；`crates/voltip-relay/tests/socket.rs@the_policy_file_turns_old_clients_away_and_stats_count_them`；`crates/voltip-transport/tests/link.rs@a_relay_that_requires_a_newer_version_makes_the_link_wait`、`a_minimum_raised_while_connected_turns_the_link_too_old`；`crates/voltip-core/tests/e2e.rs@a_minimum_raised_on_the_relay_shows_in_the_status_with_the_version`。
+
+## 设备票据（2026-11-03）
+
+问题：托管中继的地址写在公开的代码和安装包里，fork 改一下地址就能用；内置服务的设备号是客户端自己说的。用户的目标是不让别人使用托管中继和内置服务，不收费（2026-11-03 的决定：设备凭据加短期票据，不要账号，不做平台认证，不做闭源模块；先统计，调高最低版本后再拦截）。
+
+- **构建密钥**：每个版本一把，`K_build(v) = HMAC-SHA256(K_master, "voltip-access/build/v1/" ‖ v)`，v 是根 `package.json` 的版本。主密钥只在 `voltip-auth` 的服务器、GitHub secret `VOLTIP_ACCESS_MASTER` 和维护者本机的私有文件里；CI 每条打包腿只有一个步骤读它，派生出这个版本的密钥、遮住后交给构建（`scripts/lib/build-key.sh`），`crates/voltip-access/build.rs` 把它拆成两份编进程序，再编入标记串 `voltip-access:keyed:<版本>`。打包脚本扫描产物：完整的密钥（十六进制或原始字节）出现就失败，标记串缺失也失败（`voltip_scan_build_key`）。没有密钥的构建（fork、PR 的 CI、调试构建）不证明、不换票，其余照常。
+- **证明版本**（`POST /auth/v1/prove`，`voltip-auth`，私有仓库 `voltip-admin/auth/`）：设备号用内置服务的 usage-id（`docs/dictation.md` §27）。请求带 `proof = HMAC(K_build(v), "prove|设备号|client|ts|nonce")`，`client` 是 `voltip/x.y.z (平台)`；已有设备密钥时再带同一串的 `mac`。服务端检查版本不低于最低客户端版本、不在管理台停用的版本里（某个版本的构建密钥泄露时停用它）、时间差不超过 24 小时、nonce 没用过、设备没被撤销、新设备没超过每个 IP 每天的登记上限，成功后记下设备证明过的版本，返回设备密钥 `device_secret = HMAC(K_device, "voltip-access/device/v1/" ‖ 设备号)`。设备密钥在电脑和手机的系统钥匙串里（条目 `voltip.access.device`），本机语音服务放在它自己目录的 `serve/access.json`（0600）。
+- **换票**（`POST /auth/v1/ticket`）：带设备密钥的 `mac`。票据 `base64url(payload) "." base64url(HMAC(K_ticket, base64url(payload)))`，`payload = {"v":1,"d":设备号,"ver":证明过的版本,"exp":…,"scope":["relay","builtin"]}`，有效期 1 小时。票据里的版本始终是最近一次用构建密钥证明的版本；`client` 报的版本与它不同时答复 `prove_required`，客户端先证明再换票。低于最低版本或被停用的版本答复 `version_not_allowed`（证明时和换票时都查）。
+- **客户端**（`voltip_access::AccessClient`）：在后台续票，用到有效期的 75% 时提前换；失败时等 1、2、4……最多 30 分钟，`version_not_allowed` 和 `revoked` 直接等 30 分钟；同一时间只有一个请求。`TicketSource::refresh_now` 让它尽快重试，但两次尝试至少隔 10 秒。请求走内置服务的 HTTPS 客户端（Android 用 Mozilla 根证书，跟随代理设置）。
+- **只给构建自带的中继和内置服务**：中继连接只有在 `RelaySource::Builtin` 时才带票据源（`CoreConfig::tickets`），连接自检从不发；内置服务的请求带 `X-Voltip-Ticket`，用户配置的服务商收不到。
+- **中继的连接内认证**：客户端 `hello.features` 带 `ticket`；中继配了 `--ticket-key-file` 时 `hello_ack.features` 带 `ticket`。这时客户端发 `auth{ticket}`，收到 `auth_ack{exp}` 后才报告「已连接」，所以 `attach` 和配对请求都在认证之后；拿到新票后再发一次 `auth`。没有票时先请求一张、最多等 5 秒（`LinkConfig::ticket_wait`），还没有就不带票继续；票被拒（`ticket_invalid`）也不带票继续。中继验 MAC、`scope` 含 `relay`、未过期，记下这条连接的到期时间；有票时，最低版本按票据里的版本判断。
+- **门禁**（策略 `require_ticket`，默认关）：只有同时设了 `min_version`、中继有票据密钥时才生效。生效后：
+  - `hello` 不带 `ticket` 的客户端按低于最低版本处理（认识 `client_too_old` 的收到它并被关闭，更早的版本被软拦截）；
+  - 带 `ticket` 但没认证的连接，`create_session`、`join_*`、`attach` 收到 `ticket_required`；`forward` 收到 `ticket_required` 并被关闭；
+  - 票据到期而没有新票的连接收到 `ticket_expired` 后被关闭，所以撤销设备后，已经建立的连接最多 1 小时也会断开；
+  - 门禁从关到开的那一刻，中继把所有没有有效票的连接当场撤销（`RelayCore::revoke`）：它的配对会话和频道在中继内立即释放，对方收到 `peer_left` / `peer_presence{online:false}`，此后它发来的任何帧只换来关闭，不依赖关闭消息能否送达。服务端的关闭分两步：读取立即停止，writer 在 2 秒内按顺序发完原因和关闭帧，发不出去（客户端不读）就被强制结束，连接一定关闭。撤销之前已经排进它队列的转发帧仍可能在宽限期内发出。
+- **客户端收到 `ticket_required` / `ticket_expired`**：请求新票，以失败类别 `ticket` 结束这条连接，按退避重连；重连后重新认证，核心照常重新 `attach`，频道恢复。进行中的配对随断开失败；`last_failure` 为 `ticket` 时开始配对被核心拒绝：「无法验证这台设备，请稍后重试或更新 Voltip」。内置服务开启门禁后不带有效票的请求得到 401 `ticket_required`，界面写「无法验证这台设备，请稍后重试或更新 Voltip」。
+- **统计期**：门禁关着时什么都不拒绝，只计数：`auth.ok`、`auth.invalid`、`auth.expired`、`auth.no_feature`（`hello` 不带 `ticket`）、`auth.unauthenticated`（带 `ticket` 却不带票请求会话或频道，每条连接计一次）、`auth.refused`、`auth.revoked`。管理台据此显示有效票的占比，再决定何时打开。
+
+回归测试：`crates/voltip-relay/src/core.rs@regression_turning_the_gate_on_stops_unauthenticated_connections_forwarding`、`under_the_gate_only_authenticated_clients_are_served`、`an_expired_ticket_closes_the_connection_under_the_gate`、`the_minimum_version_reads_the_proven_version`、`without_the_gate_unauthenticated_clients_are_counted_and_served`；`crates/voltip-relay/tests/socket.rs@regression_a_full_queue_does_not_keep_a_cut_off_connection`、`under_the_gate_ticket_required_comes_before_the_close`；`crates/voltip-relay/src/ticket.rs@the_shared_vector_holds`；`crates/voltip-transport/tests/link.rs@regression_ticket_required_refreshes_reconnects_and_the_attach_succeeds`、`regression_a_relay_without_a_ticket_source_gets_no_ticket_and_neither_does_the_probe`、`the_builds_relay_is_shown_the_ticket_before_connected_and_on_renewal`；`crates/voltip-core/tests/e2e.rs@regression_a_relay_the_user_entered_never_gets_the_device_ticket`；`crates/voltip-access/src/tests.rs@the_shared_vectors_hold`；`scripts/check-build-key.sh`（`make verify`）。
 
 ## 中继统计（2026-10-27）
 
@@ -117,6 +138,16 @@ Idle → Joining(code|ticket) → KeyExchange → AwaitingVerification → Trust
 - 统计按连接计数，不按设备：中继没有设备标识，也不该有。中继看不到用户是否确认了安全码（之后只转发密文），所以只统计「两端会合」（两端都加入了会话），不叫「配对成功」。
 
 回归测试：`crates/voltip-relay/src/stats.rs@counts_go_to_their_hour_and_48_hours_are_kept`、`regression_versions_are_named_only_from_the_policy_or_up_to_the_hours_slots`；`crates/voltip-relay/src/core.rs@the_statistics_count_what_happened_and_name_no_device`。
+
+## 中继限额（2026-11-03）
+
+策略 `limits` 的四项，`null` 表示不限，默认全是 `null`：先统计一周，再由管理员在管理台按分布图设数值（用户 2026-11-03 的决定）。
+
+- `forward_bytes_per_minute`、`forward_frames_per_minute`：按连接、按 UTC 整分钟（固定窗口）计，字节数是 `forward.payload` 解码后的长度，被拒绝的转发也计入。超过时中继发 `error{rate_limited, retry_after_secs: 本分钟剩余秒数}` 并关闭连接（Noise 的传输不能只丢一帧），像门禁一样当场撤销它的会话和频道。
+- `connections_per_ip`、`max_connections`：新连接到来时，这个地址已有的连接数或总连接数达到上限，中继发 `error{rate_limited}` 后关闭它。地址经 `--trust-proxy` 还原。
+- 统计（每小时，加进 `GET /stats`，只增加字段）：每个「连接 × 分钟」只要有过转发就记一个样本，分钟结束或连接关闭时写入；`forward_bytes_hist`（分桶边界 64 KiB / 256 KiB / 1 MiB / 4 MiB / 16 MiB / 64 MiB，加溢出桶）、`forward_frames_hist`（60 / 300 / 1200 / 6000，加溢出桶）、精确的 `forward_bytes_max`、`forward_frames_max`、`limited_forward`、`limited_connections`；每个地址这一小时同时连接数的峰值进 `ip_connections_hist`（1 / 2 / 4 / 8 / 16 / 32，加溢出桶）和精确的 `ip_connections_max`，每小时最多跟踪 4096 个地址，其余计入 `ip_overflow`。分桶边界在报告的 `edges` 里。统计里不出现任何地址。
+
+回归测试：`crates/voltip-relay/src/core.rs@forwarding_over_a_minute_limit_closes_the_connection`、`connection_limits_refuse_new_connections`；`crates/voltip-relay/src/stats.rs@samples_and_peaks_fall_into_their_buckets`；`crates/voltip-relay/src/policy.rs@a_policy_parses_and_only_a_known_older_version_is_too_old`。
 
 ## 解除配对
 

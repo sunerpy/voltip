@@ -8,7 +8,8 @@ How to work in this repository, for coding agents and people alike. `CONTRIBUTIN
   events out, ports for everything native); the other crates are its adapters: audio, cloud and
   on-device recognition, clean-up, injection, the insert check's focus readers (`voltip-focus`),
   the pill window's stacking (`voltip-overlay`), platform tables, protocol, crypto, identity,
-  pairing, transport, relay, the network proxy every connection follows (`voltip-net`), what a
+  pairing, transport, relay, the device tickets official builds show the hosted relay and the
+  built-in service (`voltip-access`), the network proxy every connection follows (`voltip-net`), what a
   service said when it refused a request (`voltip-reply`), the local speech service's HTTP layer
   (`voltip-serve`), and the Tauri bridge.
 - `apps/desktop`, `apps/mobile` — the Tauri 2 shells (`src-tauri/`) and their React front ends.

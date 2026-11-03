@@ -100,12 +100,17 @@ impl Shell {
     /// [`Shell::start`] with `updates` for where updates come from (tests point it elsewhere).
     pub fn start_with_updates(
         runtime: Handle,
-        config: CoreConfig,
+        mut config: CoreConfig,
         store: Arc<dyn SecretStore>,
         ports: DictationPorts,
         host: Arc<dyn Host>,
         updates: UpdateConfig,
     ) -> Result<Self, String> {
+        // docs/pairing.md 「设备票据」: an official build shows its relay and the built-in service a
+        // ticket for this device.
+        if config.tickets.is_none() {
+            config.tickets = voltip_cloud::access::device_tickets(&config.data_dir, store.clone(), &config.network, std::env::consts::OS);
+        }
         let updater = Arc::new(PhoneUpdater::new(updates, &config.app_version).with_network(&config.network));
         let network = Arc::clone(&config.network);
         let started = {

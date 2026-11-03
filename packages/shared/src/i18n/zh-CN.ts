@@ -174,6 +174,8 @@ export const zhCN = {
       proxy: "代理无法连接中继，请检查代理设置",
       version: "中继不支持此版本，请更新 Voltip",
       too_old: "此版本过低，请更新 Voltip",
+      /** The relay serves only verified devices (docs/pairing.md 「设备票据」). */
+      ticket: "无法验证这台设备，请稍后重试",
       lost: "连接中断",
       other: "连接失败",
     },
@@ -268,6 +270,8 @@ export const zhCN = {
      *  service said (`serviceReasonText`); the service's words follow as they are. */
     serviceReason: {
       unauthorized: "密钥被拒绝",
+      /** The built-in service serves only verified devices (docs/pairing.md 「设备票据」). */
+      unverified: "无法验证这台设备，请稍后重试或更新 Voltip",
       rateLimited: "请求过于频繁",
       rateLimitedRetry: "请求过于频繁（{s} 秒后可重试）",
       overloaded: "服务繁忙",

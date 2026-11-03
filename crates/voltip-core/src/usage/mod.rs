@@ -21,12 +21,17 @@ use crate::providers::{ProviderId, ServiceKind};
 pub use ledger::{CHART_DAYS, LEDGER_DAYS, LEDGER_FILE_NAME, LedgerView, OriginUse, ProviderUse, PurposeUse, UsageDayView, UsageLedger, UsageNotice};
 pub use report::{AsrQuota, QuotaBasis, QuotaMode, QuotaReport, RefineQuota};
 
+/// Headers computed for each request (the ticket).
+pub type HeaderSource = Arc<dyn Fn() -> Vec<(String, String)> + Send + Sync>;
+
 /// The file that holds this device's usage id.
 pub const DEVICE_ID_FILE_NAME: &str = "usage-id";
 /// The request header naming the device.
 pub const DEVICE_HEADER: &str = "x-voltip-device";
 /// The request header naming the client: `voltip/<version> (<platform>)`.
 pub const CLIENT_HEADER: &str = "x-voltip-client";
+/// The request header carrying the device's ticket (docs/pairing.md 「设备票据」).
+pub use voltip_access::TICKET_HEADER;
 /// The request header saying what a recognition is for: `take` or `preview`.
 pub const PURPOSE_HEADER: &str = "x-voltip-purpose";
 /// The request header carrying a recognition's length of audio, in milliseconds.
@@ -163,6 +168,8 @@ pub struct Metering {
     default_origin: UsageOrigin,
     sink: Arc<dyn Fn(UsageNote) + Send + Sync>,
     clock: Arc<dyn Fn() -> u64 + Send + Sync>,
+    /// The device's tickets, sent with every request (only the built-in service is metered).
+    tickets: Option<Arc<dyn voltip_access::TicketSource>>,
 }
 
 impl PartialEq for Metering {
@@ -183,7 +190,18 @@ impl Metering {
     /// `device` (its usage id) as `client` (`voltip/<version> (<platform>)`), telling `sink`; a
     /// call that names no origin is `default_origin`'s.
     pub fn new(device: impl Into<String>, client: impl Into<String>, default_origin: UsageOrigin, sink: impl Fn(UsageNote) + Send + Sync + 'static) -> Self {
-        Self { device: device.into(), client: client.into(), default_origin, sink: Arc::new(sink), clock: Arc::new(wall_clock_ms) }
+        Self { device: device.into(), client: client.into(), default_origin, sink: Arc::new(sink), clock: Arc::new(wall_clock_ms), tickets: None }
+    }
+
+    /// Where its tickets come from, if anywhere.
+    pub fn tickets(&self) -> Option<&Arc<dyn voltip_access::TicketSource>> {
+        self.tickets.as_ref()
+    }
+
+    /// The same metering, its requests carrying the ticket of `tickets` when there is one.
+    pub fn with_tickets(mut self, tickets: Option<Arc<dyn voltip_access::TicketSource>>) -> Self {
+        self.tickets = tickets;
+        self
     }
 
     /// The same metering on `clock` (milliseconds since the epoch; tests).
@@ -206,6 +224,18 @@ impl Metering {
     /// The headers every request to the built-in service carries.
     pub fn headers(&self) -> Vec<(String, String)> {
         vec![(DEVICE_HEADER.to_owned(), self.device.clone()), (CLIENT_HEADER.to_owned(), self.client.clone())]
+    }
+
+    /// The headers that change from request to request: the current ticket, when there is one.
+    pub fn ticket_headers(&self) -> Vec<(String, String)> {
+        self.tickets.as_ref().and_then(|t| t.current()).map(|t| vec![(TICKET_HEADER.to_owned(), t.as_str().to_owned())]).unwrap_or_default()
+    }
+
+    /// A function that reads [`Metering::ticket_headers`] at each request, for the clients that
+    /// copy the static headers once.
+    pub fn ticket_header_source(&self) -> Option<HeaderSource> {
+        let tickets = self.tickets.clone()?;
+        Some(Arc::new(move || tickets.current().map(|t| vec![(TICKET_HEADER.to_owned(), t.as_str().to_owned())]).unwrap_or_default()))
     }
 
     /// An answer's `X-Voltip-Quota`: the device's day, to the owner. An unreadable report is

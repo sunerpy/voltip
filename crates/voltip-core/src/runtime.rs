@@ -181,6 +181,10 @@ pub struct CoreConfig {
     /// Asks the built-in service for this device's day (docs/dictation.md §27); `None`: the usage
     /// shows what the service's answers report, and nothing is asked.
     pub usage_probe: Option<Arc<dyn crate::usage::UsageProbe>>,
+    /// This device's tickets (docs/pairing.md 「设备票据」), from a build that carries the build
+    /// key: shown to the build's own relay and the built-in service, never to a relay or provider
+    /// the user entered. `None`: none are sent.
+    pub tickets: Option<Arc<dyn voltip_access::TicketSource>>,
     /// Tests only.
     #[doc(hidden)]
     pub test_hooks: TestHooks,
@@ -260,6 +264,7 @@ impl CoreConfig {
             sync_stats: Arc::default(),
             network: voltip_net::Network::new(),
             usage_probe: None,
+            tickets: None,
             test_hooks: TestHooks::default(),
         }
     }
@@ -956,6 +961,10 @@ impl AppCore {
         secret_store: Arc<dyn SecretStore>,
         ports: DictationPorts,
     ) -> Result<(CoreHandle, mpsc::Receiver<CoreEvent>), CoreError> {
+        // The device's tickets renew on this runtime from now on (docs/pairing.md 「设备票据」).
+        if let Some(tickets) = &config.tickets {
+            tickets.start();
+        }
         let (rt, inbox, handle, events) = Self::build(config, secret_store, ports)?;
         tokio::spawn(async move { rt.run(inbox).await });
         Ok((handle, events))
@@ -1006,7 +1015,8 @@ impl AppCore {
         let resolved = ResolvedEngines::resolve_with_models(&settings.engines, &user_secrets, &built_in, &library);
         let (levels_tx, _) = broadcast::channel(LEVELS_QUEUE);
         // docs/dictation.md §27: every client is metered from the first take on.
-        let (usage, usage_rx) = usage::UsageRuntime::new(&config.data_dir, format!("{} ({})", config.client_version, std::env::consts::OS));
+        let (usage, usage_rx) =
+            usage::UsageRuntime::new(&config.data_dir, format!("{} ({})", config.client_version, std::env::consts::OS), config.tickets.clone());
         let (mut dictation, dict_rx) = DictationEngine::metered(ports, &resolved, levels_tx.clone(), Some(usage.metering.clone()));
         dictation.set_vocabulary(Arc::new(Vocabulary::compile(dictionary.entries(), rules.rules())));
         dictation.set_scenes(Arc::new(scenes.scenes().to_vec()));
@@ -1526,6 +1536,10 @@ impl Runtime {
         cfg.probe_timeout = self.config.relay_probe_timeout;
         cfg.write_gate = self.config.test_hooks.relay_write_gate.clone();
         cfg.network = voltip_net::NetworkRef::new(&self.config.network);
+        // The device ticket goes to the build's own relay only (docs/pairing.md 「设备票据」).
+        if source == RelaySource::Builtin {
+            cfg.ticket = self.config.tickets.clone();
+        }
         let link = self.spawn_link(LinkId::Relay, cfg);
         self.relay_status = RelayStatus { endpoint: shown, source, state: ConnectionState::Connecting, attempts: 0, last_failure: None };
         self.emit(CoreEvent::Relay(self.relay_status.clone()));
@@ -2914,11 +2928,15 @@ impl Runtime {
         if self.relay_connected() {
             return Ok(());
         }
-        let too_old = self.relay_status.last_failure.as_ref().is_some_and(|f| f.kind == voltip_transport::FailureKind::TooOld);
+        let failed = self.relay_status.last_failure.as_ref().map(|f| f.kind);
         let why = match self.relay_status.source {
             RelaySource::None => "pairing: 配对需要中继，请先在设置中开启中继",
             // docs/pairing.md 「最低版本」: only an update helps.
-            RelaySource::Builtin | RelaySource::User if too_old => "pairing: 此版本过低，请更新 Voltip 后再配对",
+            RelaySource::Builtin | RelaySource::User if failed == Some(voltip_transport::FailureKind::TooOld) => "pairing: 此版本过低，请更新 Voltip 后再配对",
+            // docs/pairing.md 「设备票据」: the relay serves only verified devices.
+            RelaySource::Builtin | RelaySource::User if failed == Some(voltip_transport::FailureKind::Ticket) => {
+                "pairing: 无法验证这台设备，请稍后重试或更新 Voltip"
+            }
             RelaySource::Builtin | RelaySource::User => "pairing: 尚未连上中继，请检查网络后再试",
         };
         Err(CoreError::Invalid(why.into()))
@@ -3589,6 +3607,8 @@ impl Runtime {
             }
             RelayFrame::Hello { .. }
             | RelayFrame::HelloAck { .. }
+            | RelayFrame::Auth { .. }
+            | RelayFrame::AuthAck { .. }
             | RelayFrame::CreateSession { .. }
             | RelayFrame::JoinByCode { .. }
             | RelayFrame::JoinBySession { .. }
