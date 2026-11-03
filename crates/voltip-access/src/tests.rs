@@ -64,13 +64,21 @@ impl CredentialStore for MemoryStore {
 struct FakeAuth {
     proves: AtomicUsize,
     tickets: AtomicUsize,
+    /// When each ticket request arrived.
+    ticket_times: Mutex<Vec<Instant>>,
     ticket_refusals: Mutex<Vec<&'static str>>,
     lifetime: u64,
 }
 
 impl FakeAuth {
     fn new(lifetime: u64, ticket_refusals: Vec<&'static str>) -> Arc<Self> {
-        Arc::new(Self { proves: AtomicUsize::new(0), tickets: AtomicUsize::new(0), ticket_refusals: Mutex::new(ticket_refusals), lifetime })
+        Arc::new(Self {
+            proves: AtomicUsize::new(0),
+            tickets: AtomicUsize::new(0),
+            ticket_times: Mutex::new(Vec::new()),
+            ticket_refusals: Mutex::new(ticket_refusals),
+            lifetime,
+        })
     }
 }
 
@@ -105,6 +113,7 @@ impl Respond for Prove {
 
 impl Respond for Tickets {
     fn respond(&self, request: &Request) -> ResponseTemplate {
+        self.0.ticket_times.lock().push(Instant::now());
         self.0.tickets.fetch_add(1, Ordering::SeqCst);
         if let Some(code) = self.0.ticket_refusals.lock().pop() {
             return refusal(code);
@@ -247,17 +256,21 @@ async fn refresh_now_renews_soon_and_is_paced() {
     assert!(started.elapsed() < Duration::from_secs(5));
 }
 
-/// Failures wait longer each time, up to the most.
+/// Failures wait longer each time, up to the most: the gaps between tries are at least 50, 100,
+/// 200 and 200 ms. Only the least gaps are checked: a busy machine makes a wait late, never early
+/// (regression: a fixed 700 ms window saw no try at all once in 200 runs under load).
 #[tokio::test]
 async fn failures_back_off() {
     let fake = FakeAuth::new(3600, vec!["busy"; 20]);
     let server = auth(&fake).await;
     let access = client(&server, Arc::new(MemoryStore::default()), Arc::new(AtomicUsize::new(0)));
     let _task = access.spawn();
-    tokio::time::sleep(Duration::from_millis(700)).await;
-    let tries = fake.tickets.load(Ordering::SeqCst);
-    // 50 + 100 + 200 + 200 ms … : about 4 or 5 tries in 700 ms, never one every few milliseconds.
-    assert!((2..=7).contains(&tries), "{tries} tries");
+    until("five tries", || fake.tickets.load(Ordering::SeqCst) >= 5).await;
+    let times = fake.ticket_times.lock().clone();
+    let gaps: Vec<Duration> = times.windows(2).map(|w| w[1] - w[0]).take(4).collect();
+    for (gap, least) in gaps.iter().zip([50, 100, 200, 200]) {
+        assert!(*gap >= Duration::from_millis(least), "never sooner than the backoff: {gaps:?}");
+    }
 }
 
 #[test]
