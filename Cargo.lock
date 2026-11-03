@@ -7614,6 +7614,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "voltip-access"
+version = "0.0.0"
+dependencies = [
+ "hex",
+ "hmac 0.13.0",
+ "parking_lot",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "uuid",
+ "wiremock",
+]
+
+[[package]]
 name = "voltip-asr"
 version = "0.0.0"
 dependencies = [

@@ -29,6 +29,7 @@ mkdir -p apps/desktop/dist apps/mobile/dist
 # Hermetic gates: the core tests assert the "no built-in engine" state, so compile-time defaults
 # from a sourced .env.build or the CI environment must not leak into this run.
 unset VOLTIP_ASR_URL VOLTIP_ASR_TOKEN VOLTIP_ASR_MODEL VOLTIP_REFINE_URL VOLTIP_REFINE_API_KEY VOLTIP_REFINE_MODEL VOLTIP_RELAY_URL VOLTIP_UPDATE_URL VOLTIP_UPDATE_PUBKEY VOLTIP_FEEDBACK_URL VOLTIP_FEEDBACK_TOKEN
+unset VOLTIP_AUTH_URL VOLTIP_BUILD_KEY VOLTIP_BUILD_KEY_VERSION VOLTIP_REQUIRE_BUILD_KEY VOLTIP_EXPECT_PROOF
 
 overall=0
 # gate <group> <name> <command…>: run it when its group is selected.
@@ -57,6 +58,8 @@ gate rust rust-coverage   make coverage-gate
 gate rust coverage-parity ./scripts/check-coverage-parity.sh
 gate rust cargo-deny      cargo deny check bans licenses sources
 gate rust ipc-e2e         make e2e-ipc
+# The build key's build-time contract with a throwaway key (docs/pairing.md 「设备票据」).
+gate rust build-key       ./scripts/check-build-key.sh
 gate web web-lint        pnpm -r run lint
 gate web web-typecheck   pnpm -r run typecheck
 gate web web-format      pnpm -r run format:check

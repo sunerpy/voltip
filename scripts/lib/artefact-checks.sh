@@ -90,3 +90,34 @@ voltip_linux_sonames_accounted() { # <exe> <label> [list: VOLTIP_LINUX_SONAMES |
     return 1
   fi
 }
+
+# Fail when the build key (VOLTIP_BUILD_KEY, hex; docs/pairing.md 「设备票据」) is inside <file>
+# whole, as hex text in either case or as its 32 bytes. When a key is set, also fail when the
+# marker `voltip-access:keyed:<VOLTIP_BUILD_KEY_VERSION>` is missing: the binary did not take the
+# key. Without a key there is nothing to look for, unless VOLTIP_REQUIRE_BUILD_KEY=1.
+# voltip_scan_build_key <file> <label>
+voltip_scan_build_key() {
+  [ -f "$1" ] && [ -r "$1" ] || {
+    echo "$2: $1 is missing or unreadable — nothing to scan" >&2
+    return 1
+  }
+  if [ -z "${VOLTIP_BUILD_KEY:-}" ]; then
+    if [ "${VOLTIP_REQUIRE_BUILD_KEY:-}" = 1 ]; then
+      echo "$2: VOLTIP_REQUIRE_BUILD_KEY=1 but no VOLTIP_BUILD_KEY to scan for" >&2
+      return 1
+    fi
+    return 0
+  fi
+  python3 -I - "$1" "$2" <<'PY'
+import mmap, os, sys
+path, label = sys.argv[1], sys.argv[2]
+key = os.environ["VOLTIP_BUILD_KEY"].strip().lower()
+marker = ("voltip-access:keyed:" + os.environ.get("VOLTIP_BUILD_KEY_VERSION", "").strip()).encode()
+with open(path, "rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as data:
+    for needle in (bytes.fromhex(key), key.encode(), key.upper().encode()):
+        if data.find(needle) != -1:
+            sys.exit(f"{label}: the build key is inside {path} whole — refusing to ship")
+    if data.find(marker) == -1:
+        sys.exit(f"{label}: {path} lacks {marker.decode()}: the build did not take the build key")
+PY
+}
