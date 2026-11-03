@@ -9,6 +9,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod access;
 pub mod dashscope;
 pub mod feedback;
 
@@ -79,13 +80,21 @@ impl Transcriber for HttpTranscriber {
 /// The recognition client's metering for the built-in service (docs/dictation.md §27).
 pub fn asr_metering(metering: &Metering) -> voltip_asr::Metering {
     let reports = metering.clone();
-    voltip_asr::Metering { headers: metering.headers(), on_report: Arc::new(move |report| reports.report(report)) }
+    voltip_asr::Metering {
+        headers: metering.headers(),
+        on_report: Arc::new(move |report| reports.report(report)),
+        per_request: metering.ticket_header_source(),
+    }
 }
 
 /// The clean-up client's metering for the built-in service (docs/dictation.md §27).
 pub fn refine_metering(metering: &Metering) -> voltip_refine::Metering {
     let reports = metering.clone();
-    voltip_refine::Metering { headers: metering.headers(), on_report: Arc::new(move |report| reports.report(report)) }
+    voltip_refine::Metering {
+        headers: metering.headers(),
+        on_report: Arc::new(move |report| reports.report(report)),
+        per_request: metering.ticket_header_source(),
+    }
 }
 
 /// Clean-up through [`voltip_refine::RefineClient`].
@@ -861,6 +870,20 @@ mod tests {
         (metering, notes)
     }
 
+    /// A device that holds the ticket `p.m`.
+    #[derive(Debug)]
+    struct OneTicket(tokio::sync::watch::Sender<u64>);
+
+    impl voltip_access::TicketSource for OneTicket {
+        fn current(&self) -> Option<voltip_access::Ticket> {
+            Some(voltip_access::Ticket::new("p.m"))
+        }
+        fn refresh_now(&self) {}
+        fn subscribe(&self) -> tokio::sync::watch::Receiver<u64> {
+            self.0.subscribe()
+        }
+    }
+
     /// docs/dictation.md §27: only the built-in service is told which device asks and what for, and
     /// its answers' reports reach the metering; a service the user configured gets none of it, even
     /// when the engines carry a metering.
@@ -884,6 +907,7 @@ mod tests {
             .await;
         let url: &'static str = Box::leak(server.uri().into_boxed_str());
         let (metering, notes) = test_metering();
+        let metering = metering.with_tickets(Some(Arc::new(OneTicket(tokio::sync::watch::channel(0).0))));
         let built_in = BuiltIn { asr_url: Some(url), asr_token: Some("app-token"), refine_url: Some(url), refine_api_key: Some("app-key"), ..BuiltIn::EMPTY };
         let mut engines = ResolvedEngines::resolve(&EngineSettings::default(), &UserSecrets::default(), &built_in);
         assert_eq!((engines.asr_provider, engines.llm_provider), (ProviderId::Builtin, Some(ProviderId::Builtin)));
@@ -905,13 +929,14 @@ mod tests {
         for i in 0..4 {
             assert_eq!(header(i, DEVICE_HEADER).as_deref(), Some("6f1c2d3e-0000-4000-8000-000000000001"), "request {i}");
             assert_eq!(header(i, CLIENT_HEADER).as_deref(), Some("voltip/0.1.10 (linux)"), "request {i}");
+            assert_eq!(header(i, voltip_core::usage::TICKET_HEADER).as_deref(), Some("p.m"), "request {i}: the device ticket (docs/pairing.md 「设备票据」)");
         }
         assert_eq!((header(0, PURPOSE_HEADER), header(0, AUDIO_MS_HEADER)), (Some("take".into()), Some("1500".into())));
         assert_eq!((header(1, PURPOSE_HEADER), header(1, AUDIO_MS_HEADER)), (Some("preview".into()), Some("1500".into())));
         assert_eq!((header(2, PURPOSE_HEADER), header(3, PURPOSE_HEADER)), (Some("refine".into()), Some("edit".into())));
         assert_eq!(header(3, AUDIO_MS_HEADER), None, "a clean-up carries no audio length");
         for i in 4..6 {
-            for name in [DEVICE_HEADER, CLIENT_HEADER, PURPOSE_HEADER, AUDIO_MS_HEADER] {
+            for name in [DEVICE_HEADER, CLIENT_HEADER, PURPOSE_HEADER, AUDIO_MS_HEADER, voltip_core::usage::TICKET_HEADER] {
                 assert_eq!(header(i, name), None, "request {i} told the user's service {name}");
             }
         }

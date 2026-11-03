@@ -472,7 +472,9 @@ mod tests {
         let limits = RelayLimits { code_attempts_per_connection: 5, code_attempts_per_session: 10, session_ttl_secs: 120 };
         let plain = RelayFrame::HelloAck { version: ProtocolVersion::CURRENT, relay_version: "r".into(), limits, features: Vec::new() };
         assert_eq!(plain.encode().unwrap(), older, "a relay without tickets answers as before");
-        let text = RelayFrame::HelloAck { version: ProtocolVersion::CURRENT, relay_version: "r".into(), limits, features: vec![FEATURE_TICKET.into()] }.encode().unwrap();
+        let text = RelayFrame::HelloAck { version: ProtocolVersion::CURRENT, relay_version: "r".into(), limits, features: vec![FEATURE_TICKET.into()] }
+            .encode()
+            .unwrap();
         assert!(text.ends_with(r#""features":["ticket"]}"#), "{text}");
         assert_eq!(RelayFrame::auth("p.m").encode().unwrap(), r#"{"type":"auth","version":1,"ticket":"p.m"}"#);
         assert_eq!(RelayFrame::AuthAck { version: ProtocolVersion::CURRENT, exp: 7 }.encode().unwrap(), r#"{"type":"auth_ack","version":1,"exp":7}"#);

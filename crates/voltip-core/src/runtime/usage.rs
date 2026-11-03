@@ -61,7 +61,7 @@ pub(super) struct UsageRuntime {
 impl UsageRuntime {
     /// The metering of `device` as `client`, its record in `dir`; the notes come back on the
     /// returned receiver.
-    pub(super) fn new(dir: &std::path::Path, client: String) -> (Self, mpsc::Receiver<UsageInbound>) {
+    pub(super) fn new(dir: &std::path::Path, client: String, tickets: Option<Arc<dyn voltip_access::TicketSource>>) -> (Self, mpsc::Receiver<UsageInbound>) {
         let device = crate::usage::device_id(dir).unwrap_or_else(|e| {
             tracing::warn!(error = %e, "the usage id could not be saved; using one for this run");
             uuid::Uuid::new_v4().to_string()
@@ -72,7 +72,8 @@ impl UsageRuntime {
             if sink.try_send(UsageInbound::Note(note)).is_err() {
                 tracing::debug!("usage note dropped: the core is behind");
             }
-        });
+        })
+        .with_tickets(tickets);
         let runtime = Self {
             metering,
             ledger: UsageLedger::open(dir),
@@ -185,7 +186,9 @@ impl Runtime {
         }
         let Some((probe, base, token)) = self.usage_question() else { return };
         self.usage.asking();
-        let (headers, tx) = (self.usage.metering.headers(), self.usage.tx.clone());
+        let mut headers = self.usage.metering.headers();
+        headers.extend(self.usage.metering.ticket_headers());
+        let tx = self.usage.tx.clone();
         tokio::spawn(async move {
             let result = probe.quota(base, token, &headers).await;
             let _ = tx.send(UsageInbound::Probed(result)).await;
@@ -229,7 +232,7 @@ mod tests {
 
     fn runtime() -> (UsageRuntime, mpsc::Receiver<UsageInbound>, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
-        let (usage, rx) = UsageRuntime::new(dir.path(), "voltip/test (linux)".into());
+        let (usage, rx) = UsageRuntime::new(dir.path(), "voltip/test (linux)".into(), None);
         (usage, rx, dir)
     }
 

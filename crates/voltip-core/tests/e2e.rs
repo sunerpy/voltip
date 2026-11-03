@@ -1517,3 +1517,39 @@ async fn regression_clean_ups_running_together_are_each_recorded_with_their_own_
     phone.handle.send(CoreCommand::Shutdown).await.unwrap();
     desk.handle.send(CoreCommand::Shutdown).await.unwrap();
 }
+
+/// A device that always holds one ticket.
+#[derive(Debug)]
+struct HeldTicket(tokio::sync::watch::Sender<u64>, String);
+
+impl voltip_access::TicketSource for HeldTicket {
+    fn current(&self) -> Option<voltip_access::Ticket> {
+        Some(voltip_access::Ticket::new(self.1.clone()))
+    }
+    fn refresh_now(&self) {}
+    fn subscribe(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.0.subscribe()
+    }
+}
+
+/// Regression guard (plan review 2026-11-03, round 1; docs/pairing.md 「设备票据」): the device
+/// ticket goes to the build's own relay only. A relay the user entered, even one that asks for
+/// tickets, gets none: not on connecting, not while pairing.
+#[tokio::test]
+async fn regression_a_relay_the_user_entered_never_gets_the_device_ticket() {
+    let key = voltip_relay::ticket::TicketKey::new(&[9; 32]).unwrap();
+    let exp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() + 3600;
+    let ticket = key.issue(&voltip_relay::ticket::TicketPayload { v: 1, d: "dev".into(), ver: "0.3.1".into(), exp, scope: vec!["relay".into()] });
+    let (url, _addr, _stop, relay) = relay_with(RelayConfig { ticket_key: Some(key), ..RelayConfig::default() }).await;
+    let settings = Settings { relay_url: Some(url.clone()), relay_enabled: true, ..Settings::default() };
+    let tickets: Arc<dyn voltip_access::TicketSource> = Arc::new(HeldTicket(tokio::sync::watch::channel(0).0, ticket));
+    let mut desk = node_tuned(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "desk", &settings, |c| c.tickets = Some(tickets.clone()));
+    let mut phone = node_tuned(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "phone", &settings, |c| c.tickets = Some(tickets.clone()));
+    wait(&mut desk, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+    wait(&mut phone, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+    pair_by_code(&mut desk, &mut phone).await;
+    let hours = relay.stats_report().hours;
+    let (ok, invalid, unauthenticated) = hours.iter().fold((0, 0, 0), |(a, b, c), h| (a + h.auth.ok, b + h.auth.invalid, c + h.auth.unauthenticated));
+    assert_eq!((ok, invalid), (0, 0), "no ticket reached the user's relay");
+    assert!(unauthenticated >= 2, "both cores paired there without one");
+}

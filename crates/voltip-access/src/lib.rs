@@ -83,6 +83,9 @@ pub trait TicketSource: Send + Sync + std::fmt::Debug {
     fn refresh_now(&self);
     /// Changes whenever a new ticket comes.
     fn subscribe(&self) -> watch::Receiver<u64>;
+    /// Begin renewing on the current Tokio runtime (the core calls it as it starts); a second
+    /// call does nothing.
+    fn start(&self) {}
 }
 
 /// The device secret `voltip-auth` gave this device. `Debug` hides it.
@@ -277,6 +280,9 @@ pub struct AccessClient {
     http: HttpFactory,
     held: Mutex<Option<Held>>,
     wake: Arc<Notify>,
+    /// Itself, for [`TicketSource::start`].
+    me: std::sync::Weak<Self>,
+    started: std::sync::atomic::AtomicBool,
     tickets: watch::Sender<u64>,
     timing: Timing,
     /// Unix seconds (tests turn it).
@@ -298,7 +304,7 @@ impl AccessClient {
     /// [`AccessClient::new`] with its own `timing`, on `wall` (Unix seconds; tests).
     pub fn tuned(config: AccessConfig, key: BuildKey, store: Arc<dyn CredentialStore>, http: HttpFactory, timing: Timing, wall: fn() -> u64) -> Arc<Self> {
         let client = client_name(key.version(), &config.platform);
-        Arc::new(Self {
+        Arc::new_cyclic(|me| Self {
             config,
             client,
             key,
@@ -306,6 +312,8 @@ impl AccessClient {
             http,
             held: Mutex::new(None),
             wake: Arc::new(Notify::new()),
+            me: me.clone(),
+            started: std::sync::atomic::AtomicBool::new(false),
             tickets: watch::channel(0).0,
             timing,
             wall,
@@ -314,6 +322,7 @@ impl AccessClient {
 
     /// Renew in the background on the current Tokio runtime until the client is dropped.
     pub fn spawn(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
+        self.started.store(true, std::sync::atomic::Ordering::SeqCst);
         let weak = Arc::downgrade(self);
         let (wake, timing) = (self.wake.clone(), self.timing);
         tokio::spawn(async move {
@@ -405,7 +414,8 @@ impl AccessClient {
         let ts = (self.wall)();
         let nonce = uuid::Uuid::new_v4().simple().to_string();
         let device = &self.config.device_id;
-        let request = TicketRequest { device_id: device, client: &self.client, ts, nonce: &nonce, mac: device_mac(&secret, "ticket", device, &self.client, ts, &nonce) };
+        let request =
+            TicketRequest { device_id: device, client: &self.client, ts, nonce: &nonce, mac: device_mac(&secret, "ticket", device, &self.client, ts, &nonce) };
         let answer: TicketAnswer = self.post("ticket", &request).await?;
         if answer.ticket.is_empty() || answer.ticket.len() > 1024 || answer.exp <= answer.now {
             return Err(AccessError::BadAnswer("ticket".into()));
@@ -454,6 +464,62 @@ impl TicketSource for AccessClient {
 
     fn subscribe(&self) -> watch::Receiver<u64> {
         self.tickets.subscribe()
+    }
+
+    fn start(&self) {
+        if self.started.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+        if let Some(me) = self.me.upgrade() {
+            drop(me.spawn());
+        }
+    }
+}
+
+/// The device secret in a private file: `voltip-server`'s store (it has no keychain of its own).
+/// The file holds `{"device_secret":"<hex>"}` and is written with mode 0600 where there are modes.
+#[derive(Debug)]
+pub struct FileStore {
+    path: std::path::PathBuf,
+}
+
+impl FileStore {
+    /// The secret at `path`.
+    pub fn new(path: impl Into<std::path::PathBuf>) -> Self {
+        Self { path: path.into() }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct SecretFile {
+    device_secret: String,
+}
+
+impl CredentialStore for FileStore {
+    fn load(&self) -> Option<DeviceSecret> {
+        let text = std::fs::read_to_string(&self.path).ok()?;
+        let file: SecretFile = serde_json::from_str(&text).ok()?;
+        Some(DeviceSecret::new(file.device_secret))
+    }
+
+    fn save(&self, secret: &DeviceSecret) -> Result<(), String> {
+        if let Some(dir) = self.path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        }
+        let text = serde_json::to_string(&SecretFile { device_secret: secret.as_str().to_owned() }).map_err(|e| e.to_string())?;
+        let tmp = self.path.with_extension("tmp");
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        let mut file = options.open(&tmp).map_err(|e| e.to_string())?;
+        std::io::Write::write_all(&mut file, text.as_bytes()).map_err(|e| e.to_string())?;
+        drop(file);
+        std::fs::rename(&tmp, &self.path).map_err(|e| e.to_string())
+    }
+
+    fn clear(&self) {
+        let _ = std::fs::remove_file(&self.path);
     }
 }
 

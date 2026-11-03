@@ -722,6 +722,7 @@ export function coreMessageText(message: string): string {
 
 type ServiceReasonKey =
   | "unauthorized"
+  | "unverified"
   | "rateLimited"
   | "rateLimitedRetry"
   | "overloaded"
@@ -747,6 +748,11 @@ const SERVICE_REASONS: readonly {
     said?: string;
   };
 }[] = [
+  {
+    // The built-in service's gateway: this device has no valid ticket (docs/pairing.md 「设备票据」).
+    pattern: /^(?:ASR|refine service) rejected the credentials: ticket_required$/,
+    read: () => ({ key: "unverified" }),
+  },
   {
     pattern: /^(?:ASR|refine service) rejected the credentials(?:: ([\s\S]*))?$/,
     read: (m) => ({ key: "unauthorized", said: m[1] }),

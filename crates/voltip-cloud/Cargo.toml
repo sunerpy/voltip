@@ -24,8 +24,11 @@ sha2.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 uuid.workspace = true
+# The device's tickets (src/access.rs, docs/pairing.md 「设备票据」).
+voltip-access.workspace = true
 voltip-asr.workspace = true
 voltip-core.workspace = true
+voltip-identity.workspace = true
 voltip-refine.workspace = true
 # The proxy every client here follows (docs/dictation.md §24).
 voltip-net.workspace = true
@@ -39,6 +42,7 @@ webpki-root-certs.workspace = true
 
 [dev-dependencies]
 futures-util.workspace = true
+tempfile.workspace = true
 tokio.workspace = true
 tokio-tungstenite.workspace = true
 webpki-root-certs.workspace = true

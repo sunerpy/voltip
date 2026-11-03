@@ -15,6 +15,8 @@ for tool in cargo cargo-about node readelf ldd sha256sum tar strings; do
   command -v "$tool" >/dev/null || { echo "build-server-linux-x64: $tool not installed"; exit 2; }
 done
 . scripts/lib/build-env.sh && voltip_load_build_env
+# The build key for the device tickets (docs/pairing.md 「设备票据」), when a master secret is at hand.
+. scripts/lib/build-key.sh && voltip_build_key
 . scripts/lib/require-builtin-engines.sh && voltip_require_builtin_engines
 . scripts/lib/head-commit.sh
 # TRANSCRIBE_CMAKE_ARGS for the Vulkan backend and VOLTIP_VULKAN_LIB_DIR, whose loader the package ships.
@@ -31,6 +33,7 @@ exe=target/release/voltip-server
 # ship or check for (scripts/lib/artefact-checks.sh).
 . scripts/lib/artefact-checks.sh
 voltip_scan_provider_keys "$exe" build-server-linux-x64
+voltip_scan_build_key "$exe" build-server-linux-x64
 voltip_output_has 'NEEDED.*\[libvulkan\.so\.1\]' readelf -d "$exe" || { echo "build-server-linux-x64: voltip-server does not link libvulkan.so.1 (built without the Vulkan backend)"; exit 1; }
 voltip_linux_sonames_accounted "$exe" build-server-linux-x64 VOLTIP_SERVER_SONAMES || exit 1
 

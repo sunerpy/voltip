@@ -54,12 +54,8 @@ async fn main() -> std::io::Result<()> {
         None => None,
     };
     tracing::info!(tickets = ticket_key.is_some(), "relay starting");
-    let config = RelayConfig {
-        session_ttl: std::time::Duration::from_secs(args.session_ttl),
-        trusted_proxies: args.trust_proxy,
-        ticket_key,
-        ..RelayConfig::default()
-    };
+    let config =
+        RelayConfig { session_ttl: std::time::Duration::from_secs(args.session_ttl), trusted_proxies: args.trust_proxy, ticket_key, ..RelayConfig::default() };
     let handle = RelayHandle::new(config);
     if let Some(policy) = args.policy {
         handle.watch_policy(PolicyFiles::new(policy, args.policy_override));

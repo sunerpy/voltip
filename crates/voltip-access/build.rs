@@ -27,7 +27,10 @@ fn main() {
     let required = std::env::var("VOLTIP_REQUIRE_BUILD_KEY").is_ok_and(|v| v.trim() == "1");
     let keyed = match (key, key_version) {
         (Some(key), Some(key_version)) => {
-            assert!(key_version.trim() == version, "VOLTIP_BUILD_KEY_VERSION is {key_version:?}, but package.json says {version:?}: derive the key for this version");
+            assert!(
+                key_version.trim() == version,
+                "VOLTIP_BUILD_KEY_VERSION is {key_version:?}, but package.json says {version:?}: derive the key for this version"
+            );
             let bytes = hex::decode(key.trim()).unwrap_or_else(|_| panic!("VOLTIP_BUILD_KEY is not hex"));
             let bytes: [u8; 32] = bytes.try_into().unwrap_or_else(|b: Vec<u8>| panic!("VOLTIP_BUILD_KEY is {} bytes, not 32", b.len()));
             Some(bytes)

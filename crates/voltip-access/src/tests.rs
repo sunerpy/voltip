@@ -89,7 +89,8 @@ impl Respond for Prove {
     fn respond(&self, request: &Request) -> ResponseTemplate {
         self.0.proves.fetch_add(1, Ordering::SeqCst);
         let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
-        let (device, client, ts, nonce) = (body["device_id"].as_str().unwrap(), body["client"].as_str().unwrap(), body["ts"].as_u64().unwrap(), body["nonce"].as_str().unwrap());
+        let (device, client, ts, nonce) =
+            (body["device_id"].as_str().unwrap(), body["client"].as_str().unwrap(), body["ts"].as_u64().unwrap(), body["nonce"].as_str().unwrap());
         if body["proof"] != proof(&key(), device, client, ts, nonce) {
             return refusal("bad_proof");
         }
@@ -109,7 +110,8 @@ impl Respond for Tickets {
             return refusal(code);
         }
         let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
-        let (device, client, ts, nonce) = (body["device_id"].as_str().unwrap(), body["client"].as_str().unwrap(), body["ts"].as_u64().unwrap(), body["nonce"].as_str().unwrap());
+        let (device, client, ts, nonce) =
+            (body["device_id"].as_str().unwrap(), body["client"].as_str().unwrap(), body["ts"].as_u64().unwrap(), body["nonce"].as_str().unwrap());
         if body["mac"] != device_mac(&DeviceSecret::new(SECRET), "ticket", device, client, ts, nonce) {
             return refusal("bad_mac");
         }
@@ -256,4 +258,35 @@ async fn failures_back_off() {
     let tries = fake.tickets.load(Ordering::SeqCst);
     // 50 + 100 + 200 + 200 ms … : about 4 or 5 tries in 700 ms, never one every few milliseconds.
     assert!((2..=7).contains(&tries), "{tries} tries");
+}
+
+#[test]
+fn the_file_store_keeps_the_secret_privately() {
+    let dir = std::env::temp_dir().join(format!("voltip-access-{}", uuid::Uuid::new_v4().simple()));
+    let store = FileStore::new(dir.join("serve").join("access.json"));
+    assert_eq!(store.load(), None);
+    store.save(&DeviceSecret::new(SECRET)).unwrap();
+    assert_eq!(store.load().unwrap().as_str(), SECRET);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = std::fs::metadata(dir.join("serve").join("access.json")).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+    store.clear();
+    assert_eq!(store.load(), None);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// The core starts the renewal once, however often it is asked.
+#[tokio::test]
+async fn start_runs_one_renewal_task() {
+    let fake = FakeAuth::new(3600, Vec::new());
+    let server = auth(&fake).await;
+    let access = client(&server, Arc::new(MemoryStore::default()), Arc::new(AtomicUsize::new(0)));
+    access.start();
+    access.start();
+    until("a ticket", || access.current().is_some()).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(fake.tickets.load(Ordering::SeqCst), 1, "one task, one ticket");
 }

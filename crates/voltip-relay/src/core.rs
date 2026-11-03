@@ -853,7 +853,8 @@ impl RelayCore {
         let Some(c) = self.conns.get_mut(&conn) else { return };
         c.forwarding.bytes += payload.len() as u64;
         c.forwarding.frames += 1;
-        let over = limits.forward_bytes_per_minute.is_some_and(|l| c.forwarding.bytes > l) || limits.forward_frames_per_minute.is_some_and(|l| c.forwarding.frames > l);
+        let over = limits.forward_bytes_per_minute.is_some_and(|l| c.forwarding.bytes > l)
+            || limits.forward_frames_per_minute.is_some_and(|l| c.forwarding.frames > l);
         if over {
             tracing::info!(?conn, "forwarding over the per-minute limit; closing the connection");
             self.book.count(Count::LimitedForward, wall);
@@ -1295,8 +1296,17 @@ mod tests {
     fn server_only_frames_from_clients_are_ignored_and_creator_disconnect_notifies_joiner() {
         let (mut r, t0) = relay();
         assert!(
-            r.on_frame(A, RelayFrame::HelloAck { version: ProtocolVersion::CURRENT, relay_version: "x".into(), limits: RelayConfig::default().limits(), features: Vec::new() }, t0)
-                .is_empty()
+            r.on_frame(
+                A,
+                RelayFrame::HelloAck {
+                    version: ProtocolVersion::CURRENT,
+                    relay_version: "x".into(),
+                    limits: RelayConfig::default().limits(),
+                    features: Vec::new()
+                },
+                t0
+            )
+            .is_empty()
         );
         assert!(r.on_frame(A, RelayFrame::error(RelayErrorCode::Malformed), t0).is_empty());
         assert!(r.on_frame(A, RelayFrame::Joined { version: ProtocolVersion::CURRENT, session_id: SessionId::random() }, t0).is_empty());
@@ -1510,7 +1520,11 @@ mod tests {
 
     fn greet(r: &mut RelayCore, conn: ConnId, ip: IpAddr, client: &str, features: &[&str], t0: Instant) -> Vec<Delivery> {
         assert!(r.on_connect(conn, ip).is_empty());
-        let hello = RelayFrame::Hello { version: ProtocolVersion::CURRENT, client_version: client.into(), features: features.iter().map(|f| (*f).to_owned()).collect() };
+        let hello = RelayFrame::Hello {
+            version: ProtocolVersion::CURRENT,
+            client_version: client.into(),
+            features: features.iter().map(|f| (*f).to_owned()).collect(),
+        };
         r.on_frame(conn, hello, t0)
     }
 
@@ -1597,7 +1611,10 @@ mod tests {
         let mut r = ticketed();
         r.set_policy(gate("0.2.0"));
         // 0.2.x knows client_too_old but cannot authenticate: told and closed.
-        assert_eq!(greet(&mut r, A, IP_A, "voltip/0.2.5", &["client_too_old"], t0), vec![Delivery::Send(A, RelayFrame::client_too_old("0.2.0")), Delivery::Close(A)]);
+        assert_eq!(
+            greet(&mut r, A, IP_A, "voltip/0.2.5", &["client_too_old"], t0),
+            vec![Delivery::Send(A, RelayFrame::client_too_old("0.2.0")), Delivery::Close(A)]
+        );
         // Before 0.2.0: it may stay, and gets unsupported_version for anything new.
         greet(&mut r, B, IP_B, "voltip/0.1.9", &[], t0);
         assert_eq!(err_code(&r.on_frame(B, create(), t0)[0]), Some(RelayErrorCode::UnsupportedVersion));

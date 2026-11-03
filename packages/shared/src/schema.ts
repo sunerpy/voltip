@@ -2656,6 +2656,7 @@ export const relayFailureKindSchema = z.enum([
   "proxy",
   "version",
   "too_old",
+  "ticket",
   "lost",
   "other",
 ]);

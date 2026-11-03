@@ -403,14 +403,14 @@ fn the_server_meters_as_the_apps_device_or_as_itself_and_never_writes_the_apps_d
     let (app, own) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let header = |m: &voltip_core::usage::Metering| m.headers().into_iter().find(|(name, _)| name == DEVICE_HEADER).unwrap().1;
 
-    let alone = voltip_server::server_metering(app.path(), own.path());
+    let alone = voltip_server::server_metering(app.path(), own.path(), &voltip_net::Network::new());
     assert!(!app.path().join(DEVICE_ID_FILE_NAME).exists(), "the app's directory is only read");
     let own_id = std::fs::read_to_string(own.path().join(DEVICE_ID_FILE_NAME)).unwrap();
     assert_eq!(header(&alone), own_id.trim());
-    assert_eq!(header(&voltip_server::server_metering(app.path(), own.path())), own_id.trim(), "kept");
+    assert_eq!(header(&voltip_server::server_metering(app.path(), own.path(), &voltip_net::Network::new())), own_id.trim(), "kept");
 
     let app_id = device_id(app.path()).unwrap();
-    assert_eq!(header(&voltip_server::server_metering(app.path(), own.path())), app_id, "the app's device");
-    let client = voltip_server::server_metering(app.path(), own.path()).headers()[1].1.clone();
+    assert_eq!(header(&voltip_server::server_metering(app.path(), own.path(), &voltip_net::Network::new())), app_id, "the app's device");
+    let client = voltip_server::server_metering(app.path(), own.path(), &voltip_net::Network::new()).headers()[1].1.clone();
     assert!(client.starts_with(&format!("voltip/{APP_VERSION} (")) && client.ends_with("; server)"), "{client}");
 }

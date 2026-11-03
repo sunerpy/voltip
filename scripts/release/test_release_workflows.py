@@ -333,6 +333,36 @@ class CandidateBuild(unittest.TestCase):
                 self.assertIn("VOLTIP_FEEDBACK_URL: ${{ secrets.VOLTIP_FEEDBACK_URL }}", body)
                 self.assertIn("VOLTIP_FEEDBACK_TOKEN: ${{ secrets.VOLTIP_FEEDBACK_TOKEN }}", body)
 
+    def test_every_leg_bakes_in_the_build_key_and_auth_url(self) -> None:
+        # docs/pairing.md 「设备票据」: an official build proves its version with the build key and
+        # renews its ticket at VOLTIP_AUTH_URL. The master secret is in one step of each leg only,
+        # which derives this version's key, masks it and requires it; the package's scan checks
+        # the key is not whole in the binary and that the build took it.
+        for leg in self.LEGS:
+            with self.subTest(leg=leg):
+                body = self.jobs[leg]
+                self.assertIn("VOLTIP_AUTH_URL: ${{ secrets.VOLTIP_AUTH_URL }}", body)
+                self.assertEqual(body.count("secrets.VOLTIP_ACCESS_MASTER"), 1, "one step holds the master secret")
+                derive = body.index("- name: Derive the build key")
+                step = body[derive:].split("\n      - name:", 1)[0]
+                self.assertIn("VOLTIP_ACCESS_MASTER: ${{ secrets.VOLTIP_ACCESS_MASTER }}", step)
+                self.assertIn("voltip_build_key_ci", step)
+                self.assertLess(derive, body.index("- name: Build"), "the key is in the environment before the build")
+        lib = (ROOT / "scripts/lib/build-key.sh").read_text(encoding="utf-8")
+        self.assertIn("::add-mask::", lib)
+        self.assertIn("VOLTIP_REQUIRE_BUILD_KEY=1", lib)
+        prepare = self.jobs["prepare"]
+        for name in ("VOLTIP_AUTH_URL", "VOLTIP_ACCESS_MASTER"):
+            self.assertIn(f"{name}_PRESENT: ${{{{ secrets.{name} != '' }}}}", prepare)
+        for script in ("build-linux-x64.sh", "build-windows-x64.sh", "build-server-linux-x64.sh", "build-android-rn.sh"):
+            with self.subTest(script=script):
+                text = (ROOT / "scripts" / script).read_text(encoding="utf-8")
+                self.assertIn("voltip_scan_build_key", text)
+                self.assertIn(". scripts/lib/build-key.sh && voltip_build_key", text)
+        for leg, binary in (("bundle-linux", "target/release/voltip-desktop"), ("bundle-linux", "target/release/voltip-server"), ("bundle-macos", "target/$MACOS_TARGET/release/voltip-desktop")):
+            with self.subTest(leg=leg, binary=binary):
+                self.assertRegex(self.jobs[leg], r'voltip_scan_build_key "?' + re.escape(binary))
+
     def test_regression_the_key_alias_is_no_secret(self) -> None:
         # Candidate 36844362994 (0.0.18, 2026-10-01): the alias was the secret ANDROID_KEY_ALIAS,
         # whose value is the project's name, so GitHub masked "voltip" in every log line of

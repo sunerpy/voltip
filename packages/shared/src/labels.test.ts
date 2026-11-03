@@ -96,6 +96,16 @@ describe("serviceReasonText", () => {
       ],
       ["ASR rejected the credentials", "密钥被拒绝", "the key was refused"],
       [
+        "ASR rejected the credentials: ticket_required",
+        "无法验证这台设备，请稍后重试或更新 Voltip",
+        "this device could not be verified; try again later or update Voltip",
+      ],
+      [
+        "refine service rejected the credentials: ticket_required",
+        "无法验证这台设备，请稍后重试或更新 Voltip",
+        "this device could not be verified; try again later or update Voltip",
+      ],
+      [
         "refine service rejected the credentials: bad key",
         "密钥被拒绝：bad key",
         "the key was refused: bad key",

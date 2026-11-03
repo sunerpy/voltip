@@ -9,8 +9,9 @@ use futures_util::{SinkExt as _, StreamExt as _};
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
+use voltip_access::TicketSource;
 use voltip_protocol::ProtocolVersion;
-use voltip_protocol::relay::RelayFrame;
+use voltip_protocol::relay::{FEATURE_TICKET, RelayErrorCode, RelayFrame};
 
 use crate::{ConnectionMachine, ConnectionState, ReconnectPolicy, RelayEndpoint, StateChange, TransportError};
 
@@ -43,6 +44,13 @@ pub struct LinkConfig {
     pub write_gate: Option<std::sync::Arc<tokio::sync::RwLock<()>>>,
     /// The proxy plan the connection follows (docs/dictation.md §24): each attempt asks it again.
     pub network: voltip_net::NetworkRef,
+    /// The device's tickets (docs/pairing.md 「设备票据」): set only for the build's own relay,
+    /// never for one the user entered. A relay that lists `ticket` in `hello_ack` is sent the
+    /// current one, and every new one after.
+    pub ticket: Option<std::sync::Arc<dyn TicketSource>>,
+    /// How long a connection waits for a ticket when there is none yet, before it goes on
+    /// without one.
+    pub ticket_wait: Duration,
 }
 
 impl LinkConfig {
@@ -61,6 +69,8 @@ impl LinkConfig {
             too_old_retry: Duration::from_secs(30 * 60),
             write_gate: None,
             network: voltip_net::NetworkRef::default(),
+            ticket: None,
+            ticket_wait: Duration::from_secs(5),
         }
     }
 }
@@ -109,6 +119,9 @@ pub enum FailureKind {
     /// This app's version is below the relay's minimum (`LinkFailure::min_version` names it): it
     /// may not pair or reconnect until it is updated (docs/pairing.md 「最低版本」).
     TooOld,
+    /// The relay serves only verified devices and this one has no valid ticket (docs/pairing.md
+    /// 「设备票据」): a new ticket is asked for and the link tries again.
+    Ticket,
     /// The connection was up and went down.
     Lost,
     /// Anything else.
@@ -198,6 +211,7 @@ fn refusal_kind(code: voltip_protocol::relay::RelayErrorCode) -> FailureKind {
     match code {
         voltip_protocol::relay::RelayErrorCode::UnsupportedVersion => FailureKind::Version,
         voltip_protocol::relay::RelayErrorCode::ClientTooOld => FailureKind::TooOld,
+        voltip_protocol::relay::RelayErrorCode::TicketRequired | voltip_protocol::relay::RelayErrorCode::TicketExpired => FailureKind::Ticket,
         _ => FailureKind::Other,
     }
 }
@@ -424,6 +438,53 @@ pub async fn probe(config: &LinkConfig) -> Result<Duration, ProbeFailure> {
     tokio::time::timeout(config.connect_timeout, exchange).await.unwrap_or(Err(ProbeFailure::Timeout))
 }
 
+/// Show the relay the current ticket and wait for its answer. Without a ticket, ask for one and
+/// wait up to `config.ticket_wait`; still none, or one the relay refuses, and the connection goes
+/// on unauthenticated (a relay that requires tickets then says `ticket_required`).
+async fn authenticate<S, R>(source: &dyn TicketSource, config: &LinkConfig, sink: &mut S, stream: &mut R) -> Result<(), LinkFailure>
+where
+    S: futures_util::Sink<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
+    R: futures_util::Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin,
+{
+    let mut ticket = source.current();
+    if ticket.is_none() {
+        let mut changes = source.subscribe();
+        source.refresh_now();
+        let _ = tokio::time::timeout(config.ticket_wait, changes.changed()).await;
+        ticket = source.current();
+    }
+    let Some(ticket) = ticket else {
+        tracing::info!("no device ticket; connecting without one");
+        return Ok(());
+    };
+    let text = RelayFrame::auth(ticket.as_str()).encode().map_err(|e| LinkFailure::new(FailureKind::Other, e.to_string()))?;
+    sink.send(Message::Text(text.into())).await.map_err(|e| LinkFailure::new(FailureKind::Lost, format!("send auth: {e}")))?;
+    let answer = tokio::time::timeout(config.hello_timeout, async {
+        loop {
+            match stream.next().await {
+                Some(Ok(Message::Text(t))) => return RelayFrame::decode(&t).map_err(|e| LinkFailure::new(FailureKind::NotRelay, e.to_string())),
+                Some(Ok(Message::Ping(_) | Message::Pong(_))) => continue,
+                Some(Ok(other)) => return Err(LinkFailure::new(FailureKind::NotRelay, format!("unexpected frame before auth_ack: {other:?}"))),
+                Some(Err(e)) => return Err(LinkFailure::new(FailureKind::Lost, e.to_string())),
+                None => return Err(LinkFailure::new(FailureKind::Lost, "closed before auth_ack")),
+            }
+        }
+    })
+    .await;
+    match answer {
+        Ok(Ok(RelayFrame::AuthAck { .. })) => Ok(()),
+        Ok(Ok(RelayFrame::Error { code: RelayErrorCode::TicketInvalid, .. })) => {
+            tracing::info!("the relay refused the device ticket; connecting without one");
+            source.refresh_now();
+            Ok(())
+        }
+        Ok(Ok(RelayFrame::Error { code, min_version, .. })) => Err(LinkFailure::refused(code, min_version, format!("relay refused the ticket: {code:?}"))),
+        Ok(Ok(other)) => Err(LinkFailure::new(FailureKind::NotRelay, format!("expected auth_ack, got {}", other.encode().unwrap_or_default()))),
+        Ok(Err(e)) => Err(e),
+        Err(_) => Err(LinkFailure::new(FailureKind::Timeout, "auth_ack timed out")),
+    }
+}
+
 async fn connect_and_run(
     config: &LinkConfig,
     cmd_rx: &mut mpsc::Receiver<Cmd>,
@@ -456,8 +517,8 @@ async fn connect_and_run(
         }
     })
     .await;
-    match ack {
-        Ok(Ok(RelayFrame::HelloAck { .. })) => {}
+    let relay_takes_tickets = match ack {
+        Ok(Ok(RelayFrame::HelloAck { features, .. })) => features.iter().any(|f| f == FEATURE_TICKET),
         Ok(Ok(RelayFrame::Error { code, min_version, .. })) => {
             return Outcome::Lost(LinkFailure::refused(code, min_version, format!("relay refused hello: {code:?}")));
         }
@@ -466,6 +527,18 @@ async fn connect_and_run(
         }
         Ok(Err(e)) => return Outcome::Lost(e),
         Err(_) => return Outcome::Lost(LinkFailure::new(FailureKind::Timeout, "hello_ack timed out")),
+    };
+    // Tickets go only to the build's own relay (`config.ticket` is set for no other), and only when
+    // it asks for them. The link reports `Connected` once the relay accepted the ticket, so the
+    // owner's `attach` and pairing requests always come after it.
+    let mut tickets = None;
+    if relay_takes_tickets && let Some(source) = &config.ticket {
+        if let Err(failure) = authenticate(source.as_ref(), config, &mut sink, &mut stream).await {
+            return Outcome::Lost(failure);
+        }
+        let mut changes = source.subscribe();
+        changes.mark_unchanged();
+        tickets = Some((source.clone(), changes));
     }
     let change = state.lock().connected();
     report_state(evt, change).await;
@@ -506,12 +579,48 @@ async fn connect_and_run(
                     }
                 }
             },
+            changed = async {
+                match &mut tickets {
+                    Some((_, changes)) => changes.changed().await.is_ok(),
+                    None => std::future::pending().await,
+                }
+            } => {
+                // A new ticket: shown to the relay before the old one runs out.
+                let ticket = if changed { tickets.as_ref().and_then(|(source, _)| source.current()) } else { None };
+                match ticket {
+                    Some(ticket) => {
+                        let Ok(text) = RelayFrame::auth(ticket.as_str()).encode() else { continue };
+                        if let Err(e) = sink.send(Message::Text(text.into())).await {
+                            return Outcome::Lost(LinkFailure::new(FailureKind::Lost, format!("send: {e}")));
+                        }
+                    }
+                    // The ticket source went away: nothing more to renew.
+                    None if !changed => tickets = None,
+                    None => {}
+                }
+            },
             msg = stream.next() => match msg {
                 Some(Ok(Message::Text(t))) => match RelayFrame::decode(&t) {
                     // The relay raised its minimum while this link was up: it closes the socket
                     // next, and the link waits as it does after a refused `hello`.
                     Ok(RelayFrame::Error { code: code @ voltip_protocol::relay::RelayErrorCode::ClientTooOld, min_version, .. }) => {
                         return Outcome::Lost(LinkFailure::refused(code, min_version, format!("relay refused the connection: {code:?}")));
+                    }
+                    // The relay wants a valid ticket (docs/pairing.md 「设备票据」): ask for a new one
+                    // and connect again; the owner attaches again once connected.
+                    Ok(RelayFrame::Error { code: code @ (RelayErrorCode::TicketRequired | RelayErrorCode::TicketExpired), .. }) => {
+                        if let Some(source) = &config.ticket {
+                            source.refresh_now();
+                        }
+                        return Outcome::Lost(LinkFailure::new(FailureKind::Ticket, format!("relay asked for a ticket: {code:?}")));
+                    }
+                    // A renewed ticket was taken, or refused while the one before still holds.
+                    Ok(RelayFrame::AuthAck { .. }) => {}
+                    Ok(RelayFrame::Error { code: RelayErrorCode::TicketInvalid, .. }) => {
+                        tracing::info!("the relay refused the renewed ticket");
+                        if let Some(source) = &config.ticket {
+                            source.refresh_now();
+                        }
                     }
                     Ok(frame) => {
                         if evt.send(LinkEvent::Frame(frame)).await.is_err() {
@@ -587,6 +696,8 @@ mod tests {
         }
         assert_eq!(refusal_kind(RelayErrorCode::UnsupportedVersion), FailureKind::Version);
         assert_eq!(refusal_kind(RelayErrorCode::RateLimited), FailureKind::Other);
+        assert_eq!(refusal_kind(RelayErrorCode::TicketRequired), FailureKind::Ticket);
+        assert_eq!(refusal_kind(RelayErrorCode::TicketExpired), FailureKind::Ticket);
     }
 
     /// The kinds go on the wire under their own names (the apps word them).
@@ -601,6 +712,7 @@ mod tests {
             FailureKind::NotRelay,
             FailureKind::Proxy,
             FailureKind::Version,
+            FailureKind::Ticket,
             FailureKind::Lost,
             FailureKind::Other,
         ]
@@ -618,6 +730,7 @@ mod tests {
                 r#""not_relay""#,
                 r#""proxy""#,
                 r#""version""#,
+                r#""ticket""#,
                 r#""lost""#,
                 r#""other""#
             ]

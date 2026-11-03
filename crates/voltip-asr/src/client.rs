@@ -165,6 +165,9 @@ impl AsrClient {
                 for (name, value) in &metering.headers {
                     request = request.header(name.as_str(), value.as_str());
                 }
+                for (name, value) in metering.per_request.as_ref().map(|f| f()).unwrap_or_default() {
+                    request = request.header(name, value);
+                }
             }
             for (name, value) in headers {
                 request = request.header(*name, value.as_str());
@@ -585,6 +588,7 @@ mod tests {
                 ("x-voltip-client".into(), "voltip/0.1.10 (linux)".into()),
             ],
             on_report: std::sync::Arc::new(move |report| reports.lock().unwrap().push(report.to_owned())),
+            per_request: Some(std::sync::Arc::new(|| vec![("x-voltip-ticket".into(), "p.m".into())])),
         }
     }
 
@@ -609,8 +613,9 @@ mod tests {
         let header = |i: usize, name: &str| requests[i].headers.get(name).map(|v| v.to_str().unwrap().to_owned());
         assert_eq!(header(0, "x-voltip-device").as_deref(), Some("6f1c2d3e-0000-4000-8000-000000000001"));
         assert_eq!(header(0, "x-voltip-client").as_deref(), Some("voltip/0.1.10 (linux)"));
+        assert_eq!(header(0, "x-voltip-ticket").as_deref(), Some("p.m"), "the per-request header");
         assert_eq!((header(0, "x-voltip-purpose").as_deref(), header(0, "x-voltip-audio-ms").as_deref()), (Some("take"), Some("4200")));
-        assert_eq!((header(1, "x-voltip-device"), header(1, "x-voltip-purpose")), (None, None));
+        assert_eq!((header(1, "x-voltip-device"), header(1, "x-voltip-purpose"), header(1, "x-voltip-ticket")), (None, None, None));
     }
 
     /// docs/dictation.md §27: the built-in service's day is used up. The refusal is a used-up

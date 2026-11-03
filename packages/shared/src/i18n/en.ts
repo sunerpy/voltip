@@ -166,6 +166,7 @@ export const en: Messages = {
       proxy: "The proxy could not reach the relay; check the proxy settings",
       version: "The relay does not support this version; update Voltip",
       too_old: "This version is too old; update Voltip",
+      ticket: "This device could not be verified; try again later",
       lost: "The connection dropped",
       other: "The connection failed",
     },
@@ -255,6 +256,7 @@ export const en: Messages = {
     },
     serviceReason: {
       unauthorized: "the key was refused",
+      unverified: "this device could not be verified; try again later or update Voltip",
       rateLimited: "too many requests",
       rateLimitedRetry: "too many requests (try again in {s} s)",
       overloaded: "the service is busy",

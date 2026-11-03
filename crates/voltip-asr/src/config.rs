@@ -17,6 +17,9 @@ pub const MAX_ERROR_BODY_CHARS: usize = 200;
 /// (docs/dictation.md §27).
 pub const QUOTA_HEADER: &str = "x-voltip-quota";
 
+/// Headers computed for each request.
+pub type HeaderSource = Arc<dyn Fn() -> Vec<(String, String)> + Send + Sync>;
+
 /// The built-in service's metering (docs/dictation.md §27): the headers every request carries
 /// (the device and the client), and who hears the usage report of an answer ([`QUOTA_HEADER`]),
 /// refusals included. Only the built-in service is metered; `Debug` names the headers only.
@@ -26,6 +29,9 @@ pub struct Metering {
     pub headers: Vec<(String, String)>,
     /// Called with the [`QUOTA_HEADER`] of every answer that carries one.
     pub on_report: Arc<dyn Fn(&str) + Send + Sync>,
+    /// Headers read again for every request: the device's ticket (docs/pairing.md 「设备票据」),
+    /// which is renewed while the client lives. `Debug` and equality leave them out.
+    pub per_request: Option<HeaderSource>,
 }
 
 impl PartialEq for Metering {
@@ -219,7 +225,7 @@ mod tests {
 
     #[test]
     fn metering_compares_its_headers_and_debug_names_them_only() {
-        let metering = |device: &str| Metering { headers: vec![("x-voltip-device".into(), device.into())], on_report: Arc::new(|_| {}) };
+        let metering = |device: &str| Metering { headers: vec![("x-voltip-device".into(), device.into())], on_report: Arc::new(|_| {}), per_request: None };
         assert_eq!(metering("a"), metering("a"), "the callback is not compared");
         assert_ne!(metering("a"), metering("b"));
         let debug = format!("{:?}", AsrConfig::new("https://host", "m").with_metering(Some(metering("6f1c…"))));
