@@ -6,7 +6,7 @@
 
 | type | 方向 | 字段 | 说明 |
 |---|---|---|---|
-| `hello` | C→R | `client_version`, `features?` | 连接后第一帧；不携带任何设备身份。`features` 是客户端认识的新行为（0.2.0 起 `["client_too_old"]`，0.3.1 起再加 `"ticket"`），旧客户端不带，中继据此决定怎样拒绝过低的版本（`docs/pairing.md`「最低版本」「设备票据」） |
+| `hello` | C→R | `client_version`, `features?` | 连接后第一帧；不携带任何设备身份。`features` 是客户端认识的新行为（0.2.0 起 `["client_too_old"]`，0.3.0 起再加 `"ticket"`），旧客户端不带，中继据此决定怎样拒绝过低的版本（`docs/pairing.md`「最低版本」「设备票据」） |
 | `hello_ack` | R→C | `relay_version`, `limits{code_attempts, session_ttl_secs}`, `features?` | 中继配了票据密钥时 `features` 为 `["ticket"]`：客户端可以发 `auth`；旧中继不带这个字段 |
 | `auth` | C→R | `ticket` | 设备票据（`docs/pairing.md`「设备票据」），`hello_ack` 带 `ticket` 时发，之后每拿到新票再发一次；只发给构建自带的中继。票据对客户端是不透明的字符串，最长 1024 字节 |
 | `auth_ack` | R→C | `exp` | 票据有效，连接认证到 `exp`（Unix 秒）；票据无效时中继回 `error{ticket_invalid}`，连接保留、按未认证处理 |

@@ -107,7 +107,7 @@ pub enum RelayFrame {
         /// Advertised limits.
         limits: RelayLimits,
         /// What the relay understands beyond the frames ([`FEATURE_TICKET`]); relays before
-        /// 0.3.1 send none, and older clients ignore the field.
+        /// 0.3.0 send none, and older clients ignore the field.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         features: Vec<String>,
     },
@@ -463,8 +463,8 @@ mod tests {
         ));
     }
 
-    /// docs/pairing.md 「设备票据」: a relay before 0.3.1 sends `hello_ack` without `features` and
-    /// a client before 0.3.1 reads one with them; only a relay that lists `ticket` is sent `auth`.
+    /// docs/pairing.md 「设备票据」: a relay before 0.3.0 sends `hello_ack` without `features` and
+    /// a client before 0.3.0 reads one with them; only a relay that lists `ticket` is sent `auth`.
     #[test]
     fn the_ticket_fields_are_optional_both_ways() {
         let older = r#"{"type":"hello_ack","version":1,"relay_version":"r","limits":{"code_attempts_per_connection":5,"code_attempts_per_session":10,"session_ttl_secs":120}}"#;

@@ -87,7 +87,7 @@ pub struct AuthCounts {
     pub invalid: u64,
     /// Tickets that ran out on a connection.
     pub expired: u64,
-    /// `hello`s without the `ticket` feature (clients before 0.3.1).
+    /// `hello`s without the `ticket` feature (clients before 0.3.0).
     pub no_feature: u64,
     /// Connections with the feature that asked for a session or a channel without a ticket.
     pub unauthenticated: u64,
