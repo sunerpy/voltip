@@ -2413,7 +2413,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 ### 27.2 请求头与计量（`voltip_core::usage`）
 
 - **设备号**：`<数据目录>/usage-id`，首次使用时生成的随机 UUID v4，只由这个应用进程写；与配对密钥无关，不进备份（§4.6），不同步到手机。`voltip-server`（§23.5）只读不写 App 的数据目录：App 的 `usage-id` 存在时照用（同一台机器算一台设备），否则用它自己目录（`ProjectDirs` dev / voltip / voltip-server）里的。
-- **请求头**（只发给 `ProviderId::Builtin`，其他服务商收不到）：`X-Voltip-Device`、`X-Voltip-Client: voltip/<版本> (<平台>)`；识别另加 `X-Voltip-Purpose: take|preview` 和 `X-Voltip-Audio-Ms`（由 WAV 头算出的音频毫秒数）；润色加 `X-Voltip-Purpose: refine|edit`。
+- **请求头**（只发给 `ProviderId::Builtin`，其他服务商收不到）：`X-Voltip-Device`、`X-Voltip-Client: voltip/<版本> (<平台>)`；官方构建手上有设备票据时再加 `X-Voltip-Ticket`（每次请求时读当前的票，`docs/pairing.md`「设备票据」）：网关验过的票据，以其中的设备号计数，`quota.json` 的 `require_ticket` 打开后不带有效票的请求得到 401 `ticket_required`；识别另加 `X-Voltip-Purpose: take|preview` 和 `X-Voltip-Audio-Ms`（由 WAV 头算出的音频毫秒数）；润色加 `X-Voltip-Purpose: refine|edit`。
 - **统一入口**：每个识别和润色客户端都经 `dictation::engine_clients(factory, engines, quota, meter)` 构造（引擎启动、设置变化后重建、指定模型重新识别、本机语音服务）。它把 `Metering` 放进 `ResolvedEngines.metering`，`voltip-cloud` 据此只给内置服务加请求头、读回报；再把每条链路（主链路和每个候补模型，§3.5）的客户端包进 `MeteredTranscriber` / `MeteredRefiner`，答复成功时按这条链路实际的服务商记一条用量（`UsageEvent { at_ms, provider, model, service, purpose, amount, origin }`；识别为毫秒数，润色为 1）。
 - **来源**随每次调用传递（`AsrCall`、`RefineHints.origin`），没有共享的可变状态：手机发到这台电脑的录音为该手机（`start_from_origin`），指定模型重新识别为 `retake`，本机语音服务的请求为 `serve`，其余（这台设备上的听写、历史记录的 AI 处理、预设「试一试」）为 `this_device`。
 - **实时预览不重复计数**：流式模式下预览的解码标为 `preview`（§11），服务端不计；句子关闭时为 `take`。本机记录也不记预览。预览收到额度用完时停止这次预览，不再每秒重试。手机不发预览。

@@ -23,12 +23,16 @@
 | 内置服务的每日额度被绕过，或用量把用户关联起来（`docs/dictation.md` §27） | 设备号是首次使用时生成的随机 UUID（`usage-id`），与配对密钥无关，不进备份、不同步，只发给内置服务；内置服务仍要应用令牌，按 IP 的限流照旧；额度是没有账号时的公平使用额度，不是安全边界（重装或伪造请求头能拿到新的额度，旧版本按 IP 计数）；额度用完只影响内置服务，其他服务商和本机模型照常可用；网关的统计只给每台设备 / 每个 IP 一个数，不含设备号和 IP；用量记录不含录音和文字 | `crates/voltip-cloud/src/lib.rs@only_the_built_in_service_is_told_who_asks`、`crates/voltip-core/src/usage/mod.rs@the_device_id_is_made_once_and_read_without_writing`、`apps/server/tests/cli.rs@the_server_meters_as_the_apps_device_or_as_itself_and_never_writes_the_apps_directory` |
 | 中继的统计泄露谁在和谁连接（`docs/pairing.md`「中继统计」） | `GET /stats` 只在中继的回环监听地址上，反向代理只转发 `/ws`；只有按小时的计数，不含 IP、频道、会话号和验证码；版本只按已发布版本的名单分桶，其余记为 `other`，每小时的桶数有上限 | `crates/voltip-relay/src/core.rs@the_statistics_count_what_happened_and_name_no_device`、`crates/voltip-relay/src/stats.rs@regression_versions_are_named_only_from_the_policy_or_up_to_the_hours_slots` |
 | 管理台被冒用：调高最低版本把所有客户端挡在外面，或改动额度（`docs/runbook.md`「管理台与同步」） | 管理台（私有仓库 `sunerpy/voltip-admin`）只在 Cloudflare Access 之后；Functions 用团队域的公钥验证每个请求的 `Cf-Access-Jwt-Assertion`（签名、`aud`、`exp`），失败一律 403；同步接口只认 Access 的 service token；最低版本只能选已发布的版本，并发修改按 revision 回 409，每次修改记审计（邮箱、前后内容、时间），可以恢复上一个设置；中继和网关主机上的本地覆盖文件优先于同步来的配置，坏的配置不会替换上一份有效配置 | 私有仓库的 `site/` 测试（Access JWT 用测试密钥对、409、已发布版本校验、同步令牌）；`crates/voltip-relay/src/policy.rs@the_override_wins_while_valid_and_a_broken_main_file_keeps_the_last_valid_policy` |
+| fork 或其他客户端使用托管中继和内置服务（`docs/pairing.md`「设备票据」） | 官方构建带每个版本一把的构建密钥（CI 从主密钥派生、拆分编入，产物扫描不许整把出现），用它向 `voltip-auth` 证明版本，换到 1 小时的设备票据；中继在连接内验票（门禁下未认证的连接不能配对、attach 和转发，门禁打开时已有的未认证连接当场撤销，票据到期的连接被关闭），内置服务网关验 `X-Voltip-Ticket`；票据只发给构建自带的中继和内置服务；设备可在管理台撤销，最多 1 小时失效；每个 IP 每天的新设备登记有上限；门禁要和最低版本一起打开 | `crates/voltip-relay/src/core.rs@regression_turning_the_gate_on_stops_unauthenticated_connections_forwarding`、`crates/voltip-relay/tests/socket.rs@regression_a_full_queue_does_not_keep_a_cut_off_connection`、`crates/voltip-transport/tests/link.rs@regression_a_relay_without_a_ticket_source_gets_no_ticket_and_neither_does_the_probe`、`crates/voltip-core/tests/e2e.rs@regression_a_relay_the_user_entered_never_gets_the_device_ticket`、`crates/voltip-cloud/src/lib.rs@only_the_built_in_service_is_told_who_asks`、`scripts/check-build-key.sh` |
+| 转发洪泛与连接耗尽（`docs/pairing.md`「中继限额」） | 每条连接每分钟的转发字节和帧数、每个地址和全部的连接数都有上限（默认不限，先统计分布再设）；超过时 `rate_limited` 并关闭连接 | `crates/voltip-relay/src/core.rs@forwarding_over_a_minute_limit_closes_the_connection`、`connection_limits_refuse_new_connections` |
 
 ## 已知缺口
 
 - 扫码配对时二维码就是凭据：有效期内（120 秒，常开配对时每个会话都是）看得到它的人（截图、拍照、共享屏幕）不经电脑确认就能配对，之后能在电脑的光标处输入文字。电脑的配对卡片写明这一点并提醒不要截图或共享；配对后设备出现在列表里，可以随时忘记（用户 2026-10-27 接受的取舍）。
 
-- `forward` 洪泛：Relay 对已加入会话 / 频道的转发不限速；应加每连接字节 / 帧速率上限。
+- 构建密钥能从某个版本的安装包里提取出来（它必须在客户端里）：拿到它的人能伪造这个版本的设备证明。影响面限于这个版本，每个 IP 每天的登记有上限；发现后把这个版本移出允许名单，或调高最低版本。没有账号和平台认证（Play Integrity / App Attest，用户 2026-11-03 决定暂不做），挡不住有心逆向的人；目标是让改个地址的 fork 用不了。
+- 中继持有票据密钥：拿到中继主机就能伪造票据。中继和 `voltip-auth` 在同一台主机上，攻击面没有因此变大。
+- 转发和连接的上限默认不限，统计一周后才设数值；在那之前 `forward` 洪泛仍只受连接数和各自网络的限制。
 - 频道标签可被知道两把公钥的人计算出来（公钥不是秘密），攻击者可占位造成 `channel_full`；缓解：attach 需要对频道所有者的签名挑战（下一版协议）。
 - 桌面端 keyring 在 Linux 依赖 Secret Service（无守护进程时 `StoreUnavailable`，应用拒绝降级到明文文件）。
 - 本机语音服务的令牌对同一用户的所有进程可读（这就是给其他程序用的）：能读到这个文件的程序就能使用服务，包括它背后的内置服务额度。`--allow-remote` 时令牌以明文 HTTP 传输，应改用 SSH 隧道或 TLS 反向代理。

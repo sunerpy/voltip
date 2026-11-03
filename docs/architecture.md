@@ -20,6 +20,7 @@ crates/voltip-core       应用外观层：把 identity + pairing + transport + 
 crates/voltip-tauri-bridge  UiCommand / UiEvent / UiState：webview 看到的唯一契约；Bridge::publish 让 shell 自己产生的状态（热键注册结果）并入同一状态流
 crates/voltip-audio      麦克风枚举与输入电平（cpal：WASAPI / CoreAudio / ALSA / Android AAudio），纯 DSP 可脱离硬件测试
 crates/voltip-reply      服务拒绝请求时说了什么（docs/dictation.md §3.12）：各服务商错误体的代码与消息，合并空白、遮住密钥与账号后显示在悬浮窗、历史和测试连接里
+crates/voltip-access     设备票据（docs/pairing.md「设备票据」）：CI 编入的构建密钥，向 voltip-auth 证明版本、续 1 小时的票据；传输层把它给构建自带的中继，计量把它给内置服务
 crates/voltip-net        网络代理（docs/dictation.md §24）：跟随系统 / 不使用 / 手动的代理计划，reqwest 客户端每个请求都按它走，WebSocket 连接经它打开 TCP 流（HTTP CONNECT、SOCKS5）
 crates/voltip-cloud      云端识别与润色（voltip-asr、voltip-refine 的客户端；阿里云百炼的实时模型经 WebSocket 推流）作为核心的 Transcriber / Refiner / StreamingTranscriber 端口，桌面与手机共用
 crates/voltip-serve      本机语音服务的 HTTP 层（axum）：OpenAI 兼容的 /v1/audio/transcriptions、令牌、准入、边收边解码的 WAV 上传；处理在 voltip-core 的 serve 模块（docs/dictation.md §23）
@@ -30,7 +31,7 @@ apps/desktop/src-tauri   桌面 shell：全局热键（tauri-plugin-global-short
 apps/server              无头服务端 voltip-server（Linux x64 tar.gz）：命令行、只读地读 App 的数据目录与系统钥匙串，没有 GUI 和音频依赖
 ```
 
-依赖方向只允许向下：`apps → core → {pairing, transport, identity} → {crypto, protocol}`；`voltip-net` 在最底层，`transport`、`asr`、`refine`、`asr-local`、`cloud` 和 `core` 都依赖它，它不依赖任何 Voltip crate；`voltip-reply` 同样在最底层，只有 `asr` 和 `refine` 依赖它；`relay` 只依赖 `protocol`，不依赖 `crypto`（它拿不到、也不需要会话密钥）。`voltip-serve` 是 `voltip-core` 之上的适配层（实现核心的 `ServeHost` 端口，调用 `SpeechService`），只有桌面壳和 `apps/server` 依赖它。`voltip-media` 同样在 `voltip-core` 之上（实现 `MediaDecoder` 端口，借用 `voltip-serve` 的重采样器），只有桌面壳依赖它。`voltip-focus` 只依赖 `voltip-platform`，桌面壳把它包成核心的 `FocusReader` 端口。`voltip-overlay` 不依赖任何 Voltip crate，只有桌面壳依赖它。
+依赖方向只允许向下：`apps → core → {pairing, transport, identity} → {crypto, protocol}`；`voltip-net` 在最底层，`transport`、`asr`、`refine`、`asr-local`、`cloud` 和 `core` 都依赖它，它不依赖任何 Voltip crate；`voltip-reply` 同样在最底层，只有 `asr` 和 `refine` 依赖它；`voltip-access` 也在最底层（HTTP 客户端由壳注入），`transport`、`core`、`cloud` 和 `apps/server` 依赖它；`relay` 只依赖 `protocol`，不依赖 `crypto`（它拿不到、也不需要会话密钥）。`voltip-serve` 是 `voltip-core` 之上的适配层（实现核心的 `ServeHost` 端口，调用 `SpeechService`），只有桌面壳和 `apps/server` 依赖它。`voltip-media` 同样在 `voltip-core` 之上（实现 `MediaDecoder` 端口，借用 `voltip-serve` 的重采样器），只有桌面壳依赖它。`voltip-focus` 只依赖 `voltip-platform`，桌面壳把它包成核心的 `FocusReader` 端口。`voltip-overlay` 不依赖任何 Voltip crate，只有桌面壳依赖它。
 
 ## 1.1 原生优先（硬约束）
 

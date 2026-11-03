@@ -72,7 +72,8 @@ scp target/x86_64-unknown-linux-musl/release/voltip-relay <host>:/usr/local/bin/
 
 - systemd `voltip-relay.service`：`ExecStart=/usr/local/bin/voltip-relay --bind 127.0.0.1:47830 --trust-proxy 127.0.0.1 --policy /etc/voltip/relay-policy.json --policy-override /etc/voltip/relay-policy.override.json`，`Environment=VOLTIP_RELAY_JSON_LOGS=1`，`DynamicUser=yes`，`Restart=always`；`journalctl -u voltip-relay -f` 看 `pairing session created / peer joined` 等结构化日志。
 - 最低版本（`docs/pairing.md`「最低版本」）：`/etc/voltip/relay-policy.json` 由管理台的同步程序写，`relay-policy.override.json` 由运维手写，存在且有效时整份优先。两个文件都要让中继的运行用户读到（内容不是秘密）：当前部署中继以 `voltip` 用户运行（`User=voltip`），`/etc/voltip` 为 `root:voltip 0750`，策略文件为 `root:voltip 0640`（同步程序的默认权限）；用上面的 `DynamicUser=yes` 时，目录要 0755、文件要 0644。读不到时中继记一条告警，沿用上一份有效策略，从没读到过就不设最低版本。同目录的同步配置 `admin-sync.env` 为 `root 0600`。中继每 30 秒检查一次两个文件。紧急放开：写入 `{"schema":1,"min_version":null}` 到覆盖文件，30 秒内生效；删掉覆盖文件即回到同步来的策略。坏文件不会替换上一份有效策略，启动日志和告警写明读到了哪一份。
-- 统计：`curl http://127.0.0.1:47830/stats`（`docs/pairing.md`「中继统计」）。只在中继主机上访问，nginx 不要转发 `/stats`。
+- 统计：`curl http://127.0.0.1:47830/stats`（`docs/pairing.md`「中继统计」「中继限额」）。只在中继主机上访问，nginx 不要转发 `/stats`。`/healthz` 的 `policy_revision` 是生效的策略版本。
+- 设备票据（`docs/pairing.md`「设备票据」）：加 `--ticket-key-file /etc/voltip/relay-ticket.key`（64 个十六进制字符，`root:voltip 0640`，与 `voltip-auth` 签票用的 `K_ticket` 相同）。配了它，`hello_ack` 就带 `ticket`，中继开始验票和计数；不配时中继不要也不读票据，自己架的中继照旧。门禁和限额都在策略文件里（`require_ticket`、`limits`），默认关。紧急放开：覆盖文件写 `{"schema":1,"min_version":null}`（没有最低版本，门禁随之不生效），30 秒内生效。
 - 中继在反向代理后面时必须给出 `--trust-proxy <代理的地址或网段>`（可以写多个或用逗号分隔，环境变量 `VOLTIP_RELAY_TRUST_PROXY`）。中继按客户端 IP 限流（`docs/pairing.md`「Relay 侧防护」），代理后面每条连接的 TCP 对端都是代理自己，不给这个参数时所有用户共用一份额度（2026-10-12 发现线上就是这样）。中继只读这些对端发来的 `X-Forwarded-For`，从右往左跳过可信代理，取第一个其他地址，规则与 nginx 的 `real_ip_recursive on` 相同；其他对端发来的这个头一律忽略，客户端伪造不了。启动日志 `relay listening … trusted_proxies=[…]` 列出生效的代理；直接对外监听时（例如 `deploy/relay/Dockerfile`）不要给。
 - 放在负载均衡器后面时（当前做法，见上文「当前部署」），TLS 在负载均衡器上，nginx 只做 `/ws` 的升级转发，负载均衡器空闲超时不低于 3600 s；nginx 要先用 `set_real_ip_from` 与 `real_ip_header X-Forwarded-For` 还原客户端地址，`$remote_addr` 才是客户端。单独一台主机时：
 - nginx vhost `<relay-host>`（Let's Encrypt，acme.sh）：`location /ws` 走 `proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "upgrade"; proxy_set_header X-Forwarded-For $remote_addr; proxy_read_timeout 3600s;` 到 `127.0.0.1:47830`；`location /healthz` 直通。中继只监听回环，外网只见 443。
@@ -85,6 +86,18 @@ VOLTIP_LIVE_RELAY_URL=wss://<relay-host>/ws cargo test -p voltip-core --test e2e
 该测试未设置变量时自动跳过，离线套件保持封闭。2026-09-25 对一台线上中继实测：TLS + WebSocket 升级 + 会合 + 配对 + 双向消息 0.8 s，nginx 记录两条 `GET /ws … 101`；2026-10-08 迁到负载均衡器后面再测一次通过（3.0 s，客户端在国内）。同一天发现并修复：`voltip-transport` 的 rustls 没有绑定加密 provider，不链接 reqwest 的二进制（移动端、core 测试）拨 `wss://` 会 panic（`crates/voltip-transport/src/endpoint.rs@regression_wss_dial_has_exactly_one_crypto_provider`）。
 
 Relay 无状态（内存里只有活动会话 / 频道），可水平扩展前提是同一对设备落在同一实例（按 `channel` / `session_id` 做粘性路由）。
+
+## 设备票据与 voltip-auth
+
+`docs/pairing.md`「设备票据」的服务端在私有仓库 `sunerpy/voltip-admin`（`auth/`、`gateway/` 的 `access.js`、`sync/`、`site/`），主机与部署细节写在那里的 README。这里只记密钥和操作：
+
+- 三把密钥，各 32 字节随机数：`K_master`（派生每个版本的构建密钥；`voltip-auth` 的 `/etc/voltip/auth-keys.env`、GitHub secret `VOLTIP_ACCESS_MASTER`、维护者本机 `~/.config/voltip/access/master.key`，0600）、`K_device`（只在 `voltip-auth`）、`K_ticket`（`voltip-auth` 签票，中继的 `--ticket-key-file` 和网关的 secrets include 验票）。都不进 `.env.build`（它的 `VOLTIP_*` 会全部导出给构建），写入时从文件读、不打印。
+- 本机打包：`scripts/build-*.sh` 在读完 `.env.build` 后 source `scripts/lib/build-key.sh`，有主密钥文件就派生当前版本的构建密钥；没有就打出不带密钥的包（不换票，门禁打开前照常可用）。产物扫描（`voltip_scan_build_key`）确认密钥不整把出现、构建确实带上了它。
+- 发版：CI 每条打包腿的「Derive the build key」步骤派生并遮住密钥，设 `VOLTIP_REQUIRE_BUILD_KEY=1`，缺 `VOLTIP_ACCESS_MASTER` 或 `VOLTIP_AUTH_URL` 时候选构建失败。
+- 打开门禁（只允许官方构建）：先在管理台看最近 24 小时有效票的占比（中继 `auth.ok`、内置服务按票据计数的占比）；调高最低版本到带票据的版本，再打开「只允许官方构建」，它同时写中继和网关的 `require_ticket`。`min_version` 为空时管理台拒绝打开。
+- 撤销设备：管理台「设备」里撤销，`voltip-auth` 不再给它证明和换票，已经建立的中继连接在票据到期时（最多 1 小时）断开。
+- 某个版本的构建密钥泄露：把这个版本从允许名单里去掉，或调高最低版本越过它。换主密钥：新主密钥同时写进 GitHub secret 和 `voltip-auth`，旧版本的设备再证明时会失败（它们的构建密钥由旧主密钥派生），所以换主密钥等于让所有旧版本失效，只在必要时做。
+- `voltip-auth` 不可用：统计期没有影响；门禁打开后，拿不到新票的设备最多 1 小时后连不上中继、用不了内置服务。在管理台关掉开关（不依赖 `voltip-auth`），最多约 5.5 分钟生效。
 
 ## 内置服务的额度与管理台
 
