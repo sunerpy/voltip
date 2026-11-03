@@ -5,13 +5,16 @@
 # RUNPATH is `$ORIGIN:$ORIGIN/../lib/voltip`, apps/desktop/src-tauri/build.rs). The local models run
 # on a GPU through Vulkan and fall back to the CPU (docs/dictation.md §10.6): scripts/lib/vulkan-sdk.sh
 # fetches the SDK; the deb and rpm depend on the system's loader, the AppImage carries its own.
+# scripts/lib/appimage.sh places the pinned AppRun with mode 0755 before the bundler runs (it would
+# package its own cached copy with mode 0770) and checks that every user can read and run what the
+# AppImage carries.
 # Packages go to dist/linux-x64 (git-ignored) with SHA256SUMS.txt and the record, build-info.txt.
 # Usage: scripts/build-linux-x64.sh [out-dir] [build-info]
 # VOLTIP_BUILD_NOTE adds one free-text line to the record (e.g. "uncommitted B5 changes on top").
 # VOLTIP_BUILD_REUSE=1 skips `cargo tauri build` and re-checks the bundles already in target/.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-for tool in cargo cargo-about pnpm dpkg-deb rpm2cpio cpio patchelf readelf ldd sha256sum strings; do
+for tool in cargo cargo-about pnpm dpkg-deb rpm2cpio cpio patchelf readelf ldd sha256sum strings curl unsquashfs; do
   command -v "$tool" >/dev/null || { echo "build-linux-x64: $tool not installed"; exit 2; }
 done
 . scripts/lib/build-env.sh && voltip_load_build_env
@@ -27,7 +30,12 @@ python3 scripts/release/third-party-notices.py --out apps/desktop/src-tauri/reso
 out=${1:-dist/linux-x64}
 info=${2:-$out/build-info.txt}
 
-if [ -z "${VOLTIP_BUILD_REUSE:-}" ]; then (cd apps/desktop && cargo tauri build --ci --bundles deb,rpm,appimage --features gpu-vulkan); fi
+. scripts/lib/appimage.sh
+if [ -z "${VOLTIP_BUILD_REUSE:-}" ]; then
+  # The AppRun the AppImage starts through, pinned and with mode 0755 (scripts/lib/appimage.sh).
+  voltip_appimage_apprun || exit 1
+  (cd apps/desktop && cargo tauri build --ci --bundles deb,rpm,appimage --features gpu-vulkan)
+fi
 bundle=target/release/bundle
 # Only this version's bundles (package.json): the bundle directory keeps those of earlier builds.
 version=$(node -p 'require("./package.json").version')
@@ -44,6 +52,8 @@ voltip_scan_build_key target/release/voltip-desktop build-linux-x64
 voltip_output_has 'NEEDED.*\[libvulkan\.so\.1\]' readelf -d target/release/voltip-desktop || { echo "build-linux-x64: voltip-desktop does not link libvulkan.so.1 (built without the Vulkan backend)"; exit 1; }
 # Every library it takes from the system is one the deb and rpm depend on.
 voltip_linux_sonames_accounted target/release/voltip-desktop build-linux-x64 || exit 1
+# Every user can read and run what the AppImage carries (firejail --appimage runs it as stored).
+voltip_check_appimage_permissions "$appimage" build-linux-x64 || exit 1
 rm -rf "$out"
 mkdir -p "$out" "$(dirname "$info")"
 cp "$deb" "$rpm" "$appimage" "$out"/
