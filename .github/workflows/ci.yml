@@ -278,6 +278,11 @@ jobs:
           node --version; pnpm --version
           pnpm install --frozen-lockfile
 
+      # mksquashfs and unsquashfs for scripts/release/test_appimage.py (the release helpers' gate),
+      # which runs here instead of skipping.
+      - name: squashfs-tools (the AppImage check's tests)
+        run: .github/scripts/apt-install.sh squashfs-tools
+
       - name: Web gates (VERIFY_GATES=web scripts/verify-all.sh)
         env:
           VERIFY_GATES: web

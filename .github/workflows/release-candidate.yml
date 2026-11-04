@@ -659,6 +659,7 @@ jobs:
           . .release-tooling/scripts/lib/build-key.sh
           voltip_build_key_ci
 
+      # squashfs-tools: unsquashfs, for the check of the AppImage's permissions.
       - name: Linux system dependencies (Tauri bundler, webkit2gtk, ALSA, X11)
         run: |
           set -euo pipefail
@@ -666,7 +667,7 @@ jobs:
             libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev libdbus-1-dev \
             libayatana-appindicator3-dev librsvg2-dev libasound2-dev libssl-dev \
             libx11-dev libxtst-dev libxcb1-dev patchelf pkg-config file xdg-utils binutils cmake \
-            libvulkan1
+            libvulkan1 squashfs-tools
 
       - name: Rust toolchain (rust-toolchain.toml)
         run: |
@@ -780,6 +781,14 @@ jobs:
           voltip_scan_build_key target/release/voltip-server release || { echo "::error::the build key is whole inside voltip-server, or missing from it"; exit 1; }
           voltip_linux_sonames_accounted target/release/voltip-server release VOLTIP_SERVER_SONAMES || { echo "::error::voltip-server links a library its package neither ships nor checks for"; exit 1; }
 
+      # tauri-bundler would package the AppRun it caches with mode 0770 (scripts/lib/appimage.sh):
+      # the pinned copy, mode 0755, is in its tools directory before it bundles.
+      - name: Pinned AppRun for the AppImage (SHA-256, mode 0755)
+        run: |
+          set -euo pipefail
+          . .release-tooling/scripts/lib/appimage.sh
+          voltip_appimage_apprun
+
       # Phase 2: bundling and updater signatures; the only step holding the signing key. With the
       # updater enabled, createUpdaterArtifacts and the pubkey the app trusts arrive through
       # --config; otherwise the bundles ship unsigned and the key variables are unset.
@@ -807,6 +816,19 @@ jobs:
           else
             cargo tauri bundle --ci --bundles deb,appimage
           fi
+
+      # Every user can read and run what the AppImage carries: firejail --appimage (the AppImage
+      # catalogue's test) mounts it as recorded, every file root's (scripts/lib/appimage.sh).
+      - name: Check the AppImage's permissions
+        run: |
+          set -euo pipefail
+          . .release-tooling/scripts/lib/appimage.sh
+          shopt -s nullglob
+          appimages=(target/release/bundle/appimage/*.AppImage)
+          [ "${#appimages[@]}" -gt 0 ] || { echo "::error::no AppImage in target/release/bundle/appimage"; exit 1; }
+          for appimage in "${appimages[@]}"; do
+            voltip_check_appimage_permissions "$appimage" release || { echo "::error::$appimage carries entries other users cannot read or run"; exit 1; }
+          done
 
       # candidate-leg/dist: the deb, the AppImage (+ .sig) and voltip-server's tar.gz.
       - name: Collect bundles and evidence

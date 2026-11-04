@@ -170,6 +170,31 @@ class CandidateBuild(unittest.TestCase):
             gather,
         )
 
+    def test_regression_the_linux_leg_bundles_an_apprun_every_user_can_run(self) -> None:
+        # The AppImage catalogue's test of 0.2.1 (AppImage/appimage.github.io run 40927635842,
+        # 2026-11): under firejail --appimage the app stopped at "AppRun.wrapped: Permission
+        # denied". tauri-bundler had cached AppRun with mode 0770 and packaged it so
+        # (scripts/lib/appimage.sh). The pinned copy, 0755, is placed in a step of its own before
+        # the bundle step (the download is not where the signing key is), and the trusted copy of
+        # the check reads every AppImage the leg collects; unsquashfs comes with squashfs-tools.
+        steps = re.split(r"\n      - name: ", "\n".join(code_lines(self.jobs["bundle-linux"])))
+        names = [step.split("\n", 1)[0] for step in steps]
+        placing = [i for i, step in enumerate(steps) if "voltip_appimage_apprun" in step]
+        checking = [i for i, step in enumerate(steps) if "voltip_check_appimage_permissions" in step]
+        self.assertEqual(len(placing), 1, "one step places the AppRun")
+        self.assertEqual(len(checking), 1, "one step checks the AppImage")
+        bundled = names.index("Bundle and sign (deb, AppImage)")
+        collected = names.index("Collect bundles and evidence")
+        self.assertLess(placing[0], bundled)
+        self.assertLess(bundled, checking[0])
+        self.assertLess(checking[0], collected)
+        for index in (placing[0], checking[0]):
+            with self.subTest(step=names[index]):
+                self.assertIn(". .release-tooling/scripts/lib/appimage.sh", steps[index])
+                self.assertNotIn("secrets.", steps[index])
+        self.assertIn("target/release/bundle/appimage/*.AppImage", steps[checking[0]])
+        self.assertIn("squashfs-tools", steps[names.index("Linux system dependencies (Tauri bundler, webkit2gtk, ALSA, X11)")])
+
     def test_the_sherpa_fingerprint_is_cleared_in_the_source_target(self) -> None:
         # forget-sherpa-onnx-build.sh cds to the checkout it sits in and clears that target/. The
         # Android app links no sherpa-onnx.
@@ -539,6 +564,13 @@ class ContinuousIntegration(unittest.TestCase):
         first_build = next(i for i, s in enumerate(steps) if re.search(r"\bcargo (test|build|tauri build)\b", "\n".join(code_lines(s))))
         self.assertLess(steps.index(export), first_build)
 
+    def test_the_web_gates_run_the_appimage_check_tests_with_squashfs_tools(self) -> None:
+        # scripts/release/test_appimage.py builds squashfs images: on CI it runs instead of skipping.
+        code = "\n".join(code_lines(self.jobs["verify-web"]))
+        self.assertLess(code.index(".github/scripts/apt-install.sh squashfs-tools"), code.index("./scripts/verify-all.sh verify-web.log"))
+        test = (ROOT / "scripts/release/test_appimage.py").read_text(encoding="utf-8")
+        self.assertIn('@unittest.skipUnless(os.environ.get("CI") or squashfs_tools(),', test)
+
     def test_macos_exercises_the_preinstall_keychain_boundary(self) -> None:
         body = self.jobs["macos"]
         self.assertIn("--bin keychain_preinstall", body)
@@ -551,6 +583,30 @@ class ContinuousIntegration(unittest.TestCase):
         self.assertIn("wrong-signature staged app was stopped", script)
         self.assertIn("$user.signed.$b", script)
         self.assertIn("$bad_user.signed.$old", script)
+
+
+class LinuxPackageScript(unittest.TestCase):
+    """scripts/build-linux-x64.sh (`make linux-x64`) bundles the AppImage as the candidate's Linux
+    leg does."""
+
+    def test_regression_the_appimage_carries_an_apprun_every_user_can_run(self) -> None:
+        # The same fault as CandidateBuild's (0.2.1 under firejail): the pinned AppRun, 0755, is in
+        # place before `cargo tauri build`, and the AppImage is checked before anything is copied
+        # to the output directory; the script stops at once when unsquashfs is missing.
+        code = "\n".join(code_lines((ROOT / "scripts/build-linux-x64.sh").read_text(encoding="utf-8")))
+        sourced = code.index(". scripts/lib/appimage.sh")
+        placed = code.index("voltip_appimage_apprun")
+        built = code.index("cargo tauri build --ci --bundles deb,rpm,appimage")
+        checked = code.index('voltip_check_appimage_permissions "$appimage" build-linux-x64')
+        copied = code.index('cp "$deb" "$rpm" "$appimage" "$out"/')
+        self.assertLess(sourced, placed)
+        self.assertLess(placed, built)
+        self.assertLess(built, checked)
+        self.assertLess(checked, copied)
+        # A statement of its own: as the first command of an `&&` list a failure would not stop
+        # the script under `set -e`, and the build would go on with the bundles of an earlier run.
+        self.assertRegex(code, r"(?m)^\s*voltip_appimage_apprun \|\| exit 1$")
+        self.assertRegex(code, r"(?m)^for tool in [^\n]*\bunsquashfs\b")
 
 
 class AptInstalls(unittest.TestCase):
