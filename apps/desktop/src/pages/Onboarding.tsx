@@ -7,6 +7,7 @@ import {
   type Permission,
   type PermissionState,
   dictationPhaseLabel,
+  draftSecret,
   hotkeyMethodText,
   nothingToGrant,
   onboardingGate,
@@ -207,12 +208,13 @@ export function Onboarding({ step }: OnboardingProps) {
     void backend.invoke("settings_set_engines", {
       engines: engineSettingsFor(choice, state.settings.engines, engineDraft, engines),
     });
-    const key = engineDraft.key.trim();
-    if (choice === "provider" && key.length > 0)
+    // The key, or a credential's fields as one JSON value; nothing typed keeps the stored one.
+    const secret = draftSecret(engineDraft);
+    if (choice === "provider" && secret !== undefined)
       void backend.invoke("provider_key_set", {
         provider: engineDraft.provider,
         kind: "asr",
-        value: key,
+        value: secret,
       });
     go(4);
   };

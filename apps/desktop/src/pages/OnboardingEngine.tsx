@@ -1,12 +1,24 @@
 import {
+  type CredentialDraft,
   type EngineSettings,
   type EngineStatus,
   type ProviderId,
   type TFunction,
+  checkCredentialDraft,
+  credentialDraft,
   modelOptions,
   providerStatus,
 } from "@voltip/shared";
-import { Badge, Input, Select, Toggle, useI18n, useModelRefresh, useUiState } from "@voltip/ui";
+import {
+  Badge,
+  CredentialFields,
+  Input,
+  Select,
+  Toggle,
+  useI18n,
+  useModelRefresh,
+  useUiState,
+} from "@voltip/ui";
 import { shortModel } from "../shell/page-meta";
 import { applyProviderDraft, providerDraft, providersFor } from "./settings/engines/helpers";
 import { ModelCard } from "./settings/engines/LocalModels";
@@ -21,6 +33,8 @@ export interface EngineDraft {
   model: string;
   baseUrl: string;
   key: string;
+  /** A vendor whose credential has several fields fills them in here instead of `key`. */
+  credential?: CredentialDraft;
   /** Polish with an LLM too (when the choice has a polish provider). */
   refine: boolean;
 }
@@ -48,9 +62,22 @@ export function initialDraft(settings: EngineSettings, engines: EngineStatus): E
       : (vendorsFor(engines)[0] ?? "custom");
   return {
     provider,
-    ...providerDraft(settings, provider, "asr"),
+    ...vendorDraft(settings, engines, provider),
     refine: settings.refine_enabled,
   };
+}
+
+/** The model, endpoint and empty credential step 3 shows for `provider`: what is saved for it, and
+ *  for a credential of several fields the set of the stored one (docs/dictation.md §3.15). */
+export function vendorDraft(
+  settings: EngineSettings,
+  engines: EngineStatus,
+  provider: ProviderId,
+): Pick<EngineDraft, "model" | "baseUrl" | "key" | "credential"> {
+  const status = providerStatus(engines, provider);
+  const credential = status === undefined ? undefined : credentialDraft(status, status.asr);
+  const draft = providerDraft(settings, provider, "asr");
+  return credential === undefined ? draft : { ...draft, credential };
 }
 
 /** Who would polish the text for a choice: the vendor itself when it offers polish, else the
@@ -107,7 +134,12 @@ export function engineDraftProblem(
     (url.length === 0 && service.default_base_url === undefined)
   )
     return t("onboarding.engine.needUrl");
-  if (provider.key === "required" && !service.key.set && draft.key.trim().length === 0)
+  // docs/dictation.md §3.15: the stored set's blank fields keep their values, another set needs all.
+  const credential = draft.credential ?? credentialDraft(provider, service);
+  if (credential !== undefined) {
+    const issue = checkCredentialDraft(credential, provider, service, t);
+    if (issue !== undefined) return issue;
+  } else if (provider.key === "required" && !service.key.set && draft.key.trim().length === 0)
     return t("onboarding.engine.needKey");
   // What the save leaves in effect: an empty field drops the saved override and falls back to the
   // provider's default model, which the custom endpoint does not have (the core would refuse every take).
@@ -213,10 +245,11 @@ export function OnboardingEngineStep({
               size="sm"
               value={draft.provider}
               onChange={(provider) => {
+                const { credential: _previous, ...rest } = draft;
                 onDraft({
-                  ...draft,
+                  ...rest,
                   provider,
-                  ...providerDraft(state.settings.engines, provider, "asr"),
+                  ...vendorDraft(state.settings.engines, engines, provider),
                 });
               }}
               options={vendorsFor(engines).map((id) => ({
@@ -261,19 +294,31 @@ export function OnboardingEngineStep({
               }}
             />
           )}
-          {vendor?.key !== "none" && (
-            <Input
-              label={t("onboarding.engine.key")}
-              mono
+          {vendor !== undefined && draft.credential !== undefined ? (
+            <CredentialFields
               size="sm"
-              type="password"
-              autoComplete="off"
-              value={draft.key}
-              placeholder={t("onboarding.engine.keyPlaceholder")}
-              onChange={(e) => {
-                onDraft({ ...draft, key: e.target.value });
+              provider={vendor}
+              service={vendorAsr}
+              draft={draft.credential}
+              onChange={(credential) => {
+                onDraft({ ...draft, credential });
               }}
             />
+          ) : (
+            vendor?.key !== "none" && (
+              <Input
+                label={t("onboarding.engine.key")}
+                mono
+                size="sm"
+                type="password"
+                autoComplete="off"
+                value={draft.key}
+                placeholder={t("onboarding.engine.keyPlaceholder")}
+                onChange={(e) => {
+                  onDraft({ ...draft, key: e.target.value });
+                }}
+              />
+            )
           )}
         </div>
       )}

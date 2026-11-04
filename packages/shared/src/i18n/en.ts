@@ -1660,6 +1660,19 @@ export const en: Messages = {
       show: "Show",
       hide: "Hide",
       missing: "Enter {fields}",
+      listSeparator: ", ",
+      help: {
+        volcengine_speech:
+          "New console: the API key created in the Doubao Speech console. Old console: the app's App ID and Access Token.",
+        tencent:
+          "Find the AppId in the Tencent Cloud account center; create the SecretId and SecretKey on the API key management page of Cloud Access Management.",
+        iflytek:
+          "Create an app in the iFlytek Open Platform console and add the dictation (streaming) service; its service page shows the APPID, APISecret and APIKey.",
+        iflytek_rtasr:
+          "Add the realtime transcription service to an app in the iFlytek Open Platform console; its service page shows the APPID and APIKey.",
+        baidu:
+          "In the Baidu AI Cloud console, the speech technology app list shows each app's credentials: its AppID and API Key.",
+      },
     },
     ready: "Ready",
     issue: {
@@ -1678,6 +1691,8 @@ export const en: Messages = {
         "Pick from the list. Once a key is saved, the list includes every model the provider offers for this service.",
       modelHelpKeyless:
         "Pick from the list. While the service can be reached, the list includes every model it offers for this service.",
+      modelHelpPresets:
+        "This provider publishes no model list, so these are the suggested models; choose “Other model…” to enter another model ID.",
       modelOffered: "From the provider ({n})",
       modelListed: {
         one: "The list includes the model the provider offers for this service, updated each time the list opens.",

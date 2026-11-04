@@ -1,4 +1,5 @@
 import {
+  type ProviderDraft,
   type ProviderId,
   type ProviderStatus,
   type ServiceKind,
@@ -9,6 +10,9 @@ import {
   applyProviderDraft,
   checkProviderDraft,
   choosesInterface,
+  clearedSecret,
+  credentialDraft,
+  draftSecret,
   modelDisplayName,
   modelListHelp,
   modelOptions,
@@ -37,6 +41,7 @@ import { cx } from "../../cx";
 import { useI18n } from "../../i18n/I18nProvider";
 import { useFeatureShell } from "../shell";
 import { BuiltinUsage, UsageInline, useServiceUsage } from "../usage/Usage";
+import { CredentialFields } from "./CredentialFields";
 import { ProviderMark, hasProviderMark } from "./ProviderMark";
 import { useModelRefresh } from "./useModelRefresh";
 import { useProviderProbe } from "./useProviderProbe";
@@ -442,12 +447,15 @@ function BuiltinDetail({
 function ProbePanel({
   probe,
   onRun,
+  checked = false,
 }: {
   probe: ReturnType<typeof useProviderProbe>;
   onRun: () => void;
+  /** The vendor lists no models: an answer checked the credential. */
+  checked?: boolean;
 }) {
   const { t } = useI18n();
-  const result = probe.report ? probeText(probe.report, t) : undefined;
+  const result = probe.report ? probeText(probe.report, t, checked) : undefined;
   return (
     <div className="flex flex-wrap items-center gap-3 rounded-10 bg-inset px-3 py-2.5">
       <Button size="sm" variant="outline" icon="refresh" loading={probe.pending} onClick={onRun}>
@@ -484,9 +492,13 @@ function ProviderForm({
   const { t, locale } = useI18n();
   const state = useUiState();
   const name = t(`engines.provider.${provider.id}`);
-  const [draft, setDraft] = useState(() =>
-    providerDraft(state.settings.engines, provider.id, kind),
-  );
+  // A credential of several fields is edited field by field (docs/dictation.md §3.15).
+  const opened = () => {
+    const credential = credentialDraft(provider, service);
+    const draft = providerDraft(state.settings.engines, provider.id, kind);
+    return credential === undefined ? draft : { ...draft, credential };
+  };
+  const [draft, setDraft] = useState(opened);
   const [showKey, setShowKey] = useState(false);
   const [problem, setProblem] = useState<string | undefined>(undefined);
   const probe = useProviderProbe(provider.id, kind);
@@ -525,13 +537,13 @@ function ProviderForm({
         engines: use ? withProvider(engines, kind, provider.id) : engines,
       }),
     ];
-    const key = draft.key.trim();
-    if (key.length > 0)
-      sent.push(backend.invoke("provider_key_set", { provider: provider.id, kind, value: key }));
+    const typed = draftSecret(draft);
+    if (typed !== undefined)
+      sent.push(backend.invoke("provider_key_set", { provider: provider.id, kind, value: typed }));
     // The list for the endpoint and key just saved, once the core has them.
     Promise.all(sent).then(refreshModels, () => undefined);
-    setDraft({ ...draft, key: "" });
-    return key.length > 0 ? t("engines.savedKey") : "";
+    setDraft(clearedSecret(draft));
+    return typed !== undefined ? t("engines.savedKey") : "";
   };
   const save = () => {
     const keyNote = write(false);
@@ -554,11 +566,11 @@ function ProviderForm({
         baseUrl: "",
       }),
     });
-    setDraft(
-      choosesInterface(provider.id, kind)
-        ? { model: "", baseUrl: "", key: "", api: "chat_completions" }
-        : { model: "", baseUrl: "", key: "" },
-    );
+    const credential = credentialDraft(provider, service);
+    const cleared: ProviderDraft = choosesInterface(provider.id, kind)
+      ? { model: "", baseUrl: "", key: "", api: "chat_completions" }
+      : { model: "", baseUrl: "", key: "" };
+    setDraft(credential === undefined ? cleared : { ...cleared, credential });
     setTyping(false);
     setProblem(undefined);
     notify(t("engines.resetDone", { provider: name }));
@@ -679,39 +691,50 @@ function ProviderForm({
           />
           {takesKey && (
             <>
-              <Input
-                label={
-                  provider.key === "required"
-                    ? t("engines.field.key")
-                    : t("engines.field.keyOptional")
-                }
-                mono
-                type={showKey ? "text" : "password"}
-                autoComplete="off"
-                value={draft.key}
-                placeholder={
-                  service.key.set
-                    ? t("engines.field.keyPlaceholderSet")
-                    : t("engines.field.keyPlaceholderUnset")
-                }
-                onChange={(e) => {
-                  setDraft({ ...draft, key: e.target.value });
-                }}
-                help={
-                  shared
-                    ? t("engines.field.keyShared", { provider: name })
-                    : t("engines.field.keyHelp")
-                }
-                trailing={
-                  <IconButton
-                    icon="eye"
-                    label={showKey ? t("engines.field.hideKey") : t("engines.field.showKey")}
-                    onClick={() => {
-                      setShowKey(!showKey);
-                    }}
-                  />
-                }
-              />
+              {draft.credential !== undefined ? (
+                <CredentialFields
+                  provider={provider}
+                  service={service}
+                  draft={draft.credential}
+                  onChange={(credential) => {
+                    setDraft({ ...draft, credential });
+                  }}
+                />
+              ) : (
+                <Input
+                  label={
+                    provider.key === "required"
+                      ? t("engines.field.key")
+                      : t("engines.field.keyOptional")
+                  }
+                  mono
+                  type={showKey ? "text" : "password"}
+                  autoComplete="off"
+                  value={draft.key}
+                  placeholder={
+                    service.key.set
+                      ? t("engines.field.keyPlaceholderSet")
+                      : t("engines.field.keyPlaceholderUnset")
+                  }
+                  onChange={(e) => {
+                    setDraft({ ...draft, key: e.target.value });
+                  }}
+                  help={
+                    shared
+                      ? t("engines.field.keyShared", { provider: name })
+                      : t("engines.field.keyHelp")
+                  }
+                  trailing={
+                    <IconButton
+                      icon="eye"
+                      label={showKey ? t("engines.field.hideKey") : t("engines.field.showKey")}
+                      onClick={() => {
+                        setShowKey(!showKey);
+                      }}
+                    />
+                  }
+                />
+              )}
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px]">
                 <span className="text-fg-subtle">{t("engines.field.keyState")}</span>
                 <LampText tone={secret.tone} size="sm">
@@ -753,8 +776,9 @@ function ProviderForm({
           )}
           <ProbePanel
             probe={probe}
+            checked={provider.lists_models === false}
             onRun={() => {
-              probe.run({ baseUrl: draft.baseUrl, key: draft.key });
+              probe.run({ baseUrl: draft.baseUrl, key: draftSecret(draft), model: draft.model });
             }}
           />
           {problem !== undefined && (

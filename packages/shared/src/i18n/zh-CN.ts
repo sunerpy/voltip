@@ -1665,7 +1665,20 @@ export const zhCN = {
       saved: "已保存，留空则不变",
       show: "显示",
       hide: "隐藏",
-      missing: "请填写{fields}",
+      missing: "请填写 {fields}",
+      listSeparator: "、",
+      /** Where each vendor's fields are found (docs/dictation.md §3.15). */
+      help: {
+        volcengine_speech:
+          "新版控制台：填写在豆包语音控制台创建的 API Key。旧版控制台：填写应用的 App ID 与 Access Token。",
+        tencent:
+          "AppId 在腾讯云账号中心查看；SecretId 与 SecretKey 在访问管理的 API 密钥管理页面新建。",
+        iflytek:
+          "在讯飞开放平台控制台创建应用并添加语音听写（流式版）服务后，服务页面会显示 APPID、APISecret 和 APIKey。",
+        iflytek_rtasr:
+          "在讯飞开放平台控制台为应用添加实时语音转写服务后，服务页面会显示 APPID 和 APIKey。",
+        baidu: "在百度智能云控制台的语音技术应用列表里，每个应用的鉴权信息包含 AppID 和 API Key。",
+      },
     },
     ready: "就绪",
     issue: {
@@ -1682,6 +1695,9 @@ export const zhCN = {
       modelCustom: "模型 ID",
       modelHelp: "从列表里选。保存密钥后，列表会包含服务商提供的全部可用模型。",
       modelHelpKeyless: "从列表里选。能连接到这个服务时，列表会包含它提供的全部可用模型。",
+      /** docs/dictation.md §3.15: a vendor that publishes no model list. */
+      modelHelpPresets:
+        "这个服务商不提供模型清单，列表里是建议的模型；也可以选「其他模型…」填写模型 ID。",
       /** docs/dictation.md §3.3: the model select's groups; the count is 测试连接's. */
       modelOffered: "服务商提供（{n}）",
       modelListed: {

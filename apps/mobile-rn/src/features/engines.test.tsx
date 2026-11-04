@@ -198,6 +198,65 @@ describe("a provider's sheet", () => {
     expect(sheet.queryByTestId("provider-model-id")).toBeNull();
   });
 
+  it("docs/dictation.md §3.15: a credential of several fields is saved as one value; 豆包语音 switches its set", async () => {
+    const { backend } = await renderApp();
+    const invoke = jest.spyOn(backend, "invoke");
+    const sheet = await openSheet(
+      "settings-speech",
+      "asr",
+      "volcengine_speech",
+      "火山引擎豆包语音",
+    );
+    expect(sheet.queryByTestId("provider-key")).toBeNull();
+    expect(sheet.getByTestId("credential-help")).toHaveTextContent(/豆包语音控制台/);
+    expect(sheet.getByTestId("credential-api_key")).toHaveProp("secureTextEntry", true);
+    await fireEvent.press(sheet.getByLabelText("显示"));
+    expect(sheet.getByTestId("credential-api_key")).toHaveProp("secureTextEntry", false);
+    // The old console's set: its two fields, both needed while nothing is stored.
+    await fireEvent.press(sheet.getByTestId("credential-set-app_token"));
+    expect(sheet.queryByTestId("credential-api_key")).toBeNull();
+    await fireEvent.changeText(sheet.getByTestId("credential-app_id"), "volc-app");
+    await fireEvent.press(sheet.getByTestId("provider-save"));
+    expect(await sheet.findByTestId("provider-problem")).toHaveTextContent("请填写 Access Token");
+    await fireEvent.changeText(sheet.getByTestId("credential-access_token"), "volc-token");
+    await fireEvent.press(sheet.getByTestId("provider-save"));
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("provider_key_set", {
+        provider: "volcengine_speech",
+        kind: "asr",
+        value: '{"set":"app_token","app_id":"volc-app","access_token":"volc-token"}',
+      });
+    });
+    await waitFor(() => {
+      expect(sheet.getByTestId("credential-app_id")).toHaveProp(
+        "placeholder",
+        "已保存，留空则不变",
+      );
+    });
+    expect(sheet.getByTestId("credential-app_id")).toHaveDisplayValue("");
+  });
+
+  it("tests a vendor without a model list with the form's credential and model", async () => {
+    const { backend } = await renderApp();
+    const invoke = jest.spyOn(backend, "invoke");
+    const sheet = await openSheet("settings-speech", "asr", "iflytek", "讯飞语音听写");
+    expect(sheet.getByTestId("provider-model-help")).toHaveTextContent(/不提供模型清单/);
+    await fireEvent.changeText(sheet.getByTestId("credential-app_id"), "595f23df");
+    await fireEvent.changeText(sheet.getByTestId("credential-api_key"), "iat-key");
+    await fireEvent.changeText(sheet.getByTestId("credential-api_secret"), "iat-secret");
+    await fireEvent.press(sheet.getByTestId("provider-probe"));
+    expect(invoke).toHaveBeenCalledWith("provider_probe", {
+      provider: "iflytek",
+      kind: "asr",
+      baseUrl: null,
+      key: '{"set":"default","app_id":"595f23df","api_key":"iat-key","api_secret":"iat-secret"}',
+      model: null,
+    });
+    await waitFor(() => {
+      expect(sheet.getByTestId("probe-result")).toHaveTextContent(`凭据有效 · ${MOCK_PROBE_MS} ms`);
+    }, LONG);
+  });
+
   it("says when the core refuses to test a connection", async () => {
     const { backend } = await renderApp();
     const sheet = await openSheet("settings-speech", "asr", "groq", "Groq");

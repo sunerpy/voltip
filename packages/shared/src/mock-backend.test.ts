@@ -1551,6 +1551,14 @@ describe("MockBackend history, engines and secrets", () => {
     // A key-less provider refuses one.
     await backend.invoke("provider_key_set", { provider: "local", kind: "asr", value: "x" });
     expect(backend.log.at(-1)).toMatchObject({ type: "error" });
+    // A secret store that refuses the write: the core says so and keeps what it had.
+    backend.simulateKeyStoreFailure("钥匙串不可用");
+    await backend.invoke("provider_key_set", { provider: "groq", kind: "asr", value: "gsk_x" });
+    expect(backend.log.at(-1)).toEqual({ type: "error", message: "钥匙串不可用" });
+    expect(groq()?.asr?.key).toEqual({ set: false, source: "none" });
+    backend.simulateKeyStoreFailure(null);
+    await backend.invoke("provider_key_set", { provider: "groq", kind: "asr", value: "gsk_x" });
+    expect(groq()?.asr?.key).toEqual({ set: true, source: "user" });
   });
 
   it("provider_probe refuses what the core refuses up front and lists models otherwise", async () => {

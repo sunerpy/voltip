@@ -7,13 +7,20 @@ import { useCallback, useEffect, useRef, useState } from "react";
  *  core's own request deadline is 10 s, so an answer normally comes first). */
 export const PROBE_WAIT_MS = 20_000;
 
+/** The form's values a 测试连接 sends; a blank or missing one means the saved one. */
+export interface ProbeDraft {
+  baseUrl?: string | undefined;
+  key?: string | undefined;
+  model?: string | undefined;
+}
+
 export interface ProviderProbe {
   /** A test is in flight. */
   pending: boolean;
   /** The last answer for this provider and service. */
   report: ProbeReport | undefined;
   /** Ask the core to list the provider's models with the form's values (`undefined` = saved). */
-  run: (draft: { baseUrl?: string; key?: string }) => void;
+  run: (draft: ProbeDraft) => void;
 }
 
 /** 测试连接 for one provider card: sends `provider_probe` and listens for the `provider_probe`
@@ -44,9 +51,10 @@ export function useProviderProbe(provider: ProviderId, kind: ServiceKind): Provi
   );
 
   const run = useCallback(
-    (draft: { baseUrl?: string; key?: string }) => {
+    (draft: ProbeDraft) => {
       const baseUrl = draft.baseUrl?.trim();
       const key = draft.key?.trim();
+      const model = draft.model?.trim();
       setPending(true);
       clearTimeout(timer.current);
       timer.current = setTimeout(() => {
@@ -59,6 +67,7 @@ export function useProviderProbe(provider: ProviderId, kind: ServiceKind): Provi
           kind,
           baseUrl: baseUrl === undefined || baseUrl.length === 0 ? null : baseUrl,
           key: key === undefined || key.length === 0 ? null : key,
+          model: model === undefined || model.length === 0 ? null : model,
         })
         .catch(() => {
           clearTimeout(timer.current);

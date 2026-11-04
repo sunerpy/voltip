@@ -3661,6 +3661,9 @@ export interface CommandArgs {
     kind: ServiceKind;
     baseUrl?: string | null;
     key?: string | null;
+    /** The form's model (`null` = the saved one): a vendor that lists no models is checked with
+     *  it (docs/dictation.md §3.15). */
+    model?: string | null;
   };
   /** List a provider's models with the saved endpoint and key as a model list opens
    *  (docs/dictation.md §3.3); the list arrives in an `engines` event (`ServiceStatus.listed`). */

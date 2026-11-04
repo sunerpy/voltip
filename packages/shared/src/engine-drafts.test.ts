@@ -1,7 +1,15 @@
 import {
   choosesInterface,
   applyProviderDraft,
+  checkCredentialDraft,
   checkProviderDraft,
+  clearedSecret,
+  credentialDraft,
+  credentialFieldLabel,
+  credentialHelp,
+  credentialSetLabel,
+  credentialValue,
+  draftSecret,
   endpointHost,
   languageOptions,
   modelChoices,
@@ -19,8 +27,16 @@ import {
   withProvider,
 } from "./engine-drafts";
 import { defaultEngineSettings } from "./schema";
+import { PROVIDER_IDS } from "./schema";
+import { keyEntry, providerSpec, resolveEngineStatus } from "./providers";
 import { createTranslator, zhT } from "./i18n";
-import type { EngineSettings, EngineStatus, ProviderStatus, ServiceStatus } from "./schema";
+import type {
+  EngineSettings,
+  EngineStatus,
+  ProbeReport,
+  ProviderStatus,
+  ServiceStatus,
+} from "./schema";
 
 const t = zhT.t;
 
@@ -422,5 +438,151 @@ describe("engine drafts (provider cards, desktop and phone)", () => {
       "ko",
     ]);
     expect(languageOptions().length).toBe(6);
+  });
+});
+
+describe("credentials of several fields (docs/dictation.md §3.15, the core's merge_credentials)", () => {
+  /** A vendor's card as the engines status shows it, with its credential stored of `set`. */
+  const card = (id: "tencent" | "volcengine_speech", set?: string) => {
+    const entry = keyEntry(id, "asr") ?? "";
+    const status = resolveEngineStatus({
+      settings: defaultEngineSettings(),
+      userKeys: new Set(set === undefined ? [] : [entry]),
+      credentialSets: set === undefined ? {} : { [entry]: set },
+      builtIn: {},
+      local: { id: "", name: "", installed: false },
+      liveReady: false,
+    });
+    const found = status.providers.find((p) => p.id === id);
+    if (found === undefined) throw new Error(id);
+    return found;
+  };
+  const en = createTranslator("en").t;
+
+  it("opens with the stored set, else the first, every field empty", () => {
+    expect(credentialDraft(card("volcengine_speech"), card("volcengine_speech").asr)).toEqual({
+      set: "api_key",
+      fields: {},
+    });
+    const old = card("volcengine_speech", "app_token");
+    expect(credentialDraft(old, old.asr)).toEqual({ set: "app_token", fields: {} });
+    expect(credentialDraft(provider(), service())).toBeUndefined();
+  });
+
+  it("checks a draft by the core's rule, case by case", () => {
+    const fresh = card("tencent");
+    const stored = card("tencent", "default");
+    const cases: [string, ProviderStatus, Record<string, string>, string | undefined][] = [
+      [
+        "nothing stored: every field",
+        fresh,
+        { app_id: "125", secret_id: "test-secret-id", secret_key: "sk" },
+        undefined,
+      ],
+      ["nothing stored: a field missing", fresh, { app_id: "125" }, "请填写 SecretId、SecretKey"],
+      [
+        "nothing stored: blanks count as missing",
+        fresh,
+        { app_id: " ", secret_id: "test-secret-id", secret_key: "sk" },
+        "请填写 App ID",
+      ],
+      ["the same set: blanks keep the stored values", stored, {}, undefined],
+      ["the same set: one field replaced", stored, { secret_key: "new" }, undefined],
+    ];
+    expect(
+      cases.map(([what, status, fields]) => [
+        what,
+        checkCredentialDraft({ set: "default", fields }, status, status.asr, t),
+      ]),
+    ).toEqual(cases.map(([what, , , want]) => [what, want]));
+    // 豆包语音: another set than the stored one needs all of its fields.
+    const old = card("volcengine_speech", "app_token");
+    expect(checkCredentialDraft({ set: "api_key", fields: {} }, old, old.asr, t)).toBe(
+      "请填写 API Key",
+    );
+    expect(
+      checkCredentialDraft({ set: "api_key", fields: { api_key: "k" } }, old, old.asr, t),
+    ).toBeUndefined();
+    expect(checkCredentialDraft({ set: "app_token", fields: {} }, old, old.asr, t)).toBeUndefined();
+    expect(checkCredentialDraft({ set: "other", fields: {} }, old, old.asr, t)).toBe(
+      t("engines.check.missingKey"),
+    );
+    expect(checkCredentialDraft({ set: "default", fields: {} }, fresh, fresh.asr, en)).toBe(
+      "Enter App ID, SecretId, SecretKey",
+    );
+  });
+
+  it("sends the set and the fields typed, and nothing when none is", () => {
+    expect(
+      credentialValue({
+        set: "default",
+        fields: { app_id: " 125 ", secret_id: "", secret_key: "sk" },
+      }),
+    ).toBe('{"set":"default","app_id":"125","secret_key":"sk"}');
+    expect(credentialValue({ set: "default", fields: { app_id: "  " } })).toBeUndefined();
+    const draft = {
+      model: "",
+      baseUrl: "",
+      key: "",
+      credential: { set: "api_key", fields: { api_key: "k" } },
+    };
+    expect(draftSecret(draft)).toBe('{"set":"api_key","api_key":"k"}');
+    expect(clearedSecret(draft)).toEqual({ ...draft, credential: { set: "api_key", fields: {} } });
+    expect(draftSecret({ model: "", baseUrl: "", key: " gsk " })).toBe("gsk");
+    expect(draftSecret({ model: "", baseUrl: "", key: " " })).toBeUndefined();
+  });
+
+  it("checks a card's draft with its credential instead of a key", () => {
+    const fresh = card("tencent");
+    const draft = { model: "", baseUrl: "", key: "" };
+    expect(checkProviderDraft(draft, fresh, "asr", t)).toBe("请填写 App ID、SecretId、SecretKey");
+    expect(
+      checkProviderDraft(
+        {
+          ...draft,
+          credential: { set: "default", fields: { app_id: "1", secret_id: "2", secret_key: "3" } },
+        },
+        fresh,
+        "asr",
+        t,
+      ),
+    ).toBeUndefined();
+    const stored = card("tencent", "default");
+    expect(checkProviderDraft(draft, stored, "asr", t)).toBeUndefined();
+  });
+
+  it("names every field and set of the catalogue, and where each vendor's fields are found", () => {
+    const sets = (id: (typeof PROVIDER_IDS)[number]) => providerSpec(id).credential ?? [];
+    const vendors = PROVIDER_IDS.filter((id) => sets(id).length > 0);
+    expect(vendors).toEqual(["volcengine_speech", "tencent", "iflytek", "iflytek_rtasr", "baidu"]);
+    expect(PROVIDER_IDS.filter((id) => !vendors.includes(id) && credentialHelp(id, t))).toEqual([]);
+    expect(vendors.filter((id) => !credentialHelp(id, t) || !credentialHelp(id, en))).toEqual([]);
+    const fields = vendors.flatMap((id) => sets(id).flatMap((set) => set.fields.map((f) => f.id)));
+    expect(
+      fields.filter(
+        (id) => credentialFieldLabel(id, t) === id || credentialFieldLabel(id, en) === id,
+      ),
+    ).toEqual([]);
+    const named = vendors.flatMap((id) => (sets(id).length > 1 ? sets(id).map((s) => s.id) : []));
+    expect(named).toEqual(["api_key", "app_token"]);
+    expect(named.filter((id) => credentialSetLabel(id, t) === id)).toEqual([]);
+    expect(credentialFieldLabel("token", t)).toBe("token");
+    expect(credentialSetLabel("default", t)).toBe("default");
+  });
+
+  it("says a vendor without a model list checked the credential, and that its list is the presets", () => {
+    const report: ProbeReport = {
+      provider: "tencent",
+      kind: "asr",
+      result: "ok",
+      models: ["16k_zh_en"],
+      latency_ms: 40,
+    };
+    expect(probeText(report, t, true)).toEqual({ ok: true, text: "凭据有效 · 40 ms" });
+    expect(probeText(report, t).text).toBe("连接正常 · 1 个模型 · 40 ms");
+    const fresh = card("tencent");
+    expect(modelListHelp(fresh, fresh.asr ?? service(), t)).toBe(
+      t("engines.field.modelHelpPresets"),
+    );
   });
 });

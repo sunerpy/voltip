@@ -32,6 +32,127 @@ export interface ProviderDraft {
   api?: LlmApi;
   /** `undefined` sends no effort. */
   reasoning?: ReasoningEffort;
+  /** A vendor whose credential has several fields edits it here instead of `key`. */
+  credential?: CredentialDraft;
+}
+
+/** A credential of several fields as a form edits it (docs/dictation.md §3.15): the set chosen and
+ *  what was typed in its fields. Nothing is prefilled: a stored value never reaches the interface. */
+export interface CredentialDraft {
+  set: string;
+  fields: Readonly<Record<string, string>>;
+}
+
+/** The credential draft a form opens with for `provider`: the set of the stored credential, else
+ *  the default set, every field empty; `undefined` for a vendor with a plain key. */
+export function credentialDraft(
+  provider: ProviderStatus,
+  service: ServiceStatus | undefined,
+): CredentialDraft | undefined {
+  const sets = provider.credential ?? [];
+  const first = sets[0];
+  if (first === undefined) return undefined;
+  const stored = storedSet(service);
+  return { set: sets.find((s) => s.id === stored)?.id ?? first.id, fields: {} };
+}
+
+/** The set of the credential the user saved for `service`, if one is saved. */
+function storedSet(service: ServiceStatus | undefined): string | undefined {
+  const key = service?.key;
+  return key?.set === true && key.source === "user" ? key.credential_set : undefined;
+}
+
+/** Why a credential draft cannot be saved, by the core's rule (`merge_credentials`): with the
+ *  stored set chosen a blank field keeps its stored value; with another set, or none stored, every
+ *  required field of the chosen set must be filled in. */
+export function checkCredentialDraft(
+  draft: CredentialDraft,
+  provider: ProviderStatus,
+  service: ServiceStatus | undefined,
+  t: TFunction = zhT.t,
+): string | undefined {
+  const set = provider.credential?.find((s) => s.id === draft.set);
+  if (set === undefined) return t("engines.check.missingKey");
+  if (storedSet(service) === draft.set) return undefined;
+  const missing = set.fields.filter((f) => f.required && typed(draft, f.id) === undefined);
+  if (missing.length === 0) return undefined;
+  return t("engines.credential.missing", {
+    fields: missing
+      .map((f) => credentialFieldLabel(f.id, t))
+      .join(t("engines.credential.listSeparator")),
+  });
+}
+
+/** The `provider_key_set` value of a credential draft: its set and the fields filled in, trimmed;
+ *  `undefined` when none is (the stored credential stays as it is). */
+export function credentialValue(draft: CredentialDraft): string | undefined {
+  const fields = Object.keys(draft.fields).flatMap((id) => {
+    const value = typed(draft, id);
+    return value === undefined ? [] : [[id, value] as const];
+  });
+  if (fields.length === 0) return undefined;
+  return JSON.stringify({ set: draft.set, ...Object.fromEntries(fields) });
+}
+
+/** The catalogue's credential fields, sets and vendors with a note on where they are found (the
+ *  keys of `engines.credential`). */
+const CREDENTIAL_FIELD_IDS = [
+  "app_id",
+  "api_key",
+  "api_secret",
+  "access_token",
+  "secret_id",
+  "secret_key",
+] as const;
+const CREDENTIAL_SET_IDS = ["api_key", "app_token"] as const;
+const CREDENTIAL_HELP_IDS = [
+  "volcengine_speech",
+  "tencent",
+  "iflytek",
+  "iflytek_rtasr",
+  "baidu",
+] as const;
+
+function oneOf<T extends string>(ids: readonly T[], id: string): id is T {
+  return (ids as readonly string[]).includes(id);
+}
+
+/** A credential field's label (`engines.credential.<id>`); the id itself for one without. */
+export function credentialFieldLabel(id: string, t: TFunction = zhT.t): string {
+  return oneOf(CREDENTIAL_FIELD_IDS, id) ? t(`engines.credential.${id}`) : id;
+}
+
+/** A credential set's name (`engines.credential.set.<id>`); the id itself for one without. */
+export function credentialSetLabel(id: string, t: TFunction = zhT.t): string {
+  return oneOf(CREDENTIAL_SET_IDS, id) ? t(`engines.credential.set.${id}`) : id;
+}
+
+/** Where a vendor's credential fields are found, for one with several. */
+export function credentialHelp(provider: ProviderId, t: TFunction = zhT.t): string | undefined {
+  return oneOf(CREDENTIAL_HELP_IDS, provider)
+    ? t(`engines.credential.help.${provider}`)
+    : undefined;
+}
+
+/** A draft's field, trimmed, when it holds something. */
+function typed(draft: CredentialDraft, id: string): string | undefined {
+  const value = draft.fields[id]?.trim() ?? "";
+  return value.length > 0 ? value : undefined;
+}
+
+/** What a form's save and 测试连接 send as the provider's credential: the fields of a credential
+ *  of several fields, else the key typed; `undefined` when nothing was typed. */
+export function draftSecret(draft: ProviderDraft): string | undefined {
+  if (draft.credential !== undefined) return credentialValue(draft.credential);
+  const key = draft.key.trim();
+  return key.length > 0 ? key : undefined;
+}
+
+/** `draft` after a save: what was typed is cleared, the set chosen stays. */
+export function clearedSecret(draft: ProviderDraft): ProviderDraft {
+  return draft.credential === undefined
+    ? { ...draft, key: "" }
+    : { ...draft, key: "", credential: { set: draft.credential.set, fields: {} } };
 }
 
 /** Whether a card chooses its interface: the custom provider's clean-up (§3.7). */
@@ -162,6 +283,7 @@ export function modelListHelp(
   service: ServiceStatus,
   t: TFunction = zhT.t,
 ): string {
+  if (provider.lists_models === false) return t("engines.field.modelHelpPresets");
   const n = service.listed?.length ?? 0;
   if (n > 0) return t("engines.field.modelListed", { n });
   return provider.key === "required"
@@ -205,7 +327,11 @@ export function checkProviderDraft(
   if (url.length > 0 && !HTTP_URL_PATTERN.test(url)) return t("engines.check.badUrl");
   if (url.length === 0 && service?.default_base_url === undefined)
     return t("engines.check.missingUrl");
-  if (provider.key === "required" && !service?.key.set && draft.key.trim().length === 0)
+  const credential = draft.credential ?? credentialDraft(provider, service);
+  if (credential !== undefined) {
+    const issue = checkCredentialDraft(credential, provider, service, t);
+    if (issue !== undefined) return issue;
+  } else if (provider.key === "required" && !service?.key.set && draft.key.trim().length === 0)
     return t("engines.check.missingKey");
   const model = draft.model.trim().length > 0 ? draft.model : (service?.model ?? "");
   if (model.trim().length === 0) return t("engines.check.missingModel");
@@ -214,18 +340,22 @@ export function checkProviderDraft(
 
 const HTTP_URL_PATTERN = /^https?:\/\/[^/\s]+/;
 
-/** The probe answer as one line and a lamp tone. */
+/** The probe answer as one line and a lamp tone. For a vendor that lists no models (`checked`)
+ *  测试连接 checked the credential, and says so instead of counting the presets it returns. */
 export function probeText(
   report: ProbeReport,
   t: TFunction = zhT.t,
+  checked = false,
 ): { text: string; ok: boolean } {
   if (report.result === "ok")
     return {
       ok: true,
-      text: t("engines.probeResult.ok", {
-        n: report.models?.length ?? 0,
-        ms: report.latency_ms ?? 0,
-      }),
+      text: checked
+        ? t("engines.probeResult.okChecked", { ms: report.latency_ms ?? 0 })
+        : t("engines.probeResult.ok", {
+            n: report.models?.length ?? 0,
+            ms: report.latency_ms ?? 0,
+          }),
     };
   const reason = report.reason ?? "unreachable";
   const result = t(`engines.probeResult.${reason}`, { status: report.status ?? 0 });

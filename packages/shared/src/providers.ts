@@ -370,7 +370,8 @@ export function glossaryRoute(provider: ProviderId, url: string, model: string):
   if (m.startsWith("qwen-audio") && m.includes("-asr")) return "hotwords";
   // §3.15: Fun-ASR's context (`fun_asr_takes_context`).
   const context =
-    m === "fun-asr-realtime" || (m.startsWith("fun-asr-flash") && !m.includes("realtime") && !m.includes("8k"));
+    m === "fun-asr-realtime" ||
+    (m.startsWith("fun-asr-flash") && !m.includes("realtime") && !m.includes("8k"));
   return context ? "prompt" : "not_supported";
 }
 

@@ -2019,6 +2019,12 @@ export class MockBackend implements Backend {
     this.refineFailure = failure ?? undefined;
   }
 
+  /** From now on the secret store refuses every key written (`null`: it takes them again): the
+   *  core reports `message` and keeps what it had (tests and the dev pages). */
+  simulateKeyStoreFailure(message: string | null) {
+    this.keyStoreFailure = message ?? undefined;
+  }
+
   /** From now on another window is in front when a take's text is ready (`false`: the same one
    *  again): with `switched_window = copy_only` the text is copied, and `done`, the history and the
    *  longer dwell say so, as the core does (tests and the dev pages, docs/dictation.md §14.3). */
@@ -2696,6 +2702,10 @@ export class MockBackend implements Backend {
         });
         return;
       }
+      if (this.keyStoreFailure !== undefined) {
+        this.emit({ type: "error", message: this.keyStoreFailure });
+        return;
+      }
       if (value !== null && value.trim().length > 0) this.userKeys.add(entry);
       else this.userKeys.delete(entry);
       // A credential of several fields: the set it names, else the stored one's, else the first.
@@ -3336,6 +3346,7 @@ export class MockBackend implements Backend {
 
   /** `simulateRefineFailure`: how the next takes' clean-up fails, if it does. */
   private refineFailure: RefineFailure | undefined;
+  private keyStoreFailure: string | undefined;
   private windowSwitched = false;
 
   /** How often 复制令牌 was pressed (tests; the token itself never reaches the interface). */

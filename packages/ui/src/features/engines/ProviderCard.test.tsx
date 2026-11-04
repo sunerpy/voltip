@@ -112,6 +112,120 @@ describe("ProviderCards (desktop model pages and phone settings)", () => {
     backend.destroy();
   });
 
+  it("docs/dictation.md §3.15: a credential of several fields is saved as one value, a blank field keeping its stored value", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend();
+    const invoke = vi.spyOn(backend, "invoke");
+    renderCard(backend, { id: "tencent", kind: "asr" });
+    const form = await screen.findByTestId("provider-form");
+    expect(within(form).queryByLabelText(t("engines.field.key"))).toBeNull();
+    expect(within(form).getByTestId("credential-help")).toHaveTextContent(
+      t("engines.credential.help.tencent"),
+    );
+    const appId = within(form).getByLabelText(t("engines.credential.app_id"));
+    const secretId = within(form).getByLabelText(t("engines.credential.secret_id"));
+    const secretKey = within(form).getByLabelText(t("engines.credential.secret_key"));
+    expect(appId).toHaveAttribute("type", "text");
+    expect(secretKey).toHaveAttribute("type", "password");
+    await user.click(within(form).getByRole("button", { name: t("engines.credential.show") }));
+    expect(secretKey).toHaveAttribute("type", "text");
+    // Nothing stored yet: every field is needed, and nothing is saved without them.
+    await user.type(appId, "1250000000");
+    const save = within(form).getByRole("button", { name: t("engines.save") });
+    await user.click(save);
+    expect(screen.getByTestId("provider-problem")).toHaveTextContent("请填写 SecretId、SecretKey");
+    expect(invoke).not.toHaveBeenCalledWith("provider_key_set", expect.anything());
+    await user.type(secretId, "test-sid");
+    await user.type(secretKey, "sktest");
+    await user.click(save);
+    expect(invoke).toHaveBeenCalledWith("provider_key_set", {
+      provider: "tencent",
+      kind: "asr",
+      value: '{"set":"default","app_id":"1250000000","secret_id":"test-sid","secret_key":"sktest"}',
+    });
+    // Stored: the fields are empty again, a blank one keeps its value, and one field goes alone.
+    await waitFor(() => {
+      expect(appId).toHaveAttribute("placeholder", t("engines.credential.saved"));
+    });
+    expect(appId).toHaveValue("");
+    await user.type(secretKey, "new-secret-key");
+    await user.click(save);
+    expect(invoke).toHaveBeenCalledWith("provider_key_set", {
+      provider: "tencent",
+      kind: "asr",
+      value: '{"set":"default","secret_key":"new-secret-key"}',
+    });
+    backend.destroy();
+  });
+
+  it("switches 豆包语音 between its new and old console credentials, a new set needing all its fields", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend();
+    await backend.invoke("provider_key_set", {
+      provider: "volcengine_speech",
+      kind: "asr",
+      value: '{"set":"app_token","app_id":"app","access_token":"tok"}',
+    });
+    const invoke = vi.spyOn(backend, "invoke");
+    renderCard(backend, { id: "volcengine_speech", kind: "asr" });
+    const form = await screen.findByTestId("provider-form");
+    const sets = within(form).getByRole("radiogroup", { name: t("engines.credential.setLabel") });
+    // The stored set first, its fields blank and keeping their values.
+    expect(
+      within(sets).getByRole("radio", { name: t("engines.credential.set.app_token") }),
+    ).toHaveAttribute("aria-checked", "true");
+    expect(within(form).getByLabelText(t("engines.credential.access_token"))).toHaveAttribute(
+      "placeholder",
+      t("engines.credential.saved"),
+    );
+    await user.click(
+      within(sets).getByRole("radio", { name: t("engines.credential.set.api_key") }),
+    );
+    expect(within(form).queryByLabelText(t("engines.credential.app_id"))).toBeNull();
+    const key = within(form).getByLabelText(t("engines.credential.api_key"));
+    expect(key).toHaveAttribute("placeholder", "");
+    const save = within(form).getByRole("button", { name: t("engines.save") });
+    await user.click(save);
+    expect(screen.getByTestId("provider-problem")).toHaveTextContent("请填写 API Key");
+    await user.type(key, "volc-key");
+    await user.click(save);
+    expect(invoke).toHaveBeenCalledWith("provider_key_set", {
+      provider: "volcengine_speech",
+      kind: "asr",
+      value: '{"set":"api_key","api_key":"volc-key"}',
+    });
+    backend.destroy();
+  });
+
+  it("tests a vendor without a model list with the form's credential and model, and says the credential was accepted", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend();
+    const invoke = vi.spyOn(backend, "invoke");
+    renderCard(backend, { id: "baidu", kind: "asr" });
+    const form = await screen.findByTestId("provider-form");
+    expect(within(form).getByTestId("provider-model-help")).toHaveTextContent(
+      t("engines.field.modelHelpPresets"),
+    );
+    await user.selectOptions(
+      within(form).getByRole("combobox", { name: t("engines.field.model") }),
+      "1537",
+    );
+    await user.type(within(form).getByLabelText(t("engines.credential.app_id")), "123456");
+    await user.type(within(form).getByLabelText(t("engines.credential.api_key")), "bd-key");
+    await user.click(within(form).getByRole("button", { name: t("engines.probe") }));
+    expect(invoke).toHaveBeenCalledWith("provider_probe", {
+      provider: "baidu",
+      kind: "asr",
+      baseUrl: null,
+      key: '{"set":"default","app_id":"123456","api_key":"bd-key"}',
+      model: "1537",
+    });
+    expect(
+      await screen.findByTestId("probe-result", {}, { timeout: MOCK_PROBE_MS * 20 }),
+    ).toHaveTextContent(t("engines.probeResult.okChecked", { ms: MOCK_PROBE_MS }));
+    backend.destroy();
+  });
+
   it("switches Kimi between its China and international sites, each with its own key page", async () => {
     const user = userEvent.setup();
     const backend = new MockBackend();

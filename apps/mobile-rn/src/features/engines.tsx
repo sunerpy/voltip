@@ -6,8 +6,10 @@
 // `@voltip/shared`'s, as on the desktop.
 import {
   CHINESE_SCRIPTS,
+  type CredentialDraft,
   PROVIDER_MARKS,
   type ProbeReport,
+  type ProviderDraft,
   type ProviderBadgeTone,
   type ProviderId,
   type ProviderStatus,
@@ -17,6 +19,12 @@ import {
   applyProviderDraft,
   checkProviderDraft,
   choosesInterface,
+  clearedSecret,
+  credentialDraft,
+  credentialFieldLabel,
+  credentialHelp,
+  credentialSetLabel,
+  draftSecret,
   fallbackRows,
   fallbackTargets,
   modelListHelp,
@@ -104,9 +112,14 @@ export function useProviderProbe(provider: ProviderId, kind: ServiceKind) {
     [],
   );
   const run = useCallback(
-    (draft: { baseUrl?: string; key?: string }) => {
+    (draft: {
+      baseUrl?: string | undefined;
+      key?: string | undefined;
+      model?: string | undefined;
+    }) => {
       const baseUrl = draft.baseUrl?.trim();
       const key = draft.key?.trim();
+      const model = draft.model?.trim();
       setPending(true);
       clearTimeout(timer.current);
       timer.current = setTimeout(() => {
@@ -119,6 +132,7 @@ export function useProviderProbe(provider: ProviderId, kind: ServiceKind) {
           kind,
           baseUrl: baseUrl === undefined || baseUrl.length === 0 ? null : baseUrl,
           key: key === undefined || key.length === 0 ? null : key,
+          model: model === undefined || model.length === 0 ? null : model,
         })
         .catch(() => {
           clearTimeout(timer.current);
@@ -146,13 +160,16 @@ export function useModelRefresh(provider: ProviderId | undefined, kind: ServiceK
 function ProbePanel({
   probe,
   onRun,
+  checked = false,
 }: {
   probe: ReturnType<typeof useProviderProbe>;
   onRun: () => void;
+  /** The vendor lists no models: an answer checked the credential. */
+  checked?: boolean;
 }) {
   const theme = useAppTheme();
   const { t } = useI18n();
-  const result = probe.report ? probeText(probe.report, t) : undefined;
+  const result = probe.report ? probeText(probe.report, t, checked) : undefined;
   return (
     <View
       style={{
@@ -538,9 +555,12 @@ function ProviderForm({
   const { t, locale } = useI18n();
   const state = useUiState();
   const name = t(`engines.provider.${provider.id}`);
-  const [draft, setDraft] = useState(() =>
-    providerDraft(state.settings.engines, provider.id, kind),
-  );
+  // A credential of several fields is edited field by field (docs/dictation.md §3.15).
+  const [draft, setDraft] = useState<ProviderDraft>(() => {
+    const credential = credentialDraft(provider, service);
+    const opened = providerDraft(state.settings.engines, provider.id, kind);
+    return credential === undefined ? opened : { ...opened, credential };
+  });
   const [showKey, setShowKey] = useState(false);
   const [problem, setProblem] = useState<string | undefined>(undefined);
   const probe = useProviderProbe(provider.id, kind);
@@ -573,13 +593,13 @@ function ProviderForm({
         engines: use ? withProvider(engines, kind, provider.id) : engines,
       }),
     ];
-    const key = draft.key.trim();
-    if (key.length > 0)
-      sent.push(backend.invoke("provider_key_set", { provider: provider.id, kind, value: key }));
+    const typed = draftSecret(draft);
+    if (typed !== undefined)
+      sent.push(backend.invoke("provider_key_set", { provider: provider.id, kind, value: typed }));
     // The list for the endpoint and key just saved, once the core has them.
     Promise.all(sent).then(refreshModels, () => undefined);
-    setDraft({ ...draft, key: "" });
-    return key.length > 0 ? t("engines.savedKey") : "";
+    setDraft(clearedSecret(draft));
+    return typed !== undefined ? t("engines.savedKey") : "";
   };
   const save = () => {
     const keyNote = write(false);
@@ -602,11 +622,11 @@ function ProviderForm({
         baseUrl: "",
       }),
     });
-    setDraft(
-      choosesInterface(provider.id, kind)
-        ? { model: "", baseUrl: "", key: "", api: "chat_completions" }
-        : { model: "", baseUrl: "", key: "" },
-    );
+    const credential = credentialDraft(provider, service);
+    const cleared: ProviderDraft = choosesInterface(provider.id, kind)
+      ? { model: "", baseUrl: "", key: "", api: "chat_completions" }
+      : { model: "", baseUrl: "", key: "" };
+    setDraft(credential === undefined ? cleared : { ...cleared, credential });
     setTyping(false);
     setProblem(undefined);
     shell.toast(t("engines.resetDone", { provider: name }));
@@ -740,41 +760,58 @@ function ProviderForm({
       </View>
       {takesKey && (
         <View style={{ gap: 4 }}>
-          <TextInput
-            mode="outlined"
-            label={
-              provider.key === "required" ? t("engines.field.key") : t("engines.field.keyOptional")
-            }
-            value={draft.key}
-            placeholder={
-              service.key.set
-                ? t("engines.field.keyPlaceholderSet")
-                : t("engines.field.keyPlaceholderUnset")
-            }
-            secureTextEntry={!showKey}
-            autoCapitalize="none"
-            autoCorrect={false}
-            autoComplete="off"
-            testID="provider-key"
-            style={{ backgroundColor: sheetColor(theme) }}
-            onChangeText={(key) => {
-              setDraft({ ...draft, key });
-            }}
-            right={
-              <TextInput.Icon
-                icon={showKey ? "eye-off-outline" : "eye-outline"}
-                accessibilityLabel={
-                  showKey ? t("engines.field.hideKey") : t("engines.field.showKey")
+          {draft.credential !== undefined ? (
+            <CredentialInputs
+              provider={provider}
+              service={service}
+              draft={draft.credential}
+              onChange={(credential) => {
+                setDraft({ ...draft, credential });
+              }}
+            />
+          ) : (
+            <>
+              <TextInput
+                mode="outlined"
+                label={
+                  provider.key === "required"
+                    ? t("engines.field.key")
+                    : t("engines.field.keyOptional")
                 }
-                onPress={() => {
-                  setShowKey(!showKey);
+                value={draft.key}
+                placeholder={
+                  service.key.set
+                    ? t("engines.field.keyPlaceholderSet")
+                    : t("engines.field.keyPlaceholderUnset")
+                }
+                secureTextEntry={!showKey}
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoComplete="off"
+                testID="provider-key"
+                style={{ backgroundColor: sheetColor(theme) }}
+                onChangeText={(key) => {
+                  setDraft({ ...draft, key });
                 }}
+                right={
+                  <TextInput.Icon
+                    icon={showKey ? "eye-off-outline" : "eye-outline"}
+                    accessibilityLabel={
+                      showKey ? t("engines.field.hideKey") : t("engines.field.showKey")
+                    }
+                    onPress={() => {
+                      setShowKey(!showKey);
+                    }}
+                  />
+                }
               />
-            }
-          />
-          <Hint>
-            {shared ? t("engines.field.keyShared", { provider: name }) : t("engines.field.keyHelp")}
-          </Hint>
+              <Hint>
+                {shared
+                  ? t("engines.field.keyShared", { provider: name })
+                  : t("engines.field.keyHelp")}
+              </Hint>
+            </>
+          )}
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <Text variant="bodySmall" style={{ color: theme.voltip.subtle }}>
               {t("engines.field.keyState")}
@@ -819,8 +856,9 @@ function ProviderForm({
       )}
       <ProbePanel
         probe={probe}
+        checked={provider.lists_models === false}
         onRun={() => {
-          probe.run({ baseUrl: draft.baseUrl, key: draft.key });
+          probe.run({ baseUrl: draft.baseUrl, key: draftSecret(draft), model: draft.model });
         }}
       />
       {problem !== undefined && (
@@ -851,6 +889,92 @@ function ProviderForm({
           )}
         </View>
       </View>
+    </View>
+  );
+}
+
+/** A credential of several fields (`@voltip/ui`'s CredentialFields, docs/dictation.md §3.15): the
+ *  vendor's sets as segmented buttons when it has more than one, the chosen set's fields, the
+ *  secret ones hidden until shown; a field of the stored set left blank keeps its stored value. */
+function CredentialInputs({
+  provider,
+  service,
+  draft,
+  onChange,
+}: {
+  provider: ProviderStatus;
+  service: ServiceStatus;
+  draft: CredentialDraft;
+  onChange: (draft: CredentialDraft) => void;
+}) {
+  const theme = useAppTheme();
+  const { t } = useI18n();
+  const [shown, setShown] = useState<readonly string[]>([]);
+  const sets = provider.credential ?? [];
+  const set = sets.find((s) => s.id === draft.set) ?? sets[0];
+  if (set === undefined) return null;
+  const kept =
+    service.key.set && service.key.source === "user" && service.key.credential_set === set.id;
+  const help = credentialHelp(provider.id, t);
+  return (
+    <View style={{ gap: 8 }} testID="credential-fields">
+      {sets.length > 1 && (
+        <View style={{ gap: 4 }}>
+          <Text variant="bodySmall" style={{ color: theme.voltip.subtle }}>
+            {t("engines.credential.setLabel")}
+          </Text>
+          <SegmentedButtons
+            value={set.id}
+            onValueChange={(id) => {
+              if (id !== set.id) onChange({ set: id, fields: {} });
+            }}
+            buttons={sets.map((s) => ({
+              value: s.id,
+              label: credentialSetLabel(s.id, t),
+              testID: `credential-set-${s.id}`,
+            }))}
+          />
+        </View>
+      )}
+      {set.fields.map((field) => {
+        const visible = !field.secret || shown.includes(field.id);
+        return (
+          <TextInput
+            key={field.id}
+            mode="outlined"
+            label={credentialFieldLabel(field.id, t)}
+            value={draft.fields[field.id] ?? ""}
+            placeholder={kept ? t("engines.credential.saved") : ""}
+            secureTextEntry={!visible}
+            autoCapitalize="none"
+            autoCorrect={false}
+            autoComplete="off"
+            testID={`credential-${field.id}`}
+            style={{ backgroundColor: sheetColor(theme) }}
+            onChangeText={(value) => {
+              onChange({ set: set.id, fields: { ...draft.fields, [field.id]: value } });
+            }}
+            {...(field.secret
+              ? {
+                  right: (
+                    <TextInput.Icon
+                      icon={visible ? "eye-off-outline" : "eye-outline"}
+                      accessibilityLabel={
+                        visible ? t("engines.credential.hide") : t("engines.credential.show")
+                      }
+                      onPress={() => {
+                        setShown(
+                          visible ? shown.filter((id) => id !== field.id) : [...shown, field.id],
+                        );
+                      }}
+                    />
+                  ),
+                }
+              : {})}
+          />
+        );
+      })}
+      {help !== undefined && <Hint testID="credential-help">{help}</Hint>}
     </View>
   );
 }
