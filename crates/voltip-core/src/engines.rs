@@ -1655,8 +1655,13 @@ mod tests {
             (ProviderId::Aliyun, Some("qwen-audio-3.1-asr-flash-streaming"), Some(GlossaryRoute::Hotwords)),
             (ProviderId::Aliyun, Some("qwen-audio-3.1-asr-flash-message"), Some(GlossaryRoute::Hotwords)),
             (ProviderId::Aliyun, Some("qwen3-asr-flash"), Some(GlossaryRoute::NotSupported)),
-            (ProviderId::Aliyun, Some("fun-asr-flash-2026-06-15"), Some(GlossaryRoute::NotSupported)),
+            // docs/dictation.md §3.15: Fun-ASR takes the glossary as its context, the vendors their way.
+            (ProviderId::Aliyun, Some("fun-asr-flash-2026-06-15"), Some(GlossaryRoute::Prompt)),
+            (ProviderId::Aliyun, Some("fun-asr-flash-8k-realtime"), Some(GlossaryRoute::NotSupported)),
             (ProviderId::Aliyun, Some("paraformer-realtime-v2"), Some(GlossaryRoute::NotSupported)),
+            (ProviderId::Tencent, None, Some(GlossaryRoute::Hotwords)),
+            (ProviderId::Iflytek, None, Some(GlossaryRoute::NotSupported)),
+            (ProviderId::Stepfun, Some("stepaudio-2.5-asr-stream"), Some(GlossaryRoute::Prompt)),
         ];
         for (provider, model, expected) in cases {
             assert_eq!(route(provider, model, true, &BuiltIn::EMPTY), expected, "{provider:?} {model:?}");

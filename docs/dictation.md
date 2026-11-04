@@ -453,7 +453,17 @@ Kimi（`api.moonshot.cn` / `api.moonshot.ai`）和智谱 GLM（智谱开放平�
 
 每个客户端如实报告请求带没带术语表（`sends_glossary`）；`voltip-cloud` 的测试对目录里每家服务商、每个站点的每个推荐模型，核对客户端与路由一致、与 `AsrProtocol::streams` 一致。
 
-**错误**：鉴权失败（含握手的 401、403）归 `Unauthorized`；欠费、额度或资源包用完、每日上限归 `QuotaExhausted`（会切到候补，§3.5）；并发与频率超限归 `RateLimited`；服务端错误归 `Server`；其余拒绝归 `Service { code, message }`。阶跃的 `internal_error` 归 `Server`，`max_idle_timeout`、`pong_timeout` 归网络错误；402 归 `QuotaExhausted`。智谱 `1113`（余额不足）、`1304`（日调用上限）归 `QuotaExhausted`，`1302`、`1303`、`1305` 归 `RateLimited`。MiMo 的 402 归 `QuotaExhausted`。
+**错误**：鉴权失败（含握手的 401、403）归 `Unauthorized`；欠费、额度或资源包用完、每日上限归 `QuotaExhausted`（会切到候补，§3.5）；并发与频率超限归 `RateLimited`；服务端错误归 `Server`；其余拒绝归 `Service { code, message }`。各家按自己文档的错误码表：
+
+- 火山：错误帧 `45000081`（等待音频超时）归超时，`45000151`（音频格式不对）归音频错误，`55000031`（服务繁忙）归 `Server` 503，其他 `550xxxxx` 归 `Server` 500，其余（`45000001` 参数无效、`45000002` 空音频等）归 `Service`；握手被拒按 HTTP 状态。文档没有写未开通、资源用完或欠费时返回什么，所以握手被拒或错误帧的文字含「欠费」「余额不足」（英文 arrear、insufficient balance）时按额度用完处理；这一条没有文档依据，要用真实账户确认。
+- 腾讯（实时接口与极速版）：`4002` 鉴权失败归 `Unauthorized`；`4004` 资源包耗尽、`4005` 欠费归 `QuotaExhausted`；`4006` 并发超限与 `4000` 发送过快归 `RateLimited`；`4007` 与极速版的 `4011` 归音频错误；`4008`（15 秒未发音频）与极速版的 `5003` 归超时；`4009` 归网络错误；`5000`–`5002`（负载高或网络抖动，可重试）归 `Server` 503，其他 `5xxx` 归 500；`4001` 参数、`4003` 服务未开通、`4010` 等归 `Service`。`app_id` 必须是数字。
+- 阶跃：`internal_error` 归 `Server`，`max_idle_timeout`、`pong_timeout` 归网络错误；HTTP 402 归 `QuotaExhausted`。
+- 智谱：`1113`（余额不足）、`1304`（日调用上限）归 `QuotaExhausted`，`1302`、`1303`、`1305` 归 `RateLimited`。
+- MiMo：HTTP 402 归 `QuotaExhausted`。
+
+结束之后等待最后结果的时间以客户端超时为上限（火山、腾讯为 `config.timeout`，阶跃 15 秒），超时按 `Timeout` 结束，会话任务不会一直挂着。
+
+**旧版手机**：手机与电脑同步设置镜像时（§20.8），旧版手机不认识新的服务商 id，丢弃这份镜像，历史记录照常同步；两端都更新后恢复（同 §3.4）。
 
 **界面**：卡片说明写明各家只用于识别、在哪里获取凭据、需要先在控制台开通服务；讯飞语音听写写明热词只能在控制台上传；火山写明火山方舟的密钥不能用。图标取自 LobeHub Icons 的 `doubao-color`、`tencentcloud-color`、`iflytekcloud-color`（讯飞两张卡）、`baiducloud-color`、`stepfun-color`（§3，提交 `bcdb7c8`）。
 
