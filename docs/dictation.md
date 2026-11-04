@@ -144,7 +144,7 @@ pub struct EngineSettings {                                  // Settings.engines
 }
 ```
 
-没有填写的模型与地址取目录里的预设。每家服务商的每项服务只带两三个推荐模型，第一个是默认（2026-10-25 用户决定：「所有的provider不需要带内置列表 而是填写了key测试通过后拉取model」「每家留2-3个模型吧」）；其余模型在保存密钥后从服务商自己的模型列表获取（§3.3），推荐模型保证填好密钥就能用，也让没有选过模型的老用户照常使用。`ResolvedEngines::resolve` 把设置、用户密钥和内置服务合成出客户端真正用的配置；识别或润色跑不了时给出 `EngineIssue`（`unavailable` / `key_missing` / `url_missing` / `model_missing` / `model_not_installed` / `no_provider`），界面按它提示，首页按钮在识别就绪前禁用。
+没有填写的模型与地址取目录里的预设。每家服务商的每项服务只带一到三个推荐模型（只有一个识别模型的服务商，如讯飞、智谱、MiMo 的识别，只带一个），第一个是默认（2026-10-25 用户决定：「所有的provider不需要带内置列表 而是填写了key测试通过后拉取model」「每家留2-3个模型吧」）；其余模型在保存密钥后从服务商自己的模型列表获取（§3.3），推荐模型保证填好密钥就能用，也让没有选过模型的老用户照常使用。`ResolvedEngines::resolve` 把设置、用户密钥和内置服务合成出客户端真正用的配置；识别或润色跑不了时给出 `EngineIssue`（`unavailable` / `key_missing` / `url_missing` / `model_missing` / `model_not_installed` / `no_provider`），界面按它提示，首页按钮在识别就绪前禁用。
 
 **内置服务**（`voltip_core::engines::BuiltIn`）全部来自编译期 `option_env!`，源码与文档不出现它的主机名（`.github/scripts/check-no-production-hosts.sh` 扫描整棵树；真实值只在 CI secrets 与本机 git 忽略的 `.env.build`）：
 
@@ -621,7 +621,7 @@ pub struct HistoryEntry {
 | `dictation_cancel` | `DictationCancel` | — |
 | `settings_set_engines` | `SettingsSetEngines { engines }` | `EngineSettings` 全量（含 `asr_provider` / `local_model` / `live_preview`，§3 §10 §11；`output_mode` / `vad_trim`，§12） |
 | `provider_key_set` | `ProviderKeySet { provider, kind, value }` | `kind: "asr" \| "llm"`，`value: string \| null`（§3） |
-| `provider_probe` | `ProviderProbe { provider, kind, base_url, key }` | 测试连接，结果为 `provider_probe` 事件（§3） |
+| `provider_probe` | `ProviderProbe { provider, kind, base_url, key, model }` | 测试连接，结果为 `provider_probe` 事件（§3） |
 | `history_delete` | `HistoryDelete { id }` | uuid |
 | `history_clear` | `HistoryClear` | — |
 | `history_star` | `HistoryStar { id, starred }` | |
