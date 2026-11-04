@@ -436,6 +436,12 @@ Kimi（`api.moonshot.cn` / `api.moonshot.ai`）和智谱 GLM（智谱开放平�
 
 切段沿用长录音的回落切法（`voltip_asr::split::quiet_cuts`）：一段到上限时，在最后 5 秒里最安静的 200 ms 中间切开。各段的文字按句子拼接（中文之间不加空格，其他加一个）。
 
+**讯飞与百度的实时识别**：
+
+- 讯飞语音听写：`wss://…/v2/iat`，URL 带 `authorization`、`date`（RFC 1123）、`host`，签名用实际连接地址的主机和路径（代理前缀也算在内），与文档示例逐字节一致。首帧带 `common.app_id` 与 `business`（`zh_cn` + `mandarin` + 动态修正 `dwa: wpgs`，英文为 `en_us`、不开动态修正，后端点 10 秒），音频 40 ms 一帧（1280 B），结束帧单独发 `{"data":{"status":2}}`。动态修正按 `sn`、`pgs`、`rg` 重建一次会话的文字，作为 `Partial`；会话结束（`data.status == 2`）时整段作为一句，时间是这次会话的音频在整次听写里的位置。一次会话满 55 秒后，下一帧整帧音频结束它并换一个新签名的会话；服务端自己结束的会话也一样。后端点的参数名：保存的文档表格写 `eos`，官方示例与多数实现写 `vad_eos`，现在发 `vad_eos: 10000`；如果服务报参数错误（`10163`）或停顿 10 秒以内就提前结束会话，要改成 `eos`，需要用真实账户确认。
+- 讯飞实时语音转写：`wss://…/v1/ws?appid=…&ts=…&signa=…`，`signa` = base64(HmacSHA1(APIKey, hex(MD5(APPID + ts))))，与文档示例一致。收到 `action: started` 后才发音频，二进制 1280 B 一帧，结束标记以二进制帧发 `{"end": true}`；`cn.st.type` 为 1 是中间结果，为 0 是一句（`bg`、`ed` 是时间），服务端关闭连接即结束。
+- 百度：`wss://…/realtime_asr?sn=<UUID>`，START 帧带 `appid`、`appkey`、`dev_pid`（`15376` 另加 `user`），二进制 160 ms 一帧（5120 B），FINISH 结束，取消时先发 CANCEL 再关闭。`MID_TEXT` 是中间结果，`FIN_TEXT` 是一句，`HEARTBEAT` 不处理；服务端在 FINISH 之后正常关闭连接即结束。`app_id` 与 `dev_pid` 必须是数字。
+
 **阶跃的实时识别**：`wss://…/realtime/asr/stream`，`Authorization: Bearer`。服务端先发 `session.created`，客户端发 `session.update`（`pcm_s16le` 16 kHz、模型、语言 zh / en、术语表作 `prompt`、`full_rerun_on_commit`、`enable_itn`、服务端断句 `server_vad` 800 ms），音频以 `input_audio_buffer.append`（base64，每条不超过 1 秒）发送。`…transcription.delta` 的 `text` 是该段到目前为止的全文，作为 `Partial`；`…transcription.completed` 的 `transcript` 是一句，开始时间取 `speech_started` 的 `audio_start_ms`，长度取逐字时间，没有时取到 `speech_stopped` 或已发出的音频为止。文档写明开启服务端断句时不需要 `input_audio_buffer.commit`，但没有写松开快捷键时正在说的那句怎么结束，所以结束时先发 1 秒静音（长于断句的 800 ms），让服务端自己断开这一句，再发 commit 提交余下的内容：没有对应 `speech_stopped` 的 `committed`，或 commit 被拒绝（`error.event_id` 是这条 commit 的，或 `invalid_request_error`，例如缓冲区为空），算作 commit 的回答；之后已提交的段都识别完即结束。服务端对 commit 没有任何回答时，没有正在说或在识别的段、并且安静 2 秒后结束；结束后 15 秒仍没有完成就报超时，这次听写降级为整段识别。
 
 **术语表**（`GlossaryRoute::for_service`，§16.3、§30.6）：
@@ -457,11 +463,14 @@ Kimi（`api.moonshot.cn` / `api.moonshot.ai`）和智谱 GLM（智谱开放平�
 
 - 火山：错误帧 `45000081`（等待音频超时）归超时，`45000151`（音频格式不对）归音频错误，`55000031`（服务繁忙）归 `Server` 503，其他 `550xxxxx` 归 `Server` 500，其余（`45000001` 参数无效、`45000002` 空音频等）归 `Service`；握手被拒按 HTTP 状态。文档没有写未开通、资源用完或欠费时返回什么，所以握手被拒或错误帧的文字含「欠费」「余额不足」（英文 arrear、insufficient balance）时按额度用完处理；这一条没有文档依据，要用真实账户确认。
 - 腾讯（实时接口与极速版）：`4002` 鉴权失败归 `Unauthorized`；`4004` 资源包耗尽、`4005` 欠费归 `QuotaExhausted`；`4006` 并发超限与 `4000` 发送过快归 `RateLimited`；`4007` 与极速版的 `4011` 归音频错误；`4008`（15 秒未发音频）与极速版的 `5003` 归超时；`4009` 归网络错误；`5000`–`5002`（负载高或网络抖动，可重试）归 `Server` 503，其他 `5xxx` 归 500；`4001` 参数、`4003` 服务未开通、`4010` 等归 `Service`。`app_id` 必须是数字。
+- 讯飞语音听写：握手的 401、403（签名、时钟偏差）与 `10005`、`10313`（APPID 与密钥不匹配）归 `Unauthorized`；`11200`（未授权，或总调用量超过上限）、`11201`（日调用量超限）、`11203` 归 `QuotaExhausted`；`11202`（秒级流控）归 `RateLimited`；`10222`（网络）归网络错误；表中其余错误码归 `Service`。`11200` 按文档的处理方式（查看套餐用量）归额度用完，候补模型才会接替。
+- 讯飞实时语音转写：`10105`（没有权限）归 `Unauthorized`；`10110` 的说明提到 signa 或 authorization 时归 `Unauthorized`（文档的签名失败示例用的就是它），其余 `10110`（无授权、时长或路数用完）归 `QuotaExhausted`；`10800`（连接数超限）归 `RateLimited`；`10202`、`10204`、`10205`（WebSocket 读写错误）归网络错误；其余归 `Service`。
+- 百度：`-3004`（鉴权失败，服务端随即断开）归 `Unauthorized`；`-3005`（无效音频）与 `-3003` 只针对一句话，跳过该句继续；`-3001` 与 FINISH 之前断开的连接归网络错误；其余 `err_no` 归 `Service`。百度文档末尾的错误码表没有取到，`-3001`、`-3003` 的含义来自其他章节的说明。
 - 阶跃：`internal_error` 归 `Server`，`max_idle_timeout`、`pong_timeout` 归网络错误；HTTP 402 归 `QuotaExhausted`。
 - 智谱：`1113`（余额不足）、`1304`（日调用上限）归 `QuotaExhausted`，`1302`、`1303`、`1305` 归 `RateLimited`。
 - MiMo：HTTP 402 归 `QuotaExhausted`。
 
-结束之后等待最后结果的时间以客户端超时为上限（火山、腾讯为 `config.timeout`，阶跃 15 秒），超时按 `Timeout` 结束，会话任务不会一直挂着。
+结束之后等待最后结果的时间有上限：火山、腾讯为客户端超时（`config.timeout`），阶跃 15 秒；讯飞与百度等到服务端结束或调用方不再等待（`voltip-cloud` 的 `FINISH_TIMEOUT` 30 秒后关闭输入，客户端随即关闭连接）。超时按 `Timeout` 结束，会话任务不会一直挂着。
 
 **旧版手机**：手机与电脑同步设置镜像时（§20.8），旧版手机不认识新的服务商 id，丢弃这份镜像，历史记录照常同步；两端都更新后恢复（同 §3.4）。
 

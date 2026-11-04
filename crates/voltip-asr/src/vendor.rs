@@ -98,7 +98,10 @@ pub trait VendorAsr: Send + Sync {
     /// Run one realtime session: connect, send what `input` brings, and pass what the service says
     /// to `events` until it has said everything, ending with [`RealtimeEvent::Finished`]. An error
     /// ends the session with it. When `input` closes before [`RealtimeInput::Finish`] (a cancelled
-    /// take) the connection closes at once and nothing more is sent.
+    /// take) the connection closes at once, and nothing more is sent but the vendor's own cancel
+    /// message where it has one (Baidu's `CANCEL`). After `Finish` the session waits for the last
+    /// sentence until the service ends it, the client's own limit runs out, or the caller closes
+    /// `input` because it stopped waiting.
     async fn realtime(
         &self,
         language: Option<&str>,
@@ -152,11 +155,6 @@ pub fn endpoint(base: &str, ws: bool, path: &str) -> Result<Url, AsrError> {
         url.set_scheme(if secure { "wss" } else { "ws" }).map_err(|()| AsrError::InvalidConfig(format!("base_url {raw:?}: no WebSocket form")))?;
     }
     Ok(url)
-}
-
-/// The error of a vendor whose client is not finished.
-pub(crate) fn not_ready(vendor: &str) -> AsrError {
-    AsrError::InvalidConfig(format!("{vendor}: this client is not implemented yet"))
 }
 
 #[cfg(test)]
