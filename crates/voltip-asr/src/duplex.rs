@@ -48,6 +48,8 @@ pub struct DuplexOptions {
     pub model: String,
     /// `payload.parameters` of `run-task`.
     pub parameters: Map<String, Value>,
+    /// `payload.input` of `run-task`: Fun-ASR's `context`, or nothing (docs/dictation.md §3.15).
+    pub input: Map<String, Value>,
     /// The proxy plan the WebSocket follows (docs/dictation.md §24).
     pub network: voltip_net::NetworkRef,
 }
@@ -162,7 +164,7 @@ async fn open(options: &DuplexOptions) -> Result<(DuplexSender, DuplexReceiver),
     let task_id = uuid::Uuid::new_v4().to_string();
     let run = json!({
         "header": { "action": "run-task", "task_id": task_id, "streaming": "duplex" },
-        "payload": { "task_group": "audio", "task": "asr", "function": "recognition", "model": options.model, "parameters": options.parameters, "input": {} },
+        "payload": { "task_group": "audio", "task": "asr", "function": "recognition", "model": options.model, "parameters": options.parameters, "input": options.input },
     });
     sink.send(Message::text(run.to_string())).await.map_err(map_ws)?;
     loop {
@@ -433,6 +435,7 @@ pub(crate) mod tests {
             token: token.map(str::to_owned),
             model: "qwen-audio-3.1-asr-flash-streaming".into(),
             parameters,
+            input: Map::new(),
             network: voltip_net::NetworkRef::default(),
         }
     }

@@ -11,7 +11,8 @@
 //!
 //! The endpoints come from the base URL's origin, so the public address, a workspace's own one
 //! and either of their paths (`/compatible-mode/v1`, `/api/v1`) all work. The user's dictionary
-//! terms go out as instant hot words where the model takes them (the `qwen-audio` models).
+//! terms go out as instant hot words where the model takes them (the `qwen-audio` models), and as
+//! context to `fun-asr-realtime` and `fun-asr-flash` (docs/dictation.md §3.15).
 
 use std::time::Instant;
 
@@ -45,6 +46,8 @@ pub const MAX_HOTWORDS: usize = 2000;
 /// Largest data URI the HTTP models take (10 MB, base64 included): about four minutes of 16 kHz
 /// 16-bit mono.
 pub const MAX_DATA_URI_BYTES: usize = 10 * 1024 * 1024;
+/// Most characters of context a Fun-ASR request keeps (Model Studio cuts the rest).
+pub const MAX_CONTEXT_CHARS: usize = 400;
 
 /// The language codes every Model Studio recogniser takes as a hint; any other code (`yue`, which
 /// they recognise as Chinese anyway) is left to their detection.
@@ -90,9 +93,20 @@ impl DashscopeClient {
     }
 
     /// Whether a request of this client carries `glossary` (docs/dictation.md §16.3, §30.6): as hot
-    /// words, for the `qwen-audio` models on the native and realtime protocols, when it has a term.
+    /// words for the `qwen-audio` models on the native and realtime protocols, as context for
+    /// `fun-asr-realtime` and `fun-asr-flash` (§3.15), when it has a term.
     pub fn sends_glossary(&self, glossary: &[String]) -> bool {
-        self.vocabulary(glossary).is_some()
+        self.vocabulary(glossary).is_some() || self.context(glossary).is_some()
+    }
+
+    /// `glossary` as Fun-ASR's context: one user message with the terms (whole ones, within
+    /// [`MAX_CONTEXT_CHARS`]), for the models that take context (Model Studio's 上下文增强).
+    fn context(&self, glossary: &[String]) -> Option<Value> {
+        if self.mode == DashscopeMode::Chat || !takes_context(&self.config.model) {
+            return None;
+        }
+        let text = context_text(glossary)?;
+        Some(json!({ "role": "user", "content": [{ "type": "input_text", "text": text }] }))
     }
 
     /// `glossary` as the request's `vocabulary` parameter, when the model takes hot words.
@@ -146,7 +160,11 @@ impl DashscopeClient {
                 parameters.insert("heartbeat".into(), json!(true));
             }
         }
-        DuplexOptions { url: duplex_url(&self.origin), token: self.config.token.clone(), model, parameters, network: self.config.network.clone() }
+        let mut input = Map::new();
+        if let Some(context) = self.context(glossary) {
+            input.insert("context".into(), json!([context]));
+        }
+        DuplexOptions { url: duplex_url(&self.origin), token: self.config.token.clone(), model, parameters, input, network: self.config.network.clone() }
     }
 
     /// `qwen3-asr-flash`: one chat completion with the audio as the user's `input_audio` part.
@@ -186,11 +204,10 @@ impl DashscopeClient {
         if let Some(vocabulary) = self.vocabulary(glossary) {
             parameters.insert("vocabulary".into(), vocabulary);
         }
-        let body = json!({
-            "model": model,
-            "input": { "messages": [{ "role": "user", "content": [{ "type": "input_audio", "input_audio": { "data": data_uri(wav)? } }] }] },
-            "parameters": parameters,
-        });
+        // Fun-ASR's context comes before the audio (Model Studio's 上下文增强).
+        let mut messages: Vec<Value> = self.context(glossary).into_iter().collect();
+        messages.push(json!({ "role": "user", "content": [{ "type": "input_audio", "input_audio": { "data": data_uri(wav)? } }] }));
+        let body = json!({ "model": model, "input": { "messages": messages }, "parameters": parameters });
         let answer = self.post(&self.endpoint(), &body, true).await?;
         let text = answer
             .pointer("/output/text")
@@ -284,6 +301,33 @@ fn hint(language: Option<&str>, family: Family) -> Option<String> {
 /// `zh-CN` → `zh`, trimmed and lower-cased.
 fn primary_subtag(language: &str) -> String {
     language.trim().split(['-', '_']).next().unwrap_or_default().to_ascii_lowercase()
+}
+
+/// The models that take context (Model Studio's 上下文增强, checked 2026-11-04): `fun-asr-realtime`
+/// and the 16 kHz `fun-asr-flash` models. Their snapshots of other dates and the 8 kHz telephone
+/// models are not listed.
+pub fn takes_context(model: &str) -> bool {
+    let model = model.trim().to_ascii_lowercase();
+    model == "fun-asr-realtime" || (model.starts_with("fun-asr-flash") && !model.contains("realtime") && !model.contains("8k"))
+}
+
+/// The glossary as Fun-ASR's context text: the terms joined by `、`, whole terms only, within
+/// [`MAX_CONTEXT_CHARS`]; `None` when no term fits.
+fn context_text(glossary: &[String]) -> Option<String> {
+    let mut text = String::new();
+    let mut chars = 0;
+    for term in glossary.iter().map(|t| t.trim()).filter(|t| !t.is_empty()) {
+        let needed = term.chars().count() + usize::from(!text.is_empty());
+        if chars + needed > MAX_CONTEXT_CHARS {
+            break;
+        }
+        if !text.is_empty() {
+            text.push('、');
+        }
+        text.push_str(term);
+        chars += needed;
+    }
+    (!text.is_empty()).then_some(text)
 }
 
 /// The glossary as Model Studio's instant hot words (`{"term": weight}`); `None` when empty.
@@ -527,6 +571,9 @@ pub(crate) mod tests {
         );
         let fun = options("fun-asr-realtime", Some("en"), true);
         assert_eq!(Value::Object(fun.parameters), json!({ "format": "pcm", "sample_rate": 16000, "language_hints": ["en"], "heartbeat": true }));
+        // docs/dictation.md §3.15: its glossary goes in the task's input as context.
+        assert_eq!(Value::Object(fun.input), json!({ "context": [{ "role": "user", "content": [{ "type": "input_text", "text": "Voltip、Teams" }] }] }));
+        assert!(options("qwen-audio-3.1-asr-flash-streaming", None, true).input.is_empty(), "hot words, not context");
         let paraformer = options("paraformer-realtime-v2", Some("yue"), true);
         assert_eq!(Value::Object(paraformer.parameters), json!({ "format": "pcm", "sample_rate": 16000, "language_hints": ["yue"], "heartbeat": true }));
         let old = options("paraformer-realtime-v1", None, true);
@@ -591,13 +638,19 @@ pub(crate) mod tests {
         let c = client(&server, "qwen-audio-3.1-asr-flash", DashscopeMode::Multimodal);
         let t = c.transcribe(&wav(1600, 16_000), Some("en"), &["Good Idea".into()]).await.unwrap();
         assert_eq!(t.text, "我想创建一个Good Idea吧。");
-        // The top-level `text` serves when `output.text` is missing; fun-asr gets no hot words.
+        // The top-level `text` serves when `output.text` is missing; fun-asr gets no hot words but
+        // the glossary as context before the audio (docs/dictation.md §3.15).
         let server = MockServer::start().await;
         Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_json(json!({ "text": "fine" }))).mount(&server).await;
         let fun = client(&server, "fun-asr-flash-2026-06-15", DashscopeMode::Multimodal);
         assert_eq!(fun.transcribe(&wav(1600, 8_000), None, &["Voltip".into()]).await.unwrap().text, "fine");
         let body: Value = serde_json::from_slice(&server.received_requests().await.unwrap()[0].body).unwrap();
         assert_eq!(body["parameters"], json!({ "format": "wav", "sample_rate": "8000" }), "{body}");
+        assert_eq!(body.pointer("/input/messages/0"), Some(&json!({ "role": "user", "content": [{ "type": "input_text", "text": "Voltip" }] })), "{body}");
+        assert_eq!(body.pointer("/input/messages/1/content/0/type"), Some(&json!("input_audio")), "{body}");
+        assert_eq!(fun.transcribe(&wav(1600, 8_000), None, &[]).await.unwrap().text, "fine");
+        let body: Value = serde_json::from_slice(&server.received_requests().await.unwrap()[1].body).unwrap();
+        assert_eq!(body["input"]["messages"].as_array().map(Vec::len), Some(1), "no terms, no context: {body}");
         let server = MockServer::start().await;
         Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_string("{\"output\":{}}")).mount(&server).await;
         let err = client(&server, "qwen-audio-3.1-asr-flash", DashscopeMode::Multimodal).transcribe(&wav(10, 16_000), None, &[]).await.unwrap_err();
@@ -606,8 +659,9 @@ pub(crate) mod tests {
         assert!(matches!(err, AsrError::Audio(_)), "{err:?}");
     }
 
-    /// docs/dictation.md §30.6: which requests carry the glossary — the `qwen-audio` models' on the
-    /// native and realtime protocols, with a term to send — as the request bodies above show.
+    /// docs/dictation.md §30.6, §3.15: which requests carry the glossary — the `qwen-audio` models'
+    /// on the native and realtime protocols as hot words, `fun-asr-realtime` and `fun-asr-flash` as
+    /// context, with a term to send — as the request bodies above show.
     #[test]
     fn the_glossary_goes_out_as_hot_words_only_where_the_model_takes_them() {
         let terms = vec!["Voltip".to_owned()];
@@ -615,8 +669,11 @@ pub(crate) mod tests {
             ("qwen-audio-3.1-asr-flash", DashscopeMode::Multimodal, true),
             ("qwen-audio-3.1-asr-flash-streaming", DashscopeMode::Duplex, true),
             ("qwen-audio-3.1-asr-flash-message", DashscopeMode::Duplex, true),
-            ("fun-asr-flash-2026-06-15", DashscopeMode::Multimodal, false),
-            ("fun-asr-realtime", DashscopeMode::Duplex, false),
+            ("fun-asr-flash-2026-06-15", DashscopeMode::Multimodal, true),
+            ("fun-asr-realtime", DashscopeMode::Duplex, true),
+            // Context only where Model Studio lists it: not the snapshots, not the 8 kHz models.
+            ("fun-asr-realtime-2026-02-28", DashscopeMode::Duplex, false),
+            ("fun-asr-flash-8k-realtime", DashscopeMode::Duplex, false),
             ("paraformer-realtime-v2", DashscopeMode::Duplex, false),
             ("qwen3-asr-flash", DashscopeMode::Chat, false),
             // The chat form never sends hot words, whatever the model is called.
@@ -627,11 +684,25 @@ pub(crate) mod tests {
             assert_eq!(c.sends_glossary(&terms), sent, "{model}");
             assert!(!c.sends_glossary(&[]), "{model}: nothing to send");
             assert!(!c.sends_glossary(&["  ".to_owned()]), "{model}: a blank term is not a term");
-            // The realtime task's parameters agree.
+            // The realtime task agrees.
             if mode == DashscopeMode::Duplex {
-                assert_eq!(c.duplex_options(None, &terms, 16_000, true).parameters.contains_key("vocabulary"), sent, "{model}");
+                let options = c.duplex_options(None, &terms, 16_000, true);
+                assert_eq!(options.parameters.contains_key("vocabulary") || options.input.contains_key("context"), sent, "{model}");
             }
         }
+    }
+
+    /// Fun-ASR keeps 400 characters of context: whole terms only, the first ones.
+    #[test]
+    fn the_context_keeps_whole_terms_within_its_limit() {
+        assert_eq!(context_text(&[" a ".into(), "".into(), "b".into()]).as_deref(), Some("a、b"));
+        assert_eq!(context_text(&["  ".into()]), None);
+        let long: Vec<String> = (0..100).map(|i| format!("术语{i:03}")).collect();
+        let text = context_text(&long).unwrap();
+        assert!(text.chars().count() <= MAX_CONTEXT_CHARS, "{}", text.chars().count());
+        assert!(text.starts_with("术语000、术语001") && text.split('、').all(|t| t.starts_with("术语") && t.chars().count() == 5), "{text}");
+        assert!(context_text(&["长".repeat(MAX_CONTEXT_CHARS + 1)]).is_none(), "a term that cannot fit is left out");
+        assert!(takes_context("Fun-ASR-Realtime") && takes_context("fun-asr-flash") && !takes_context("fun-asr"));
     }
 
     /// Model Studio's error bodies as errors a person can act on: the key (401, `InvalidApiKey`),

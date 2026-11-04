@@ -67,6 +67,12 @@ describe("Model Studio's recognition protocols (docs/dictation.md §3.4)", () =>
       none.map(() => "not_supported"),
     );
     expect(glossaryRoute("openai", "https://api.openai.com/v1", "whisper-1")).toBe("prompt");
+    const studio = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+    expect(
+      ["qwen-audio-3.1-asr-flash", "fun-asr-realtime", "fun-asr-flash-2026-06-15", "fun-asr-flash-8k-realtime"].map(
+        (m) => glossaryRoute("aliyun", studio, m),
+      ),
+    ).toEqual(["hotwords", "prompt", "prompt", "not_supported"]);
     expect(keyEntry("volcengine_speech", "asr")).toBe("provider-key.volcengine-speech");
     expect(keyEntry("iflytek_rtasr", "asr")).toBe("provider-key.iflytek-rtasr");
   });

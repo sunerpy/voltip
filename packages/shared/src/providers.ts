@@ -367,7 +367,11 @@ export function glossaryRoute(provider: ProviderId, url: string, model: string):
   if (!isDashscope(url)) return "prompt";
   const m = model.trim().toLowerCase();
   if (m.includes("filetrans")) return "not_supported";
-  return m.startsWith("qwen-audio") && m.includes("-asr") ? "hotwords" : "not_supported";
+  if (m.startsWith("qwen-audio") && m.includes("-asr")) return "hotwords";
+  // §3.15: Fun-ASR's context (`fun_asr_takes_context`).
+  const context =
+    m === "fun-asr-realtime" || (m.startsWith("fun-asr-flash") && !m.includes("realtime") && !m.includes("8k"));
+  return context ? "prompt" : "not_supported";
 }
 
 /** The secret-store entry of the user's key (`voltip_core::providers::key_entry`): a vendor's two

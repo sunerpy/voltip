@@ -774,7 +774,16 @@ mod tests {
         let studio = "https://dashscope.aliyuncs.com/compatible-mode/v1";
         let mut models: Vec<&str> =
             voltip_core::PROVIDERS.iter().filter(|p| p.id == ProviderId::Aliyun).flat_map(|p| p.asr.map(|a| a.models.to_vec()).unwrap_or_default()).collect();
-        models.extend(["qwen-audio-3.1-asr-flash", "qwen-audio-3.1-asr-flash-message", "fun-asr-realtime", "paraformer-realtime-v2", "qwen3-asr-flash"]);
+        models.extend([
+            "qwen-audio-3.1-asr-flash",
+            "qwen-audio-3.1-asr-flash-message",
+            "fun-asr-realtime",
+            "paraformer-realtime-v2",
+            "qwen3-asr-flash",
+            "fun-asr-flash-2026-06-15",
+            "fun-asr-realtime-2026-02-28",
+            "fun-asr-flash-8k-realtime",
+        ]);
         for model in models {
             let protocol = AsrProtocol::of(studio, model);
             let mode = match protocol {
@@ -785,9 +794,44 @@ mod tests {
             };
             let client = voltip_asr::DashscopeClient::new(AsrConfig::new(studio, model), mode).unwrap();
             let route = voltip_core::GlossaryRoute::for_service(ProviderId::Aliyun, studio, model);
-            assert_eq!(client.sends_glossary(&terms), route == voltip_core::GlossaryRoute::Hotwords, "{model}: {route:?}");
+            assert_eq!(client.sends_glossary(&terms), route != voltip_core::GlossaryRoute::NotSupported, "{model}: {route:?}");
         }
         assert_eq!(voltip_core::GlossaryRoute::for_service(ProviderId::Custom, &server.uri(), "whisper-1"), voltip_core::GlossaryRoute::Prompt);
+    }
+
+    /// docs/dictation.md §3.15: for every model of every vendor with a protocol of its own, on each
+    /// of its sites, the client the take uses says what the engines pane says: whether the glossary
+    /// goes out and whether the model recognises while the take is spoken.
+    #[test]
+    fn every_vendor_model_takes_the_glossary_and_streams_as_the_catalogue_says() {
+        let terms = vec!["Voltip".to_owned()];
+        let mut checked = 0;
+        for spec in voltip_core::PROVIDERS {
+            let Some(asr) = spec.asr else { continue };
+            // A credential with every field of the provider's first set, as the core stores it.
+            let credential = match spec.credential {
+                voltip_core::Credential::Key => "k-test".to_owned(),
+                voltip_core::Credential::Sets(sets) => {
+                    let fields: serde_json::Map<String, serde_json::Value> = sets[0].fields.iter().map(|f| (f.id.to_owned(), "1".into())).collect();
+                    voltip_core::merge_credentials(spec.id, None, &serde_json::Value::Object(fields).to_string()).unwrap()
+                }
+            };
+            let mut bases: Vec<&str> = std::iter::once(asr.base_url).chain(asr.sites.iter().map(|s| s.base_url)).collect();
+            bases.dedup();
+            for base in bases {
+                for model in asr.models {
+                    let protocol = AsrProtocol::resolve(spec.id, base, model);
+                    let Some(vendor) = crate::vendor::vendor_of(protocol) else { continue };
+                    let client = voltip_asr::vendor::client(vendor, AsrConfig::new(base, *model).with_token(Some(credential.clone())))
+                        .unwrap_or_else(|e| panic!("{:?} {model}: {e}", spec.id));
+                    let route = voltip_core::GlossaryRoute::for_service(spec.id, base, model);
+                    assert_eq!(client.sends_glossary(&terms), route != voltip_core::GlossaryRoute::NotSupported, "{:?} {model}: {route:?}", spec.id);
+                    assert_eq!(client.streams(), protocol.streams(), "{:?} {model}", spec.id);
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked >= 15, "{checked} vendor models");
     }
 
     /// docs/dictation.md §3.14: every failure of the recognition and clean-up clients reaches the

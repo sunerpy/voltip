@@ -35,6 +35,27 @@ pub fn quiet_cuts(pcm: &[u8], max_ms: u64) -> Vec<Range<usize>> {
     pieces
 }
 
+/// `pcm` (16-bit little-endian mono at `sample_rate`) as a WAV file, for a service that takes a
+/// file per piece.
+pub fn wav(pcm: &[u8], sample_rate: u32) -> Vec<u8> {
+    let data = u32::try_from(pcm.len()).unwrap_or(u32::MAX);
+    let mut out = Vec::with_capacity(44 + pcm.len());
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&data.saturating_add(36).to_le_bytes());
+    out.extend_from_slice(b"WAVEfmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&sample_rate.to_le_bytes());
+    out.extend_from_slice(&sample_rate.saturating_mul(2).to_le_bytes());
+    out.extend_from_slice(&2u16.to_le_bytes());
+    out.extend_from_slice(&16u16.to_le_bytes());
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&data.to_le_bytes());
+    out.extend_from_slice(pcm);
+    out
+}
+
 /// The sum of squares of a block's samples.
 fn energy(block: &[u8]) -> f64 {
     block.as_chunks::<2>().0.iter().map(|s| f64::from(i16::from_le_bytes(*s))).map(|x| x * x).sum()
@@ -54,6 +75,14 @@ mod tests {
                 x.to_le_bytes()
             })
             .collect()
+    }
+
+    #[test]
+    fn a_piece_reads_back_as_the_wav_it_came_from() {
+        let pcm = speech(2, 0);
+        let wav = wav(&pcm, 16_000);
+        let format = crate::dashscope::wav_format(&wav).unwrap();
+        assert_eq!((format.sample_rate, &wav[format.data.0..format.data.1]), (16_000, &pcm[..]));
     }
 
     #[test]

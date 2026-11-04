@@ -498,6 +498,7 @@ impl GlossaryRoute {
         match AsrProtocol::resolve(provider, url, model) {
             AsrProtocol::OpenaiTranscriptions | AsrProtocol::StepfunRealtime => Self::Prompt,
             AsrProtocol::DashscopeMultimodal | AsrProtocol::DashscopeDuplex if model.trim().to_ascii_lowercase().starts_with("qwen-audio") => Self::Hotwords,
+            AsrProtocol::DashscopeMultimodal | AsrProtocol::DashscopeDuplex if fun_asr_takes_context(model) => Self::Prompt,
             AsrProtocol::VolcengineSauc | AsrProtocol::TencentRealtime | AsrProtocol::StepfunTranscriptions | AsrProtocol::ZhipuTranscriptions => {
                 Self::Hotwords
             }
@@ -511,6 +512,13 @@ impl GlossaryRoute {
             | AsrProtocol::MimoChat => Self::NotSupported,
         }
     }
+}
+
+/// The Fun-ASR models that take the glossary as context (Model Studio's 上下文增强, docs/dictation.md
+/// §3.15): `fun-asr-realtime` and the 16 kHz `fun-asr-flash` models (`voltip_asr`'s `takes_context`).
+fn fun_asr_takes_context(model: &str) -> bool {
+    let model = model.trim().to_ascii_lowercase();
+    model == "fun-asr-realtime" || (model.starts_with("fun-asr-flash") && !model.contains("realtime") && !model.contains("8k"))
 }
 
 /// Whether `url` is an Alibaba Cloud Model Studio address (a host under `aliyuncs.com`).
@@ -1578,8 +1586,12 @@ mod tests {
         {
             assert_eq!(route(provider, model), GlossaryRoute::NotSupported, "{provider:?}");
         }
-        // Unchanged for the others.
+        // Model Studio: hot words for qwen-audio, context for the Fun-ASR models that take it.
         assert_eq!(route(ProviderId::Aliyun, "qwen-audio-3.1-asr-flash"), GlossaryRoute::Hotwords);
+        assert_eq!(route(ProviderId::Aliyun, "fun-asr-realtime"), GlossaryRoute::Prompt);
+        assert_eq!(route(ProviderId::Aliyun, "fun-asr-flash-2026-06-15"), GlossaryRoute::Prompt);
+        assert_eq!(route(ProviderId::Aliyun, "fun-asr-flash-8k-realtime"), GlossaryRoute::NotSupported);
+        assert_eq!(route(ProviderId::Aliyun, "paraformer-realtime-v2"), GlossaryRoute::NotSupported);
         assert_eq!(route(ProviderId::Openai, "whisper-1"), GlossaryRoute::Prompt);
     }
 
