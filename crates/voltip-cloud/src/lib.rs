@@ -738,7 +738,8 @@ mod tests {
 
     /// docs/dictation.md §30.6: every recognition client says whether its request carried the
     /// glossary — an OpenAI-compatible endpoint's `prompt` when there is a term, Model Studio's hot
-    /// words where its model takes them — and the core's route for the same service agrees.
+    /// words or Fun-ASR's context where its model takes them (§3.15) — and the core's route for the
+    /// same service agrees.
     #[tokio::test]
     async fn every_recognition_client_says_whether_the_glossary_went_out() {
         use wiremock::matchers::{method, path};
@@ -764,11 +765,15 @@ mod tests {
         assert!(body.contains("name=\"prompt\"") && body.contains("Voltip"), "{body}");
         let t = transcriber_for(AsrProtocol::OpenaiTranscriptions, &openai, &net()).transcribe(&wav, None, &[]).await.unwrap();
         assert!(!t.glossary_sent, "nothing to send");
-        // Model Studio's native protocol, at the mock's address: its hot words.
-        for (model, sent) in [("qwen-audio-3.1-asr-flash", true), ("fun-asr-flash-2026-06-15", false)] {
+        // Model Studio's native protocol, at the mock's address: qwen-audio's hot words, Fun-ASR's
+        // context, and nothing without a term.
+        let none: Vec<String> = Vec::new();
+        for (model, glossary, sent) in
+            [("qwen-audio-3.1-asr-flash", &terms, true), ("fun-asr-flash-2026-06-15", &terms, true), ("fun-asr-flash-2026-06-15", &none, false)]
+        {
             let studio = remote(format!("{}/compatible-mode/v1", server.uri()), model);
-            let t = transcriber_for(AsrProtocol::DashscopeMultimodal, &studio, &net()).transcribe(&wav, None, &terms).await.unwrap();
-            assert_eq!(t.glossary_sent, sent, "{model}");
+            let t = transcriber_for(AsrProtocol::DashscopeMultimodal, &studio, &net()).transcribe(&wav, None, glossary).await.unwrap();
+            assert_eq!(t.glossary_sent, sent, "{model} with {} terms", glossary.len());
         }
         // The status's route says the same for every model of the catalogue and a few more.
         let studio = "https://dashscope.aliyuncs.com/compatible-mode/v1";

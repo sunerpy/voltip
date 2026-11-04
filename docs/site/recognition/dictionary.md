@@ -20,7 +20,11 @@ Right after recognition, every heard-as spelling in the text is replaced with th
 | The built-in service | Sent with the recording |
 | OpenAI, Groq, SiliconFlow and custom endpoints | Sent with the recording |
 | Alibaba Cloud Model Studio's qwen-audio models | Sent as hot words |
-| Model Studio's other speech models, such as fun-asr-realtime | Not sent |
+| Model Studio's fun-asr-realtime and fun-asr-flash | Sent as context |
+| Model Studio's other speech models, such as qwen3-asr-flash and paraformer-realtime-v2 | Not sent |
+| Volcengine Doubao Speech, Tencent Cloud Speech Recognition, Zhipu GLM's glm-asr-2512, StepFun stepaudio-2.5-asr | Sent as hot words |
+| StepFun stepaudio-2.5-asr-stream | Sent as a prompt |
+| iFlytek Dictation, iFlytek Realtime Transcription, Baidu AI Cloud Speech, Xiaomi MiMo's mimo-v2.5-asr | Not sent; iFlytek's hot words can be uploaded for the app in the iFlytek console |
 | Local models | Not sent |
 
 With a recognition service that takes no glossary, the dictionary works through the corrections alone. An enabled built-in scene also adds its terms to the glossary in its apps, so a dictation there can send a glossary even when no dictionary entry is enabled. While a fallback model recognises in place of the selected one (its quota ran out, or it failed with **Also switch when a service fails** on), what happens to the glossary depends on the fallback model. The top of the Dictionary page, and the Speech models page under the recognition services, say whether the service in use receives the glossary; in the history, an entry's **Glossary** line says whether it went to recognition that time.

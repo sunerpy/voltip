@@ -119,9 +119,10 @@ pub struct DictationStatus { pub phase: DictationPhase, pub session: u64 /* 递�
 | `builtin` | ✓ | ✓ | 构建时写入，界面看不到也改不了 |
 | `local` | ✓（§10） | — | 无 |
 | `openai`、`groq`、`siliconflow`、`aliyun` | ✓ | ✓ | 必填，同一家的两项服务共用一把 |
+| `volcengine_speech`（火山引擎豆包语音）、`tencent`（腾讯云语音识别）、`iflytek`（讯飞语音听写）、`iflytek_rtasr`（讯飞实时语音转写）、`baidu`（百度智能云）、`stepfun`（阶跃星辰），2026-11-04，§3.15 | ✓ | — | 必填；前五家是多个字段（§3.15） |
 | `google`（Google AI Studio，2026-10-08） | — | ✓（Gemini，OpenAI 兼容接口 `…/v1beta/openai`） | 必填 |
 | `deepseek` | — | ✓ | 必填 |
-| `kimi`、`glm`（智谱 / Z.ai，两家都可切换中国站与国际站，§3.2）、`volcengine`（火山方舟）、`hunyuan`（腾讯混元，经腾讯云 TokenHub）、`mimo`（小米 MiMo）、`openrouter`（2026-10-25，§3.13） | — | ✓ | 必填 |
+| `kimi`、`glm`（智谱 / Z.ai，两家都可切换中国站与国际站，§3.2）、`volcengine`（火山方舟）、`hunyuan`（腾讯混元，经腾讯云 TokenHub）、`mimo`（小米 MiMo）、`openrouter`（2026-10-25，§3.13） | `glm`、`mimo`（2026-11-04，§3.15） | ✓ | 必填 |
 | `ollama` | — | ✓（`http://127.0.0.1:11434/v1`） | 无 |
 | `custom` | ✓ | ✓ | 可选，识别与润色各一把；接口地址必填 |
 
@@ -158,7 +159,7 @@ pub struct EngineSettings {                                  // Settings.engines
 
 两个令牌都是服务端可随时吊销的应用令牌，不是任何服务商的 API 密钥：服务商密钥只放在服务端，打包脚本扫描二进制，发现 `gsk_…` / `sk-…` 形式的密钥就拒绝出包。
 
-**密钥**：`provider_key_set { provider, kind, value }`（`value: null` 删除）写进系统钥匙串（条目 `provider-key.<id>`，自定义接口为 `provider-key.custom-asr` / `-llm`）。界面只看到 `SecretState`（有没有、来自哪里），永远拿不到值。一把密钥只发给它所属的服务商：换了服务商或改了自定义地址，旧密钥不会跟过去，内置令牌也只发给内置服务（回归测试 `regression_keys_never_leave_their_provider`）。
+**密钥**：`provider_key_set { provider, kind, value }`（`value: null` 删除）写进系统钥匙串（条目 `provider-key.<id>`，`_` 写成 `-`，例如 `provider-key.iflytek-rtasr`；自定义接口为 `provider-key.custom-asr` / `-llm`）。凭据有多个字段的服务商，`value` 是一个 JSON 对象，按 §3.15 的规则合并后存为一个条目。界面只看到 `SecretState`（有没有、来自哪里），永远拿不到值。一把密钥只发给它所属的服务商：换了服务商或改了自定义地址，旧密钥不会跟过去，内置令牌也只发给内置服务（回归测试 `regression_keys_never_leave_their_provider`）。
 
 ### 3.2 中国站与国际站（2026-10-25）
 
@@ -171,7 +172,7 @@ Kimi（`api.moonshot.cn` / `api.moonshot.ai`）和智谱 GLM（智谱开放平�
 
 ### 3.3 测试连接与模型列表（2026-10-12）
 
-**测试连接**：`provider_probe { provider, kind, base_url?, key? }` 请求 `GET {base}/models`，结果以 `provider_probe` 事件返回模型列表或失败原因（`ProbeFailure`，不含主机名，内置服务的地址也不会借错误信息泄露）。列表按服务筛选（见下），内置服务只计本构建提供的模型。`provider_console_open { provider, page?, site? }` 在浏览器里打开该服务商的密钥页（`page` 省略或为 `key`；有两个站点的服务商打开 `site` 的，§3.2）或额度页（`quota`，目前只有阿里云百炼，§3.5）；外壳只打开目录里的地址（`ProviderId::console_page`），界面只给出服务商、页面和站点。
+**测试连接**：`provider_probe { provider, kind, base_url?, key?, model? }` 请求 `GET {base}/models`（不提供模型列表的服务商另行检查凭据，§3.15），结果以 `provider_probe` 事件返回模型列表或失败原因（`ProbeFailure`，不含主机名，内置服务的地址也不会借错误信息泄露）。列表按服务筛选（见下），内置服务只计本构建提供的模型。`provider_console_open { provider, page?, site? }` 在浏览器里打开该服务商的密钥页（`page` 省略或为 `key`；有两个站点的服务商打开 `site` 的，§3.2）或额度页（`quota`，目前只有阿里云百炼，§3.5）；外壳只打开目录里的地址（`ProviderId::console_page`），界面只给出服务商、页面和站点。
 
 **模型列表**（2026-10-12 用户反馈：模型下拉框只有内置的几个预设，测试连接却显示很多模型；保存密钥后，每次打开模型列表都应带出服务商最新的模型，不必手填模型 ID）：
 
@@ -381,6 +382,84 @@ Kimi（`api.moonshot.cn` / `api.moonshot.ai`）和智谱 GLM（智谱开放平�
 - **历史**：`Transcript`、`StreamFinal`、`Refined` 带 `provider` 与 `fallback`，由候补链写上。`HistoryEntry` 新增可选的 `asr_provider`、`asr_fallback`、`refine_provider`、`refine_fallback`（`#[serde(default, skip_serializing_if = "Option::is_none")]`）。服务商、模型和原因取自同一个回执（`Receipt`）：管线自己识别的用它的回执，否则用流或分段的回执，都没有时用这一条所选的模型和服务商；没有候补链时服务商就是所选的服务商，`fallback` 为空。导入记所选的服务商，`fallback` 为空。旧条目没有这些字段，界面不显示。桌面历史详情的技术信息显示「识别服务商：Groq · 候补模型 · 所选模型出错」，润色同样。
 - **状态与界面**：`FallbackStatus.selected_retry_reason` 与 `FallbackModelStatus.retry_reason`；行状态新增「出错，暂时跳过 · 何时再试」（`cooling`）与「选用本地识别时，出错不会改用云端服务」（`not_for_local`）。运行时每次 tick 调 `QuotaLedger::forget_expired`：到期的标记清除时重发引擎状态，冷却过后的行恢复为可用。「重新检查」同时清除出错记录。开关开时，候补区块的说明改为「额度用完或服务出错时」，隐私说明写「额度用完或服务出错时改发给…」（本机项不算）。添加一行在识别里列出已下载的本机模型（按名称）。手机的 `Fallback.tsx` 能显示新的行状态，不加开关。
 - **测试**：`voltip-core` `fallback.rs` 的单元测试（可控时钟与 `start_paused` 虚拟时间：开关关时 503、超时不切换且没有截止点；开时超时、网络、5xx、503、429 切换，401、400 不切换；冷却与到期、`Retry-After`、冷却原因、全部冷却只试第一项、最多 3 项、永不回应的链接在截止点被截断，假链接用 `std::future::pending`），`engines.rs` 的本机项行状态与 `in_use`，引擎的 `with_the_switch_on_a_failing_service_hands_the_take_to_the_next_and_the_history_says_why`、`a_failure_moves_on_only_with_the_switch_on_and_never_for_a_refused_request`、`with_the_switch_on_a_stream_failing_mid_take_degrades_and_its_remainder_moves_on`，`tests/long.rs` 的 `a_long_takes_segment_moves_on_when_its_model_fails`，`tests/fallback.rs`，`tests/import.rs`，运行时的 `the_tick_forgets_a_skipped_model_once_its_time_is_over`；`voltip-cloud` 的 `every_client_failure_reaches_the_core_with_its_kind_and_its_words`；前端 `fallback.test.ts`、`FallbackSection.test.tsx`、`HistoryDetail.test.tsx`、手机的 `Fallback.test.tsx`。
+
+### 3.15 国内语音识别服务商（2026-11-04）
+
+用户反馈支持的识别服务商太少（2026-11-04）。调研热门的语音转文字软件支持哪些厂商后，用户定下优先级与落地顺序，要求「13个provider都要添加和支持」：除已支持的百炼 qwen-audio、OpenAI / Groq / 内置服务、硅基流动三行外，新增或补齐以下几项。
+
+| id | 识别服务 | 默认地址 | 推荐模型（第一个是默认） | 凭据 | 模型列表 | 边说边识别 |
+|---|---|---|---|---|---|---|
+| `volcengine_speech` | 火山引擎豆包语音，大模型流式识别 | `https://openspeech.bytedance.com` | `volc.seedasr.sauc.duration`、`volc.bigasr.sauc.duration`、`volc.seedasr.sauc.concurrent`（资源 ID，`X-Api-Resource-Id`） | 新版控制台 `api_key[api_key]`；旧版控制台 `app_token[app_id, access_token]` | 无 | ✓ |
+| `tencent` | 腾讯云实时语音识别，整段走录音文件识别极速版 | `https://asr.cloud.tencent.com` | `16k_zh_en`、`Hy-ASR-3.0-preview`、`16k_zh`（引擎类型） | `default[app_id, secret_id, secret_key]` | 无 | ✓ |
+| `iflytek` | 讯飞语音听写（流式版，`iat`） | `https://iat-api.xfyun.cn` | `iat` | `default[app_id, api_key, api_secret]` | 无 | ✓ |
+| `iflytek_rtasr` | 讯飞实时语音转写（`rtasr`） | `https://rtasr.xfyun.cn` | `rtasr` | `default[app_id, api_key]`（APIKey 与语音听写的不同） | 无 | ✓ |
+| `baidu` | 百度智能云实时语音识别 | `https://vop.baidu.com` | `15372`、`1537`、`15376`（`dev_pid`） | `default[app_id, api_key]` | 无 | ✓ |
+| `stepfun` | 阶跃星辰 StepAudio，中国站与国际站（§3.2） | `https://api.stepfun.com/v1`、`https://api.stepfun.ai/v1` | `stepaudio-2.5-asr`、`stepaudio-2.5-asr-stream` | API Key | `GET /models` | `-stream` 模型 |
+| `glm` | 智谱 GLM-ASR（原有润色，新增识别） | 原有两站 | `glm-asr-2512` | API Key，与润色共用 | `GET /models` | — |
+| `mimo` | 小米 MiMo-ASR（原有润色，新增识别） | `https://api.xiaomimimo.com/v1` | `mimo-v2.5-asr` | API Key，与润色共用 | `GET /models` | — |
+
+阿里云百炼的 `fun-asr-realtime` 与 `fun-asr-flash…` 此前不发术语表，现在作为上下文发送（见下文「术语表」）。不做：新厂商的润色；腾讯 `hotword_id`、火山 `boosting_table_id`、百炼 `vocabulary_id`、百度 `lm_id` 等控制台热词表；火山与阶跃的录音文件识别、腾讯一句话识别；8 kHz 电话模型；自定义接口指向这些厂商的地址（自定义接口仍只认 OpenAI 兼容和百炼）。
+
+**地址与协议**：设置里的地址一律是 `http(s)`（服务商卡片检查这一点）。`AsrProtocol::resolve(provider, url, model)` 按服务商分派：这几家的协议由服务商决定，与地址无关，所以接口地址填代理时协议不变；`Aliyun` 与 `Custom` 仍按 `AsrProtocol::of(url, model)`（§3.4）。阶跃按模型名分：以 `-stream` 结尾的是实时协议。客户端从地址推出 WebSocket 端点（`voltip_asr::vendor::endpoint`）：`https` 变 `wss`，地址里的路径前缀（代理的前缀）保留在端点路径前面。各家都实现 `voltip_asr::vendor::VendorAsr`：整段识别、测试连接、实时会话；`voltip-cloud` 的 `VendorTranscriber` / `VendorStreaming` 把它接到核心的端口上。
+
+**多字段凭据**：
+
+- 钥匙串里一家服务商仍是一个条目，内容是一个 JSON 对象，写明它的集与字段，例如 `{"set":"app_token","app_id":"…","access_token":"…"}`。`provider_key_set` 的 `value` 仍是字符串。
+- `providers::merge_credentials(provider, stored, draft)` 合并表单发来的草稿与所存的值：草稿的集与所存相同（或没写集）时逐字段合并，空字段保留所存值；换了集时整套替换，新集的必填项必须在草稿里；未知的字段、未知的集、不是 JSON、值不是文字都拒绝（`CredentialError`）。输出总是同一种写法：先是集，再是该集的字段，按目录里的顺序，只含该集。保存（`set_provider_key`）与测试连接（`probe_target`）都用它，所以只改了一个字段的表单测试的正是保存后会留下的凭据。
+- 界面只看到集，看不到值：`SecretState.credential_set`（`stored_credential_set`），以及 `ProviderStatus.credential`（各集与字段，字段是否保密、是否必填）。
+- 表单（`packages/ui` 的 `CredentialFields`，手机 RN 的同名表单，首次引导第 3 步）每个字段一行，保密字段默认隐藏；火山用分段选择切换新旧控制台的集，初始为所存的集。所选集等于所存的集时，空字段表示保持原值，占位文字写「已保存，留空则不变」；换了集或还没有保存时，所选集的必填项都要填写，否则提示「请填写 …」。规则在前端是 `checkCredentialDraft`，与 `merge_credentials` 同一组用例；`credentialValue` 只发所选集的非空字段和集，一项都没填时不发。
+- 本机语音服务的环境变量 `VOLTIP_KEY_<条目>`（§23.5）同样放这个 JSON，例如 `VOLTIP_KEY_TENCENT='{"set":"default","app_id":"…","secret_id":"…","secret_key":"…"}'`。
+
+**测试连接**：没有模型列表的服务商（`ProviderStatus.lists_models: false`）不请求 `GET /models`，改由 `ServiceProbe::check_credentials(provider, base_url, key, model)` 用各家客户端的 `probe` 检查凭据：模型取表单里的（`provider_probe` 的 `model`）、所存的或默认的。成功时回目录里的推荐模型，原样返回，不写进列表缓存；界面写「凭据有效 · N ms」，模型下方说明这家服务商不提供模型清单。打开模型列表时也不请求刷新。各家的 `probe` 发最小的合法请求，等到服务明确说成功才算成功，只完成握手不算：
+
+- 火山：完整的客户端请求，再发一包 200 ms 静音（6400 B）并标为最后一包，等到标为最后一包结果（`0b0011`）、不是错误帧的服务端响应。
+- 腾讯：握手后服务端回 `code` 为 0 的消息（签名校验通过才回 0），随后发 `{"type":"end"}`。
+- 讯飞语音听写：握手只校验 APIKey 与 APISecret，APPID 在首帧里，所以发完整的首帧（`status: 0`，40 ms 静音即 1280 B），再单独发结束帧 `{"data":{"status":2}}`，等到 `data.status == 2` 且 `code == 0` 的最终结果（文字可以为空）。
+- 讯飞实时语音转写：APPID 参与 URL 签名，收到 `action: started` 且 `code` 为 `"0"` 即成功，随后发 `{"end": true}`。
+- 百度：START、一帧 160 ms 静音（5120 B）、FINISH，服务端在 FINISH 之后正常关闭连接即成功；`-3004`（鉴权失败）是失败，`-3005`（无效音频）与 `-3003` 只针对一句话，静音本来就没有句子，不算失败。
+- 阶跃、智谱、MiMo：`GET /models`，与润色相同（识别只保留含 `asr` 的模型，§3.3）。
+
+**实时会话**（`VendorAsr::realtime`）：调用方送来 16 kHz 16-bit 单声道 PCM（`RealtimeInput::Audio`，任意长度，客户端按各家要求分帧）和结束（`RealtimeInput::Finish`）；客户端回报正在说的句子（`RealtimeEvent::Partial`，到目前为止的整句）、说完的句子（`Sentence { text, begin_ms, end_ms }`，时间是整次会话的音频时间，跨连接时加上之前发出的音频）和结束（`Finished`）。输入在 `Finish` 之前关闭（取消这次听写）时立即关闭连接，不再发送任何内容。会话出错，或连接在 `Finished` 之前断开，按错误结束：引擎照 §12 降级为整段识别，整段识别照常走候补链（§3.5、§3.14），这次听写照常完成。实时会话需要开启实时预览（`LiveSource::Stream`，与百炼的实时模型相同，§11.9）。
+
+**整段识别**（录音已在手上：实时预览关闭、重新识别、降级、长录音分段）：
+
+| 服务商 | 怎么发 | 单次上限与切段 |
+|---|---|---|
+| 火山 | 流式输入接口 `bigmodel_nostream`，200 ms 一包，按两倍播放速度发送 | 期限为超时加发送用时（`whole_take_deadline`） |
+| 腾讯 | 录音文件识别极速版（WAV，HMAC-SHA1 签名）；`Hy-ASR-3.0-preview` 不在极速版的引擎里，改走实时接口，按播放速度发送 | `Hy-ASR-3.0-preview` 单次最长 5 分钟，在停顿处切成不超过 290 s 的段 |
+| 讯飞语音听写 | 实时接口，按播放速度发送 | 单次 60 s，在停顿处切成不超过 55 s 的段，一段一个会话 |
+| 讯飞实时语音转写 | 实时接口，按播放速度发送 | 不限 |
+| 百度 | 实时接口，一次发完，160 ms 一帧 | 不限 |
+| 阶跃 | `POST {base}/audio/transcriptions`（multipart，`response_format` 必填）；`-stream` 模型的录音改由 `stepaudio-2.5-asr` 识别，回执写这个模型 | 文件小于 100 MB：超过 45 分钟时在停顿处切段 |
+| 智谱 | `POST {base}/audio/transcriptions`（multipart，`stream=false`） | 单次 30 s：在停顿处切成不超过 28 s 的段，第二段起带上前面已识别文字的最后 2000 字作为 `prompt` |
+| MiMo | `POST {base}/chat/completions`，用户消息里一个 `input_audio`（`data:audio/wav;base64,…`），`asr_options.language` 只传 zh / en | 编码后不超过 10 MB：在停顿处切成不超过 3 分钟的段 |
+
+切段沿用长录音的回落切法（`voltip_asr::split::quiet_cuts`）：一段到上限时，在最后 5 秒里最安静的 200 ms 中间切开。各段的文字按句子拼接（中文之间不加空格，其他加一个）。
+
+**阶跃的实时识别**：`wss://…/realtime/asr/stream`，`Authorization: Bearer`。服务端先发 `session.created`，客户端发 `session.update`（`pcm_s16le` 16 kHz、模型、语言 zh / en、术语表作 `prompt`、`full_rerun_on_commit`、`enable_itn`、服务端断句 `server_vad` 800 ms），音频以 `input_audio_buffer.append`（base64，每条不超过 1 秒）发送。`…transcription.delta` 的 `text` 是该段到目前为止的全文，作为 `Partial`；`…transcription.completed` 的 `transcript` 是一句，开始时间取 `speech_started` 的 `audio_start_ms`，长度取逐字时间，没有时取到 `speech_stopped` 或已发出的音频为止。文档写明开启服务端断句时不需要 `input_audio_buffer.commit`，但没有写松开快捷键时正在说的那句怎么结束，所以结束时先发 1 秒静音（长于断句的 800 ms），让服务端自己断开这一句，再发 commit 提交余下的内容：没有对应 `speech_stopped` 的 `committed`，或 commit 被拒绝（`error.event_id` 是这条 commit 的，或 `invalid_request_error`，例如缓冲区为空），算作 commit 的回答；之后已提交的段都识别完即结束。服务端对 commit 没有任何回答时，没有正在说或在识别的段、并且安静 2 秒后结束；结束后 15 秒仍没有完成就报超时，这次听写降级为整段识别。
+
+**术语表**（`GlossaryRoute::for_service`，§16.3、§30.6）：
+
+| 协议 | 发送方式 | 上限与清洗 | 路由 |
+|---|---|---|---|
+| 火山 | `request.corpus.context`，一个 JSON 字符串 `{"hotwords":[{"word":…}]}` | 实时接口按 100 字保守截断；流式输入 5000 个词 | `hotwords` |
+| 腾讯 | `hotword_list`，`词|10` 以逗号分隔（实时与极速版） | 最多 128 个；跳过含空格、`|`、`,`，超过 30 个字符或 10 个汉字的词 | `hotwords` |
+| 智谱 | `hotwords`，每个词一个 multipart 字段 | 最多 100 个 | `hotwords` |
+| 阶跃整段 | `hotwords`，JSON 数组字符串 | 最多 100 个 | `hotwords` |
+| 阶跃实时 | `session.update` 的 `prompt`「专业术语：A、B」 | 1000 字，整词截断 | `prompt` |
+| 百炼 `fun-asr-realtime` | `run-task` 的 `input.context`，一条 user 的 `input_text` | 400 字，整词截断 | `prompt` |
+| 百炼 `fun-asr-flash…`（不含 8k 与 realtime 模型） | 多模态请求的消息里，放在音频之前 | 400 字，整词截断 | `prompt` |
+| 讯飞两种、百度、MiMo | 不发送；讯飞的热词只能在控制台为应用上传（卡片说明写明） | — | `not_supported` |
+
+每个客户端如实报告请求带没带术语表（`sends_glossary`）；`voltip-cloud` 的测试对目录里每家服务商、每个站点的每个推荐模型，核对客户端与路由一致、与 `AsrProtocol::streams` 一致。
+
+**错误**：鉴权失败（含握手的 401、403）归 `Unauthorized`；欠费、额度或资源包用完、每日上限归 `QuotaExhausted`（会切到候补，§3.5）；并发与频率超限归 `RateLimited`；服务端错误归 `Server`；其余拒绝归 `Service { code, message }`。阶跃的 `internal_error` 归 `Server`，`max_idle_timeout`、`pong_timeout` 归网络错误；402 归 `QuotaExhausted`。智谱 `1113`（余额不足）、`1304`（日调用上限）归 `QuotaExhausted`，`1302`、`1303`、`1305` 归 `RateLimited`。MiMo 的 402 归 `QuotaExhausted`。
+
+**界面**：卡片说明写明各家只用于识别、在哪里获取凭据、需要先在控制台开通服务；讯飞语音听写写明热词只能在控制台上传；火山写明火山方舟的密钥不能用。图标取自 LobeHub Icons 的 `doubao-color`、`tencentcloud-color`、`iflytekcloud-color`（讯飞两张卡）、`baiducloud-color`、`stepfun-color`（§3，提交 `bcdb7c8`）。
+
+**未在真实账户上验证**：本机没有这些厂商的账号。各协议按官方文档实现（2026-11-04 取得），用本机模拟的服务端测试：握手头与签名对照文档的示例，首帧参数、分帧、部分与最终结果、结束、错误、取消关闭连接。由用户用本地构建验证。
+
+**测试**：`voltip-core` 的 `the_provider_picks_a_vendor_protocol_whatever_the_address`、`each_vendor_takes_the_glossary_its_way`、`credential_sets_are_well_formed`、`credentials_merge_field_by_field_and_switch_sets_whole`，`tests/credentials.rs`；`voltip-asr` 各客户端的模拟服务端测试（`stepfun`、`zhipu`、`mimo`、`dashscope` 的上下文，以及火山、腾讯、讯飞、百度）与 `split`、`realtime`、`vendor`、`credentials`；`voltip-cloud` 的 `vendor` 与 `every_vendor_model_takes_the_glossary_and_streams_as_the_catalogue_says`；前端 `engine-drafts.test.ts`（多字段凭据的同一组用例）、`ProviderCard.test.tsx`、`Onboarding.test.tsx`（首次、已存、写入失败）、手机 RN 的 `engines.test.tsx`。
 
 ## 4. 历史记录（`voltip_core::history`）
 
@@ -1187,7 +1266,7 @@ live_inject     ：每个 committed 句子 / tail / 补齐的 remainder：句子
 - 规则跨不了 `live_inject` 的句子边界（每句单独处理）。
 - 纠正与规则让非空文本变成空白：不注入，按 `no_speech` 结束（`live_inject` 里该句直接跳过）。
 - **词表**（glossary）= 启用词条的 `term`，按词典顺序、去重，受 16.1 上限约束；误识别写法**永远不**进词表（否则把识别往错误写法上引）。
-  - **云端 ASR**：OpenAI 兼容的转写接口（内置服务、OpenAI、Groq、自建与自定义接口）在词表非空时把它作为 multipart 的可选 `prompt` 字段发送，值为 `", "` 连接的词表；为空时不发该字段。vLLM 的 Qwen3-ASR 把 `prompt` 清洗后放进 system 轮作为上下文（vLLM `qwen3_asr.py` `get_generation_prompt`），这正是 Qwen3-ASR 的上下文偏置用法；Whisper 类端点把它当作前文提示。阿里云百炼只有 `qwen-audio-…-asr` 模型以热词接收，Qwen3-ASR、Fun-ASR、Paraformer 等不接收（2026-11-01 更正：此前文档、设置页和词典页都写成「发给云端识别」）。哪种服务收到什么、界面怎么说、每条历史怎么记，见 §30.6。
+  - **云端 ASR**：OpenAI 兼容的转写接口（内置服务、OpenAI、Groq、自建与自定义接口）在词表非空时把它作为 multipart 的可选 `prompt` 字段发送，值为 `", "` 连接的词表；为空时不发该字段。国内语音识别服务商各有各的方式（热词、上下文或提示词，讯飞、百度、MiMo 不接收），见 §3.15。vLLM 的 Qwen3-ASR 把 `prompt` 清洗后放进 system 轮作为上下文（vLLM `qwen3_asr.py` `get_generation_prompt`），这正是 Qwen3-ASR 的上下文偏置用法；Whisper 类端点把它当作前文提示。阿里云百炼只有 `qwen-audio-…-asr` 模型以热词接收，Qwen3-ASR、Fun-ASR、Paraformer 等不接收（2026-11-01 更正：此前文档、设置页和词典页都写成「发给云端识别」）。哪种服务收到什么、界面怎么说、每条历史怎么记，见 §30.6。
   - **LLM 润色**：`voltip_refine::system_prompt(style, language, glossary)` 在词表非空时追加一段「用户词典」块（每行一个词，要求逐字保留写法、明显指向某词的同音误识别改成词典写法、不确定就保留）；为空时提示词与之前逐字相同。
   - **本地引擎**：不下发。transcribe.cpp 0.2.3 的 Qwen3-ASR 用空 system 轮拼 chat 提示（`transcribe-cpp-sys-0.2.3/src/arch/qwen3_asr/model.cpp` `build_prompt_tokens`）；0.4.1（§29）起它声明 `Feature::Vocabulary` 与 `Feature::ContextPrompt`，词表和上下文提示都放进这个 system 轮，Voltip 升级时没有接上（不改变用户可见的行为），把个人词典交给本机模型要另行评估。两个版本都不声明 `Feature::InitialPrompt`，Whisper 运行扩展会被拒绝——实测见 16.8；SenseVoice / Paraformer 在 sherpa-onnx 里没有热词；流式 Zipformer 的热词实测见 16.8，结论是**不开**。本地引擎因此只有识别后的词典纠正。
 - 端口：`Transcriber::transcribe(wav, language, glossary: &[String])`、`Refiner::refine(text, hints: &RefineHints)`（词表在 `hints.glossary`；同一结构还带本次的语言、风格与场景上下文，§18.5）；引擎持有编译好的 `Arc<Vocabulary>` 快照（词典 / 规则每次变更由运行时替换），每次运行在开始时取用当时的快照。
@@ -2101,7 +2180,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 
 - **密钥**：
   - **钥匙串**：启动时用 `SecretStore::peek` 从系统钥匙串读一次，只读：不写入、不删除、不弹授权框（签名的 macOS 构建的 `PerBuildStore` 用 `Ask::Never`，跳过会弹窗的条目）。
-  - **环境变量**：2026-10-05 用户决定，再从每个密钥条目对应的环境变量读取（`voltip_core::key_env_var`：`provider-key.custom-llm` → `VOLTIP_KEY_CUSTOM_LLM`），非空时优先于钥匙串（`voltip_server::with_env_keys`）。
+  - **环境变量**：2026-10-05 用户决定，再从每个密钥条目对应的环境变量读取（`voltip_core::key_env_var`：`provider-key.custom-llm` → `VOLTIP_KEY_CUSTOM_LLM`），非空时优先于钥匙串（`voltip_server::with_env_keys`）。凭据有多个字段的服务商（§3.15），变量里放规范的 JSON，例如 `VOLTIP_KEY_IFLYTEK_RTASR='{"set":"default","app_id":"…","api_key":"…"}'`。
   - **报告**：`--check` 列出用到的变量名，启动日志只记变量名，从不打印密钥。
   - 两种方式都没有提供密钥时，需要密钥的服务商按未配置处理，内置服务不受影响。
   - App 本身仍只读钥匙串。用户文档建议用 systemd 的 `EnvironmentFile=` 加 0600 文件，并说明同一用户的其他进程能读到服务进程的环境变量。
@@ -2841,13 +2920,17 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 
 ### 30.6 术语表的去向
 
-词典里启用词条的正确写法组成术语表（§16.3）。它是否进入识别请求，由识别服务和协议决定（`GlossaryRoute::remote`，`voltip-asr` 发送的与它一致，`voltip-cloud` 的测试核对两者）：
+词典里启用词条的正确写法组成术语表（§16.3）。它是否进入识别请求，由识别服务和协议决定（`GlossaryRoute::for_service`，`voltip-asr` 发送的与它一致，`voltip-cloud` 的测试核对两者）：
 
 | 识别服务 | 术语表 | `GlossaryRoute` |
 |---|---|---|
 | OpenAI 兼容的转写接口（OpenAI、Groq、SiliconFlow、自建与自定义接口、内置服务） | multipart 的 `prompt` 字段 | `prompt` |
 | 阿里云百炼的 `qwen-audio-…-asr` 模型 | 任务参数里的热词 | `hotwords` |
-| 阿里云百炼的其他识别模型（Qwen3-ASR、Fun-ASR、Paraformer 等） | 不发送 | `not_supported` |
+| 阿里云百炼的 `fun-asr-realtime` 与 `fun-asr-flash…`（不含 8k 与 realtime 模型，2026-11-04） | 上下文（§3.15） | `prompt` |
+| 阿里云百炼的其他识别模型（Qwen3-ASR、其他 Fun-ASR、Paraformer 等） | 不发送 | `not_supported` |
+| 火山引擎豆包语音、腾讯云、智谱 GLM-ASR、阶跃 `stepaudio-2.5-asr`（2026-11-04） | 请求里的热词（§3.15） | `hotwords` |
+| 阶跃 `…-stream` 模型 | `session.update` 的 `prompt` | `prompt` |
+| 讯飞语音听写、讯飞实时语音转写、百度、MiMo-ASR | 不发送 | `not_supported` |
 | 本地模型 | 不发送，词典只在识别之后纠正 | `not_supported` |
 | 以上会发送、但没有启用的词条，也没有启用的带术语包的内置场景 | 不发送 | `empty` |
 

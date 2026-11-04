@@ -1,5 +1,5 @@
 ---
-description: The built-in service, the cloud providers Voltip supports for recognition and AI polish (Alibaba Cloud Model Studio's realtime models among them), and how their keys are stored.
+description: The built-in service, the cloud providers Voltip supports for recognition and AI polish (Alibaba Cloud Model Studio's realtime models and speech recognition providers in China among them), and how their keys are stored.
 ---
 
 # Cloud services
@@ -48,12 +48,18 @@ Other providers and on-device models are not limited by it. Each device has a de
 | Google AI Studio | — | Yes, Gemini models | Required |
 | SiliconFlow | Yes | Yes | Required |
 | Alibaba Cloud Model Studio | Yes, realtime models included | Yes | Required |
+| Volcengine Doubao Speech | Yes, while you speak | — | Required: an API key, or an App ID and Access Token |
+| Tencent Cloud Speech Recognition | Yes, while you speak | — | Required: AppId, SecretId and SecretKey |
+| iFlytek Dictation | Yes, while you speak | — | Required: APPID, APIKey and APISecret |
+| iFlytek Realtime Transcription | Yes, while you speak | — | Required: APPID and APIKey |
+| Baidu AI Cloud Speech | Yes, while you speak | — | Required: AppID and API Key |
+| StepFun | Yes, realtime model included, on its China or international site | — | Required |
 | DeepSeek | — | Yes | Required |
 | Kimi | — | Yes, on its China or international site | Required |
-| Zhipu GLM | — | Yes, on its China or international site (Z.ai) | Required |
+| Zhipu GLM | Yes, `glm-asr-2512` | Yes, on its China or international site (Z.ai) | Required |
 | Volcengine Ark | — | Yes, Doubao and other models | Required |
 | Tencent Hunyuan | — | Yes, through Tencent Cloud TokenHub | Required |
-| Xiaomi MiMo | — | Yes | Required |
+| Xiaomi MiMo | Yes, `mimo-v2.5-asr` | Yes | Required |
 | OpenRouter | — | Yes, many vendors' models | Required |
 | Ollama, on this computer | — | Yes | Not needed |
 | Custom, any OpenAI-compatible endpoint | Yes | Yes | Optional; the endpoint address is required |
@@ -66,7 +72,7 @@ Recognition can also run on a GPU server of your own, used as the custom endpoin
 
 1. On the Speech models or AI models page, select the provider's card. Its settings open in a panel on the right, or from the bottom on the phone.
 2. Choose a model, and for a custom endpoint enter its address. Each provider suggests two or three models, the first being the default, so a provider works as soon as its key is entered. Once a key is saved, the model list shows every model the provider offers after **Other model…** (the **From the provider** group, with their number), updated each time the list opens, so there is no need to type a model ID.
-3. Enter your key. **Test connection** checks the address and the key and shows how many models the provider offers, the same number as in the model list. When it fails, the result ends with what the service answered, for example **The key was refused: Incorrect API key provided**. The Speech models page lists speech recognition models only, and the AI models page leaves out speech, image and embedding models.
+3. Enter your key. A provider whose credential has several parts (Tencent Cloud's AppId, SecretId and SecretKey, for example) takes them one field each; a saved field left blank stays as it is. **Test connection** checks the address and the key and shows how many models the provider offers, the same number as in the model list. For a provider that publishes no model list (see [Speech recognition providers in China](#speech-recognition-providers-in-china)), **Test connection** checks the credential only and says **Credentials accepted**. When it fails, the result ends with what the service answered, for example **The key was refused: Incorrect API key provided**. The Speech models page lists speech recognition models only, and the AI models page leaves out speech, image and embedding models.
 4. Choose **Set as current** to save what you entered and switch to the provider. **Set as current** on a card switches to the provider without opening its settings.
 
 When a provider refuses a request (a wrong key, a used-up quota, an unknown model, a busy service and so on), the overlay, the home page and the history show what the service answered, for example **Speech recognition failed: the key was refused: Incorrect API key provided**. Keys, tokens and account ids in it are masked; a long answer shows its beginning, and the history's details show all of it.
@@ -122,9 +128,24 @@ Model Studio's speech models use Model Studio's own interfaces, and Voltip picks
 
 With the endpoint left empty, Voltip uses the public address `https://dashscope.aliyuncs.com/compatible-mode/v1`. For your workspace's own address, enter it under **Endpoint**, for example `https://<workspace ID>.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`; the Singapore region uses `dashscope-intl.aliyuncs.com`. A Model Studio address entered for a **Custom endpoint** follows the same rules.
 
-The correct spellings in your [dictionary](/recognition/dictionary) go to the qwen-audio models as hot words; Model Studio's other speech models take no glossary. For AI polish with Model Studio's Qwen or DeepSeek models, Voltip turns off their thinking mode, which is on by default and makes polish slow.
+The correct spellings in your [dictionary](/recognition/dictionary) go to the qwen-audio models as hot words, and to fun-asr-realtime and fun-asr-flash as context; Model Studio's other speech models take no glossary. For AI polish with Model Studio's Qwen or DeepSeek models, Voltip turns off their thinking mode, which is on by default and makes polish slow.
 
 Model Studio gives newly activated models a free quota, one for each model. **View quota** in the Model Studio settings opens the console's free quota page, where you see each model's remaining quota and usage: Model Studio has no API for reading the quota with an API key, so Voltip does not show it. To use the free quota only, turn on **Free Quota Only** (免费额度用完即停 in the Chinese console) on that page. Once the quota is used up, dictation says that the model's quota is used up, or Voltip moves on to another model: see the next section.
+
+## Speech recognition providers in China
+
+These providers are for speech recognition; Zhipu GLM and Xiaomi MiMo offer AI polish too, with one key for both. Volcengine Doubao Speech, Tencent Cloud, iFlytek and Baidu publish no model list: the model list holds the suggested models, and **Other model…** takes any other model ID.
+
+- **Volcengine Doubao Speech**: recognises while you speak. With the new console, enter the API key; with the old one, choose **Old console: App ID and Access Token** under **Credential type** and enter those two. Volcengine Ark keys do not work here. The model is the service's resource ID: `volc.seedasr.sauc.duration` is the hourly plan of the Doubao streaming speech recognition model 2.0, `volc.bigasr.sauc.duration` the hourly plan of 1.0, `volc.seedasr.sauc.concurrent` the concurrency plan of 2.0; enable the chosen service in the console first.
+- **Tencent Cloud Speech Recognition**: recognises while you speak. Enter the AppId, SecretId and SecretKey, and enable speech recognition in the console first. The model is the engine type: `16k_zh_en` covers Chinese, English, Cantonese and many dialects, `16k_zh` is general Chinese, `Hy-ASR-3.0-preview` covers Chinese, English and 20 dialects and takes at most 5 minutes at a time, so a longer recording is recognised in parts.
+- **iFlytek Dictation**: recognises while you speak. Enter the APPID, APIKey and APISecret. One session takes at most 60 seconds, and a longer recording carries on in a new one. Hot words can only be uploaded for the app in the iFlytek console.
+- **iFlytek Realtime Transcription**: recognises while you speak, with no length limit, which suits long recordings. Its APIKey differs from dictation's.
+- **Baidu AI Cloud Speech**: recognises while you speak. Enter the app's AppID and API Key. The model is the recognition model number: `15372` is Mandarin with fuller punctuation, `1537` Mandarin, `15376` Chinese dialects (Mandarin, Cantonese, Sichuanese and Northeastern).
+- **StepFun**: `stepaudio-2.5-asr` recognises whole recordings; `stepaudio-2.5-asr-stream` recognises while you speak, and a recording made earlier (to recognise it again, for example) goes to `stepaudio-2.5-asr`. Switch between the China and international sites.
+- **Zhipu GLM**: `glm-asr-2512` recognises whole recordings. One request takes at most 30 seconds, so a longer recording is recognised in parts cut at its pauses, each with the text recognised before it.
+- **Xiaomi MiMo**: `mimo-v2.5-asr` recognises whole recordings; one longer than 3 minutes is recognised in parts cut at its pauses.
+
+While you speak, the overlay shows the words, and release only waits for the last sentence. This needs **Live preview** (on by default); with it off, the recording is recognised when you release the shortcut. If the connection drops or the service fails during a recording, Voltip recognises the whole recording instead, and the dictation still goes through. Whether the correct spellings in your [dictionary](/recognition/dictionary) go to these services is in the dictionary page's table.
 
 ## When a model's quota runs out
 
@@ -191,7 +212,7 @@ Voltip does not support PAC files, automatic proxy detection (WPAD) or `https://
 
 ## What is sent
 
-- **Recognition**: the recording, the model name and your key. If your [dictionary](/recognition/dictionary) has entries, their correct spellings go along as a hint. With a realtime model, the recording is sent while you speak.
+- **Recognition**: the recording, the model name and your key. If your [dictionary](/recognition/dictionary) has entries, their correct spellings go to the recognition services that take a glossary. With a model that recognises while you speak, the recording is sent while you speak.
 - **AI polish**: the recognised text, never audio, together with the app's name unless you turn that off. See [Privacy](/privacy) for the details.
 - **Fallback models**: with **When a model's quota runs out** turned on, the recording or the text goes to the provider of the next model in the list once the selected model's quota is used up (and, with **Also switch when a service fails** on the computer, once the service fails). A local model in the list works on this computer and sends nothing.
 - **Model lists**: when a provider's settings or a model list opens, Voltip asks that provider for its models with the saved key; no recording or text goes with it.
