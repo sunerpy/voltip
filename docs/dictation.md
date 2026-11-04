@@ -3083,8 +3083,8 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 
 - setup hook 里 `attach_bridge` 返回 `BridgeError::Core(CoreError::Identity(IdentityError::StoreUnavailable(_)))` 时，`KeychainUnavailable::for_error` 选出这台电脑的说明（`voltip_platform::keychain::KeychainNotice`），记一行 ERROR 日志（带 `keyring` 的原话），hook 返回 `Ok`。
 - 已注册的 tauri-plugin-dialog 弹出原生消息框：警告图标，标题与正文如下，一个按钮「退出 Voltip / Quit Voltip」（与托盘菜单的退出相同）。setup hook 在事件循环的线程上运行，插件的 `blocking_show` 不能在这里调用（插件文档写明会卡住应用：它等待的回答要靠这个线程画出对话框），所以用 `show`：hook 立即返回，事件循环继续，对话框（GTK 上是模态的 GtkMessageDialog）显示出来。按按钮、按 Esc 或关闭窗口都会回调，回调回到事件循环的线程调用 `exit::exit_process(1)`；退出码 1 表示启动失败，与 `voltip-server` 相同（§23.5）。
-- 说明框显示期间核心没有启动，主窗口保持隐藏：`KeychainUnavailable` 作为 Tauri 状态管理，`show_main_window` 看到它就什么也不做，第二次启动和 macOS 的 Dock 都不会打开空的主窗口。
-- `ShellOptions::shows_notices`：生产为开；mock runtime（`ShellOptions::HEADLESS`）为关，只管理状态、记日志，测试不弹窗也不结束测试进程。
+- 说明框显示期间核心没有启动，主窗口不显示。显示说明框之前先隐藏主窗口：Linux 和 Windows 的主窗口创建时就不可见，macOS 的 `tauri.macos.conf.json` 替换了整个窗口列表、没有 `"visible": false`，主窗口在 setup hook 之前就已显示，没有核心时它是空的。`KeychainUnavailable` 作为 Tauri 状态管理，`show_main_window` 看到它就什么也不做，第二次启动和 macOS 的 Dock 都不会打开空的主窗口。
+- `ShellOptions::shows_notices`：生产为开；mock runtime（`ShellOptions::HEADLESS`）为关，只管理状态、隐藏主窗口、记日志，测试不弹窗也不结束测试进程。
 
 | 平台 | 中文 | English |
 |---|---|---|
@@ -3100,14 +3100,15 @@ AppImage 目录在 C locale 下运行应用，并对截图做 OCR（`code/check-
 
 ### 34.5 门禁
 
-- 修复前失败、修复后通过：`apps/desktop/src-tauri/tests/ipc.rs` 的 `regression_an_unavailable_keychain_shows_the_notice_instead_of_panicking`（mock runtime 上注入读写都返回 `StoreUnavailable` 的存储，原因依次是没有 Secret Service、解锁提示被关掉、条目被锁：修复前在 `app.run` 里 panic「Failed to setup app: … secret store unavailable」；修复后管理的状态是这台电脑在系统语言下的说明，退出码不是 0，核心没有启动）；`keychain_notice.rs` 的 `only_an_unavailable_keychain_is_explained`（只有 `StoreUnavailable` 走说明，`Corrupt`、设置错误和参数错误不走）。
+- 修复前失败、修复后通过：`apps/desktop/src-tauri/tests/ipc.rs` 的 `regression_an_unavailable_keychain_shows_the_notice_instead_of_panicking`（mock runtime 上注入读写都返回 `StoreUnavailable` 的存储，原因依次是没有 Secret Service、解锁提示被关掉、条目被锁：修复前在 `app.run` 里 panic「Failed to setup app: … secret store unavailable」；修复后管理的状态是这台电脑在系统语言下的说明，退出码不是 0，核心没有启动）；`keychain_notice.rs` 的 `only_an_unavailable_keychain_is_explained`（只有 `StoreUnavailable` 走说明，`Corrupt`、设置错误和参数错误不走）；`tests/ipc.rs` 的 `regression_the_main_window_does_not_stay_behind_the_keychain_notice`（像 macOS 那样创建时就可见的主窗口，在说明框路径上被隐藏；没有主窗口时什么也不做。mock runtime 不模拟可见性，测试读说明框路径报告的结果；没有隐藏时它报告主窗口原样留着，测试失败）。
 - `crates/voltip-platform/src/keychain.rs`：三个平台、两种语言的文案（各自的钥匙串名称，按钮与托盘的退出相同）；`regression_the_english_notice_has_no_word_the_appimage_catalog_reads_as_an_error`（HARD 与 SOFT 词表，英文全是 ASCII，中文不是）；与界面词典相同的用词检查；`the_message_language_is_read_the_way_gettext_reads_it`（C、`C.UTF-8`、`POSIX`、没有 locale、`LANGUAGE` 只在非 C locale 时优先、`LC_ALL` > `LC_MESSAGES` > `LANG`）。
 - `crates/voltip-identity/src/secret_store.rs` 的 `every_way_the_secret_service_refuses_is_an_unavailable_store`（`keyring` 对上述几种情况的报法都是 `StoreUnavailable`，`NoEntry` 不是）。
 - 真实入口（2026-11-04，Linux，本分支的 debug 构建带打包的前端，Xvfb 800×600，临时数据目录）：C locale、没有 Secret Service 的私有会话总线：英文说明框，按 Return 后退出码 1，没有 panic；说明框显示期间再启动一次，交给第一个实例后以 0 退出，主窗口没有出现。没有会话总线、`LANG=C.UTF-8`：英文说明框，按 Esc 后退出码 1。`LANG=zh_CN.UTF-8`：中文说明框，退出码 1。私有会话总线上的真实 gnome-keyring（私有的 XDG 目录）：未锁时正常启动并把身份存进钥匙串；锁上后启动，gcr 的解锁提示（Unlock Login Keyring）被 Esc 关掉，说明框出现（日志：`SS error: prompt dismissed`），按 Return 后退出码 1。截图用目录自己的 `code/check-screenshot.sh` 检查（临时容器，Ubuntu 22.04，tesseract 4.1.1，ImageMagick 6.9.11，与目录的 CI 相同）：三张英文截图都通过，没有命中错误词，OCR 读到 114 个拉丁字母、0 个汉字，只有黑色根窗口带来的「大部分是暗色」警告；中文截图按预期判为「主要不是英文」，目录在 C locale 下运行，看到的是英文。
 
 ### 34.6 限制
 
-- 测试只在 mock runtime 上验证选择与状态；真实的对话框、关闭和退出码在 Linux 的真实入口上验证，macOS 和 Windows 由用户在自己的电脑上确认。
+- 测试只在 mock runtime 上验证选择与状态；真实的对话框、关闭和退出码在 Linux 的真实入口上验证，macOS 和 Windows 由用户在自己的电脑上确认，包括 macOS 上说明框后面没有主窗口。
+- 官方构建的设备票据续期在读取身份之前就开始（`AppCore::start_with`），说明框显示期间它可能已在运行，直到退出；它不创建存储。
 - 对话框没有父窗口（主窗口隐藏），位置由窗口管理器决定；没有窗口管理器时在屏幕左上角。macOS 菜单栏启动（`--start-hidden`，没有 Dock 图标）时它是否在其他窗口前面没有验证。
 - Secret Service 的解锁提示由 gnome-keyring 或 KWallet 自己显示，Voltip 等它结束才继续启动（与之前相同）；提示一直不关时 Voltip 一直等。
 - 截图在根窗口为黑色的环境里大部分是暗色，目录脚本的「默认深色主题」检查只给警告。

@@ -21,13 +21,16 @@ use voltip_core::{
     Activation, ContextSharing, CoreConfig, DictationPhase, EdgeSource, FailureCode, InjectMode, Locale, ModelInstallState, SecretSource, Settings,
     SettingsStore, TakeKind, ThemeId,
 };
-use voltip_desktop_lib::keychain_notice::KeychainUnavailable;
+use voltip_desktop_lib::keychain_notice::{self, KeychainUnavailable, MainWindow};
 use voltip_desktop_lib::update::{NOT_CONFIGURED, UpdateSlot};
-use voltip_desktop_lib::{COMMANDS, DEV_SECRET_STORE_ENV, KEYCHAIN_SERVICE, ShellOptions, build_app, data_dir, dev_memory_store_requested, secret_store};
+use voltip_desktop_lib::{
+    COMMANDS, DEV_SECRET_STORE_ENV, KEYCHAIN_SERVICE, MAIN_WINDOW, ShellOptions, build_app, data_dir, dev_memory_store_requested, secret_store,
+};
 use voltip_identity::{IdentityError, MemorySecretStore, SecretStore};
 use voltip_pairing::PairingState;
 use voltip_platform::HostOs;
 use voltip_platform::keychain::KeychainNotice;
+use voltip_platform::tray::TrayLocale;
 use voltip_tauri_bridge::Bridge;
 use zeroize::Zeroizing;
 
@@ -261,6 +264,27 @@ fn regression_an_unavailable_keychain_shows_the_notice_instead_of_panicking() {
             std::panic::resume_unwind(panic);
         }
     }
+}
+
+/// Regression (goal gate 2026-11-04, macOS): Linux and Windows create the main window invisible,
+/// but `tauri.macos.conf.json` replaces the window list without `"visible": false`, so on a Mac the
+/// main window is up before the setup hook runs. The notice path only kept it from being shown
+/// again, and an empty main window stayed behind the notice. Showing the notice now hides it.
+/// Tauri's mock runtime does not model visibility (`is_visible` always answers true), so the test
+/// reads what the notice path reports it did with the window; on a real Mac the user's checklist
+/// looks at the screen (docs/dictation.md §34).
+#[test]
+fn regression_the_main_window_does_not_stay_behind_the_keychain_notice() {
+    let blocked = KeychainUnavailable { notice: KeychainNotice::new(HostOs::current(), TrayLocale::En), exit_code: keychain_notice::EXIT_CODE };
+    {
+        let app = mock_builder().build(mock_context(noop_assets())).unwrap();
+        // As on a Mac: the window is created visible, before the setup hook.
+        tauri::WebviewWindowBuilder::new(&app, MAIN_WINDOW, Default::default()).visible(true).build().unwrap();
+        assert_eq!(keychain_notice::show(app.handle(), blocked, false), MainWindow::Hidden);
+        assert_eq!(app.try_state::<KeychainUnavailable>().map(|state| *state.inner()), Some(blocked));
+    }
+    let app = mock_builder().build(mock_context(noop_assets())).unwrap();
+    assert_eq!(keychain_notice::show(app.handle(), blocked, false), MainWindow::Missing, "no main window, nothing to hide");
 }
 
 #[test]

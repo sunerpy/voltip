@@ -37,22 +37,49 @@ impl KeychainUnavailable {
     }
 }
 
+/// What showing the notice did with the main window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MainWindow {
+    /// Hidden, so the notice comes alone.
+    Hidden,
+    /// Hiding it failed: on macOS an empty main window stays behind the notice.
+    NotHidden,
+    /// There is no main window.
+    Missing,
+}
+
 /// Show the notice and quit once it is closed, by its button or by closing its window. Called from
 /// the setup hook, which runs on the event loop's thread: `show` returns at once and the loop keeps
 /// turning, which the dialog needs to appear (`blocking_show` would wait for an answer the loop
-/// never gets to draw). `shows_notices` off (the mock runtime): the state is managed only.
-pub fn show<R: Runtime>(app: &AppHandle<R>, blocked: KeychainUnavailable, shows_notices: bool) {
+/// never gets to draw). The main window is hidden first: Linux and Windows create it invisible,
+/// but macOS creates it visible (`tauri.macos.conf.json` replaces the window list without
+/// `"visible": false`), and without the core it would stay empty behind the notice.
+/// `shows_notices` off (the mock runtime): the state is managed and the window hidden, no dialog.
+pub fn show<R: Runtime>(app: &AppHandle<R>, blocked: KeychainUnavailable, shows_notices: bool) -> MainWindow {
     app.manage(blocked);
-    if !shows_notices {
-        return;
+    let main_window = hide_main_window(app);
+    if shows_notices {
+        let handle = app.clone();
+        app.dialog()
+            .message(blocked.notice.message)
+            .title(blocked.notice.title)
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCustom(blocked.notice.button.to_owned()))
+            .show(move |_| quit(&handle, blocked.exit_code));
     }
-    let handle = app.clone();
-    app.dialog()
-        .message(blocked.notice.message)
-        .title(blocked.notice.title)
-        .kind(MessageDialogKind::Warning)
-        .buttons(MessageDialogButtons::OkCustom(blocked.notice.button.to_owned()))
-        .show(move |_| quit(&handle, blocked.exit_code));
+    main_window
+}
+
+/// Hide the main window, when there is one, so that the notice shows alone.
+fn hide_main_window<R: Runtime>(app: &AppHandle<R>) -> MainWindow {
+    let Some(window) = app.get_webview_window(crate::MAIN_WINDOW) else { return MainWindow::Missing };
+    match window.hide() {
+        Ok(()) => MainWindow::Hidden,
+        Err(e) => {
+            tracing::warn!(error = %e, "the main window could not be hidden behind the keychain notice");
+            MainWindow::NotHidden
+        }
+    }
 }
 
 /// Leave with `code` on the event loop's thread, where macOS and Windows run their exit handlers;
