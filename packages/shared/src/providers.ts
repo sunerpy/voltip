@@ -4,6 +4,7 @@
 // cards in the Rust-generated fixtures, so a drift fails the build.
 import { fallbackSettingsOf } from "./fallback";
 import type {
+  CredentialSet,
   EngineIssue,
   EngineSettings,
   EngineStatus,
@@ -43,9 +44,20 @@ export interface ProviderSpec {
   console: boolean;
   /** The shell can open the vendor's page of free quota and usage (Model Studio). */
   quota?: boolean;
+  /** A credential of several fields: its sets, the default first (docs/dictation.md §3.15). */
+  credential?: readonly CredentialSet[];
+  /** `false`: the vendor lists no models (§3.15). */
+  listsModels?: false;
 }
 
 const NO_PRESET: ServicePreset = { baseUrl: "", models: [] };
+
+/** A required credential field. */
+const field = (id: string, secret: boolean) => ({ id, secret, required: true });
+/** A vendor with one credential set. */
+const fields = (...list: ReturnType<typeof field>[]): readonly CredentialSet[] => [
+  { id: "default", fields: list },
+];
 
 const SPECS: Readonly<Record<ProviderId, Omit<ProviderSpec, "id">>> = {
   builtin: {
@@ -122,6 +134,76 @@ const SPECS: Readonly<Record<ProviderId, Omit<ProviderSpec, "id">>> = {
     console: true,
     quota: true,
   },
+  volcengine_speech: {
+    asr: {
+      baseUrl: "https://openspeech.bytedance.com",
+      models: [
+        "volc.seedasr.sauc.duration",
+        "volc.bigasr.sauc.duration",
+        "volc.seedasr.sauc.concurrent",
+      ],
+    },
+    key: "required",
+    onDevice: false,
+    console: true,
+    credential: [
+      { id: "api_key", fields: [field("api_key", true)] },
+      { id: "app_token", fields: [field("app_id", false), field("access_token", true)] },
+    ],
+    listsModels: false,
+  },
+  tencent: {
+    asr: {
+      baseUrl: "https://asr.cloud.tencent.com",
+      models: ["16k_zh_en", "Hy-ASR-3.0-preview", "16k_zh"],
+    },
+    key: "required",
+    onDevice: false,
+    console: true,
+    credential: fields(
+      field("app_id", false),
+      field("secret_id", false),
+      field("secret_key", true),
+    ),
+    listsModels: false,
+  },
+  iflytek: {
+    asr: { baseUrl: "https://iat-api.xfyun.cn", models: ["iat"] },
+    key: "required",
+    onDevice: false,
+    console: true,
+    credential: fields(field("app_id", false), field("api_key", true), field("api_secret", true)),
+    listsModels: false,
+  },
+  iflytek_rtasr: {
+    asr: { baseUrl: "https://rtasr.xfyun.cn", models: ["rtasr"] },
+    key: "required",
+    onDevice: false,
+    console: true,
+    credential: fields(field("app_id", false), field("api_key", true)),
+    listsModels: false,
+  },
+  baidu: {
+    asr: { baseUrl: "https://vop.baidu.com", models: ["15372", "1537", "15376"] },
+    key: "required",
+    onDevice: false,
+    console: true,
+    credential: fields(field("app_id", false), field("api_key", true)),
+    listsModels: false,
+  },
+  stepfun: {
+    asr: {
+      baseUrl: "https://api.stepfun.com/v1",
+      models: ["stepaudio-2.5-asr", "stepaudio-2.5-asr-stream"],
+      sites: [
+        { id: "cn", baseUrl: "https://api.stepfun.com/v1" },
+        { id: "intl", baseUrl: "https://api.stepfun.ai/v1" },
+      ],
+    },
+    key: "required",
+    onDevice: false,
+    console: true,
+  },
   deepseek: {
     llm: {
       baseUrl: "https://api.deepseek.com",
@@ -145,6 +227,14 @@ const SPECS: Readonly<Record<ProviderId, Omit<ProviderSpec, "id">>> = {
     console: true,
   },
   glm: {
+    asr: {
+      baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+      models: ["glm-asr-2512"],
+      sites: [
+        { id: "cn", baseUrl: "https://open.bigmodel.cn/api/paas/v4" },
+        { id: "intl", baseUrl: "https://api.z.ai/api/paas/v4" },
+      ],
+    },
     llm: {
       baseUrl: "https://open.bigmodel.cn/api/paas/v4",
       models: ["glm-5.3-flash", "glm-4.7-flash", "glm-5.3"],
@@ -177,6 +267,7 @@ const SPECS: Readonly<Record<ProviderId, Omit<ProviderSpec, "id">>> = {
     console: true,
   },
   mimo: {
+    asr: { baseUrl: "https://api.xiaomimimo.com/v1", models: ["mimo-v2.5-asr"] },
     llm: { baseUrl: "https://api.xiaomimimo.com/v1", models: ["mimo-v2.6-flash", "mimo-v2.6-pro"] },
     key: "required",
     onDevice: false,
@@ -226,9 +317,25 @@ export function isDashscope(url: string): boolean {
   }
 }
 
-/** `AsrProtocol::of(url, model).streams()` (docs/dictation.md §3.4): a Model Studio realtime model,
- *  which recognises while the take is spoken. */
-export function asrStreams(url: string, model: string): boolean {
+/** The vendors whose provider picks the protocol, whatever the address (`AsrProtocol::resolve`,
+ *  docs/dictation.md §3.15). */
+const VENDOR_STREAMS: Partial<Record<ProviderId, (model: string) => boolean>> = {
+  volcengine_speech: () => true,
+  tencent: () => true,
+  iflytek: () => true,
+  iflytek_rtasr: () => true,
+  baidu: () => true,
+  stepfun: (model) => model.trim().toLowerCase().endsWith("-stream"),
+  glm: () => false,
+  mimo: () => false,
+};
+
+/** `AsrProtocol::resolve(provider, url, model).streams()` (docs/dictation.md §3.4, §3.15): a
+ *  vendor's realtime protocol, or a Model Studio realtime model, which recognises while the take
+ *  is spoken. */
+export function asrStreams(provider: ProviderId, url: string, model: string): boolean {
+  const vendor = VENDOR_STREAMS[provider];
+  if (vendor !== undefined) return vendor(model);
   if (!isDashscope(url)) return false;
   const m = model.trim().toLowerCase();
   if (m.includes("filetrans") || m.startsWith("qwen3-asr")) return false;
@@ -238,10 +345,25 @@ export function asrStreams(url: string, model: string): boolean {
   return (m.startsWith("fun-asr") || m.startsWith("paraformer")) && realtime;
 }
 
-/** `GlossaryRoute::remote(url, model)` (docs/dictation.md §30.6): the `prompt` of an
- *  OpenAI-compatible endpoint, hot words for Model Studio's `qwen-audio` recognition models on its
- *  native and realtime protocols, nowhere for its other models. */
-export function glossaryRoute(url: string, model: string): GlossaryRoute {
+/** Where each vendor puts the glossary (`GlossaryRoute::for_service`, docs/dictation.md §3.15). */
+const VENDOR_GLOSSARY: Partial<Record<ProviderId, (model: string) => GlossaryRoute>> = {
+  volcengine_speech: () => "hotwords",
+  tencent: () => "hotwords",
+  iflytek: () => "not_supported",
+  iflytek_rtasr: () => "not_supported",
+  baidu: () => "not_supported",
+  stepfun: (model) => (model.trim().toLowerCase().endsWith("-stream") ? "prompt" : "hotwords"),
+  glm: () => "hotwords",
+  mimo: () => "not_supported",
+};
+
+/** `GlossaryRoute::for_service(provider, url, model)` (docs/dictation.md §30.6): a vendor's own
+ *  way (§3.15); else the `prompt` of an OpenAI-compatible endpoint, hot words for Model Studio's
+ *  `qwen-audio` recognition models on its native and realtime protocols, nowhere for its other
+ *  models. */
+export function glossaryRoute(provider: ProviderId, url: string, model: string): GlossaryRoute {
+  const vendor = VENDOR_GLOSSARY[provider];
+  if (vendor !== undefined) return vendor(model);
   if (!isDashscope(url)) return "prompt";
   const m = model.trim().toLowerCase();
   if (m.includes("filetrans")) return "not_supported";
@@ -259,7 +381,7 @@ export function keyEntry(provider: ProviderId, kind: ServiceKind): string | unde
     case "custom":
       return `provider-key.custom-${kind}`;
     default:
-      return `provider-key.${provider}`;
+      return `provider-key.${provider.replace("_", "-")}`;
   }
 }
 
@@ -279,6 +401,9 @@ export interface EngineResolveInput {
   settings: EngineSettings;
   /** Secret-store entries holding a user key (`keyEntry`). */
   userKeys: ReadonlySet<string>;
+  /** For a credential of several fields, the set each stored one is of, by entry
+   *  (`SecretState.credential_set`, docs/dictation.md §3.15). */
+  credentialSets?: Readonly<Record<string, string>>;
   builtIn: { asr?: BuiltInService; llm?: BuiltInService };
   /** The local model the settings select, as the library sees it. */
   local: { id: string; name: string; installed: boolean };
@@ -355,6 +480,13 @@ function target(
 
 const NO_KEY: SecretState = { set: false, source: "none" };
 
+/** A user key's state, with the set of a credential of several fields. */
+function userSecret(set: string | undefined): SecretState {
+  return set === undefined
+    ? { set: true, source: "user" }
+    : { set: true, source: "user", credential_set: set };
+}
+
 /** `BuiltIn::models`: the built-in service's models, the default first. */
 function builtInModels(service: BuiltInService): readonly string[] {
   return service.models !== undefined && service.models.length > 0
@@ -410,7 +542,9 @@ function serviceStatus(
     presets: [...preset.models],
     ...(baseUrl === undefined ? {} : { base_url: baseUrl }),
     ...(defaultBase === undefined ? {} : { default_base_url: defaultBase }),
-    key: userKey ? { set: true, source: "user" } : NO_KEY,
+    key: userKey
+      ? userSecret(entry === undefined ? undefined : input.credentialSets?.[entry])
+      : NO_KEY,
     ...("issue" in resolved ? { issue: resolved.issue } : {}),
     active,
     ...(listed.length === 0 ? {} : { listed: [...listed] }),
@@ -504,8 +638,8 @@ function fallbackStatus(
       };
       if (row.skip === undefined && !onDevice)
         ready.push({
-          streams: asrStreams(r.ok.url, model),
-          glossary: glossaryRoute(r.ok.url, model),
+          streams: asrStreams(entry.provider, r.ok.url, model),
+          glossary: glossaryRoute(entry.provider, r.ok.url, model),
         });
     }
     // §3.14: recognition on this device never moves on to a service.
@@ -587,6 +721,10 @@ export function resolveEngineStatus(input: EngineResolveInput): EngineStatus {
     providers.push({
       id,
       key: spec.key,
+      ...(spec.credential === undefined
+        ? {}
+        : { credential: spec.credential.map((set) => ({ id: set.id, fields: [...set.fields] })) }),
+      ...(spec.listsModels === false ? { lists_models: false } : {}),
       on_device: spec.onDevice,
       console: spec.console,
       ...(spec.quota === true ? { quota: true } : {}),
@@ -600,7 +738,7 @@ export function resolveEngineStatus(input: EngineResolveInput): EngineStatus {
     ? undefined
     : asrProvider === "builtin" && asrTarget !== undefined && input.builtIn.asr?.preview === true
       ? "cloud"
-      : asrTarget !== undefined && asrStreams(asrTarget.url, asrTarget.model)
+      : asrTarget !== undefined && asrStreams(asrProvider, asrTarget.url, asrTarget.model)
         ? "stream"
         : input.liveReady
           ? "local"
@@ -667,6 +805,6 @@ export function resolveEngineStatus(input: EngineResolveInput): EngineStatus {
         ? { glossary: "not_supported" as const }
         : asrTarget === undefined
           ? {}
-          : { glossary: glossaryRoute(asrTarget.url, asrTarget.model) }),
+          : { glossary: glossaryRoute(asrProvider, asrTarget.url, asrTarget.model) }),
   };
 }

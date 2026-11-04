@@ -1593,6 +1593,12 @@ export const en: Messages = {
       google: "Google AI Studio",
       siliconflow: "SiliconFlow",
       aliyun: "Alibaba Cloud Model Studio",
+      volcengine_speech: "Volcengine Doubao Speech",
+      tencent: "Tencent Cloud Speech Recognition",
+      iflytek: "iFlytek Dictation",
+      iflytek_rtasr: "iFlytek Realtime Transcription",
+      baidu: "Baidu AI Cloud Speech",
+      stepfun: "StepFun",
       deepseek: "DeepSeek",
       kimi: "Kimi",
       glm: "Zhipu GLM",
@@ -1613,17 +1619,47 @@ export const en: Messages = {
       siliconflow: "SenseVoice and open models hosted by SiliconFlow.",
       aliyun:
         "Model Studio's speech recognition and Qwen models; its realtime models transcribe while you speak.",
+      volcengine_speech:
+        "Speech recognition models from Volcengine's Doubao Speech, for recognition only; it transcribes while you speak. Use the new console's API key, or the old console's App ID and Access Token; Volcengine Ark keys do not work here.",
+      tencent:
+        "Tencent Cloud speech recognition, for recognition only; it transcribes while you speak. Enter the AppId, SecretId and SecretKey, and enable speech recognition in the console first.",
+      iflytek:
+        "iFlytek's dictation, for recognition only; it transcribes while you speak, up to 60 seconds at a time and then carries on. Hot words can only be uploaded for the app in the iFlytek console.",
+      iflytek_rtasr:
+        "iFlytek's realtime transcription, for recognition only; it transcribes while you speak with no length limit, which suits long recordings. Its APIKey differs from dictation's.",
+      baidu:
+        "Baidu AI Cloud realtime speech recognition, for recognition only; it transcribes while you speak. Enter the app's AppID and API Key.",
+      stepfun:
+        "StepFun's StepAudio recognition: stepaudio-2.5-asr transcribes whole recordings, stepaudio-2.5-asr-stream transcribes while you speak. Switch between the China and international sites, whose accounts and keys are separate.",
       deepseek: "DeepSeek's chat models, for polish only.",
       kimi: "Moonshot AI's Kimi models, for polish only; switch between the China and international sites, whose accounts and keys are separate.",
-      glm: "Zhipu's GLM models, for polish only; the China site is Zhipu's BigModel platform, the international one Z.ai, and their accounts and keys are separate.",
+      glm: "Zhipu's GLM models and its speech recognition model; the China site is Zhipu's BigModel platform, the international one Z.ai, and their accounts and keys are separate.",
       volcengine:
         "Doubao and other models on Volcengine Ark, for polish only; enable a model under Model Activation in the Ark console first.",
       hunyuan:
         "Hunyuan and other models on Tencent Cloud TokenHub, for polish only; enable a model in the TokenHub console first.",
-      mimo: "Xiaomi's MiMo models, for polish only.",
+      mimo: "Xiaomi's MiMo models and its speech recognition model.",
       openrouter: "Many vendors' models with one key, for polish only.",
       ollama: "Models in Ollama on this computer; text never leaves it.",
       custom: "Any OpenAI-compatible endpoint: vLLM, LocalAI or your own gateway.",
+    },
+    /** docs/dictation.md §3.15: a credential of several fields. */
+    credential: {
+      app_id: "App ID",
+      api_key: "API Key",
+      api_secret: "API Secret",
+      access_token: "Access Token",
+      secret_id: "SecretId",
+      secret_key: "SecretKey",
+      set: {
+        api_key: "New console: API key",
+        app_token: "Old console: App ID and Access Token",
+      },
+      setLabel: "Credential type",
+      saved: "Saved; leave blank to keep it",
+      show: "Show",
+      hide: "Hide",
+      missing: "Enter {fields}",
     },
     ready: "Ready",
     issue: {
@@ -1702,6 +1738,9 @@ export const en: Messages = {
       timeout: "The connection timed out",
       http_status: "The service returned HTTP {status}",
       bad_response: "The response is not a model list",
+      refused: "The service refused the request",
+      /** A vendor that lists no models accepted the credential (docs/dictation.md §3.15). */
+      okChecked: "Credentials accepted · {ms} ms",
       /** A failed probe with what the service said (docs/dictation.md §3.12). */
       withDetail: "{result}: {detail}",
     },

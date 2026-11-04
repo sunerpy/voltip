@@ -311,6 +311,14 @@ describe("ProviderCards (desktop model pages and phone settings)", () => {
       "Groq",
       "硅基流动",
       "阿里云百炼",
+      "火山引擎豆包语音",
+      "腾讯云语音识别",
+      "讯飞语音听写",
+      "讯飞实时语音转写",
+      "百度智能云语音",
+      "阶跃星辰",
+      "智谱 GLM",
+      "小米 MiMo",
       "自定义接口",
     ]);
     const builtin = screen.getByTestId("provider-asr-builtin");
@@ -552,6 +560,14 @@ describe("ProviderCards (desktop model pages and phone settings)", () => {
       ["Groq", "groq"],
       ["硅基流动", "siliconflow"],
       ["阿里云百炼", "aliyun"],
+      ["火山引擎豆包语音", "volcengine_speech"],
+      ["腾讯云语音识别", "tencent"],
+      ["讯飞语音听写", "iflytek"],
+      ["讯飞实时语音转写", "iflytek_rtasr"],
+      ["百度智能云语音", "baidu"],
+      ["阶跃星辰", "stepfun"],
+      ["智谱 GLM", "glm"],
+      ["小米 MiMo", "mimo"],
       ["自定义接口", "link"],
     ]);
     // The marks are decorative: the provider's name says who it is.

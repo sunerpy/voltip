@@ -32,17 +32,33 @@ pub enum ProviderId {
     /// Alibaba Cloud Model Studio (阿里云百炼, the DashScope API): its own recognition protocols
     /// ([`AsrProtocol`]), clean-up through its OpenAI-compatible mode.
     Aliyun,
+    /// Volcengine's speech service (豆包语音, `openspeech.bytedance.com`): the Seed-ASR models over
+    /// its binary WebSocket protocol, with its own credentials, not an Ark key (recognition only).
+    VolcengineSpeech,
+    /// Tencent Cloud's speech recognition (腾讯云语音识别): an AppId and an API key pair
+    /// (recognition only; [`ProviderId::Hunyuan`] is Tencent's clean-up).
+    Tencent,
+    /// iFlytek's dictation (讯飞语音听写, `iat`): sessions of at most 60 seconds (recognition only).
+    Iflytek,
+    /// iFlytek's realtime transcription (讯飞实时语音转写, `rtasr`): its own APIKey, no length limit
+    /// (recognition only).
+    IflytekRtasr,
+    /// Baidu AI Cloud's realtime speech recognition (百度智能云, recognition only).
+    Baidu,
+    /// StepFun (阶跃星辰): StepAudio recognition, whole files over HTTP or realtime over WebSocket, on
+    /// its Chinese or its international site (recognition only).
+    Stepfun,
     /// DeepSeek (clean-up only).
     Deepseek,
     /// Kimi (Moonshot AI), on its Chinese or its international site (clean-up only).
     Kimi,
-    /// Zhipu's GLM: bigmodel.cn, or Z.ai abroad (clean-up only).
+    /// Zhipu's GLM: bigmodel.cn, or Z.ai abroad (GLM-ASR recognition and clean-up).
     Glm,
     /// Volcengine Ark (火山方舟), the Doubao models (clean-up only).
     Volcengine,
     /// Tencent Hunyuan through Tencent Cloud's TokenHub (clean-up only).
     Hunyuan,
-    /// Xiaomi MiMo (clean-up only).
+    /// Xiaomi MiMo (MiMo-ASR recognition and clean-up).
     Mimo,
     /// OpenRouter, one key for many vendors' models (clean-up only).
     Openrouter,
@@ -55,7 +71,7 @@ pub enum ProviderId {
 
 impl ProviderId {
     /// Every provider in display order.
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 22] = [
         Self::Builtin,
         Self::Local,
         Self::Openai,
@@ -63,6 +79,12 @@ impl ProviderId {
         Self::Google,
         Self::Siliconflow,
         Self::Aliyun,
+        Self::VolcengineSpeech,
+        Self::Tencent,
+        Self::Iflytek,
+        Self::IflytekRtasr,
+        Self::Baidu,
+        Self::Stepfun,
         Self::Deepseek,
         Self::Kimi,
         Self::Glm,
@@ -84,6 +106,12 @@ impl ProviderId {
             Self::Google => "google",
             Self::Siliconflow => "siliconflow",
             Self::Aliyun => "aliyun",
+            Self::VolcengineSpeech => "volcengine_speech",
+            Self::Tencent => "tencent",
+            Self::Iflytek => "iflytek",
+            Self::IflytekRtasr => "iflytek_rtasr",
+            Self::Baidu => "baidu",
+            Self::Stepfun => "stepfun",
             Self::Deepseek => "deepseek",
             Self::Kimi => "kimi",
             Self::Glm => "glm",
@@ -179,6 +207,55 @@ pub enum KeyPolicy {
     None,
 }
 
+/// What a provider's user credential is (docs/dictation.md §3.15).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Credential {
+    /// One API key, as the user pastes it.
+    Key,
+    /// Several fields, in one of these sets (the first is the default). The secret-store entry
+    /// holds them as one JSON object naming its set: [`merge_credentials`].
+    Sets(&'static [CredentialSet]),
+}
+
+/// One way a vendor's credential is made up (Volcengine has a new and an old one).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct CredentialSet {
+    /// Id, stored as the JSON's `set` (`engines.credential.set.<id>` names it).
+    pub id: &'static str,
+    /// Its fields, in the form's order.
+    pub fields: &'static [CredentialField],
+}
+
+/// One field of a credential set.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct CredentialField {
+    /// Id: the JSON key (`engines.credential.<id>` labels it).
+    pub id: &'static str,
+    /// Hidden while typed (a key or a secret, not an id).
+    pub secret: bool,
+    /// The service refuses requests without it.
+    pub required: bool,
+}
+
+const fn field(id: &'static str, secret: bool) -> CredentialField {
+    CredentialField { id, secret, required: true }
+}
+
+impl Credential {
+    /// The sets, none for a plain key.
+    pub fn sets(self) -> &'static [CredentialSet] {
+        match self {
+            Self::Key => &[],
+            Self::Sets(sets) => sets,
+        }
+    }
+
+    /// The set `id`.
+    pub fn set(self, id: &str) -> Option<&'static CredentialSet> {
+        self.sets().iter().find(|s| s.id == id)
+    }
+}
+
 /// A service a vendor offers: its public base URL, its other sites and the two or three models
 /// suggested first (the first one is the default; docs/dictation.md §3.3). The user may type any
 /// other model id or pick one from the provider's list.
@@ -228,6 +305,12 @@ pub struct ProviderSpec {
     pub llm: Option<ServicePreset>,
     /// Credential policy.
     pub key: KeyPolicy,
+    /// What the user enters as the credential: one key, or several fields.
+    pub credential: Credential,
+    /// The vendor answers `GET {base}/models`. Without it 测试连接 checks the credential with a
+    /// request of the vendor's own and the selects offer the suggested models (docs/dictation.md
+    /// §3.15).
+    pub lists_models: bool,
     /// Runs on this machine: no audio or text leaves it.
     pub on_device: bool,
     /// The vendor page where an API key is created (opened by the desktop shell on request).
@@ -301,9 +384,47 @@ pub enum AsrProtocol {
     /// the background (`…-filetrans`, `fun-asr`, `fun-asr-mtl`, `paraformer-v2`, `sensevoice-v1`),
     /// and `qwen3-asr-flash-realtime`, whose realtime protocol this client does not speak.
     DashscopeUnsupported,
+    /// 豆包语音 ([`ProviderId::VolcengineSpeech`]): its binary WebSocket protocol, `bigmodel_async`
+    /// while the user speaks, `bigmodel_nostream` for a whole recording.
+    VolcengineSauc,
+    /// Tencent Cloud ([`ProviderId::Tencent`]): the signed realtime WebSocket while the user speaks,
+    /// the flash file API (极速版) for a whole recording.
+    TencentRealtime,
+    /// iFlytek dictation ([`ProviderId::Iflytek`]): its signed WebSocket, 60 seconds a session.
+    IflytekIat,
+    /// iFlytek realtime transcription ([`ProviderId::IflytekRtasr`]): its signed WebSocket.
+    IflytekRtasr,
+    /// Baidu ([`ProviderId::Baidu`]): the realtime WebSocket (START, audio, FINISH).
+    BaiduRealtime,
+    /// StepFun's whole-file models ([`ProviderId::Stepfun`]): `POST {base}/audio/transcriptions`.
+    StepfunTranscriptions,
+    /// StepFun's `…-stream` models: `wss://…/realtime/asr/stream`.
+    StepfunRealtime,
+    /// GLM-ASR ([`ProviderId::Glm`]): `POST {base}/audio/transcriptions`, 30 seconds a request.
+    ZhipuTranscriptions,
+    /// MiMo-ASR ([`ProviderId::Mimo`]): `POST {base}/chat/completions` with an `input_audio` part.
+    MimoChat,
 }
 
 impl AsrProtocol {
+    /// The protocol a recognition request to `provider`'s `model` at `url` speaks: the vendor's own
+    /// for a vendor with one (docs/dictation.md §3.15), whatever address the user gave it (a proxy
+    /// keeps the protocol); [`AsrProtocol::of`] for the others.
+    pub fn resolve(provider: ProviderId, url: &str, model: &str) -> Self {
+        match provider {
+            ProviderId::VolcengineSpeech => Self::VolcengineSauc,
+            ProviderId::Tencent => Self::TencentRealtime,
+            ProviderId::Iflytek => Self::IflytekIat,
+            ProviderId::IflytekRtasr => Self::IflytekRtasr,
+            ProviderId::Baidu => Self::BaiduRealtime,
+            ProviderId::Stepfun if model.trim().to_ascii_lowercase().ends_with("-stream") => Self::StepfunRealtime,
+            ProviderId::Stepfun => Self::StepfunTranscriptions,
+            ProviderId::Glm => Self::ZhipuTranscriptions,
+            ProviderId::Mimo => Self::MimoChat,
+            _ => Self::of(url, model),
+        }
+    }
+
     /// The protocol `model` speaks at `url` (a base URL as the settings hold it). Any address under
     /// `aliyuncs.com` is Model Studio's (`dashscope.aliyuncs.com`, `dashscope-intl.aliyuncs.com`, a
     /// workspace's `<id>.cn-beijing.maas.aliyuncs.com`); the model id picks among its protocols,
@@ -339,7 +460,16 @@ impl AsrProtocol {
     /// The service recognises while the take is spoken, so the take's audio goes to it as it is
     /// recorded and its sentences are the take's text (docs/dictation.md §3.4, §11.9).
     pub fn streams(self) -> bool {
-        self == Self::DashscopeDuplex
+        matches!(
+            self,
+            Self::DashscopeDuplex
+                | Self::VolcengineSauc
+                | Self::TencentRealtime
+                | Self::IflytekIat
+                | Self::IflytekRtasr
+                | Self::BaiduRealtime
+                | Self::StepfunRealtime
+        )
     }
 }
 
@@ -350,25 +480,35 @@ impl AsrProtocol {
 pub enum GlossaryRoute {
     /// As the request's `prompt` (an OpenAI-compatible endpoint, the built-in service).
     Prompt,
-    /// As Model Studio's hot words (its `qwen-audio` models).
+    /// As the service's hot words: Model Studio's `qwen-audio` models, 豆包语音, Tencent Cloud,
+    /// GLM-ASR and StepFun's whole-file models (docs/dictation.md §3.15).
     Hotwords,
     /// The service in use takes none: an on-device model (the dictionary corrects its text
-    /// afterwards), Model Studio's other models.
+    /// afterwards), Model Studio's other models, iFlytek, Baidu, MiMo.
     NotSupported,
     /// The service would take it, and the dictionary has no enabled entry to send.
     Empty,
 }
 
 impl GlossaryRoute {
-    /// How a recognition request to `model` at `url` carries the glossary: its protocol's way
-    /// (`voltip-asr` sends the same, `voltip-cloud` checks that the two agree).
-    pub fn remote(url: &str, model: &str) -> Self {
-        match AsrProtocol::of(url, model) {
-            AsrProtocol::OpenaiTranscriptions => Self::Prompt,
+    /// How a recognition request to `provider`'s `model` at `url` carries the glossary: its
+    /// protocol's way ([`AsrProtocol::resolve`]; `voltip-asr` sends the same, `voltip-cloud` checks
+    /// that the two agree).
+    pub fn for_service(provider: ProviderId, url: &str, model: &str) -> Self {
+        match AsrProtocol::resolve(provider, url, model) {
+            AsrProtocol::OpenaiTranscriptions | AsrProtocol::StepfunRealtime => Self::Prompt,
             AsrProtocol::DashscopeMultimodal | AsrProtocol::DashscopeDuplex if model.trim().to_ascii_lowercase().starts_with("qwen-audio") => Self::Hotwords,
-            AsrProtocol::DashscopeMultimodal | AsrProtocol::DashscopeDuplex | AsrProtocol::DashscopeChat | AsrProtocol::DashscopeUnsupported => {
-                Self::NotSupported
+            AsrProtocol::VolcengineSauc | AsrProtocol::TencentRealtime | AsrProtocol::StepfunTranscriptions | AsrProtocol::ZhipuTranscriptions => {
+                Self::Hotwords
             }
+            AsrProtocol::DashscopeMultimodal
+            | AsrProtocol::DashscopeDuplex
+            | AsrProtocol::DashscopeChat
+            | AsrProtocol::DashscopeUnsupported
+            | AsrProtocol::IflytekIat
+            | AsrProtocol::IflytekRtasr
+            | AsrProtocol::BaiduRealtime
+            | AsrProtocol::MimoChat => Self::NotSupported,
         }
     }
 }
@@ -387,16 +527,30 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         asr: Some(NO_PRESET),
         llm: Some(NO_PRESET),
         key: KeyPolicy::Builtin,
+        credential: Credential::Key,
+        lists_models: true,
         on_device: false,
         console_url: None,
         quota_url: None,
     },
-    ProviderSpec { id: ProviderId::Local, asr: Some(NO_PRESET), llm: None, key: KeyPolicy::None, on_device: true, console_url: None, quota_url: None },
+    ProviderSpec {
+        id: ProviderId::Local,
+        asr: Some(NO_PRESET),
+        llm: None,
+        key: KeyPolicy::None,
+        credential: Credential::Key,
+        lists_models: true,
+        on_device: true,
+        console_url: None,
+        quota_url: None,
+    },
     ProviderSpec {
         id: ProviderId::Openai,
         asr: Some(ServicePreset { base_url: "https://api.openai.com/v1", models: &["gpt-transcribe", "gpt-4o-mini-transcribe", "whisper-1"], sites: &[] }),
         llm: Some(ServicePreset { base_url: "https://api.openai.com/v1", models: &["gpt-6-luna", "gpt-6-sol"], sites: &[] }),
         key: KeyPolicy::Required,
+        credential: Credential::Key,
+        lists_models: true,
         on_device: false,
         console_url: Some("https://platform.openai.com/api-keys"),
         quota_url: None,
@@ -410,6 +564,8 @@ pub const PROVIDERS: &[ProviderSpec] = &[
             sites: &[],
         }),
         key: KeyPolicy::Required,
+        credential: Credential::Key,
+        lists_models: true,
         on_device: false,
         console_url: Some("https://console.groq.com/keys"),
         quota_url: None,
@@ -428,6 +584,8 @@ pub const PROVIDERS: &[ProviderSpec] = &[
             sites: &[],
         }),
         key: KeyPolicy::Required,
+        credential: Credential::Key,
+        lists_models: true,
         on_device: false,
         console_url: Some("https://aistudio.google.com/apikey"),
         quota_url: None,
@@ -437,6 +595,8 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         asr: Some(ServicePreset { base_url: "https://api.siliconflow.cn/v1", models: &["FunAudioLLM/SenseVoiceSmall", "TeleAI/TeleSpeechASR"], sites: &[] }),
         llm: Some(ServicePreset { base_url: "https://api.siliconflow.cn/v1", models: &["Qwen/Qwen3-8B", "deepseek-ai/DeepSeek-V3"], sites: &[] }),
         key: KeyPolicy::Required,
+        credential: Credential::Key,
+        lists_models: true,
         on_device: false,
         console_url: Some("https://cloud.siliconflow.cn/account/ak"),
         quota_url: None,
@@ -459,15 +619,118 @@ pub const PROVIDERS: &[ProviderSpec] = &[
             sites: &[],
         }),
         key: KeyPolicy::Required,
+        credential: Credential::Key,
+        lists_models: true,
         on_device: false,
         console_url: Some("https://bailian.console.aliyun.com/cn-beijing/model/settings/api-key"),
         quota_url: Some("https://bailian.console.aliyun.com/cn-beijing/costing-balance/free-quota"),
+    },
+    // Volcengine's speech service (豆包语音, the 大模型流式语音识别 API, checked 2026-11-04): the model
+    // is the `X-Api-Resource-Id` of what the account bought — Seed-ASR 2.0 by the hour first, 1.0 by
+    // the hour, 2.0 by concurrency. Its new console gives one API key, the old one an App ID and an
+    // Access Token.
+    ProviderSpec {
+        id: ProviderId::VolcengineSpeech,
+        asr: Some(ServicePreset {
+            base_url: "https://openspeech.bytedance.com",
+            models: &["volc.seedasr.sauc.duration", "volc.bigasr.sauc.duration", "volc.seedasr.sauc.concurrent"],
+            sites: &[],
+        }),
+        llm: None,
+        key: KeyPolicy::Required,
+        credential: Credential::Sets(&[
+            CredentialSet { id: "api_key", fields: &[field("api_key", true)] },
+            CredentialSet { id: "app_token", fields: &[field("app_id", false), field("access_token", true)] },
+        ]),
+        lists_models: false,
+        on_device: false,
+        console_url: Some("https://console.volcengine.com/speech/app"),
+        quota_url: None,
+    },
+    // Tencent Cloud ASR (cloud.tencent.com/document/product/1093, checked 2026-11-04): the model is
+    // the `engine_model_type`. `16k_zh_en` is the big model of the 1.0 plan, `Hy-ASR-3.0-preview` the
+    // 2.0 plan's (at most five minutes a take), `16k_zh` the general engine.
+    ProviderSpec {
+        id: ProviderId::Tencent,
+        asr: Some(ServicePreset { base_url: "https://asr.cloud.tencent.com", models: &["16k_zh_en", "Hy-ASR-3.0-preview", "16k_zh"], sites: &[] }),
+        llm: None,
+        key: KeyPolicy::Required,
+        credential: Credential::Sets(&[CredentialSet {
+            id: "default",
+            fields: &[field("app_id", false), field("secret_id", false), field("secret_key", true)],
+        }]),
+        lists_models: false,
+        on_device: false,
+        console_url: Some("https://console.cloud.tencent.com/cam/capi"),
+        quota_url: None,
+    },
+    // iFlytek dictation (www.xfyun.cn/doc/asr/voicedictation/API.html, checked 2026-11-04): one
+    // service, at most 60 seconds a session; its hot words are the app's list in the console only.
+    ProviderSpec {
+        id: ProviderId::Iflytek,
+        asr: Some(ServicePreset { base_url: "https://iat-api.xfyun.cn", models: &["iat"], sites: &[] }),
+        llm: None,
+        key: KeyPolicy::Required,
+        credential: Credential::Sets(&[CredentialSet { id: "default", fields: &[field("app_id", false), field("api_key", true), field("api_secret", true)] }]),
+        lists_models: false,
+        on_device: false,
+        console_url: Some("https://console.xfyun.cn/services/iat"),
+        quota_url: None,
+    },
+    // iFlytek realtime transcription (www.xfyun.cn/doc/asr/rtasr/API.html, checked 2026-11-04): no
+    // length limit; the console shows it an APIKey of its own.
+    ProviderSpec {
+        id: ProviderId::IflytekRtasr,
+        asr: Some(ServicePreset { base_url: "https://rtasr.xfyun.cn", models: &["rtasr"], sites: &[] }),
+        llm: None,
+        key: KeyPolicy::Required,
+        credential: Credential::Sets(&[CredentialSet { id: "default", fields: &[field("app_id", false), field("api_key", true)] }]),
+        lists_models: false,
+        on_device: false,
+        console_url: Some("https://console.xfyun.cn/services/rta"),
+        quota_url: None,
+    },
+    // Baidu AI Cloud realtime recognition (ai.baidu.com/ai-doc/SPEECH, checked 2026-11-04): the model
+    // is the `dev_pid` — 15372 Mandarin with full punctuation, 1537 Mandarin, 15376 Chinese dialects.
+    ProviderSpec {
+        id: ProviderId::Baidu,
+        asr: Some(ServicePreset { base_url: "https://vop.baidu.com", models: &["15372", "1537", "15376"], sites: &[] }),
+        llm: None,
+        key: KeyPolicy::Required,
+        credential: Credential::Sets(&[CredentialSet { id: "default", fields: &[field("app_id", false), field("api_key", true)] }]),
+        lists_models: false,
+        on_device: false,
+        console_url: Some("https://console.bce.baidu.com/ai/#/ai/speech/app/list"),
+        quota_url: None,
+    },
+    // StepFun (platform.stepfun.com/docs, checked 2026-11-04): `stepaudio-2.5-asr` takes whole files,
+    // `stepaudio-2.5-asr-stream` recognises while the user speaks. The two sites keep separate
+    // accounts and keys.
+    ProviderSpec {
+        id: ProviderId::Stepfun,
+        asr: Some(ServicePreset {
+            base_url: "https://api.stepfun.com/v1",
+            models: &["stepaudio-2.5-asr", "stepaudio-2.5-asr-stream"],
+            sites: &[
+                ProviderSite { id: SiteId::Cn, base_url: "https://api.stepfun.com/v1", console_url: "https://platform.stepfun.com/interface-key" },
+                ProviderSite { id: SiteId::Intl, base_url: "https://api.stepfun.ai/v1", console_url: "https://platform.stepfun.ai/interface-key" },
+            ],
+        }),
+        llm: None,
+        key: KeyPolicy::Required,
+        credential: Credential::Key,
+        lists_models: true,
+        on_device: false,
+        console_url: Some("https://platform.stepfun.com/interface-key"),
+        quota_url: None,
     },
     ProviderSpec {
         id: ProviderId::Deepseek,
         asr: None,
         llm: Some(ServicePreset { base_url: "https://api.deepseek.com", models: &["deepseek-flash", "deepseek-v4-pro"], sites: &[] }),
         key: KeyPolicy::Required,
+        credential: Credential::Key,
+        lists_models: true,
         on_device: false,
         console_url: Some("https://platform.deepseek.com/api_keys"),
         quota_url: None,
@@ -487,16 +750,29 @@ pub const PROVIDERS: &[ProviderSpec] = &[
             ],
         }),
         key: KeyPolicy::Required,
+        credential: Credential::Key,
+        lists_models: true,
         on_device: false,
         console_url: Some("https://platform.kimi.com/console/api-keys"),
         quota_url: None,
     },
     // GLM (docs.bigmodel.cn and docs.z.ai, checked 2026-10-25): `glm-5.3-flash` is the newest fast
-    // model, `glm-4.7-flash` costs nothing on either site. The two sites keep separate accounts and
-    // keys.
+    // model, `glm-4.7-flash` costs nothing on either site; `glm-asr-2512` recognises up to 30 seconds
+    // a request (checked 2026-11-04). The two sites keep separate accounts and keys.
     ProviderSpec {
         id: ProviderId::Glm,
-        asr: None,
+        asr: Some(ServicePreset {
+            base_url: "https://open.bigmodel.cn/api/paas/v4",
+            models: &["glm-asr-2512"],
+            sites: &[
+                ProviderSite {
+                    id: SiteId::Cn,
+                    base_url: "https://open.bigmodel.cn/api/paas/v4",
+                    console_url: "https://bigmodel.cn/usercenter/proj-mgmt/apikeys",
+                },
+                ProviderSite { id: SiteId::Intl, base_url: "https://api.z.ai/api/paas/v4", console_url: "https://z.ai/manage-apikey/apikey-list" },
+            ],
+        }),
         llm: Some(ServicePreset {
             base_url: "https://open.bigmodel.cn/api/paas/v4",
             models: &["glm-5.3-flash", "glm-4.7-flash", "glm-5.3"],
@@ -510,6 +786,8 @@ pub const PROVIDERS: &[ProviderSpec] = &[
             ],
         }),
         key: KeyPolicy::Required,
+        credential: Credential::Key,
+        lists_models: true,
         on_device: false,
         console_url: Some("https://bigmodel.cn/usercenter/proj-mgmt/apikeys"),
         quota_url: None,
@@ -525,6 +803,8 @@ pub const PROVIDERS: &[ProviderSpec] = &[
             sites: &[],
         }),
         key: KeyPolicy::Required,
+        credential: Credential::Key,
+        lists_models: true,
         on_device: false,
         console_url: Some("https://ark.volcengine.com/region:cn-beijing/apikey"),
         quota_url: None,
@@ -537,16 +817,21 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         asr: None,
         llm: Some(ServicePreset { base_url: "https://tokenhub.tencentmaas.com/v1", models: &["hy3", "hy4-preview"], sites: &[] }),
         key: KeyPolicy::Required,
+        credential: Credential::Key,
+        lists_models: true,
         on_device: false,
         console_url: Some("https://console.cloud.tencent.com/tokenhub/apikey"),
         quota_url: None,
     },
-    // Xiaomi MiMo (mimo.mi.com/docs, checked 2026-10-25): the 2.5 models were retired on 2026-10-21.
+    // Xiaomi MiMo (mimo.mi.com/docs, checked 2026-10-25): the 2.5 chat models were retired on
+    // 2026-10-21; `mimo-v2.5-asr` is its recognition model (checked 2026-11-04).
     ProviderSpec {
         id: ProviderId::Mimo,
-        asr: None,
+        asr: Some(ServicePreset { base_url: "https://api.xiaomimimo.com/v1", models: &["mimo-v2.5-asr"], sites: &[] }),
         llm: Some(ServicePreset { base_url: "https://api.xiaomimimo.com/v1", models: &["mimo-v2.6-flash", "mimo-v2.6-pro"], sites: &[] }),
         key: KeyPolicy::Required,
+        credential: Credential::Key,
+        lists_models: true,
         on_device: false,
         console_url: Some("https://platform.xiaomimimo.com/#/console/api-keys"),
         quota_url: None,
@@ -562,6 +847,8 @@ pub const PROVIDERS: &[ProviderSpec] = &[
             sites: &[],
         }),
         key: KeyPolicy::Required,
+        credential: Credential::Key,
+        lists_models: true,
         on_device: false,
         console_url: Some("https://openrouter.ai/settings/keys"),
         quota_url: None,
@@ -571,6 +858,8 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         asr: None,
         llm: Some(ServicePreset { base_url: "http://127.0.0.1:11434/v1", models: &[], sites: &[] }),
         key: KeyPolicy::None,
+        credential: Credential::Key,
+        lists_models: true,
         on_device: true,
         console_url: None,
         quota_url: None,
@@ -580,6 +869,8 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         asr: Some(NO_PRESET),
         llm: Some(NO_PRESET),
         key: KeyPolicy::Optional,
+        credential: Credential::Key,
+        lists_models: true,
         on_device: false,
         console_url: None,
         quota_url: None,
@@ -683,6 +974,12 @@ pub fn key_entry(provider: ProviderId, kind: ServiceKind) -> Option<&'static str
         (ProviderId::Google, _) => Some("provider-key.google"),
         (ProviderId::Siliconflow, _) => Some("provider-key.siliconflow"),
         (ProviderId::Aliyun, _) => Some("provider-key.aliyun"),
+        (ProviderId::VolcengineSpeech, _) => Some("provider-key.volcengine-speech"),
+        (ProviderId::Tencent, _) => Some("provider-key.tencent"),
+        (ProviderId::Iflytek, _) => Some("provider-key.iflytek"),
+        (ProviderId::IflytekRtasr, _) => Some("provider-key.iflytek-rtasr"),
+        (ProviderId::Baidu, _) => Some("provider-key.baidu"),
+        (ProviderId::Stepfun, _) => Some("provider-key.stepfun"),
         (ProviderId::Deepseek, _) => Some("provider-key.deepseek"),
         (ProviderId::Kimi, _) => Some("provider-key.kimi"),
         (ProviderId::Glm, _) => Some("provider-key.glm"),
@@ -693,6 +990,90 @@ pub fn key_entry(provider: ProviderId, kind: ServiceKind) -> Option<&'static str
         (ProviderId::Custom, ServiceKind::Asr) => Some("provider-key.custom-asr"),
         (ProviderId::Custom, ServiceKind::Llm) => Some("provider-key.custom-llm"),
     }
+}
+
+/// Why a credential of several fields cannot be saved or tested (docs/dictation.md §3.15).
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum CredentialError {
+    /// What the form sent is not a JSON object of text fields.
+    #[error("凭据格式无效")]
+    NotJson,
+    /// It names a set the provider does not have.
+    #[error("未知的凭据类型：{0}")]
+    UnknownSet(String),
+    /// It has a field the chosen set does not have.
+    #[error("未知的凭据字段：{0}")]
+    UnknownField(String),
+    /// Required fields are empty, with nothing saved to keep.
+    #[error("请填写：{}", .0.join("、"))]
+    Missing(Vec<&'static str>),
+}
+
+/// The credential the secret store keeps for `provider` after the form sent `draft`, with
+/// `stored` the one it keeps now (docs/dictation.md §3.15). For a plain key that is `draft`
+/// itself. For several fields `draft` is a JSON object naming its `set` (optional when the
+/// provider has one) and the fields the user typed:
+///
+/// 1. the same set as `stored` (or no `set` named): field by field, a blank field keeps the stored
+///    value;
+/// 2. another set: the stored credential is replaced whole, and every required field of the new set
+///    must be in `draft`;
+/// 3. the result has every required field of its set, and is written in one form: the set first,
+///    then its fields in the catalogue's order, nothing else.
+///
+/// The engines pane's 测试连接 merges the same way, so a form that changed one field tests what
+/// saving it would keep. A `stored` value that does not parse counts as nothing stored.
+pub fn merge_credentials(provider: ProviderId, stored: Option<&str>, draft: &str) -> Result<String, CredentialError> {
+    let Credential::Sets(sets) = provider.spec().credential else { return Ok(draft.trim().to_owned()) };
+    let fields = |raw: &str| -> Option<serde_json::Map<String, serde_json::Value>> {
+        match serde_json::from_str::<serde_json::Value>(raw.trim()).ok()? {
+            serde_json::Value::Object(map) => Some(map),
+            _ => None,
+        }
+    };
+    let text = |map: &serde_json::Map<String, serde_json::Value>, key: &str| -> Option<String> {
+        map.get(key).and_then(serde_json::Value::as_str).map(str::trim).filter(|v| !v.is_empty()).map(str::to_owned)
+    };
+    let draft = fields(draft).ok_or(CredentialError::NotJson)?;
+    if draft.values().any(|v| !v.is_string()) {
+        return Err(CredentialError::NotJson);
+    }
+    let stored = stored.and_then(fields);
+    let stored_set = stored.as_ref().and_then(|map| text(map, "set")).and_then(|id| sets.iter().find(|s| s.id == id));
+    let set = match text(&draft, "set") {
+        Some(id) => sets.iter().find(|s| s.id == id).ok_or(CredentialError::UnknownSet(id))?,
+        None => stored_set.or_else(|| sets.first()).ok_or(CredentialError::NotJson)?,
+    };
+    if let Some(unknown) = draft.keys().find(|key| *key != "set" && !set.fields.iter().any(|f| f.id == key.as_str())) {
+        return Err(CredentialError::UnknownField(unknown.clone()));
+    }
+    // The stored fields count only when they are of the same set.
+    let kept = stored.filter(|_| stored_set.is_some_and(|s| s.id == set.id));
+    // One form: the set, then its fields in the catalogue's order (a JSON map would sort them).
+    let quoted = |text: &str| serde_json::Value::String(text.to_owned()).to_string();
+    let mut out = format!("{{\"set\":{}", quoted(set.id));
+    let mut missing = Vec::new();
+    for field in set.fields {
+        match text(&draft, field.id).or_else(|| kept.as_ref().and_then(|map| text(map, field.id))) {
+            Some(value) => out.push_str(&format!(",{}:{}", quoted(field.id), quoted(&value))),
+            None if field.required => missing.push(field.id),
+            None => {}
+        }
+    }
+    if !missing.is_empty() {
+        return Err(CredentialError::Missing(missing));
+    }
+    out.push('}');
+    Ok(out)
+}
+
+/// The set a stored credential of `provider` is of (`SecretState.credential_set`): its `set`
+/// when it names one of the provider's, `None` for a plain key or nothing usable.
+pub fn stored_credential_set(provider: ProviderId, stored: &str) -> Option<&'static str> {
+    let Credential::Sets(sets) = provider.spec().credential else { return None };
+    let value: serde_json::Value = serde_json::from_str(stored.trim()).ok()?;
+    let id = value.get("set")?.as_str()?;
+    sets.iter().find(|s| s.id == id).map(|s| s.id)
 }
 
 /// The environment variable the local speech service reads a key from (docs/dictation.md §23.5):
@@ -760,6 +1141,9 @@ pub enum ProbeFailure {
     HttpStatus,
     /// A 2xx answer that is not an OpenAI-style model list.
     BadResponse,
+    /// A vendor that lists no models refused its credential check with its own error: the service
+    /// is not enabled for the account, its quota is used up (docs/dictation.md §3.15).
+    Refused,
 }
 
 /// A failed probe as the shell's [`crate::dictation::ServiceProbe`] reports it.
@@ -869,8 +1253,12 @@ mod tests {
                     _ => {
                         assert!(preset.base_url.starts_with("https://"), "{:?} {kind:?}", spec.id);
                         assert!(url::Url::parse(preset.base_url).is_ok());
-                        // User decision 2026-10-25: two or three suggestions, the provider lists the rest.
-                        assert!((2..=3).contains(&preset.models.len()), "{:?} {kind:?} suggests 2–3 models: {:?}", spec.id, preset.models);
+                        // User decision 2026-10-25: two or three suggestions, the provider lists the rest;
+                        // a vendor with one recognition model suggests that one (docs/dictation.md §3.15).
+                        let single =
+                            matches!((spec.id, kind), (ProviderId::Iflytek | ProviderId::IflytekRtasr | ProviderId::Glm | ProviderId::Mimo, ServiceKind::Asr));
+                        let range = if single { 1..=1 } else { 2..=3 };
+                        assert!(range.contains(&preset.models.len()), "{:?} {kind:?} suggests {range:?} models: {:?}", spec.id, preset.models);
                         assert!(spec.console_url.is_some(), "{:?} has a key page", spec.id);
                     }
                 }
@@ -927,7 +1315,7 @@ mod tests {
         assert_eq!(key_entry(ProviderId::Aliyun, ServiceKind::Asr), Some("provider-key.aliyun"));
         assert_eq!(key_entry(ProviderId::Aliyun, ServiceKind::Asr), key_entry(ProviderId::Aliyun, ServiceKind::Llm));
         let entries = key_entries();
-        assert_eq!(entries.len(), 14, "{entries:?}");
+        assert_eq!(entries.len(), 20, "{entries:?}");
         assert!(entries.iter().all(|e| e.starts_with("provider-key.")));
     }
 
@@ -1118,8 +1506,9 @@ mod tests {
         // Ollama's pulled models, without the embedding ones.
         let ollama = ids(&["qwen3:8b", "nomic-embed-text:latest", "llava:7b"]);
         assert_eq!(usable_models(ProviderId::Ollama, ServiceKind::Llm, "http://127.0.0.1:11434/v1", ollama), ["llava:7b", "qwen3:8b"]);
-        // The catalogue's own presets survive their own filter.
-        for spec in PROVIDERS.iter().filter(|s| s.id != ProviderId::Custom) {
+        // The catalogue's own presets survive their own filter (a vendor that lists no models
+        // offers its presets as they are).
+        for spec in PROVIDERS.iter().filter(|s| s.id != ProviderId::Custom && s.lists_models) {
             for kind in [ServiceKind::Asr, ServiceKind::Llm] {
                 let Some(preset) = spec.service(kind) else { continue };
                 let mut want = ids(preset.models);
@@ -1127,6 +1516,150 @@ mod tests {
                 assert_eq!(usable_models(spec.id, kind, preset.base_url, ids(preset.models)), want, "{:?} {kind:?}", spec.id);
             }
         }
+    }
+
+    /// docs/dictation.md §3.15: a vendor with a protocol of its own speaks it at any address the
+    /// user gives it (a proxy keeps it); the others keep `of`'s choice.
+    #[test]
+    fn the_provider_picks_a_vendor_protocol_whatever_the_address() {
+        use AsrProtocol::*;
+        let proxy = "https://proxy.example.test/asr";
+        let table = [
+            (ProviderId::VolcengineSpeech, "volc.seedasr.sauc.duration", VolcengineSauc),
+            (ProviderId::Tencent, "16k_zh_en", TencentRealtime),
+            (ProviderId::Iflytek, "iat", IflytekIat),
+            (ProviderId::IflytekRtasr, "rtasr", IflytekRtasr),
+            (ProviderId::Baidu, "15372", BaiduRealtime),
+            (ProviderId::Stepfun, "stepaudio-2.5-asr", StepfunTranscriptions),
+            (ProviderId::Stepfun, " StepAudio-2.5-ASR-Stream ", StepfunRealtime),
+            (ProviderId::Glm, "glm-asr-2512", ZhipuTranscriptions),
+            (ProviderId::Mimo, "mimo-v2.5-asr", MimoChat),
+        ];
+        for (provider, model, want) in table {
+            let preset = provider.spec().asr.expect("recognises");
+            for url in [preset.base_url, proxy, "http://127.0.0.1:9000"] {
+                assert_eq!(AsrProtocol::resolve(provider, url, model), want, "{provider:?} {url} {model}");
+            }
+        }
+        // The others: as before, by the address and the model.
+        let studio = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+        for (provider, url, model) in [
+            (ProviderId::Aliyun, studio, "qwen-audio-3.1-asr-flash-streaming"),
+            (ProviderId::Aliyun, studio, "fun-asr-flash-2026-06-15"),
+            (ProviderId::Custom, studio, "qwen3-asr-flash"),
+            (ProviderId::Custom, "https://api.openai.com/v1", "whisper-1"),
+            (ProviderId::Openai, "https://api.openai.com/v1", "gpt-4o-mini-transcribe"),
+            (ProviderId::Builtin, "https://asr.example.test/v1", "qwen3-asr"),
+        ] {
+            assert_eq!(AsrProtocol::resolve(provider, url, model), AsrProtocol::of(url, model), "{provider:?} {model}");
+        }
+        for p in [VolcengineSauc, TencentRealtime, IflytekIat, IflytekRtasr, BaiduRealtime, StepfunRealtime, DashscopeDuplex] {
+            assert!(p.streams(), "{p:?}");
+        }
+        for p in [StepfunTranscriptions, ZhipuTranscriptions, MimoChat] {
+            assert!(!p.streams(), "{p:?}");
+        }
+    }
+
+    /// docs/dictation.md §3.15, §16.3: where each vendor puts the glossary.
+    #[test]
+    fn each_vendor_takes_the_glossary_its_way() {
+        let route = |provider: ProviderId, model: &str| {
+            let url = provider.spec().asr.map(|p| p.base_url).unwrap_or_default();
+            GlossaryRoute::for_service(provider, url, model)
+        };
+        assert_eq!(route(ProviderId::VolcengineSpeech, "volc.seedasr.sauc.duration"), GlossaryRoute::Hotwords);
+        assert_eq!(route(ProviderId::Tencent, "16k_zh_en"), GlossaryRoute::Hotwords);
+        assert_eq!(route(ProviderId::Glm, "glm-asr-2512"), GlossaryRoute::Hotwords);
+        assert_eq!(route(ProviderId::Stepfun, "stepaudio-2.5-asr"), GlossaryRoute::Hotwords);
+        assert_eq!(route(ProviderId::Stepfun, "stepaudio-2.5-asr-stream"), GlossaryRoute::Prompt);
+        for (provider, model) in
+            [(ProviderId::Iflytek, "iat"), (ProviderId::IflytekRtasr, "rtasr"), (ProviderId::Baidu, "15372"), (ProviderId::Mimo, "mimo-v2.5-asr")]
+        {
+            assert_eq!(route(provider, model), GlossaryRoute::NotSupported, "{provider:?}");
+        }
+        // Unchanged for the others.
+        assert_eq!(route(ProviderId::Aliyun, "qwen-audio-3.1-asr-flash"), GlossaryRoute::Hotwords);
+        assert_eq!(route(ProviderId::Openai, "whisper-1"), GlossaryRoute::Prompt);
+    }
+
+    /// docs/dictation.md §3.15: a vendor that lists no models has a credential of several fields
+    /// and a key entry of its own; every set has fields with distinct ids.
+    #[test]
+    fn credential_sets_are_well_formed() {
+        for spec in PROVIDERS {
+            let sets = spec.credential.sets();
+            if !spec.lists_models {
+                assert!(!sets.is_empty(), "{:?}: a vendor without a model list takes several fields", spec.id);
+                assert!(spec.asr.is_some() && spec.llm.is_none(), "{:?}", spec.id);
+            }
+            let mut set_ids: Vec<&str> = sets.iter().map(|s| s.id).collect();
+            set_ids.sort_unstable();
+            set_ids.dedup();
+            assert_eq!(set_ids.len(), sets.len(), "{:?}: set ids are distinct", spec.id);
+            for set in sets {
+                assert!(!set.fields.is_empty(), "{:?} {}", spec.id, set.id);
+                let mut ids: Vec<&str> = set.fields.iter().map(|f| f.id).collect();
+                ids.sort_unstable();
+                ids.dedup();
+                assert_eq!(ids.len(), set.fields.len(), "{:?} {}: field ids are distinct", spec.id, set.id);
+                assert!(!ids.contains(&"set"), "`set` names the set");
+                assert!(set.fields.iter().any(|f| f.secret), "{:?} {}: something in it is secret", spec.id, set.id);
+            }
+            if !sets.is_empty() {
+                assert_eq!(spec.key, KeyPolicy::Required, "{:?}", spec.id);
+            }
+        }
+        assert_eq!(ProviderId::VolcengineSpeech.spec().credential.sets().len(), 2, "the new console's key and the old one's app token");
+        // 豆包语音's key is not Ark's.
+        assert_ne!(key_entry(ProviderId::VolcengineSpeech, ServiceKind::Asr), key_entry(ProviderId::Volcengine, ServiceKind::Llm));
+        assert_ne!(key_entry(ProviderId::Iflytek, ServiceKind::Asr), key_entry(ProviderId::IflytekRtasr, ServiceKind::Asr));
+        assert_eq!(key_env_var("provider-key.volcengine-speech"), "VOLTIP_KEY_VOLCENGINE_SPEECH");
+    }
+
+    /// docs/dictation.md §3.15: saving and testing merge a form's fields over the stored ones.
+    #[test]
+    fn credentials_merge_field_by_field_and_switch_sets_whole() {
+        use CredentialError as E;
+        let tencent = ProviderId::Tencent;
+        let full = r#"{"set":"default","app_id":"125","secret_id":"test-secret-id","secret_key":"sk"}"#;
+        // Nothing stored: every field, in the catalogue's order, the set named.
+        assert_eq!(merge_credentials(tencent, None, r#"{"secret_key":"sk","app_id":" 125 ","secret_id":"test-secret-id"}"#), Ok(full.to_owned()));
+        assert_eq!(merge_credentials(tencent, None, r#"{"app_id":"125"}"#), Err(E::Missing(vec!["secret_id", "secret_key"])));
+        // The same set: a blank field keeps the stored value; a typed one replaces it.
+        assert_eq!(
+            merge_credentials(tencent, Some(full), r#"{"set":"default","app_id":"","secret_key":"new"}"#),
+            Ok(r#"{"set":"default","app_id":"125","secret_id":"test-secret-id","secret_key":"new"}"#.to_owned())
+        );
+        assert_eq!(merge_credentials(tencent, Some(full), r#"{"set":"default"}"#), Ok(full.to_owned()), "an empty form keeps everything");
+        assert_eq!(merge_credentials(tencent, Some(full), "{}"), Ok(full.to_owned()), "no set named: the stored one's");
+        // Refused: unknown fields and sets, not JSON, values that are not text.
+        assert_eq!(merge_credentials(tencent, Some(full), r#"{"token":"x"}"#), Err(E::UnknownField("token".into())));
+        assert_eq!(merge_credentials(tencent, Some(full), r#"{"set":"other"}"#), Err(E::UnknownSet("other".into())));
+        assert_eq!(merge_credentials(tencent, Some(full), "plain-secret-id"), Err(E::NotJson));
+        assert_eq!(merge_credentials(tencent, Some(full), r#"{"app_id":125}"#), Err(E::NotJson));
+        // A stored value that does not parse counts as nothing stored.
+        assert_eq!(merge_credentials(tencent, Some("garbage"), r#"{"app_id":"125"}"#), Err(E::Missing(vec!["secret_id", "secret_key"])));
+
+        // 豆包语音: switching sets replaces the credential whole and needs the new set's fields.
+        let volc = ProviderId::VolcengineSpeech;
+        let old = merge_credentials(volc, None, r#"{"set":"app_token","app_id":"app","access_token":"tok"}"#).unwrap();
+        assert_eq!(old, r#"{"set":"app_token","app_id":"app","access_token":"tok"}"#);
+        assert_eq!(merge_credentials(volc, Some(&old), r#"{"set":"api_key"}"#), Err(E::Missing(vec!["api_key"])));
+        assert_eq!(merge_credentials(volc, Some(&old), r#"{"set":"api_key","api_key":"k"}"#), Ok(r#"{"set":"api_key","api_key":"k"}"#.to_owned()));
+        assert_eq!(
+            merge_credentials(volc, Some(&old), r#"{"set":"api_key","app_id":"x"}"#),
+            Err(E::UnknownField("app_id".into())),
+            "the other set's fields are not this one's"
+        );
+        assert_eq!(merge_credentials(volc, None, r#"{"api_key":"k"}"#), Ok(r#"{"set":"api_key","api_key":"k"}"#.to_owned()), "the first set by default");
+        assert_eq!(stored_credential_set(volc, &old), Some("app_token"));
+        assert_eq!(stored_credential_set(volc, "plain-api-key"), None);
+        assert_eq!(stored_credential_set(ProviderId::Groq, r#"{"set":"default"}"#), None, "a plain key has no sets");
+
+        // A plain key stays what was typed.
+        assert_eq!(merge_credentials(ProviderId::Groq, Some("gsk_old"), " gsk_new "), Ok("gsk_new".to_owned()));
+        assert_eq!(E::Missing(vec!["app_id", "api_key"]).to_string(), "请填写：app_id、api_key");
     }
 
     #[test]

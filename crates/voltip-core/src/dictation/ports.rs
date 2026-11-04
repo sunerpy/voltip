@@ -833,6 +833,20 @@ pub trait ForegroundProbe: Send + Sync {
 pub trait ServiceProbe: Send + Sync {
     /// The model ids `base_url` lists, with `key` as the bearer token.
     async fn list_models(&self, base_url: &str, key: Option<&str>) -> Result<Vec<String>, crate::providers::ProbeError>;
+
+    /// For a vendor that lists no models (`ProviderSpec::lists_models`, docs/dictation.md §3.15):
+    /// whether `provider`'s recognition at `base_url` takes `key` (its stored form) for `model`,
+    /// by the smallest valid request the vendor answers. A shell that cannot ask says so.
+    async fn check_credentials(
+        &self,
+        provider: crate::providers::ProviderId,
+        base_url: &str,
+        key: Option<&str>,
+        model: &str,
+    ) -> Result<(), crate::providers::ProbeError> {
+        let _ = (provider, base_url, key, model);
+        Err(crate::providers::ProbeError::new(crate::providers::ProbeFailure::Unsupported))
+    }
 }
 
 /// How the text reached the user.

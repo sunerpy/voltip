@@ -495,8 +495,9 @@ fn provider_probe(
     kind: ServiceKind,
     base_url: Option<String>,
     key: Option<String>,
+    model: Option<String>,
 ) -> Result<(), String> {
-    Ok(bridge.dispatch(UiCommand::ProviderProbe { provider, kind, base_url, key })?)
+    Ok(bridge.dispatch(UiCommand::ProviderProbe { provider, kind, base_url, key, model })?)
 }
 
 /// List a provider's models with the saved endpoint and key as a model list opens (as on the

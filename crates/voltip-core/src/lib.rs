@@ -45,10 +45,10 @@ pub use dictation::{
     MAX_EDIT_SELECTION_CHARS, ProcessingStage, RefineFailure, Segment, SelectionTiming, TakeKind,
 };
 pub use engines::{
-    BuiltIn, ChineseScript, ClipboardAfter, EngineIssue, EngineSettings, EngineStatus, FallbackModel, FallbackModelStatus, FallbackPlan, FallbackRow,
-    FallbackRowState, FallbackSettings, FallbackSkip, FallbackStatus, FallbackTarget, InjectMode, LiveSource, LocalDevice, LocalModelRef, MAX_FALLBACK_MODELS,
-    MAX_LOCAL_THREADS, OutputMode, ProviderSettings, ProviderStatus, RemoteService, ResolvedEngines, SecretSource, SecretState, ServiceStatus, SiteStatus,
-    SwitchedWindow, UserSecrets,
+    BuiltIn, ChineseScript, ClipboardAfter, CredentialFieldStatus, CredentialSetStatus, EngineIssue, EngineSettings, EngineStatus, FallbackModel,
+    FallbackModelStatus, FallbackPlan, FallbackRow, FallbackRowState, FallbackSettings, FallbackSkip, FallbackStatus, FallbackTarget, InjectMode, LiveSource,
+    LocalDevice, LocalModelRef, MAX_FALLBACK_MODELS, MAX_LOCAL_THREADS, OutputMode, ProviderSettings, ProviderStatus, RemoteService, ResolvedEngines,
+    SecretSource, SecretState, ServiceStatus, SiteStatus, SwitchedWindow, UserSecrets,
 };
 pub use history::{
     EditRecord, EntryOrigin, HistoryEntry, HistoryHits, HistoryPage, HistoryQuery, HistoryReader, HistoryStats, HistoryStatsBucket, HistoryStore, OriginKind,
@@ -61,8 +61,9 @@ pub use models::{
 };
 pub use presets::{BuiltinPreset, CustomPreset, PresetDraft, PresetError, PresetId, PresetRef, PresetTrial, PresetTryOutcome, TakePreset};
 pub use providers::{
-    AsrProtocol, ConsolePage, GlossaryRoute, KeyPolicy, LlmApi, PROVIDERS, ProbeError, ProbeFailure, ProbeOutcome, ProbeReport, ProviderId, ProviderSite,
-    ProviderSpec, ReasoningEffort, ServiceKind, ServicePreset, SiteId, key_entries, key_env_var, load_user_secrets, peek_user_secrets,
+    AsrProtocol, ConsolePage, Credential, CredentialError, CredentialField, CredentialSet, GlossaryRoute, KeyPolicy, LlmApi, PROVIDERS, ProbeError,
+    ProbeFailure, ProbeOutcome, ProbeReport, ProviderId, ProviderSite, ProviderSpec, ReasoningEffort, ServiceKind, ServicePreset, SiteId, key_entries,
+    key_env_var, load_user_secrets, merge_credentials, peek_user_secrets, stored_credential_set,
 };
 pub use runtime::{
     AUTO_WEEKLY_DELAY, AppCore, CoreCommand, CoreConfig, CoreEvent, CoreHandle, EXTRA_RECORDING_POLL, MAX_ACTIVATION_MS, PRESET_TRY_UNCONFIGURED,

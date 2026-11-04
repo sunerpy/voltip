@@ -1602,6 +1602,12 @@ export const zhCN = {
       google: "Google AI Studio",
       siliconflow: "硅基流动",
       aliyun: "阿里云百炼",
+      volcengine_speech: "火山引擎豆包语音",
+      tencent: "腾讯云语音识别",
+      iflytek: "讯飞语音听写",
+      iflytek_rtasr: "讯飞实时语音转写",
+      baidu: "百度智能云语音",
+      stepfun: "阶跃星辰",
       deepseek: "DeepSeek",
       kimi: "Kimi",
       glm: "智谱 GLM",
@@ -1621,15 +1627,45 @@ export const zhCN = {
         "Google AI Studio 的 Gemini 模型，只用于润色；免费额度内的内容可能被 Google 用于改进产品。",
       siliconflow: "硅基流动托管的 SenseVoice 与开源大模型。",
       aliyun: "阿里云百炼的语音识别与千问大模型；实时识别模型在说话时就完成识别。",
+      volcengine_speech:
+        "火山引擎豆包语音的语音识别大模型，只用于语音识别，说话时就完成识别。凭据可以是新版控制台的 API Key，也可以是旧版控制台的 App ID 与 Access Token；火山方舟的密钥在这里不能用。",
+      tencent:
+        "腾讯云的语音识别，只用于语音识别，说话时就完成识别。需要填写 AppId、SecretId 和 SecretKey，并先在控制台开通语音识别。",
+      iflytek:
+        "讯飞开放平台的语音听写，只用于语音识别，说话时就完成识别；单次最长 60 秒，超过后自动接着识别。热词只能在讯飞控制台为应用上传。",
+      iflytek_rtasr:
+        "讯飞开放平台的实时语音转写，只用于语音识别，说话时就完成识别，不限时长，适合长录音。它的 APIKey 与语音听写的不同。",
+      baidu:
+        "百度智能云的实时语音识别，只用于语音识别，说话时就完成识别。需要填写应用的 AppID 和 API Key。",
+      stepfun:
+        "阶跃星辰的 StepAudio 语音识别：stepaudio-2.5-asr 识别整段录音，stepaudio-2.5-asr-stream 在说话时就完成识别。可切换中国站与国际站，两个站点的账号和密钥不通用。",
       deepseek: "DeepSeek 的对话模型，只用于润色。",
       kimi: "月之暗面的 Kimi 模型，只用于润色；可切换中国站与国际站，两个站点的账号和密钥不通用。",
-      glm: "智谱的 GLM 模型，只用于润色；中国站为智谱开放平台，国际站为 Z.ai，两个站点的账号和密钥不通用。",
+      glm: "智谱的 GLM 模型与语音识别模型；中国站为智谱开放平台，国际站为 Z.ai，两个站点的账号和密钥不通用。",
       volcengine: "火山方舟的豆包等模型，只用于润色；模型需先在方舟控制台的「开通管理」中开通。",
       hunyuan: "腾讯云 TokenHub 上的混元等模型，只用于润色；模型需先在 TokenHub 控制台开通。",
-      mimo: "小米的 MiMo 模型，只用于润色。",
+      mimo: "小米的 MiMo 模型与语音识别模型。",
       openrouter: "用一个密钥使用多家厂商的模型，只用于润色。",
       ollama: "本机 Ollama 里的模型，文本不离开这台电脑。",
       custom: "任意 OpenAI 兼容接口，例如 vLLM、LocalAI 或自建网关。",
+    },
+    /** docs/dictation.md §3.15: a credential of several fields. */
+    credential: {
+      app_id: "App ID",
+      api_key: "API Key",
+      api_secret: "API Secret",
+      access_token: "Access Token",
+      secret_id: "SecretId",
+      secret_key: "SecretKey",
+      set: {
+        api_key: "新版控制台：API Key",
+        app_token: "旧版控制台：App ID 与 Access Token",
+      },
+      setLabel: "凭据类型",
+      saved: "已保存，留空则不变",
+      show: "显示",
+      hide: "隐藏",
+      missing: "请填写{fields}",
     },
     ready: "就绪",
     issue: {
@@ -1703,6 +1739,9 @@ export const zhCN = {
       timeout: "连接超时",
       http_status: "服务返回错误（HTTP {status}）",
       bad_response: "返回内容不是模型列表",
+      refused: "服务拒绝了请求",
+      /** A vendor that lists no models accepted the credential (docs/dictation.md §3.15). */
+      okChecked: "凭据有效 · {ms} ms",
       /** A failed probe with what the service said (docs/dictation.md §3.12). */
       withDetail: "{result}：{detail}",
     },

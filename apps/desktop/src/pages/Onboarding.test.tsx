@@ -405,7 +405,21 @@ describe("Onboarding wizard", () => {
       within(provider)
         .getAllByRole("option")
         .map((o) => o.textContent),
-    ).toEqual(["OpenAI", "Groq", "硅基流动", "阿里云百炼", "自定义接口"]);
+    ).toEqual([
+      "OpenAI",
+      "Groq",
+      "硅基流动",
+      "阿里云百炼",
+      "火山引擎豆包语音",
+      "腾讯云语音识别",
+      "讯飞语音听写",
+      "讯飞实时语音转写",
+      "百度智能云语音",
+      "阶跃星辰",
+      "智谱 GLM",
+      "小米 MiMo",
+      "自定义接口",
+    ]);
     await user.selectOptions(provider, "groq");
     const next = screen.getByRole("button", { name: "保存并继续" });
     expect(next).toBeDisabled();
@@ -572,7 +586,21 @@ describe("Onboarding wizard", () => {
       refine_enabled: false,
     });
     expect(initialChoice(bare)).toBe("local");
-    expect(vendorsFor(bare)).toEqual(["openai", "groq", "siliconflow", "aliyun", "custom"]);
+    expect(vendorsFor(bare)).toEqual([
+      "openai",
+      "groq",
+      "siliconflow",
+      "aliyun",
+      "volcengine_speech",
+      "tencent",
+      "iflytek",
+      "iflytek_rtasr",
+      "baidu",
+      "stepfun",
+      "glm",
+      "mimo",
+      "custom",
+    ]);
   });
 
   it("regression: the trial step runs a real dictation and shows the inserted text; 完成设置 is always available", async () => {

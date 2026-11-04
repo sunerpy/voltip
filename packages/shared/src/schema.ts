@@ -44,8 +44,8 @@ export type SwitchedWindow = z.infer<typeof switchedWindowSchema>;
 
 /** Who serves recognition or clean-up (`voltip_core::providers::ProviderId`, docs/dictation.md
  *  §3): the build's own service, the on-device models, OpenAI-compatible vendors, Alibaba Cloud
- *  Model Studio (its own recognition protocols, §3.4), Ollama on this machine and a custom
- *  endpoint. Display order. */
+ *  Model Studio (its own recognition protocols, §3.4), the recognition services with protocols of
+ *  their own (§3.15), Ollama on this machine and a custom endpoint. Display order. */
 export const PROVIDER_IDS = [
   "builtin",
   "local",
@@ -54,6 +54,12 @@ export const PROVIDER_IDS = [
   "google",
   "siliconflow",
   "aliyun",
+  "volcengine_speech",
+  "tencent",
+  "iflytek",
+  "iflytek_rtasr",
+  "baidu",
+  "stepfun",
   "deepseek",
   "kimi",
   "glm",
@@ -2250,6 +2256,9 @@ export type HistoryQueryArgs = {
 export const secretStateSchema = z.object({
   set: z.boolean(),
   source: z.enum(["builtin", "user", "none"]),
+  /** For a credential of several fields, the set the stored one is of (docs/dictation.md §3.15):
+   *  the form opens on it. Never a field's value. */
+  credential_set: z.string().optional(),
 });
 export type SecretState = z.infer<typeof secretStateSchema>;
 
@@ -2289,10 +2298,35 @@ export const serviceStatusSchema = z.object({
 });
 export type ServiceStatus = z.infer<typeof serviceStatusSchema>;
 
+/** One field of a credential set (`voltip_core::engines::CredentialFieldStatus`). */
+export const credentialFieldSchema = z.object({
+  /** The JSON key; `engines.credential.<id>` labels it. */
+  id: z.string(),
+  /** Hidden while typed. */
+  secret: z.boolean(),
+  /** The service refuses requests without it. */
+  required: z.boolean(),
+});
+export type CredentialField = z.infer<typeof credentialFieldSchema>;
+
+/** One way a vendor's credential is made up (`voltip_core::engines::CredentialSetStatus`). */
+export const credentialSetSchema = z.object({
+  /** The stored credential's `set`. */
+  id: z.string(),
+  fields: z.array(credentialFieldSchema),
+});
+export type CredentialSet = z.infer<typeof credentialSetSchema>;
+
 /** One provider card (`voltip_core::engines::ProviderStatus`). */
 export const providerStatusSchema = z.object({
   id: providerIdSchema,
   key: keyPolicySchema,
+  /** For a credential of several fields, its sets, the default first (docs/dictation.md §3.15);
+   *  absent for a plain key. */
+  credential: z.array(credentialSetSchema).optional(),
+  /** The vendor lists its models; `false`: 测试连接 checks the credential and the selects offer
+   *  the suggested models (§3.15). Absent = true. */
+  lists_models: z.boolean().optional(),
   on_device: z.boolean(),
   /** The shell can open the vendor's key page (`provider_console_open`; the phone too since
    *  2026-10-01). */
@@ -2441,6 +2475,7 @@ export const PROBE_FAILURES = [
   "timeout",
   "http_status",
   "bad_response",
+  "refused",
 ] as const;
 export const probeFailureSchema = z.enum(PROBE_FAILURES);
 export type ProbeFailure = z.infer<typeof probeFailureSchema>;

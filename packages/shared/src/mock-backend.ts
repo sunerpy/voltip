@@ -1184,6 +1184,8 @@ export class MockBackend implements Backend {
   readonly permissionRequests: Permission[] = [];
   /** Secret-store entries holding a user key (`keyEntry`). */
   private readonly userKeys = new Set<string>();
+  /** For a credential of several fields, the set each stored one is of (docs/dictation.md §3.15). */
+  private readonly credentialSets: Record<string, string> = {};
   private readonly builtIn: { asr?: BuiltInService; llm?: BuiltInService };
   private readonly probeModels: Partial<Record<ProviderId, readonly string[]>> | false;
   private readonly engineOverrides: Partial<EngineStatus>;
@@ -2696,6 +2698,26 @@ export class MockBackend implements Backend {
       }
       if (value !== null && value.trim().length > 0) this.userKeys.add(entry);
       else this.userKeys.delete(entry);
+      // A credential of several fields: the set it names, else the stored one's, else the first.
+      const sets = providerSpec(provider).credential;
+      if (sets === undefined || value === null || value.trim().length === 0)
+        delete this.credentialSets[entry];
+      else {
+        let named: unknown;
+        try {
+          const parsed: unknown = JSON.parse(value);
+          named =
+            typeof parsed === "object" && parsed !== null && "set" in parsed
+              ? parsed.set
+              : undefined;
+        } catch {
+          named = undefined;
+        }
+        this.credentialSets[entry] =
+          typeof named === "string"
+            ? named
+            : (this.credentialSets[entry] ?? sets[0]?.id ?? "default");
+      }
       // Another key may be another account, with its own models.
       this.listedModels.delete(`${provider}:asr`);
       this.listedModels.delete(`${provider}:llm`);
@@ -4468,7 +4490,9 @@ export class MockBackend implements Backend {
       this.probeTimers.delete(handle);
       if (this.probeModels === false) return failed("unreachable");
       const models = this.listOf(provider, kind);
-      if (savedUrl !== undefined) this.storeList(provider, kind, savedUrl, models);
+      // A vendor that lists no models answers with its presets and fills no list (§3.15).
+      if (savedUrl !== undefined && spec.listsModels !== false)
+        this.storeList(provider, kind, savedUrl, models);
       this.emit({
         type: "provider_probe",
         provider,
@@ -4524,6 +4548,7 @@ export class MockBackend implements Backend {
   private refreshModels(provider: ProviderId, kind: ServiceKind) {
     const spec = providerSpec(provider);
     if (provider === "builtin" || provider === "local" || spec[kind] === undefined) return;
+    if (spec.listsModels === false) return;
     const saved = this.savedTarget(provider, kind);
     const url = saved.url;
     if (url === undefined || (spec.key === "required" && !saved.key)) return;
@@ -4549,6 +4574,7 @@ export class MockBackend implements Backend {
     const status = resolveEngineStatus({
       settings,
       userKeys: this.userKeys,
+      credentialSets: this.credentialSets,
       builtIn: this.builtIn,
       local: {
         id: localId,

@@ -461,8 +461,12 @@ pub enum CoreCommand {
         kind: ServiceKind,
         /// Base URL being edited.
         base_url: Option<String>,
-        /// Key being edited (never stored by the probe).
+        /// Key being edited (never stored by the probe): for a credential of several fields, the
+        /// fields typed, merged over the saved ones as saving would merge them.
         key: Option<String>,
+        /// Model being edited (`None` = the saved one, else the default): the one a vendor that
+        /// lists no models is checked with (docs/dictation.md §3.15).
+        model: Option<String>,
     },
     /// List a provider's service's models with the saved endpoint and key (docs/dictation.md
     /// §3.3), as a model list opens; the list arrives in `Engines` (`ServiceStatus.listed`).
@@ -1758,7 +1762,7 @@ impl Runtime {
                 self.dictation.quota().clear(kind);
                 Ok(())
             }
-            CoreCommand::ProbeProvider { provider, kind, base_url, key } => self.probe_provider(provider, kind, base_url, key),
+            CoreCommand::ProbeProvider { provider, kind, base_url, key, model } => self.probe_provider(provider, kind, base_url, key, model),
             CoreCommand::RefreshProviderModels { provider, kind } => self.refresh_provider_models(provider, kind),
             CoreCommand::HistoryDelete(id) => self.history.delete(id).map(|_| {
                 self.emit_history();
@@ -2543,6 +2547,14 @@ impl Runtime {
             return Err(CoreError::Invalid(format!("{}: 此服务商不需要密钥", provider.as_str())));
         };
         let value = value.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty());
+        // A credential of several fields: the form's fields over the stored ones (docs/dictation.md §3.15).
+        let value = match value {
+            Some(draft) => Some(
+                crate::providers::merge_credentials(provider, self.user_secrets.get(provider, kind), &draft)
+                    .map_err(|e| CoreError::Invalid(format!("{}: {e}", provider.as_str())))?,
+            ),
+            None => None,
+        };
         match &value {
             Some(v) => self.secrets.set(entry, v.as_bytes())?,
             None => self.secrets.delete(entry)?,
@@ -2561,7 +2573,14 @@ impl Runtime {
     /// values over the preset; the built-in service with its own key only), then list the models on
     /// a task and answer with `ProviderProbe`. Problems found before any request (no URL, no key,
     /// no such service, no probe on this shell) are answered at once.
-    fn probe_provider(&mut self, provider: ProviderId, kind: ServiceKind, base_url: Option<String>, key: Option<String>) -> Result<(), CoreError> {
+    fn probe_provider(
+        &mut self,
+        provider: ProviderId,
+        kind: ServiceKind,
+        base_url: Option<String>,
+        key: Option<String>,
+        model: Option<String>,
+    ) -> Result<(), CoreError> {
         let refused = |reason| ProbeReport { provider, kind, outcome: ProbeOutcome::Failed { reason, status: None, detail: None } };
         let (url, key) = match self.probe_target(provider, kind, base_url, key) {
             Ok(target) => target,
@@ -2574,6 +2593,10 @@ impl Runtime {
             self.emit(CoreEvent::ProviderProbe(refused(ProbeFailure::Unsupported)));
             return Ok(());
         };
+        if !provider.spec().lists_models {
+            self.check_credentials(provider, kind, url, key, model, probe);
+            return Ok(());
+        }
         // The built-in service runs only the build's models; its count is theirs.
         let offered = (provider == ProviderId::Builtin).then(|| self.built_in.models(kind));
         // A test with the saved values also refreshes the selects' list (docs/dictation.md §3.3).
@@ -2605,7 +2628,42 @@ impl Runtime {
         Ok(())
     }
 
-    /// The `(base URL, key)` a probe of `provider`'s `kind` service sends to.
+    /// 测试连接 of a vendor that lists no models (docs/dictation.md §3.15): its credential checked
+    /// with the form's model (else the saved one, else the default), answered with the suggested
+    /// models as they are. Nothing goes into the selects' lists.
+    fn check_credentials(
+        &self,
+        provider: ProviderId,
+        kind: ServiceKind,
+        url: String,
+        key: Option<String>,
+        model: Option<String>,
+        probe: Arc<dyn crate::dictation::ServiceProbe>,
+    ) {
+        let presets: Vec<String> = provider.spec().service(kind).map(|p| p.models.iter().map(|m| (*m).to_owned()).collect()).unwrap_or_default();
+        let model = model
+            .map(|m| m.trim().to_owned())
+            .filter(|m| !m.is_empty())
+            .or_else(|| self.settings.engines.provider(provider).model(kind).map(str::to_owned))
+            .or_else(|| presets.first().cloned())
+            .unwrap_or_default();
+        let evt = self.evt.clone();
+        tokio::spawn(async move {
+            let started = Instant::now();
+            let checked = probe.check_credentials(provider, &url, key.as_deref(), &model).await;
+            let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+            let outcome = match checked {
+                Ok(()) => ProbeOutcome::Ok { models: presets, latency_ms },
+                Err(ProbeError { reason, status, detail }) => ProbeOutcome::Failed { reason, status, detail },
+            };
+            if evt.send(CoreEvent::ProviderProbe(ProbeReport { provider, kind, outcome })).is_err() {
+                tracing::debug!("provider probe answered after the UI went away");
+            }
+        });
+    }
+
+    /// The `(base URL, key)` a probe of `provider`'s `kind` service sends to: for a credential of
+    /// several fields the form's fields merged over the stored ones, as saving them would.
     fn probe_target(
         &self,
         provider: ProviderId,
@@ -2629,7 +2687,11 @@ impl Runtime {
             .or_else(|| (!preset.base_url.is_empty()).then(|| preset.base_url.to_owned()))
             .ok_or(ProbeFailure::InvalidUrl)?;
         check_http_url(&url).map_err(|_| ProbeFailure::InvalidUrl)?;
-        let key = draft(key).or_else(|| self.user_secrets.get(provider, kind).map(str::to_owned));
+        let stored = self.user_secrets.get(provider, kind);
+        let key = match draft(key) {
+            Some(typed) => Some(crate::providers::merge_credentials(provider, stored, &typed).map_err(|_| ProbeFailure::KeyMissing)?),
+            None => stored.map(str::to_owned),
+        };
         if spec.key == crate::providers::KeyPolicy::Required && key.is_none() {
             return Err(ProbeFailure::KeyMissing);
         }
