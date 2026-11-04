@@ -17,6 +17,7 @@ import {
   type ServiceKind,
   type ServiceStatus,
   applyProviderDraft,
+  checkProbeDraft,
   checkProviderDraft,
   choosesInterface,
   clearedSecret,
@@ -161,15 +162,24 @@ function ProbePanel({
   probe,
   onRun,
   checked = false,
+  issue,
 }: {
   probe: ReturnType<typeof useProviderProbe>;
   onRun: () => void;
   /** The vendor lists no models: an answer checked the credential. */
   checked?: boolean;
+  /** Why the last 测试连接 was not sent (a credential field left empty), shown instead of an
+   *  earlier answer. */
+  issue?: string | undefined;
 }) {
   const theme = useAppTheme();
   const { t } = useI18n();
-  const result = probe.report ? probeText(probe.report, t, checked) : undefined;
+  const result =
+    issue !== undefined
+      ? { ok: false, text: issue }
+      : probe.report
+        ? probeText(probe.report, t, checked)
+        : undefined;
   return (
     <View
       style={{
@@ -563,6 +573,7 @@ function ProviderForm({
   });
   const [showKey, setShowKey] = useState(false);
   const [problem, setProblem] = useState<string | undefined>(undefined);
+  const [probeIssue, setProbeIssue] = useState<string | undefined>(undefined);
   const probe = useProviderProbe(provider.id, kind);
   const probed = probe.report?.result === "ok" ? (probe.report.models ?? []) : [];
   const options = modelOptions(service, probed, t, {
@@ -857,8 +868,12 @@ function ProviderForm({
       <ProbePanel
         probe={probe}
         checked={provider.lists_models === false}
+        issue={probeIssue}
         onRun={() => {
-          probe.run({ baseUrl: draft.baseUrl, key: draftSecret(draft), model: draft.model });
+          const issue = checkProbeDraft(draft, provider, kind, t);
+          setProbeIssue(issue);
+          if (issue === undefined)
+            probe.run({ baseUrl: draft.baseUrl, key: draftSecret(draft), model: draft.model });
         }}
       />
       {problem !== undefined && (

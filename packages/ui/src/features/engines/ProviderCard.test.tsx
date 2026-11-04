@@ -226,6 +226,42 @@ describe("ProviderCards (desktop model pages and phone settings)", () => {
     backend.destroy();
   });
 
+  it("regression: 测试连接 with a credential field left empty names the fields and sends nothing", async () => {
+    // 2026-11-04, the packaged app: with the old console's fields empty, 测试连接 answered
+    // 请先填写 API 密钥, a field this form does not have.
+    const user = userEvent.setup();
+    const backend = new MockBackend();
+    const invoke = vi.spyOn(backend, "invoke");
+    renderCard(backend, { id: "volcengine_speech", kind: "asr" });
+    const form = await screen.findByTestId("provider-form");
+    const sets = within(form).getByRole("radiogroup", { name: t("engines.credential.setLabel") });
+    await user.click(
+      within(sets).getByRole("radio", { name: t("engines.credential.set.app_token") }),
+    );
+    const probe = within(form).getByRole("button", { name: t("engines.probe") });
+    await user.click(probe);
+    expect(screen.getByTestId("probe-result")).toHaveTextContent("请填写 App ID、Access Token");
+    expect(invoke).not.toHaveBeenCalledWith("provider_probe", expect.anything());
+    await user.type(within(form).getByLabelText(t("engines.credential.app_id")), "app");
+    await user.type(within(form).getByLabelText(t("engines.credential.access_token")), "tok");
+    await user.click(probe);
+    expect(invoke).toHaveBeenCalledWith("provider_probe", {
+      provider: "volcengine_speech",
+      kind: "asr",
+      baseUrl: null,
+      key: '{"set":"app_token","app_id":"app","access_token":"tok"}',
+      model: null,
+    });
+    expect(
+      await screen.findByText(
+        t("engines.probeResult.okChecked", { ms: MOCK_PROBE_MS }),
+        {},
+        { timeout: MOCK_PROBE_MS * 20 },
+      ),
+    ).toBeInTheDocument();
+    backend.destroy();
+  });
+
   it("switches Kimi between its China and international sites, each with its own key page", async () => {
     const user = userEvent.setup();
     const backend = new MockBackend();

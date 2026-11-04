@@ -257,6 +257,18 @@ describe("a provider's sheet", () => {
     }, LONG);
   });
 
+  it("regression: 测试连接 with a credential field left empty names the fields and sends nothing", async () => {
+    // 2026-11-04, the packaged desktop app: with a field empty, 测试连接 answered 请先填写 API 密钥,
+    // a field these forms do not have. The phone's sheet shares the check.
+    const { backend } = await renderApp();
+    const invoke = jest.spyOn(backend, "invoke");
+    const sheet = await openSheet("settings-speech", "asr", "iflytek", "讯飞语音听写");
+    await fireEvent.changeText(sheet.getByTestId("credential-app_id"), "595f23df");
+    await fireEvent.press(sheet.getByTestId("provider-probe"));
+    expect(sheet.getByTestId("probe-result")).toHaveTextContent("请填写 API Key、API Secret");
+    expect(invoke).not.toHaveBeenCalledWith("provider_probe", expect.anything());
+  });
+
   it("says when the core refuses to test a connection", async () => {
     const { backend } = await renderApp();
     const sheet = await openSheet("settings-speech", "asr", "groq", "Groq");

@@ -8,6 +8,7 @@ import {
   REASONING_EFFORTS,
   type ReasoningEffort,
   applyProviderDraft,
+  checkProbeDraft,
   checkProviderDraft,
   choosesInterface,
   clearedSecret,
@@ -448,14 +449,23 @@ function ProbePanel({
   probe,
   onRun,
   checked = false,
+  issue,
 }: {
   probe: ReturnType<typeof useProviderProbe>;
   onRun: () => void;
   /** The vendor lists no models: an answer checked the credential. */
   checked?: boolean;
+  /** Why the last 测试连接 was not sent (a credential field left empty), shown instead of an
+   *  earlier answer. */
+  issue?: string | undefined;
 }) {
   const { t } = useI18n();
-  const result = probe.report ? probeText(probe.report, t, checked) : undefined;
+  const result =
+    issue !== undefined
+      ? { ok: false, text: issue }
+      : probe.report
+        ? probeText(probe.report, t, checked)
+        : undefined;
   return (
     <div className="flex flex-wrap items-center gap-3 rounded-10 bg-inset px-3 py-2.5">
       <Button size="sm" variant="outline" icon="refresh" loading={probe.pending} onClick={onRun}>
@@ -501,6 +511,7 @@ function ProviderForm({
   const [draft, setDraft] = useState(opened);
   const [showKey, setShowKey] = useState(false);
   const [problem, setProblem] = useState<string | undefined>(undefined);
+  const [probeIssue, setProbeIssue] = useState<string | undefined>(undefined);
   const probe = useProviderProbe(provider.id, kind);
   const probed = probe.report?.result === "ok" ? (probe.report.models ?? []) : [];
   const options = modelOptions(service, probed, t, {
@@ -777,8 +788,12 @@ function ProviderForm({
           <ProbePanel
             probe={probe}
             checked={provider.lists_models === false}
+            issue={probeIssue}
             onRun={() => {
-              probe.run({ baseUrl: draft.baseUrl, key: draftSecret(draft), model: draft.model });
+              const issue = checkProbeDraft(draft, provider, kind, t);
+              setProbeIssue(issue);
+              if (issue === undefined)
+                probe.run({ baseUrl: draft.baseUrl, key: draftSecret(draft), model: draft.model });
             }}
           />
           {problem !== undefined && (

@@ -338,6 +338,23 @@ export function checkProviderDraft(
   return undefined;
 }
 
+/** What stops 测试连接 before the core is asked (docs/dictation.md §3.15): a credential of several
+ *  fields missing a field of the set shown, by `checkCredentialDraft`'s rule. Left blank, the
+ *  stored set is tested. A single key is not checked here: blank, the core tests the saved key or
+ *  answers that none is saved. */
+export function checkProbeDraft(
+  draft: ProviderDraft,
+  provider: ProviderStatus,
+  kind: ServiceKind,
+  t: TFunction = zhT.t,
+): string | undefined {
+  const service = provider[kind];
+  const credential = draft.credential ?? credentialDraft(provider, service);
+  return credential === undefined
+    ? undefined
+    : checkCredentialDraft(credential, provider, service, t);
+}
+
 const HTTP_URL_PATTERN = /^https?:\/\/[^/\s]+/;
 
 /** The probe answer as one line and a lamp tone. For a vendor that lists no models (`checked`)

@@ -2,6 +2,7 @@ import {
   choosesInterface,
   applyProviderDraft,
   checkCredentialDraft,
+  checkProbeDraft,
   checkProviderDraft,
   clearedSecret,
   credentialDraft,
@@ -549,6 +550,31 @@ describe("credentials of several fields (docs/dictation.md §3.15, the core's me
     ).toBeUndefined();
     const stored = card("tencent", "default");
     expect(checkProviderDraft(draft, stored, "asr", t)).toBeUndefined();
+  });
+
+  it("regression: 测试连接 names the missing fields of a credential of several fields, not an API key", () => {
+    // 2026-11-04, the packaged app: 测试连接 with the old console's fields empty sent nothing, and the
+    // core's answer read 请先填写 API 密钥, a field the form does not have.
+    const fresh = card("volcengine_speech");
+    const blank = { model: "", baseUrl: "", key: "" };
+    const old = (fields: Record<string, string>) => ({
+      ...blank,
+      credential: { set: "app_token", fields },
+    });
+    expect(checkProbeDraft(old({}), fresh, "asr", t)).toBe("请填写 App ID、Access Token");
+    expect(checkProbeDraft(old({ app_id: "1" }), fresh, "asr", en)).toBe("Enter Access Token");
+    expect(
+      checkProbeDraft(old({ app_id: "1", access_token: "2" }), fresh, "asr", t),
+    ).toBeUndefined();
+    // The stored set left blank is tested as saved; another set is filled in whole first.
+    const stored = card("volcengine_speech", "app_token");
+    expect(checkProbeDraft(old({}), stored, "asr", t)).toBeUndefined();
+    expect(checkProbeDraft(blank, stored, "asr", t)).toBeUndefined();
+    expect(
+      checkProbeDraft({ ...blank, credential: { set: "api_key", fields: {} } }, stored, "asr", t),
+    ).toBe("请填写 API Key");
+    // A single key is the core's to check: left blank, the saved one is tested.
+    expect(checkProbeDraft(blank, provider({ asr: service() }), "asr", t)).toBeUndefined();
   });
 
   it("names every field and set of the catalogue, and where each vendor's fields are found", () => {
