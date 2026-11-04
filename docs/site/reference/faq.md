@@ -68,6 +68,10 @@ The packages are not code-signed yet. Choose **More info**, then **Run anyway**.
 
 The first start of an app that is not notarized needs one confirmation; see [Install](/guide/install#macos). Updating from version 0.0.6 or earlier asks for the permissions once more. Releases share one signing certificate, so updates keep the microphone and Accessibility permissions. The keychain asks whenever one version reads entries that another version created. The post-install hand-over attempted by 0.0.15 and 0.0.16 did not work because the updater had already removed the old bundle. The first release with the fix may therefore ask one last time when installed by 0.0.16. In-app updates between two fixed releases avoid the prompt; installing by hand still asks once for each entry.
 
+### Voltip says it needs the system keychain
+
+Voltip keeps your keys and this device's identity in the system keychain and does not start without it; it does not fall back to a file. On Linux the keychain is the Secret Service: start GNOME Keyring or KWallet and unlock it. When the keychain asks for its password as Voltip starts, enter it; if that prompt is closed instead, Voltip shows this notice and quits. On a Mac, unlock the keychain and allow Voltip to use it when macOS asks. On Windows, make sure the Credential Manager service is running. Then open Voltip again.
+
 ### Where are my files, and how do I remove Voltip?
 
 See [Updates, uninstall and your data](/guide/updates).

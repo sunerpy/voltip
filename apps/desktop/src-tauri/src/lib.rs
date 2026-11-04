@@ -30,6 +30,7 @@ pub mod held;
 pub mod hotkey;
 #[cfg(target_os = "macos")]
 pub mod keychain_handoff;
+pub mod keychain_notice;
 pub mod overlay;
 pub mod paste;
 pub mod platform;
@@ -1548,13 +1549,17 @@ pub struct ShellOptions {
     /// the tests call every command, and a test run must open no window on the desktop it runs on
     /// (a developer's, or the Windows build machine's).
     pub opens_folders: bool,
+    /// Show the keychain notice as a native dialog and quit once it is closed (docs/dictation.md
+    /// §34). Off on the mock runtime: a test run opens no window and keeps its process; the
+    /// notice is then only logged and managed as [`keychain_notice::KeychainUnavailable`].
+    pub shows_notices: bool,
 }
 
 impl ShellOptions {
     /// Production wiring.
-    pub const PRODUCTION: Self = Self { global_hotkey: true, start_hidden: false, opens_folders: true };
+    pub const PRODUCTION: Self = Self { global_hotkey: true, start_hidden: false, opens_folders: true, shows_notices: true };
     /// Headless / mock-runtime wiring.
-    pub const HEADLESS: Self = Self { global_hotkey: false, start_hidden: false, opens_folders: false };
+    pub const HEADLESS: Self = Self { global_hotkey: false, start_hidden: false, opens_folders: false, shows_notices: false };
 
     /// Production wiring with `--start-hidden`.
     pub const fn hidden(self, start_hidden: bool) -> Self {
@@ -1573,6 +1578,11 @@ pub const MAIN_REQUEST_EVENT: &str = "voltip://tray";
 /// Bring the main window to the front: a second launch without arguments, a tray click, and the
 /// macOS Dock / `open -a` reopen all end here. Nothing to do when the window does not exist.
 pub fn show_main_window<R: Runtime>(app: &tauri::AppHandle<R>) {
+    // The keychain notice is up (docs/dictation.md §34): the core never started, the window is empty.
+    if app.try_state::<keychain_notice::KeychainUnavailable>().is_some() {
+        tracing::info!("the keychain notice is up; the main window stays hidden");
+        return;
+    }
     if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
         let _ = window.show();
         let _ = window.unminimize();
@@ -1727,8 +1737,21 @@ pub fn build_app<R: Runtime>(
     // Closing the main window hides it where the tray or the Dock brings it back and quits
     // elsewhere (`platform::on_window_event`).
     let builder = builder.on_window_event(platform::on_window_event);
-    builder.setup(move |app| Ok(attach_bridge(app.handle(), config, store, options, ports).map_err(|e| std::io::Error::other(e.to_string()))?)).invoke_handler(
-        tauri::generate_handler![
+    builder
+        .setup(move |app| match attach_bridge(app.handle(), config, store, options, ports) {
+            Ok(()) => Ok(()),
+            // docs/dictation.md §34: without the system keychain the core has no identity. The
+            // notice says what Voltip needs and quits, where Tauri would panic on a failed setup.
+            Err(e) => match keychain_notice::KeychainUnavailable::for_error(&e, platform::system_locale()) {
+                Some(blocked) => {
+                    tracing::error!(error = %e, "the system keychain is unavailable; showing the notice");
+                    keychain_notice::show(app.handle(), blocked, options.shows_notices);
+                    Ok(())
+                }
+                None => Err(std::io::Error::other(e.to_string()).into()),
+            },
+        })
+        .invoke_handler(tauri::generate_handler![
             core_state,
             pairing_start,
             pairing_join_code,
@@ -1890,8 +1913,7 @@ pub fn build_app<R: Runtime>(
             overlay_paste,
             open_history,
             phone_share_text
-        ],
-    )
+        ])
 }
 
 /// Build and run the Tauri application with the production data dir and keychain. Parses the

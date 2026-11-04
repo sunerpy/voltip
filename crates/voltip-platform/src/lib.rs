@@ -21,6 +21,8 @@
 //!   the codes its input hook reports them with, and raw input → press / release / chorded.
 //! - [`held_key`]: the key a hold-to-talk take is held with and the codes each platform's
 //!   key-state query takes for it (docs/dictation.md §29).
+//! - [`keychain`]: the notice shown when the system keychain is unavailable at startup, per
+//!   platform and language, and the message language of a POSIX environment (docs/dictation.md §34).
 //! - [`HostOs`]: which platform this binary was compiled for; [`PermissionReport::for_host`] is
 //!   the `not_applicable` skeleton the shell starts from.
 
@@ -31,6 +33,7 @@
 pub mod foreground;
 pub mod held_key;
 pub mod insert_check;
+pub mod keychain;
 pub mod macos;
 pub mod permissions;
 pub mod solo_key;

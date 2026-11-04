@@ -160,7 +160,7 @@ impl KeyringSecretStore {
     }
 
     fn slot(&self, entry: &str, account: &str) -> Result<KeyringSlot, IdentityError> {
-        keyring::Entry::new(&format!("{}/{entry}", self.service), account).map(KeyringSlot).map_err(|e| IdentityError::StoreUnavailable(e.to_string()))
+        keyring::Entry::new(&format!("{}/{entry}", self.service), account).map(KeyringSlot).map_err(keyring_unavailable)
     }
 
     /// The item every build before this change used, and unsigned builds still use.
@@ -202,24 +202,40 @@ pub fn signed_with_a_certificate() -> bool {
 #[cfg(feature = "keyring")]
 struct KeyringSlot(keyring::Entry);
 
+/// A failed `keyring` call: the store is unavailable, which the desktop shell explains as it starts
+/// (docs/dictation.md §34). On Linux that is every way the Secret Service refuses: no service on the
+/// session bus, or no bus (`keyring` then has no default store), an unlock prompt that was
+/// dismissed or an item still locked (zbus-secret-service-keyring-store reports both as
+/// `NoStorageAccess`), and a connection that broke off (`PlatformFailure`).
+#[cfg(feature = "keyring")]
+fn keyring_unavailable(e: keyring::Error) -> IdentityError {
+    IdentityError::StoreUnavailable(e.to_string())
+}
+
+/// A read's outcome: the value, `None` for a missing item, [`keyring_unavailable`] otherwise.
+#[cfg(feature = "keyring")]
+fn read_outcome(result: keyring::Result<Vec<u8>>) -> Result<Option<Zeroizing<Vec<u8>>>, IdentityError> {
+    match result {
+        Ok(bytes) => Ok(Some(Zeroizing::new(bytes))),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(keyring_unavailable(e)),
+    }
+}
+
 #[cfg(feature = "keyring")]
 impl Slot for KeyringSlot {
     fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>, IdentityError> {
-        match self.0.get_secret() {
-            Ok(bytes) => Ok(Some(Zeroizing::new(bytes))),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(e) => Err(IdentityError::StoreUnavailable(e.to_string())),
-        }
+        read_outcome(self.0.get_secret())
     }
 
     fn write(&self, value: &[u8]) -> Result<(), IdentityError> {
-        self.0.set_secret(value).map_err(|e| IdentityError::StoreUnavailable(e.to_string()))
+        self.0.set_secret(value).map_err(keyring_unavailable)
     }
 
     fn remove(&self) -> Result<(), IdentityError> {
         match self.0.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(e) => Err(IdentityError::StoreUnavailable(e.to_string())),
+            Err(e) => Err(keyring_unavailable(e)),
         }
     }
 }
@@ -394,6 +410,32 @@ mod tests {
         assert_eq!(read_moving(&owned, &legacy).unwrap().unwrap().as_slice(), b"key");
         assert_eq!(owned.value().as_deref(), Some(&b"key"[..]));
         assert_eq!(legacy.value().as_deref(), Some(&b"key"[..]));
+    }
+
+    /// docs/dictation.md §34: every way the Linux Secret Service refuses reads as an unavailable
+    /// store, which the desktop shell explains as it starts. The errors as `keyring` reports them:
+    /// no service or no session bus (no default store), a dismissed unlock prompt and an item still
+    /// locked (zbus-secret-service-keyring-store's `decode_error` turns `Prompt` and `Locked` into
+    /// `NoStorageAccess`), a connection that closed before the prompt completed. A missing item is
+    /// not a failure.
+    #[cfg(feature = "keyring")]
+    #[test]
+    fn every_way_the_secret_service_refuses_is_an_unavailable_store() {
+        let detail = |text: &str| -> Box<dyn std::error::Error + Send + Sync> { Box::new(std::io::Error::other(text.to_owned())) };
+        let refusals = [
+            keyring::Error::NoDefaultStore,
+            keyring::Error::NoStorageAccess(detail("SS error: prompt dismissed")),
+            keyring::Error::NoStorageAccess(detail("SS Error: object locked")),
+            keyring::Error::PlatformFailure(detail("SS error: connection closed before prompt completed")),
+            keyring::Error::PlatformFailure(detail("no secret service provider or dbus session found")),
+        ];
+        for refusal in refusals {
+            let text = refusal.to_string();
+            assert!(matches!(read_outcome(Err(refusal)), Err(IdentityError::StoreUnavailable(reason)) if reason == text), "{text}");
+        }
+        assert!(matches!(keyring_unavailable(keyring::Error::NoStorageAccess(detail("SS error: prompt dismissed"))), IdentityError::StoreUnavailable(_)));
+        assert!(read_outcome(Err(keyring::Error::NoEntry)).unwrap().is_none());
+        assert_eq!(read_outcome(Ok(b"key".to_vec())).unwrap().unwrap().as_slice(), b"key");
     }
 }
 

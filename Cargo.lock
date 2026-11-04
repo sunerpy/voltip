@@ -7845,6 +7845,7 @@ dependencies = [
  "windows-sys 0.61.2",
  "wiremock",
  "x11rb 0.14.0",
+ "zeroize",
 ]
 
 [[package]]
