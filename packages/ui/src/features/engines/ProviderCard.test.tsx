@@ -22,24 +22,34 @@ function Detail({
   id,
   kind,
   localBody,
+  previews,
   onClose,
 }: {
   id: ProviderId;
   kind: ServiceKind;
   localBody?: ReactNode;
+  previews?: boolean;
   onClose: () => void;
 }) {
   const state = useUiState();
   const provider = state.engines.providers.find((p) => p.id === id);
   if (provider === undefined) return null;
-  return <ProviderDetail provider={provider} kind={kind} localBody={localBody} onClose={onClose} />;
+  return (
+    <ProviderDetail
+      provider={provider}
+      kind={kind}
+      localBody={localBody}
+      previews={previews ?? false}
+      onClose={onClose}
+    />
+  );
 }
 
-/** The cards of every provider of `kind`. */
-function Cards({ kind }: { kind: ServiceKind }) {
+/** The cards of every provider of `kind`; `previews` as on the desktop. */
+function Cards({ kind, previews = false }: { kind: ServiceKind; previews?: boolean }) {
   const state = useUiState();
   const providers = state.engines.providers.filter((p) => p[kind] !== undefined);
-  return <ProviderCards kind={kind} providers={providers} label="服务商" />;
+  return <ProviderCards kind={kind} providers={providers} label="服务商" previews={previews} />;
 }
 
 function shell(backend: Backend, ui: ReactNode) {
@@ -58,7 +68,7 @@ function shell(backend: Backend, ui: ReactNode) {
 
 function renderCard(
   backend: Backend,
-  props: { id: ProviderId; kind: ServiceKind; localBody?: ReactNode },
+  props: { id: ProviderId; kind: ServiceKind; localBody?: ReactNode; previews?: boolean },
 ) {
   const onClose = vi.fn();
   const notify = shell(backend, <Detail {...props} onClose={onClose} />);
@@ -262,6 +272,83 @@ describe("ProviderCards (desktop model pages and phone settings)", () => {
     backend.destroy();
   });
 
+  /** The ability labels on the recognition card of `id`, in order. */
+  const abilitiesOf = async (id: ProviderId) => {
+    const row = within(await screen.findByTestId(`provider-asr-${id}`)).queryByTestId(
+      "provider-abilities",
+    );
+    return row === null ? [] : Array.from(row.children, (label) => label.textContent);
+  };
+
+  it("names on each recognition card whether it recognises while you speak and takes hot words", async () => {
+    const backend = new MockBackend();
+    shell(backend, <Cards kind="asr" />);
+    const realtime = t("engines.ability.realtime");
+    const hotwords = t("engines.ability.hotwords");
+    expect(await abilitiesOf("volcengine_speech")).toEqual([realtime, hotwords]);
+    expect(await abilitiesOf("baidu")).toEqual([realtime]);
+    expect(await abilitiesOf("glm")).toEqual([hotwords]);
+    expect(await abilitiesOf("mimo")).toEqual([]);
+    expect(await abilitiesOf("local")).toEqual([]);
+    // Cards of a shell without live previews (the phone's): the built-in service has none.
+    expect(await abilitiesOf("builtin")).toEqual([hotwords]);
+    backend.destroy();
+  });
+
+  it("names the built-in service's live preview on the desktop's cards", async () => {
+    const backend = new MockBackend();
+    shell(backend, <Cards kind="asr" previews />);
+    expect(await abilitiesOf("builtin")).toEqual([
+      t("engines.ability.preview"),
+      t("engines.ability.hotwords"),
+    ]);
+    backend.destroy();
+  });
+
+  it("marks the realtime models and says under the model how it hears a take, as the model changes", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend();
+    renderCard(backend, { id: "stepfun", kind: "asr" });
+    const form = await screen.findByTestId("provider-form");
+    const model = within(form).getByRole("combobox", { name: t("engines.field.model") });
+    expect(
+      within(model)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual([
+      "stepaudio-2.5-asr",
+      t("engines.field.modelRealtime", { model: "stepaudio-2.5-asr-stream" }),
+      t("engines.field.modelOther"),
+    ]);
+    const help = within(form).getByTestId("provider-abilities-help");
+    expect(help).toHaveTextContent(t("engines.ability.wholeHelp"));
+    expect(help).toHaveTextContent(t("engines.ability.hotwordsHelp"));
+    await user.selectOptions(model, "stepaudio-2.5-asr-stream");
+    expect(help).toHaveTextContent(t("engines.ability.realtimeHelp"));
+    expect(help).toHaveTextContent(t("engines.ability.promptHelp"));
+    backend.destroy();
+  });
+
+  it("says on the desktop what the built-in service and the Live preview model show while you speak", async () => {
+    const backend = new MockBackend();
+    shell(
+      backend,
+      <>
+        <Detail id="builtin" kind="asr" previews onClose={() => undefined} />
+        <Detail id="mimo" kind="asr" previews onClose={() => undefined} />
+      </>,
+    );
+    const builtin = await screen.findByTestId("provider-asr-builtin-detail");
+    expect(within(builtin).getByTestId("provider-abilities-help")).toHaveTextContent(
+      t("engines.ability.previewHelp"),
+    );
+    const mimo = await screen.findByTestId("provider-asr-mimo-detail");
+    const help = within(mimo).getByTestId("provider-abilities-help");
+    expect(help).toHaveTextContent(t("engines.ability.wholePreviewHelp"));
+    expect(help).toHaveTextContent(t("engines.ability.noGlossaryHelp"));
+    backend.destroy();
+  });
+
   it("switches Kimi between its China and international sites, each with its own key page", async () => {
     const user = userEvent.setup();
     const backend = new MockBackend();
@@ -329,9 +416,10 @@ describe("ProviderCards (desktop model pages and phone settings)", () => {
         .getAllByRole("option")
         .map((o) => o.textContent),
     ).toEqual([
-      "qwen-audio-3.1-asr-flash-streaming",
+      // docs/dictation.md §3.15: the realtime models are marked.
+      t("engines.field.modelRealtime", { model: "qwen-audio-3.1-asr-flash-streaming" }),
       "qwen-audio-3.1-asr-flash",
-      "fun-asr-realtime",
+      t("engines.field.modelRealtime", { model: "fun-asr-realtime" }),
       t("engines.field.modelOther"),
     ]);
     expect(form).toHaveTextContent(t("engines.field.baseUrlHelpAliyun"));

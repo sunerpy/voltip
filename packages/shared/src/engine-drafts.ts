@@ -4,6 +4,7 @@
 // the checks before a save and the probe's answer as a line. Moved here from
 // `apps/desktop/src/pages/settings/engines/helpers.ts`, which re-exports it.
 import { zhT, type TFunction } from "./i18n";
+import { asrStreams, glossaryRoute } from "./providers";
 import type {
   EngineSettings,
   EngineStatus,
@@ -253,15 +254,22 @@ export function modelOptions(
   probed: readonly string[] = [],
   t: TFunction = zhT.t,
   other?: ModelOption,
+  realtime?: (model: string) => boolean,
 ): ModelOption[] {
-  const suggested = uniqueIds([service.model, ...service.presets]).map((m) => modelOption(m));
+  // docs/dictation.md §3.15: a recognition select marks the models that recognise while the take
+  // is spoken.
+  const label = (m: string) =>
+    realtime?.(m) === true ? t("engines.field.modelRealtime", { model: m }) : m;
+  const suggested = uniqueIds([service.model, ...service.presets]).map((m) =>
+    modelOption(m, label(m)),
+  );
   const offered = uniqueIds(probed.length > 0 ? probed : (service.listed ?? []));
   offered.sort();
   const group = t("engines.field.modelOffered", { n: offered.length });
   return [
     ...suggested,
     ...(other === undefined ? [] : [other]),
-    ...offered.map((m) => modelOption(m, group)),
+    ...offered.map((m) => modelOption(m, label(m), group)),
   ];
 }
 
@@ -270,10 +278,99 @@ function uniqueIds(ids: readonly string[]): string[] {
   return ids.filter((m, i) => m.length > 0 && ids.indexOf(m) === i);
 }
 
-function modelOption(model: string, group?: string): ModelOption {
-  return group === undefined
-    ? { value: model, label: model }
-    : { value: model, label: model, group };
+function modelOption(model: string, label: string, group?: string): ModelOption {
+  return group === undefined ? { value: model, label } : { value: model, label, group };
+}
+
+/** What a recognition model does with a take and with the dictionary (docs/dictation.md §3.15),
+ *  as the provider cards, the model selects and the drawers say it: it recognises while the take
+ *  is spoken (`realtime`, `AsrProtocol::streams` through `asrStreams`), the built-in service
+ *  previews the take where the shell shows its preview (`preview`, §11.8), or the recording goes
+ *  whole after release (`whole`); the dictionary's terms go as hot words, as a prompt, or nowhere
+ *  (`GlossaryRoute::for_service` through `glossaryRoute`). */
+export interface AsrAbilities {
+  live: "realtime" | "preview" | "whole";
+  glossary: "hotwords" | "prompt" | "not_supported";
+}
+
+/** `model`'s abilities at `url` for `provider`. `previews`: the shell shows a live preview while
+ *  recording (the desktop, `CoreConfig.shows_live_preview`). The on-device models take no terms;
+ *  their own cards describe them. */
+export function asrAbilities(
+  provider: ProviderId,
+  url: string,
+  model: string,
+  previews = false,
+): AsrAbilities {
+  if (provider === "local") return { live: "whole", glossary: "not_supported" };
+  const route = glossaryRoute(provider, url, model);
+  const glossary = route === "hotwords" || route === "prompt" ? route : "not_supported";
+  if (provider === "builtin") return { live: previews ? "preview" : "whole", glossary };
+  return { live: asrStreams(provider, url, model) ? "realtime" : "whole", glossary };
+}
+
+/** Whether a recognition select marks `model` 边说边识别 for `provider` at `url`. */
+export function realtimeModel(provider: ProviderId, url: string): (model: string) => boolean {
+  return (model) => asrAbilities(provider, url, model).live === "realtime";
+}
+
+/** The abilities a recognition card names (docs/dictation.md §3.15): 边说边识别 when one of its
+ *  models recognises while the take is spoken, 实时预览 on the built-in service where the shell
+ *  shows its preview, 热词 when one of them receives the dictionary's terms. None on the on-device
+ *  provider, whose model cards describe each model. */
+export function asrCardAbilities(
+  provider: ProviderStatus,
+  previews = false,
+  t: TFunction = zhT.t,
+): string[] {
+  const service = provider.asr;
+  if (service === undefined || provider.id === "local") return [];
+  const url = service.base_url ?? "";
+  const models = uniqueIds([service.model, ...service.presets, ...(service.listed ?? [])]);
+  const all = (models.length > 0 ? models : [""]).map((m) =>
+    asrAbilities(provider.id, url, m, previews),
+  );
+  const out: string[] = [];
+  if (all.some((a) => a.live === "realtime")) out.push(t("engines.ability.realtime"));
+  else if (all.some((a) => a.live === "preview")) out.push(t("engines.ability.preview"));
+  if (all.some((a) => a.glossary !== "not_supported")) out.push(t("engines.ability.hotwords"));
+  return out;
+}
+
+/** What the shell's live preview can do for a model that takes whole recordings: nothing (`none`,
+ *  a phone), once the Live preview model is downloaded (`missing`), or now (`installed`). */
+export type LocalPreview = "none" | "missing" | "installed";
+
+/** The lines under a recognition drawer's model (docs/dictation.md §3.15): how `model` hears a
+ *  take — a realtime model recognises the whole recording while 实时预览 is off — and where the
+ *  dictionary's terms go. */
+export function asrAbilityHelp(
+  provider: ProviderId,
+  url: string,
+  model: string,
+  shell: { previews: boolean; livePreview: boolean; localPreview: LocalPreview },
+  t: TFunction = zhT.t,
+): string[] {
+  const { live, glossary } = asrAbilities(provider, url, model, shell.previews);
+  const hears =
+    live === "realtime"
+      ? shell.livePreview
+        ? t("engines.ability.realtimeHelp")
+        : t("engines.ability.realtimeOffHelp")
+      : live === "preview" && shell.livePreview
+        ? t("engines.ability.previewHelp")
+        : live === "whole" && shell.livePreview && shell.localPreview === "installed"
+          ? t("engines.ability.wholeLocalHelp")
+          : live === "whole" && shell.localPreview !== "none"
+            ? t("engines.ability.wholePreviewHelp")
+            : t("engines.ability.wholeHelp");
+  const terms =
+    glossary === "hotwords"
+      ? t("engines.ability.hotwordsHelp")
+      : glossary === "prompt"
+        ? t("engines.ability.promptHelp")
+        : t("engines.ability.noGlossaryHelp");
+  return [hears, terms];
 }
 
 /** The line under a card's model select (docs/dictation.md §3.3): how many models the provider

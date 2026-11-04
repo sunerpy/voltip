@@ -1683,6 +1683,26 @@ export const en: Messages = {
       model_not_installed: "Model not downloaded",
       no_provider: "No provider selected",
     },
+    ability: {
+      realtime: "Realtime",
+      preview: "Live preview",
+      hotwords: "Hot words",
+      realtimeHelp:
+        "Realtime: it recognises while you speak, so only the last sentence is left after you let go.",
+      realtimeOffHelp:
+        "This model can recognise while you speak, but Live preview is off, so it recognises the whole recording after you let go.",
+      previewHelp:
+        "The built-in service shows a preview while you speak, updated about every 2 seconds, and recognises the whole recording after you let go.",
+      wholeHelp: "Recognises the whole recording after you let go.",
+      wholePreviewHelp:
+        "Recognises the whole recording after you let go; to see words while you speak, use Live preview under Recognition.",
+      wholeLocalHelp:
+        "Recognises the whole recording after you let go; the Live preview model on this computer shows a preview while you speak.",
+      hotwordsHelp: "The dictionary's terms go to the service as hot words.",
+      promptHelp: "The dictionary's terms go to the service as a prompt.",
+      noGlossaryHelp:
+        "This service takes no terms: the dictionary corrects the text after recognition, and AI polish gets the terms when it is on.",
+    },
     field: {
       model: "Model",
       modelOther: "Other model…",
@@ -1694,6 +1714,7 @@ export const en: Messages = {
       modelHelpPresets:
         "This provider publishes no model list, so these are the suggested models; choose “Other model…” to enter another model ID.",
       modelOffered: "From the provider ({n})",
+      modelRealtime: "{model} · realtime",
       modelListed: {
         one: "The list includes the model the provider offers for this service, updated each time the list opens.",
         other:

@@ -1,4 +1,5 @@
 import {
+  type LocalPreview,
   type ProviderDraft,
   type ProviderId,
   type ProviderStatus,
@@ -8,12 +9,15 @@ import {
   REASONING_EFFORTS,
   type ReasoningEffort,
   applyProviderDraft,
+  asrAbilityHelp,
+  asrCardAbilities,
   checkProbeDraft,
   checkProviderDraft,
   choosesInterface,
   clearedSecret,
   credentialDraft,
   draftSecret,
+  isStreamingModel,
   modelDisplayName,
   modelListHelp,
   modelOptions,
@@ -21,6 +25,7 @@ import {
   providerBadges,
   providerDraft,
   providerTagline,
+  realtimeModel,
   secretStateLabel,
   siteOf,
   siteUrl,
@@ -94,6 +99,9 @@ export interface ProviderCardsProps {
   localBody?: ReactNode;
   /** The provider whose drawer is open at first (a usage notice's 下载本机模型). */
   initialOpen?: ProviderId;
+  /** The shell shows a live preview while recording (the desktop, `CoreConfig.shows_live_preview`):
+   *  the built-in service's own, or the downloaded Live preview model's (docs/dictation.md §3.15). */
+  previews?: boolean;
 }
 
 /** The providers of one service (docs/dictation.md §3) as a grid of cards (user decision
@@ -109,6 +117,7 @@ export function ProviderCards({
   label,
   localBody,
   initialOpen,
+  previews = false,
 }: ProviderCardsProps) {
   const [openId, setOpenId] = useState<ProviderId | undefined>(initialOpen);
   const open = providers.find((p) => p.id === openId);
@@ -120,6 +129,7 @@ export function ProviderCards({
             <ProviderTile
               provider={p}
               kind={kind}
+              previews={previews}
               open={p.id === openId}
               onOpen={() => {
                 setOpenId(p.id);
@@ -134,6 +144,7 @@ export function ProviderCards({
           provider={open}
           kind={kind}
           localBody={localBody}
+          previews={previews}
           onClose={() => {
             setOpenId(undefined);
           }}
@@ -192,11 +203,13 @@ function useSwitch(provider: ProviderStatus, kind: ServiceKind) {
 function ProviderTile({
   provider,
   kind,
+  previews,
   open,
   onOpen,
 }: {
   provider: ProviderStatus;
   kind: ServiceKind;
+  previews: boolean;
   open: boolean;
   onOpen: () => void;
 }) {
@@ -206,6 +219,8 @@ function ProviderTile({
   const service = provider[kind];
   if (service === undefined) return null;
   const name = t(`engines.provider.${provider.id}`);
+  // docs/dictation.md §3.15: what its recognition models can do, before the card is opened.
+  const abilities = kind === "asr" ? asrCardAbilities(provider, previews, t) : [];
   const model =
     provider.id === "local"
       ? modelDisplayName(
@@ -241,6 +256,15 @@ function ProviderTile({
           <span className="truncate text-[12px] leading-4 text-fg-muted">
             {providerTagline(provider, kind, t)}
           </span>
+          {abilities.length > 0 && (
+            <span className="mt-1 flex flex-wrap gap-1" data-testid="provider-abilities">
+              {abilities.map((a) => (
+                <Badge key={a} tone="neutral">
+                  {a}
+                </Badge>
+              ))}
+            </span>
+          )}
         </div>
         <span className="flex shrink-0 flex-wrap items-center justify-end gap-1">
           <StateBadges service={service} />
@@ -300,10 +324,18 @@ export interface ProviderDetailProps {
   kind: ServiceKind;
   onClose: () => void;
   localBody?: ReactNode;
+  /** `ProviderCardsProps.previews`. */
+  previews?: boolean;
 }
 
 /** One provider's settings for one service, in the drawer a card opens. */
-export function ProviderDetail({ provider, kind, onClose, localBody }: ProviderDetailProps) {
+export function ProviderDetail({
+  provider,
+  kind,
+  onClose,
+  localBody,
+  previews = false,
+}: ProviderDetailProps) {
   const { t } = useI18n();
   const service = provider[kind];
   if (service === undefined) return null;
@@ -323,14 +355,26 @@ export function ProviderDetail({ provider, kind, onClose, localBody }: ProviderD
       width={provider.id === "local" ? LOCAL_DRAWER_WIDTH : DRAWER_WIDTH}
       data-testid={`provider-${kind}-${provider.id}-detail`}>
       {provider.id === "builtin" ? (
-        <BuiltinDetail provider={provider} kind={kind} service={service} onClose={onClose} />
+        <BuiltinDetail
+          provider={provider}
+          kind={kind}
+          service={service}
+          previews={previews}
+          onClose={onClose}
+        />
       ) : provider.id === "local" ? (
         <>
           <DrawerBody>{localBody}</DrawerBody>
           <UseFooter provider={provider} kind={kind} service={service} onClose={onClose} />
         </>
       ) : (
-        <ProviderForm provider={provider} kind={kind} service={service} onClose={onClose} />
+        <ProviderForm
+          provider={provider}
+          kind={kind}
+          service={service}
+          previews={previews}
+          onClose={onClose}
+        />
       )}
     </Drawer>
   );
@@ -383,15 +427,51 @@ function Help({ children, ...rest }: { children: ReactNode; "data-testid"?: stri
   );
 }
 
+/** Under a recognition model (docs/dictation.md §3.15): how `model` hears a take and where the
+ *  dictionary's terms go, for the shell this is. */
+function AbilityHelp({
+  provider,
+  url,
+  model,
+  previews,
+}: {
+  provider: ProviderId;
+  url: string;
+  model: string;
+  previews: boolean;
+}) {
+  const { t } = useI18n();
+  const state = useUiState();
+  const preview = previews ? state.models.find(isStreamingModel) : undefined;
+  const localPreview: LocalPreview =
+    preview === undefined ? "none" : preview.state.kind === "installed" ? "installed" : "missing";
+  const lines = asrAbilityHelp(
+    provider,
+    url,
+    model,
+    { previews, livePreview: state.settings.engines.live_preview, localPreview },
+    t,
+  );
+  return (
+    <div className="flex flex-col gap-0.5" data-testid="provider-abilities-help">
+      {lines.map((line) => (
+        <Help key={line}>{line}</Help>
+      ))}
+    </div>
+  );
+}
+
 function BuiltinDetail({
   provider,
   kind,
   service,
+  previews,
   onClose,
 }: {
   provider: ProviderStatus;
   kind: ServiceKind;
   service: ServiceStatus;
+  previews: boolean;
   onClose: () => void;
 }) {
   const { backend } = useBackend();
@@ -430,6 +510,9 @@ function BuiltinDetail({
             <div className="mono text-[12px] break-all text-fg">
               {t("engines.model", { model: service.model })}
             </div>
+          )}
+          {kind === "asr" && (
+            <AbilityHelp provider={provider.id} url="" model={service.model} previews={previews} />
           )}
           <ProbePanel
             probe={probe}
@@ -490,11 +573,13 @@ function ProviderForm({
   provider,
   kind,
   service,
+  previews,
   onClose,
 }: {
   provider: ProviderStatus;
   kind: ServiceKind;
   service: ServiceStatus;
+  previews: boolean;
   onClose: () => void;
 }) {
   const { backend } = useBackend();
@@ -514,10 +599,16 @@ function ProviderForm({
   const [probeIssue, setProbeIssue] = useState<string | undefined>(undefined);
   const probe = useProviderProbe(provider.id, kind);
   const probed = probe.report?.result === "ok" ? (probe.report.models ?? []) : [];
-  const options = modelOptions(service, probed, t, {
-    value: OTHER_MODEL,
-    label: t("engines.field.modelOther"),
-  });
+  // The address the form's requests would go to: what it holds, else the official one.
+  const url =
+    draft.baseUrl.trim().length > 0 ? draft.baseUrl.trim() : (service.default_base_url ?? "");
+  const options = modelOptions(
+    service,
+    probed,
+    t,
+    { value: OTHER_MODEL, label: t("engines.field.modelOther") },
+    kind === "asr" ? realtimeModel(provider.id, url) : undefined,
+  );
   const choices = options.filter((o) => o.value !== OTHER_MODEL).map((o) => o.value);
   const effectiveModel = draft.model.length > 0 ? draft.model : service.model;
   const [typing, setTyping] = useState(() => choices.length === 0);
@@ -625,6 +716,14 @@ function ProviderForm({
             />
           )}
           <Help data-testid="provider-model-help">{modelListHelp(provider, service, t)}</Help>
+          {kind === "asr" && (
+            <AbilityHelp
+              provider={provider.id}
+              url={url}
+              model={effectiveModel}
+              previews={previews}
+            />
+          )}
           {choosesInterface(provider.id, kind) && (
             // docs/dictation.md §3.7: the custom clean-up's interface, and the Responses effort.
             <>

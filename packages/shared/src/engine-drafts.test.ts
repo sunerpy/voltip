@@ -1,6 +1,9 @@
 import {
   choosesInterface,
   applyProviderDraft,
+  asrAbilities,
+  asrAbilityHelp,
+  asrCardAbilities,
   checkCredentialDraft,
   checkProbeDraft,
   checkProviderDraft,
@@ -21,6 +24,7 @@ import {
   providerDraft,
   providerTagline,
   providersFor,
+  realtimeModel,
   serviceTarget,
   shortModel,
   siteOf,
@@ -610,5 +614,139 @@ describe("credentials of several fields (docs/dictation.md §3.15, the core's me
     expect(modelListHelp(fresh, fresh.asr ?? service(), t)).toBe(
       t("engines.field.modelHelpPresets"),
     );
+  });
+});
+
+describe("what a recognition model does with a take and the dictionary (docs/dictation.md §3.15)", () => {
+  /** The recognition card of `id` as the engines status shows it, with nothing saved. */
+  const asrCard = (id: (typeof PROVIDER_IDS)[number]) => {
+    const status = resolveEngineStatus({
+      settings: defaultEngineSettings(),
+      userKeys: new Set(),
+      credentialSets: {},
+      builtIn: { asr: { model: "Qwen/Qwen3-ASR-1.7B", key: true } },
+      local: { id: "", name: "", installed: false },
+      liveReady: false,
+    });
+    const found = status.providers.find((p) => p.id === id);
+    if (found === undefined) throw new Error(id);
+    return found;
+  };
+  const en = createTranslator("en").t;
+
+  it("names on each card whether a model recognises while you speak and takes hot words", () => {
+    const named = (id: (typeof PROVIDER_IDS)[number], previews = false) =>
+      asrCardAbilities(asrCard(id), previews, t);
+    const realtime = t("engines.ability.realtime");
+    const hotwords = t("engines.ability.hotwords");
+    expect(named("volcengine_speech")).toEqual([realtime, hotwords]);
+    expect(named("tencent")).toEqual([realtime, hotwords]);
+    expect(named("aliyun")).toEqual([realtime, hotwords]);
+    // StepFun: its stream model recognises while you speak, its whole-file model takes hot words.
+    expect(named("stepfun")).toEqual([realtime, hotwords]);
+    expect(named("iflytek")).toEqual([realtime]);
+    expect(named("iflytek_rtasr")).toEqual([realtime]);
+    expect(named("baidu")).toEqual([realtime]);
+    expect(named("glm")).toEqual([hotwords]);
+    expect(named("groq")).toEqual([hotwords]);
+    expect(named("mimo")).toEqual([]);
+    expect(named("local")).toEqual([]);
+    // The built-in service previews where the shell shows its preview (the desktop).
+    expect(named("builtin", true)).toEqual([t("engines.ability.preview"), hotwords]);
+    expect(named("builtin")).toEqual([hotwords]);
+    expect(asrCardAbilities(asrCard("baidu"), false, en)).toEqual(["Realtime"]);
+  });
+
+  it("follows the address and the model as the core's protocol does", () => {
+    const dashscope = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+    expect(asrAbilities("aliyun", dashscope, "qwen-audio-3.1-asr-flash-streaming")).toEqual({
+      live: "realtime",
+      glossary: "hotwords",
+    });
+    expect(asrAbilities("aliyun", dashscope, "fun-asr-realtime")).toEqual({
+      live: "realtime",
+      glossary: "prompt",
+    });
+    expect(asrAbilities("custom", "https://example.test/v1", "whisper-1")).toEqual({
+      live: "whole",
+      glossary: "prompt",
+    });
+    // A vendor's protocol does not depend on the address: a proxy is still the vendor.
+    expect(asrAbilities("baidu", "https://proxy.example.test", "15372")).toEqual({
+      live: "realtime",
+      glossary: "not_supported",
+    });
+    expect(asrAbilities("local", "", "qwen3-asr-0.6b")).toEqual({
+      live: "whole",
+      glossary: "not_supported",
+    });
+  });
+
+  it("marks the realtime models in a recognition select, suggested and listed alike", () => {
+    const stepfun = asrCard("stepfun").asr ?? service();
+    const marked = modelOptions(
+      { ...stepfun, listed: ["stepaudio-2.5-asr-stream", "stepaudio-2-asr"] },
+      [],
+      t,
+      undefined,
+      realtimeModel("stepfun", stepfun.base_url ?? ""),
+    );
+    expect(marked.map((o) => [o.value, o.label])).toEqual([
+      ["stepaudio-2.5-asr", "stepaudio-2.5-asr"],
+      [
+        "stepaudio-2.5-asr-stream",
+        t("engines.field.modelRealtime", { model: "stepaudio-2.5-asr-stream" }),
+      ],
+      ["stepaudio-2-asr", "stepaudio-2-asr"],
+      [
+        "stepaudio-2.5-asr-stream",
+        t("engines.field.modelRealtime", { model: "stepaudio-2.5-asr-stream" }),
+      ],
+    ]);
+    expect(t("engines.field.modelRealtime", { model: "m" })).toBe("m · 边说边识别");
+    // Without the rule (clean-up, the switchers' other services) the labels are the ids.
+    expect(modelOptions(stepfun, [], t).map((o) => o.label)).toEqual([
+      "stepaudio-2.5-asr",
+      "stepaudio-2.5-asr-stream",
+    ]);
+  });
+
+  it("says under the model how it hears a take and where the terms go, for the shell", () => {
+    const desktop = { previews: true, livePreview: true, localPreview: "missing" as const };
+    const phone = { previews: false, livePreview: true, localPreview: "none" as const };
+    const help = (
+      id: (typeof PROVIDER_IDS)[number],
+      model: string,
+      shell: Parameters<typeof asrAbilityHelp>[3],
+    ) => asrAbilityHelp(id, "", model, shell, t);
+    expect(help("tencent", "16k_zh_en", desktop)).toEqual([
+      t("engines.ability.realtimeHelp"),
+      t("engines.ability.hotwordsHelp"),
+    ]);
+    // A realtime model recognises the whole recording while 实时预览 is off.
+    expect(help("tencent", "16k_zh_en", { ...desktop, livePreview: false })[0]).toBe(
+      t("engines.ability.realtimeOffHelp"),
+    );
+    expect(help("mimo", "mimo-v2.5-asr", desktop)).toEqual([
+      t("engines.ability.wholePreviewHelp"),
+      t("engines.ability.noGlossaryHelp"),
+    ]);
+    expect(help("mimo", "mimo-v2.5-asr", { ...desktop, localPreview: "installed" })[0]).toBe(
+      t("engines.ability.wholeLocalHelp"),
+    );
+    // The phone keeps no models and shows no preview.
+    expect(help("mimo", "mimo-v2.5-asr", phone)[0]).toBe(t("engines.ability.wholeHelp"));
+    expect(help("builtin", "Qwen/Qwen3-ASR-1.7B", desktop)).toEqual([
+      t("engines.ability.previewHelp"),
+      t("engines.ability.promptHelp"),
+    ]);
+    expect(help("builtin", "Qwen/Qwen3-ASR-1.7B", { ...desktop, livePreview: false })[0]).toBe(
+      t("engines.ability.wholeHelp"),
+    );
+    expect(help("builtin", "Qwen/Qwen3-ASR-1.7B", phone)[0]).toBe(t("engines.ability.wholeHelp"));
+    expect(help("stepfun", "stepaudio-2.5-asr-stream", phone)).toEqual([
+      t("engines.ability.realtimeHelp"),
+      t("engines.ability.promptHelp"),
+    ]);
   });
 });

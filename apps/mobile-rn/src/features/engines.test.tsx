@@ -269,6 +269,41 @@ describe("a provider's sheet", () => {
     expect(invoke).not.toHaveBeenCalledWith("provider_probe", expect.anything());
   });
 
+  it("names on each recognition card whether it recognises while you speak and takes hot words", async () => {
+    // docs/dictation.md §3.15. The phone shows no live preview, so the built-in service has none.
+    await renderApp();
+    await openTab("settings");
+    await fireEvent.press(await screen.findByTestId("settings-speech"));
+    const abilities = async (id: string) =>
+      within(await screen.findByTestId(`provider-asr-${id}`)).queryByTestId(
+        `provider-asr-${id}-abilities`,
+      );
+    expect(await abilities("volcengine_speech")).toHaveTextContent("边说边识别热词");
+    expect(await abilities("iflytek")).toHaveTextContent("边说边识别");
+    expect(await abilities("glm")).toHaveTextContent("热词");
+    expect(await abilities("builtin")).toHaveTextContent("热词");
+    expect(await abilities("mimo")).toBeNull();
+  });
+
+  it("marks the realtime models and says under the model how it hears a take, as the model changes", async () => {
+    await renderApp();
+    const sheet = await openSheet("settings-speech", "asr", "stepfun", "阶跃星辰");
+    // The two lines: how the model hears a take, then where the dictionary's terms go.
+    expect(sheet.getByTestId("provider-abilities-help")).toHaveTextContent(
+      "松开后识别整段录音。词典的词条作为热词发给识别服务。",
+    );
+    await fireEvent.press(sheet.getByTestId("provider-model"));
+    const list = await screen.findByTestId("provider-model-sheet");
+    const stream = within(list).getByTestId("provider-model-option-stepaudio-2.5-asr-stream");
+    expect(stream).toHaveTextContent("stepaudio-2.5-asr-stream · 边说边识别", { exact: false });
+    await fireEvent.press(stream);
+    await waitFor(() => {
+      expect(sheet.getByTestId("provider-abilities-help")).toHaveTextContent(
+        "边说边识别：说话时就开始识别，松开后只等最后一句。词典的词条作为提示词发给识别服务。",
+      );
+    });
+  });
+
   it("says when the core refuses to test a connection", async () => {
     const { backend } = await renderApp();
     const sheet = await openSheet("settings-speech", "asr", "groq", "Groq");

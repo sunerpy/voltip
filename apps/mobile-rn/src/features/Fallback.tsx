@@ -19,6 +19,7 @@ import {
   modelOptions,
   moveFallback,
   providersFor,
+  realtimeModel,
   withFallback,
 } from "@voltip/shared";
 import { useEffect, useState } from "react";
@@ -135,7 +136,16 @@ function AddFallback({
   const options =
     service === undefined
       ? []
-      : modelOptions(service, [], t, { value: OTHER_MODEL, label: t("engines.field.modelOther") });
+      : modelOptions(
+          service,
+          [],
+          t,
+          { value: OTHER_MODEL, label: t("engines.field.modelOther") },
+          // docs/dictation.md §3.15: the realtime models, at the endpoint the card saved.
+          kind === "asr" && provider !== undefined
+            ? realtimeModel(provider.id, service.base_url ?? "")
+            : undefined,
+        );
   const choices = options.filter((o) => o.value !== OTHER_MODEL).map((o) => o.value);
   const [picked, setPicked] = useState<string | undefined>(undefined);
   const [typed, setTyped] = useState("");

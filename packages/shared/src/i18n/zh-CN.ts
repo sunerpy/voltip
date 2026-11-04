@@ -1689,6 +1689,24 @@ export const zhCN = {
       model_not_installed: "模型未下载",
       no_provider: "未选择服务商",
     },
+    /** docs/dictation.md §3.15: what a recognition model does with a take and with the dictionary,
+     *  on the provider cards and under the model in their drawers. */
+    ability: {
+      realtime: "边说边识别",
+      preview: "实时预览",
+      hotwords: "热词",
+      realtimeHelp: "边说边识别：说话时就开始识别，松开后只等最后一句。",
+      realtimeOffHelp: "这个模型能边说边识别；「实时预览」已关闭，现在松开后识别整段录音。",
+      previewHelp: "说话时由内置服务显示预览，约每 2 秒更新一次；松开后识别整段录音。",
+      wholeHelp: "松开后识别整段录音。",
+      wholePreviewHelp:
+        "松开后识别整段录音；想在说话时看到文字，可在「识别设置」使用「实时预览」。",
+      wholeLocalHelp: "松开后识别整段录音；说话时由本机的「实时预览」模型显示预览。",
+      hotwordsHelp: "词典的词条作为热词发给识别服务。",
+      promptHelp: "词典的词条作为提示词发给识别服务。",
+      noGlossaryHelp:
+        "这个服务不接收词典的词条：词典在识别之后纠正文字，开启 AI 润色时也交给润色。",
+    },
     field: {
       model: "模型",
       modelOther: "其他模型…",
@@ -1700,6 +1718,8 @@ export const zhCN = {
         "这个服务商不提供模型清单，列表里是建议的模型；也可以选「其他模型…」填写模型 ID。",
       /** docs/dictation.md §3.3: the model select's groups; the count is 测试连接's. */
       modelOffered: "服务商提供（{n}）",
+      /** docs/dictation.md §3.15: a recognition model that recognises while the take is spoken. */
+      modelRealtime: "{model} · 边说边识别",
       modelListed: {
         one: "列表包含服务商提供的 {n} 个可用模型，每次打开列表时更新。",
         other: "列表包含服务商提供的 {n} 个可用模型，每次打开列表时更新。",

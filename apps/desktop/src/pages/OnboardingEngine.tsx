@@ -8,6 +8,7 @@ import {
   credentialDraft,
   modelOptions,
   providerStatus,
+  realtimeModel,
 } from "@voltip/shared";
 import {
   Badge,
@@ -268,7 +269,18 @@ export function OnboardingEngineStep({
                   onDraft({ ...draft, model });
                 }}
                 onOpen={refreshModels}
-                options={modelOptions(vendorAsr, [], t)}
+                options={modelOptions(
+                  vendorAsr,
+                  [],
+                  t,
+                  undefined,
+                  realtimeModel(
+                    draft.provider,
+                    draft.baseUrl.trim().length > 0
+                      ? draft.baseUrl.trim()
+                      : (vendorAsr.default_base_url ?? ""),
+                  ),
+                )}
               />
             ) : (
               <Input

@@ -64,14 +64,14 @@ Other providers and on-device models are not limited by it. Each device has a de
 | Ollama, on this computer | — | Yes | Not needed |
 | Custom, any OpenAI-compatible endpoint | Yes | Yes | Optional; the endpoint address is required |
 
-A provider that offers both services uses one key for both. The provider cards show each provider's logo.
+A provider that offers both services uses one key for both. The provider cards show each provider's logo. On the Speech models page a card also names what the provider can do: **Realtime** means it has a model that recognises while you speak, and **Hot words** means the terms of your [dictionary](/recognition/dictionary) go with its requests; on the computer the built-in service also shows **Live preview**.
 
 Recognition can also run on a GPU server of your own, used as the custom endpoint; see [Self-hosted recognition](/recognition/self-host).
 
 ## Setting up a provider
 
 1. On the Speech models or AI models page, select the provider's card. Its settings open in a panel on the right, or from the bottom on the phone.
-2. Choose a model, and for a custom endpoint enter its address. Each provider suggests up to three models, the first being the default, so a provider works as soon as its key is entered. Once a key is saved, the model list shows every model the provider offers after **Other model…** (the **From the provider** group, with their number), updated each time the list opens, so there is no need to type a model ID.
+2. Choose a model, and for a custom endpoint enter its address. Each provider suggests up to three models, the first being the default, so a provider works as soon as its key is entered. Once a key is saved, the model list shows every model the provider offers after **Other model…** (the **From the provider** group, with their number), updated each time the list opens, so there is no need to type a model ID. A speech recognition model that recognises while you speak is marked **realtime** in the list. Under the model, the panel says how the selected model recognises, while you speak or the whole recording after you let go, and whether the dictionary's terms go to it as hot words, as a prompt, or not at all.
 3. Enter your key. A provider whose credential has several parts (Tencent Cloud's AppId, SecretId and SecretKey, for example) takes them one field each; a saved field left blank stays as it is. **Test connection** checks the address and the key and shows how many models the provider offers, the same number as in the model list. For a provider that publishes no model list (see [Speech recognition providers in China](#speech-recognition-providers-in-china)), **Test connection** checks the credential only and says **Credentials accepted**. When it fails, the result ends with what the service answered, for example **The key was refused: Incorrect API key provided**. The Speech models page lists speech recognition models only, and the AI models page leaves out speech, image and embedding models.
 4. Choose **Set as current** to save what you entered and switch to the provider. **Set as current** on a card switches to the provider without opening its settings.
 

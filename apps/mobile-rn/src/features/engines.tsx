@@ -17,6 +17,8 @@ import {
   type ServiceKind,
   type ServiceStatus,
   applyProviderDraft,
+  asrAbilityHelp,
+  asrCardAbilities,
   checkProbeDraft,
   checkProviderDraft,
   choosesInterface,
@@ -33,6 +35,7 @@ import {
   probeText,
   providerBadges,
   providerDraft,
+  realtimeModel,
   secretStateLabel,
   serviceTarget,
   shortModel,
@@ -212,13 +215,15 @@ function ProbePanel({
   );
 }
 
-/** A small status label in a soft shade (使用中, 就绪, a provider's problem). */
-function Tag({ tone, children }: { tone: ProviderBadgeTone; children: string }) {
+/** A small status label in a soft shade (使用中, 就绪, a provider's problem), or a neutral one for
+ *  what its recognition models can do (边说边识别, 热词; docs/dictation.md §3.15). */
+function Tag({ tone, children }: { tone: ProviderBadgeTone | "neutral"; children: string }) {
   const theme = useAppTheme();
-  const shades: Record<ProviderBadgeTone, readonly [string, string]> = {
+  const shades: Record<ProviderBadgeTone | "neutral", readonly [string, string]> = {
     accent: [theme.colors.primaryContainer, theme.colors.onPrimaryContainer],
     ok: [theme.voltip.okSoft, theme.voltip.okText],
     warn: [theme.voltip.warningSoft, theme.colors.onSurface],
+    neutral: [theme.colors.surfaceVariant, theme.colors.onSurfaceVariant],
   };
   const [bg, fg] = shades[tone];
   return (
@@ -373,6 +378,9 @@ function ProviderTile({
   const lamp: Tone = tone === "warn" ? "warning" : tone;
   const ink = { accent: theme.colors.primary, ok: theme.voltip.okText, warn: theme.voltip.warning };
   const status = badges.map((b) => b.text).join(" · ");
+  // docs/dictation.md §3.15: what its recognition models can do, before the card is opened. The
+  // phone shows no live preview.
+  const abilities = kind === "asr" ? asrCardAbilities(provider, false, t) : [];
   return (
     <View
       testID={`provider-${kind}-${provider.id}`}
@@ -415,11 +423,51 @@ function ProviderTile({
               {status}
             </Text>
           </View>
+          {abilities.length > 0 && (
+            <View
+              style={{ flexDirection: "row", flexWrap: "wrap", gap: 4 }}
+              testID={`provider-${kind}-${provider.id}-abilities`}>
+              {abilities.map((a) => (
+                <Tag key={a} tone="neutral">
+                  {a}
+                </Tag>
+              ))}
+            </View>
+          )}
           <Mono numberOfLines={2} testID={`provider-${kind}-${provider.id}-model`}>
             {service.model.length > 0 ? service.model : "—"}
           </Mono>
         </View>
       </TouchableRipple>
+    </View>
+  );
+}
+
+/** Under a recognition model (docs/dictation.md §3.15): how `model` hears a take and where the
+ *  dictionary's terms go. The phone shows no live preview and keeps no models. */
+function AbilityHints({
+  provider,
+  url,
+  model,
+}: {
+  provider: ProviderId;
+  url: string;
+  model: string;
+}) {
+  const { t } = useI18n();
+  const state = useUiState();
+  const lines = asrAbilityHelp(
+    provider,
+    url,
+    model,
+    { previews: false, livePreview: state.settings.engines.live_preview, localPreview: "none" },
+    t,
+  );
+  return (
+    <View style={{ gap: 2 }} testID="provider-abilities-help">
+      {lines.map((line) => (
+        <Hint key={line}>{line}</Hint>
+      ))}
     </View>
   );
 }
@@ -527,6 +575,7 @@ function BuiltinBody({
       ) : (
         <Mono>{t("engines.model", { model: service.model })}</Mono>
       )}
+      {kind === "asr" && <AbilityHints provider={provider.id} url="" model={service.model} />}
       <ProbePanel
         probe={probe}
         onRun={() => {
@@ -576,10 +625,16 @@ function ProviderForm({
   const [probeIssue, setProbeIssue] = useState<string | undefined>(undefined);
   const probe = useProviderProbe(provider.id, kind);
   const probed = probe.report?.result === "ok" ? (probe.report.models ?? []) : [];
-  const options = modelOptions(service, probed, t, {
-    value: OTHER_MODEL,
-    label: t("engines.field.modelOther"),
-  });
+  // The address the form's requests would go to: what it holds, else the official one.
+  const url =
+    draft.baseUrl.trim().length > 0 ? draft.baseUrl.trim() : (service.default_base_url ?? "");
+  const options = modelOptions(
+    service,
+    probed,
+    t,
+    { value: OTHER_MODEL, label: t("engines.field.modelOther") },
+    kind === "asr" ? realtimeModel(provider.id, url) : undefined,
+  );
   const choices = options.filter((o) => o.value !== OTHER_MODEL).map((o) => o.value);
   const effectiveModel = draft.model.length > 0 ? draft.model : service.model;
   const [typing, setTyping] = useState(() => choices.length === 0);
@@ -687,6 +742,7 @@ function ProviderForm({
           />
         )}
         <Hint testID="provider-model-help">{modelListHelp(provider, service, t)}</Hint>
+        {kind === "asr" && <AbilityHints provider={provider.id} url={url} model={effectiveModel} />}
       </View>
       {choosesInterface(provider.id, kind) && (
         // docs/dictation.md §3.7: the custom clean-up's interface, and the Responses effort.
