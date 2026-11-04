@@ -172,7 +172,7 @@ Kimi（`api.moonshot.cn` / `api.moonshot.ai`）和智谱 GLM（智谱开放平�
 
 ### 3.3 测试连接与模型列表（2026-10-12）
 
-**测试连接**：`provider_probe { provider, kind, base_url?, key?, model? }` 请求 `GET {base}/models`（不提供模型列表的服务商另行检查凭据，§3.15），结果以 `provider_probe` 事件返回模型列表或失败原因（`ProbeFailure`，不含主机名，内置服务的地址也不会借错误信息泄露）。列表按服务筛选（见下），内置服务只计本构建提供的模型。`provider_console_open { provider, page?, site? }` 在浏览器里打开该服务商的密钥页（`page` 省略或为 `key`；有两个站点的服务商打开 `site` 的，§3.2）或额度页（`quota`，目前只有阿里云百炼，§3.5）；外壳只打开目录里的地址（`ProviderId::console_page`），界面只给出服务商、页面和站点。
+**测试连接**：`provider_probe { provider, kind, base_url?, key?, model? }` 请求 `GET {base}/models`（不提供模型列表的服务商另行检查凭据，§3.15），结果以 `provider_probe` 事件返回模型列表或失败原因（`ProbeFailure`，不含主机名，内置服务的地址也不会借错误信息泄露）。列表按服务筛选（见下），内置服务只计本构建提供的模型。`provider_console_open { provider, page?, site? }` 在浏览器里打开该服务商的密钥页（`page` 省略或为 `key`；有两个站点的服务商打开 `site` 的，§3.2）、额度页（`quota`，目前只有阿里云百炼，§3.5）或开通服务、创建应用等的页面（`setup`，§3.16）；外壳只打开目录里的地址（`ProviderId::console_page`），界面只给出服务商、页面和站点。
 
 **模型列表**（2026-10-12 用户反馈：模型下拉框只有内置的几个预设，测试连接却显示很多模型；保存密钥后，每次打开模型列表都应带出服务商最新的模型，不必手填模型 ID）：
 
@@ -481,6 +481,24 @@ Kimi（`api.moonshot.cn` / `api.moonshot.ai`）和智谱 GLM（智谱开放平�
 **未在真实账户上验证**：本机没有这些厂商的账号。各协议按官方文档实现（2026-11-04 取得），用本机模拟的服务端测试：握手头与签名对照文档的示例，首帧参数、分帧、部分与最终结果、结束、错误、取消关闭连接。由用户用本地构建验证。
 
 **测试**：`voltip-core` 的 `the_provider_picks_a_vendor_protocol_whatever_the_address`、`each_vendor_takes_the_glossary_its_way`、`credential_sets_are_well_formed`、`credentials_merge_field_by_field_and_switch_sets_whole`，`tests/credentials.rs`；`voltip-asr` 各客户端的模拟服务端测试（`stepfun`、`zhipu`、`mimo`、`dashscope` 的上下文，以及火山、腾讯、讯飞、百度）与 `split`、`realtime`、`vendor`、`credentials`；`voltip-cloud` 的 `vendor` 与 `every_vendor_model_takes_the_glossary_and_streams_as_the_catalogue_says`；前端 `engine-drafts.test.ts`（多字段凭据的同一组用例）、`ProviderCard.test.tsx`、`Onboarding.test.tsx`（首次、已存、写入失败）、手机 RN 的 `engines.test.tsx`。
+
+### 3.16 配置方法与直达链接（2026-11-05）
+
+用户要求（2026-11-05）：「每个服务商都要附上配置方式和链接」，App 内卡片的抽屉详情也要有简洁版的配置说明和链接，用户可以直达链接进行配置。
+
+**抽屉**：服务商的设置（电脑的抽屉、Tauri 手机版共用的组件、手机 RN 版的底部面板）在模型与「连接」之间有一组「配置方法」：2–4 条步骤（`engines.setup.steps.<provider>`，中英文条数相同），说明在服务商那里要开通什么、凭据在哪里、填到哪里；下面是链接按钮：
+
+- 开通服务、创建应用、充值或下载程序的页面（`ConsolePage::Setup`，目录的 `setup_url`，状态里的 `ProviderStatus.setup`）：只在取密钥之外还有一步时才有，按钮写明这一步（`engines.setup.page.<provider>`，例如「开通服务」「创建应用」「下载 Ollama」）。
+- 「获取密钥」：原来在密钥状态那一行，移到这里，仍打开所选站点的密钥页面（§3.2）。
+- 「完整说明」：用户指南「服务商设置」页（`docs/site/recognition/providers.md`）上这个服务商的一节，按界面语言（`guide_open { page: "providers", locale, provider }`，`GuidePage::url_for`）。每一节的标题带同一个自定义锚点，中英文相同，是服务商的 wire name 把 `_` 换成 `-`（`provider_anchor`，例如 `#volcengine-speech`）。
+
+内置服务和本机不显示这一组：前者不需要设置，后者的模型卡片各自说明。和密钥页、额度页一样，webview 只给出服务商、页面和站点，shell 打开目录里的地址（§3.2、§3.5）。
+
+**链接的来源**：各服务商的开通页、密钥页和文档地址取自厂商的官方文档（2026-11-05 核对，只访问厂商的官方域名）；需要登录的控制台页面以官方文档中给出的链接为准。
+
+**文档**：用户指南新增「服务商设置」页，每个服务商一节：要开通什么、凭据在哪里（直达链接）、填写到哪里、推荐的模型和注意事项、官方文档。「云端服务」页原来各服务商专属的小节（Google AI Studio、国内服务商与 OpenRouter、阿里云百炼、国内语音识别服务商）并入这一页，「云端服务」页的服务商表格链接到各节。网站的侧栏在 sunerpy/firlab 的 `voltip/src/.vitepress/config/{en,zh}.ts`，合并后需要在那里加上这一页。
+
+**测试**：`voltip-core` 的 `setup_pages_are_catalogue_addresses`、`project_links_are_pages_of_the_repository`（服务商一节的地址）；`packages/shared` 的 `setup-guide.test.ts`（除内置服务和本机外，每个服务商两种语言都有步骤、有开通页的有按钮文字，「服务商设置」页两种语言都有它的锚点）；`ProviderCard.test.tsx` 与手机 RN 的 `engines.test.tsx`（步骤、三个按钮打开的页面）；手机 RN shell 的 `pages_open_from_urls_the_shell_builds`。
 
 ## 4. 历史记录（`voltip_core::history`）
 

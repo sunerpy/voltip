@@ -193,16 +193,18 @@ export interface Backend {
   /** The result card's 打开历史 (`open_history`, §28): the main window comes up on the history page. */
   openHistory(): Promise<void>;
   /** Open the vendor's API-key page (`site`'s, for a vendor with several, docs/dictation.md
-   *  §3.2), or with `page: "quota"` its page of free quota and usage, in the browser
-   *  (`provider_console_open`); the shell only opens catalogue URLs, so the webview names the
-   *  provider, the page and the site, never a URL. */
+   *  §3.2), with `page: "quota"` its page of free quota and usage, or with `page: "setup"` the page
+   *  where its service is activated (§3.16), in the browser (`provider_console_open`); the shell
+   *  only opens catalogue URLs, so the webview names the provider, the page and the site, never a
+   *  URL. */
   providerConsoleOpen(provider: ProviderId, page?: ConsolePage, site?: SiteId): Promise<void>;
   /** Open a project page in the browser (`project_link_open`): the repository or its new-issue
    *  page; the shell builds the URL from its own repository. */
   projectLinkOpen(link: ProjectLink): Promise<void>;
-  /** Open a page of the user guide in the browser (`guide_open`), in `locale`'s language; the
-   *  shell builds the URL. */
-  guideOpen(page: GuidePage, locale: string): Promise<void>;
+  /** Open a page of the user guide in the browser (`guide_open`), in `locale`'s language, at
+   *  `provider`'s section of the providers page (docs/dictation.md §3.16); the shell builds the
+   *  URL. */
+  guideOpen(page: GuidePage, locale: string, provider?: ProviderId): Promise<void>;
   /** `model_folder_open` (docs/dictation.md §10): the model's directory in the file manager,
    *  created when missing. */
   modelFolderOpen(id: string): Promise<void>;

@@ -734,6 +734,7 @@
         "key": "required",
         "on_device": false,
         "console": true,
+        "setup": true,
         "asr": {
           "model": "gpt-transcribe",
           "presets": ["gpt-transcribe", "gpt-4o-mini-transcribe", "whisper-1"],
@@ -811,6 +812,7 @@
         "key": "required",
         "on_device": false,
         "console": true,
+        "setup": true,
         "asr": {
           "model": "FunAudioLLM/SenseVoiceSmall",
           "presets": ["FunAudioLLM/SenseVoiceSmall", "TeleAI/TeleSpeechASR"],
@@ -842,6 +844,7 @@
         "on_device": false,
         "console": true,
         "quota": true,
+        "setup": true,
         "asr": {
           "model": "qwen-audio-3.1-asr-flash-streaming",
           "presets": [
@@ -904,6 +907,7 @@
         "lists_models": false,
         "on_device": false,
         "console": true,
+        "setup": true,
         "asr": {
           "model": "volc.seedasr.sauc.duration",
           "presets": [
@@ -949,6 +953,7 @@
         "lists_models": false,
         "on_device": false,
         "console": true,
+        "setup": true,
         "asr": {
           "model": "16k_zh_en",
           "presets": ["16k_zh_en", "Hy-ASR-3.0-preview", "16k_zh"],
@@ -990,6 +995,7 @@
         "lists_models": false,
         "on_device": false,
         "console": true,
+        "setup": true,
         "asr": {
           "model": "iat",
           "presets": ["iat"],
@@ -1026,6 +1032,7 @@
         "lists_models": false,
         "on_device": false,
         "console": true,
+        "setup": true,
         "asr": {
           "model": "rtasr",
           "presets": ["rtasr"],
@@ -1108,6 +1115,7 @@
         "key": "required",
         "on_device": false,
         "console": true,
+        "setup": true,
         "llm": {
           "model": "deepseek-flash",
           "presets": ["deepseek-flash", "deepseek-v4-pro"],
@@ -1204,6 +1212,7 @@
         "key": "required",
         "on_device": false,
         "console": true,
+        "setup": true,
         "llm": {
           "model": "doubao-seed-2-1-lite-260915",
           "presets": [
@@ -1226,6 +1235,7 @@
         "key": "required",
         "on_device": false,
         "console": true,
+        "setup": true,
         "llm": {
           "model": "hy3",
           "presets": ["hy3", "hy4-preview"],
@@ -1244,6 +1254,7 @@
         "key": "required",
         "on_device": false,
         "console": true,
+        "setup": true,
         "asr": {
           "model": "mimo-v2.5-asr",
           "presets": ["mimo-v2.5-asr"],
@@ -1274,6 +1285,7 @@
         "key": "required",
         "on_device": false,
         "console": true,
+        "setup": true,
         "llm": {
           "model": "google/gemini-3.5-flash-lite",
           "presets": [
@@ -1296,6 +1308,7 @@
         "key": "none",
         "on_device": true,
         "console": false,
+        "setup": true,
         "llm": {
           "model": "",
           "presets": [],

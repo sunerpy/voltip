@@ -1201,12 +1201,14 @@ export class MockBackend implements Backend {
   readonly consoleSites: (SiteId | undefined)[] = [];
   /** Every `providerConsoleOpen` of a quota page, in order (tests). */
   readonly quotaPagesOpened: ProviderId[] = [];
+  /** Every `providerConsoleOpen` of a setup page, in order (tests). */
+  readonly setupPagesOpened: ProviderId[] = [];
   /** How many `provider_models_refresh` requests left (tests). */
   modelRefreshes = 0;
   /** `project_link_open` calls, for tests. */
   readonly linksOpened: ProjectLink[] = [];
-  /** `guide_open` calls (page and language), for tests. */
-  readonly guidesOpened: { page: GuidePage; locale: string }[] = [];
+  /** `guide_open` calls (page, language and the provider whose section), for tests. */
+  readonly guidesOpened: { page: GuidePage; locale: string; provider?: ProviderId }[] = [];
   /** `model_folder_open` calls (model ids), for tests. */
   readonly modelFoldersOpened: string[] = [];
   /** What the phone's `update_install` opened: `store` for the listing, else the release's version. */
@@ -4323,6 +4325,11 @@ export class MockBackend implements Backend {
       this.quotaPagesOpened.push(provider);
       return Promise.resolve();
     }
+    if (page === "setup") {
+      if (spec.setup !== true) return Promise.reject(new Error(`${provider}: no setup page`));
+      this.setupPagesOpened.push(provider);
+      return Promise.resolve();
+    }
     if (!spec.console) return Promise.reject(new Error(`${provider}: no key page`));
     this.consolesOpened.push(provider);
     this.consoleSites.push(site);
@@ -4334,8 +4341,8 @@ export class MockBackend implements Backend {
     return Promise.resolve();
   }
 
-  guideOpen(page: GuidePage, locale: string): Promise<void> {
-    this.guidesOpened.push({ page, locale });
+  guideOpen(page: GuidePage, locale: string, provider?: ProviderId): Promise<void> {
+    this.guidesOpened.push(provider === undefined ? { page, locale } : { page, locale, provider });
     return Promise.resolve();
   }
 

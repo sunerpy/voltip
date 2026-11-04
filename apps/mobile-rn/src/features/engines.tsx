@@ -16,6 +16,7 @@ import {
   REASONING_EFFORTS,
   type ServiceKind,
   type ServiceStatus,
+  type SiteId,
   applyProviderDraft,
   asrAbilityHelp,
   asrCardAbilities,
@@ -38,6 +39,8 @@ import {
   realtimeModel,
   secretStateLabel,
   serviceTarget,
+  setupPageLabel,
+  setupSteps,
   shortModel,
   siteOf,
   siteUrl,
@@ -52,7 +55,16 @@ import { useBackend, useUiState } from "../backend/BackendProvider";
 import { useI18n } from "../backend/i18n";
 import { useShell } from "../shell";
 import { Button } from "../ui/Button";
-import { CARD_RADIUS, Hint, Lamp, Mono, StateLine, type Tone, useAppTheme } from "../ui/kit";
+import {
+  CARD_RADIUS,
+  Hint,
+  Lamp,
+  Mono,
+  SectionTitle,
+  StateLine,
+  type Tone,
+  useAppTheme,
+} from "../ui/kit";
 import { SelectField } from "../ui/Select";
 import { BottomSheet, sheetColor } from "../ui/Sheet";
 import { mix } from "../ui/statTile";
@@ -472,6 +484,53 @@ function AbilityHints({
   );
 }
 
+/** 配置方法 (docs/dictation.md §3.16): what to do at the vendor before the form works, with its
+ *  pages, as on the desktop; the shell opens the catalogue's addresses. */
+function SetupGuide({ provider, site }: { provider: ProviderStatus; site: SiteId | undefined }) {
+  const { backend } = useBackend();
+  const { t, locale, messages } = useI18n();
+  const steps = setupSteps(provider.id, messages);
+  return (
+    <View style={{ gap: 4 }} testID="provider-setup-guide">
+      <SectionTitle style={{ paddingHorizontal: 4 }}>{t("engines.setup.title")}</SectionTitle>
+      <View style={{ gap: 2 }} testID="provider-setup-steps">
+        {steps.map((step, index) => (
+          <Hint key={step}>{`${index + 1}. ${step}`}</Hint>
+        ))}
+      </View>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        {provider.setup === true && (
+          <Button
+            compact
+            icon="open-in-new"
+            testID="provider-setup"
+            onPress={() => void backend.providerConsoleOpen(provider.id, "setup")}>
+            {setupPageLabel(provider.id, messages)}
+          </Button>
+        )}
+        {provider.console && (
+          <Button
+            compact
+            icon="open-in-new"
+            testID="provider-console"
+            onPress={() => void backend.providerConsoleOpen(provider.id, undefined, site)}>
+            {t("engines.getKey")}
+          </Button>
+        )}
+        <Button
+          compact
+          icon="open-in-new"
+          testID="provider-guide"
+          onPress={() => {
+            backend.guideOpen("providers", locale, provider.id).catch(() => undefined);
+          }}>
+          {t("engines.setup.guide")}
+        </Button>
+      </View>
+    </View>
+  );
+}
+
 /** One provider's settings for one service, in the sheet a card opens. */
 function ProviderSheet({
   provider,
@@ -781,6 +840,7 @@ function ProviderForm({
           </Hint>
         </View>
       )}
+      <SetupGuide provider={provider} site={site} />
       {sites.length > 1 && (
         <View style={{ gap: 4 }} testID="provider-site">
           <Text variant="bodySmall" style={{ color: theme.voltip.subtle }}>
@@ -888,14 +948,6 @@ function ProviderForm({
                 {secret.text}
               </StateLine>
             </View>
-            {provider.console && (
-              <Button
-                compact
-                icon="open-in-new"
-                onPress={() => void backend.providerConsoleOpen(provider.id, undefined, site)}>
-                {t("engines.getKey")}
-              </Button>
-            )}
             {provider.quota === true && (
               <Button
                 compact

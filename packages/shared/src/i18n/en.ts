@@ -1754,6 +1754,119 @@ export const en: Messages = {
     viewQuota: "View quota",
     quotaHelp:
       "Model Studio has no API for the quota left: check the quota and the usage in its console. With Free Quota Only turned on for a model, the service refuses requests instead of charging once the free quota is used up, and Voltip moves on to the next model under “When a model's quota runs out”.",
+    setup: {
+      title: "How to set up",
+      console: "Open the console",
+      guide: "Full guide",
+      page: {
+        openai: "Add credit",
+        siliconflow: "Verify your identity",
+        aliyun: "Activate Model Studio",
+        volcengine_speech: "Activate the service",
+        tencent: "Activate speech recognition",
+        iflytek: "Create an app",
+        iflytek_rtasr: "Claim the free package",
+        deepseek: "Top up",
+        volcengine: "Activate models",
+        hunyuan: "Enable models",
+        mimo: "Top up",
+        openrouter: "Buy credits",
+        ollama: "Download Ollama",
+      },
+      steps: {
+        openai: {
+          s1: "Sign in to the OpenAI Platform and add credit under Billing: the API is billed by use.",
+          s2: "Create a key on the API keys page and enter it below.",
+        },
+        groq: {
+          s1: "Sign in to the GroqCloud console; the free plan is enough to start.",
+          s2: "Create a key on the API Keys page and enter it below.",
+        },
+        google: {
+          s1: "Sign in to Google AI Studio with a Google account and accept the terms of service.",
+          s2: "Copy or create a key on the API Keys page and enter it below.",
+        },
+        siliconflow: {
+          s1: "Sign in to SiliconFlow and verify your identity: all the free models and top-ups need it.",
+          s2: "Choose New API key on the API keys page and enter the key below.",
+        },
+        aliyun: {
+          s1: "With a verified Alibaba Cloud account, open the Model Studio console in the Beijing region and accept the service agreement: Model Studio is activated with a free quota.",
+          s2: "Speech recognition models also need access enabled in the Model Studio workspace before they answer.",
+          s3: "Create an API key on the API Key page and enter it below; a key works in its own region only.",
+        },
+        volcengine_speech: {
+          s1: "With a verified Volcengine account, activate the streaming speech recognition model under Activation management in the Doubao Speech console.",
+          s2: "Create an API key under API Key management and enter it below; for the old console, choose App ID and Access Token under Credential type.",
+          s3: "Choose the resource ID of the service you activated as the model.",
+        },
+        tencent: {
+          s1: "In the speech recognition console, verify your identity, accept the user agreement and choose Activate; the service then has a monthly free quota.",
+          s2: "Create a key under API key management and copy its SecretId and SecretKey.",
+          s3: "Copy the APPID from Account center and enter all three below.",
+        },
+        iflytek: {
+          s1: "Sign in to the iFlytek Open Platform and create an app under My apps.",
+          s2: "Copy the APPID, APIKey and APISecret from the dictation service page and enter them below.",
+        },
+        iflytek_rtasr: {
+          s1: "On the realtime transcription product page, claim the free package of the standard edition; packages of the large-model edition do not work here.",
+          s2: "Open your app under My apps and go to its realtime transcription service page.",
+          s3: "Copy the APPID and this service's APIKey, which differs from dictation's, and enter them below.",
+        },
+        baidu: {
+          s1: "With a verified Baidu AI Cloud account, open the speech console; the free test resources then arrive by themselves.",
+          s2: "Choose Create app under App list on the left.",
+          s3: "Copy the app's AppID and API Key and enter them below.",
+        },
+        stepfun: {
+          s1: "Sign up on the StepFun platform; the China and international sites keep separate accounts, and the China site needs identity verification first.",
+          s2: "Create an API key on the Interface Keys page, enter it below and choose your site under Site.",
+        },
+        deepseek: {
+          s1: "Sign in to the DeepSeek platform and top up on the Top up page: requests are refused when the balance runs out.",
+          s2: "Create an API key on the API keys page and enter it below.",
+        },
+        kimi: {
+          s1: "Sign up on the Kimi API platform; the China and international sites keep separate accounts and balances.",
+          s2: "The suggested K3.1 Pro models need a top-up first: at least ¥10 on the China site, $1 on the international site.",
+          s3: "Create an API key on the API Keys page, enter it below and choose your site under Site.",
+        },
+        glm: {
+          s1: "Sign up on the Zhipu open platform (China site) or Z.ai (international site); the two keep separate accounts and keys.",
+          s2: "Create a standard API key under API Keys; Coding Plan keys are separate from it.",
+          s3: "Enter the key below and choose your site under Site.",
+        },
+        volcengine: {
+          s1: "Activate the models you want under Activation management in the Volcengine Ark console.",
+          s2: "Create an API key under API Key management and enter it below; Doubao Speech credentials do not work here.",
+        },
+        hunyuan: {
+          s1: "With a verified Tencent Cloud account, sign in to the TokenHub console and activate the service as prompted.",
+          s2: "Enable the models you want under Enable management, where free resources can be claimed; turn on pay-as-you-go once the free quota runs out.",
+          s3: "Choose the Guangzhou region under API Key management, create an API key and enter it below.",
+        },
+        mimo: {
+          s1: "Sign in to the Xiaomi MiMo platform with a Xiaomi account; accounts in mainland China need identity verification before a top-up.",
+          s2: "Top up under Account balance: requests are refused when the balance runs out.",
+          s3: "Create an API key under API Keys and enter it below.",
+        },
+        openrouter: {
+          s1: "Create an OpenRouter account and buy credits on the Credits page; free models take 50 requests a day.",
+          s2: "Create a key on the Keys page, with a credit limit if you like, and enter it below.",
+        },
+        ollama: {
+          s1: "Download and install Ollama, and keep it running on this computer.",
+          s2: "In a terminal, run “ollama pull” with a model name to download the model.",
+          s3: "Leave the endpoint empty to use Ollama on this computer, then choose the model below.",
+        },
+        custom: {
+          s1: "Enter the address of an OpenAI-compatible endpoint, such as http://127.0.0.1:8000/v1.",
+          s2: "Enter a key if the endpoint needs one, then enter or choose a model.",
+          s3: "Choose Test connection to check the address and the key.",
+        },
+      },
+    },
     save: "Save",
     saved: "Saved · {provider}",
     savedKey: " · key written to the system keychain",

@@ -377,7 +377,7 @@ export const projectLinkSchema = z.enum(PROJECT_LINKS);
 export type ProjectLink = z.infer<typeof projectLinkSchema>;
 /** Pages of the user guide the shell opens (`voltip_core::ui::GuidePage`), in the language the
  *  webview names. */
-export const GUIDE_PAGES = ["service", "privacy", "mcp", "usage", "bubble"] as const;
+export const GUIDE_PAGES = ["service", "privacy", "mcp", "usage", "bubble", "providers"] as const;
 export const guidePageSchema = z.enum(GUIDE_PAGES);
 export type GuidePage = z.infer<typeof guidePageSchema>;
 
@@ -2334,13 +2334,17 @@ export const providerStatusSchema = z.object({
   /** The shell can open the vendor's page of free quota and usage (`provider_console_open` with
    *  `page: "quota"`, docs/dictation.md §3.5); absent = no such page. */
   quota: z.boolean().optional(),
+  /** The shell can open the vendor's page where the service is activated or the credential's app
+   *  is created (`provider_console_open` with `page: "setup"`, docs/dictation.md §3.16); absent =
+   *  no such page. */
+  setup: z.boolean().optional(),
   asr: serviceStatusSchema.optional(),
   llm: serviceStatusSchema.optional(),
 });
 export type ProviderStatus = z.infer<typeof providerStatusSchema>;
 
 /** Which vendor page `provider_console_open` opens (`voltip_core::ConsolePage`). */
-export type ConsolePage = "key" | "quota";
+export type ConsolePage = "key" | "quota" | "setup";
 
 /** Why a fallback model that could run is left out of the chain (`FallbackSkip`): `not_for_local`
  *  is a service while recognition runs on this device (§3.14), which never uploads for a failure. */
@@ -3668,12 +3672,15 @@ export interface CommandArgs {
   /** List a provider's models with the saved endpoint and key as a model list opens
    *  (docs/dictation.md §3.3); the list arrives in an `engines` event (`ServiceStatus.listed`). */
   provider_models_refresh: { provider: ProviderId; kind: ServiceKind };
-  /** Open the vendor's API-key page (`page` absent or `key`) or its page of free quota and usage
-   *  (`quota`) in the browser (catalogue URLs only). */
+  /** Open the vendor's API-key page (`page` absent or `key`), its page of free quota and usage
+   *  (`quota`) or the page where its service is activated (`setup`) in the browser (catalogue URLs
+   *  only). */
   provider_console_open: { provider: ProviderId; page?: ConsolePage; site?: SiteId };
   /** Open a project page in the browser; the shell builds the URL from its repository. */
   project_link_open: { link: ProjectLink };
-  guide_open: { page: GuidePage; locale: string };
+  /** Open a page of the user guide in `locale`'s language; `provider` names the section of the
+   *  providers page (docs/dictation.md §3.16). */
+  guide_open: { page: GuidePage; locale: string; provider?: ProviderId };
   /** Query (docs/feedback.md): what a report would carry, and whether the build can send one. */
   feedback_diagnostics: { locale: string };
   /** Query: post the 反馈 dialog's report; rejects with a `FeedbackError` wire name. */

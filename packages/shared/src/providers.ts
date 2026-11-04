@@ -44,6 +44,9 @@ export interface ProviderSpec {
   console: boolean;
   /** The shell can open the vendor's page of free quota and usage (Model Studio). */
   quota?: boolean;
+  /** The shell can open the vendor's page where the service is activated or the credential's app
+   *  is created (docs/dictation.md §3.16). */
+  setup?: boolean;
   /** A credential of several fields: its sets, the default first (docs/dictation.md §3.15). */
   credential?: readonly CredentialSet[];
   /** `false`: the vendor lists no models (§3.15). */
@@ -80,6 +83,7 @@ const SPECS: Readonly<Record<ProviderId, Omit<ProviderSpec, "id">>> = {
     key: "required",
     onDevice: false,
     console: true,
+    setup: true,
   },
   groq: {
     asr: {
@@ -115,6 +119,7 @@ const SPECS: Readonly<Record<ProviderId, Omit<ProviderSpec, "id">>> = {
     key: "required",
     onDevice: false,
     console: true,
+    setup: true,
   },
   aliyun: {
     asr: {
@@ -133,6 +138,7 @@ const SPECS: Readonly<Record<ProviderId, Omit<ProviderSpec, "id">>> = {
     onDevice: false,
     console: true,
     quota: true,
+    setup: true,
   },
   volcengine_speech: {
     asr: {
@@ -146,6 +152,7 @@ const SPECS: Readonly<Record<ProviderId, Omit<ProviderSpec, "id">>> = {
     key: "required",
     onDevice: false,
     console: true,
+    setup: true,
     credential: [
       { id: "api_key", fields: [field("api_key", true)] },
       { id: "app_token", fields: [field("app_id", false), field("access_token", true)] },
@@ -160,6 +167,7 @@ const SPECS: Readonly<Record<ProviderId, Omit<ProviderSpec, "id">>> = {
     key: "required",
     onDevice: false,
     console: true,
+    setup: true,
     credential: fields(
       field("app_id", false),
       field("secret_id", false),
@@ -172,6 +180,7 @@ const SPECS: Readonly<Record<ProviderId, Omit<ProviderSpec, "id">>> = {
     key: "required",
     onDevice: false,
     console: true,
+    setup: true,
     credential: fields(field("app_id", false), field("api_key", true), field("api_secret", true)),
     listsModels: false,
   },
@@ -180,6 +189,7 @@ const SPECS: Readonly<Record<ProviderId, Omit<ProviderSpec, "id">>> = {
     key: "required",
     onDevice: false,
     console: true,
+    setup: true,
     credential: fields(field("app_id", false), field("api_key", true)),
     listsModels: false,
   },
@@ -212,6 +222,7 @@ const SPECS: Readonly<Record<ProviderId, Omit<ProviderSpec, "id">>> = {
     key: "required",
     onDevice: false,
     console: true,
+    setup: true,
   },
   kimi: {
     llm: {
@@ -259,12 +270,14 @@ const SPECS: Readonly<Record<ProviderId, Omit<ProviderSpec, "id">>> = {
     key: "required",
     onDevice: false,
     console: true,
+    setup: true,
   },
   hunyuan: {
     llm: { baseUrl: "https://tokenhub.tencentmaas.com/v1", models: ["hy3", "hy4-preview"] },
     key: "required",
     onDevice: false,
     console: true,
+    setup: true,
   },
   mimo: {
     asr: { baseUrl: "https://api.xiaomimimo.com/v1", models: ["mimo-v2.5-asr"] },
@@ -272,6 +285,7 @@ const SPECS: Readonly<Record<ProviderId, Omit<ProviderSpec, "id">>> = {
     key: "required",
     onDevice: false,
     console: true,
+    setup: true,
   },
   openrouter: {
     llm: {
@@ -281,12 +295,14 @@ const SPECS: Readonly<Record<ProviderId, Omit<ProviderSpec, "id">>> = {
     key: "required",
     onDevice: false,
     console: true,
+    setup: true,
   },
   ollama: {
     llm: { baseUrl: "http://127.0.0.1:11434/v1", models: [] },
     key: "none",
     onDevice: true,
     console: false,
+    setup: true,
   },
   custom: {
     asr: NO_PRESET,
@@ -733,6 +749,7 @@ export function resolveEngineStatus(input: EngineResolveInput): EngineStatus {
       on_device: spec.onDevice,
       console: spec.console,
       ...(spec.quota === true ? { quota: true } : {}),
+      ...(spec.setup === true ? { setup: true } : {}),
       ...(asr === undefined ? {} : { asr }),
       ...(llm === undefined ? {} : { llm }),
     });

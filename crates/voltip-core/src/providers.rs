@@ -137,6 +137,7 @@ impl ProviderId {
         self.spec().console(page, site).ok_or_else(|| match page {
             ConsolePage::Key => format!("{}: no key page", self.as_str()),
             ConsolePage::Quota => format!("{}: no quota page", self.as_str()),
+            ConsolePage::Setup => format!("{}: no setup page", self.as_str()),
         })
     }
 }
@@ -318,6 +319,10 @@ pub struct ProviderSpec {
     /// The vendor page that shows the free quota left and the usage, for a vendor whose API does
     /// not tell (Model Studio, docs/dictation.md §3.5).
     pub quota_url: Option<&'static str>,
+    /// The vendor page of the step a key alone does not cover: where the service is activated,
+    /// the app that holds the credential is created, credit is added or the program is
+    /// downloaded (the drawer's 配置方法, docs/dictation.md §3.16).
+    pub setup_url: Option<&'static str>,
 }
 
 /// Which vendor page `provider_console_open` opens.
@@ -329,6 +334,9 @@ pub enum ConsolePage {
     Key,
     /// Where the free quota and the usage are shown ([`ProviderSpec::quota_url`]).
     Quota,
+    /// Where the service is activated or the credential's app is created
+    /// ([`ProviderSpec::setup_url`]).
+    Setup,
 }
 
 impl ProviderSpec {
@@ -337,6 +345,7 @@ impl ProviderSpec {
         match page {
             ConsolePage::Key => site.and_then(|id| self.site(id)).map(|s| s.console_url).or(self.console_url),
             ConsolePage::Quota => self.quota_url,
+            ConsolePage::Setup => self.setup_url,
         }
     }
 
@@ -540,6 +549,7 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         on_device: false,
         console_url: None,
         quota_url: None,
+        setup_url: None,
     },
     ProviderSpec {
         id: ProviderId::Local,
@@ -551,6 +561,7 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         on_device: true,
         console_url: None,
         quota_url: None,
+        setup_url: None,
     },
     ProviderSpec {
         id: ProviderId::Openai,
@@ -562,6 +573,8 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         on_device: false,
         console_url: Some("https://platform.openai.com/api-keys"),
         quota_url: None,
+        // Where credit is added before a key answers (the API quickstart, checked 2026-11-05).
+        setup_url: Some("https://platform.openai.com/account/billing/overview"),
     },
     ProviderSpec {
         id: ProviderId::Groq,
@@ -577,6 +590,7 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         on_device: false,
         console_url: Some("https://console.groq.com/keys"),
         quota_url: None,
+        setup_url: None,
     },
     // Google AI Studio (checked 2026-10-08, again 2026-10-24): the Gemini models with a free tier,
     // Flash-Lite first. On 2026-10-24 `gemini-3.8-flash` turned clean-ups down with 503 "high
@@ -597,6 +611,7 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         on_device: false,
         console_url: Some("https://aistudio.google.com/apikey"),
         quota_url: None,
+        setup_url: None,
     },
     ProviderSpec {
         id: ProviderId::Siliconflow,
@@ -608,12 +623,15 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         on_device: false,
         console_url: Some("https://cloud.siliconflow.cn/account/ak"),
         quota_url: None,
+        // 实名认证: top-ups and every free model need it (docs.siliconflow.cn, checked 2026-11-05).
+        setup_url: Some("https://cloud.siliconflow.cn/account/authentication"),
     },
     // Model Studio (checked 2026-10-04): the realtime `…-streaming` model first, since it recognises
     // while the user speaks (§3.4); `…-asr-flash` takes a whole file over HTTP, `fun-asr-realtime`
     // is the other realtime engine. A workspace's own address
     // (`https://<workspace>.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`) replaces the public one
-    // in the URL field.
+    // in the URL field. A first visit to the Beijing region activates Model Studio and its free quota
+    // (help.aliyun.com/zh/model-studio/new-free-quota, checked 2026-11-05).
     ProviderSpec {
         id: ProviderId::Aliyun,
         asr: Some(ServicePreset {
@@ -632,11 +650,14 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         on_device: false,
         console_url: Some("https://bailian.console.aliyun.com/cn-beijing/model/settings/api-key"),
         quota_url: Some("https://bailian.console.aliyun.com/cn-beijing/costing-balance/free-quota"),
+        setup_url: Some("https://bailian.console.aliyun.com/model/market"),
     },
     // Volcengine's speech service (豆包语音, the 大模型流式语音识别 API, checked 2026-11-04): the model
     // is the `X-Api-Resource-Id` of what the account bought — Seed-ASR 2.0 by the hour first, 1.0 by
     // the hour, 2.0 by concurrency. Its new console gives one API key, the old one an App ID and an
-    // Access Token.
+    // Access Token. The new console's 开通管理 and API Key 管理 pages are the ones its docs link
+    // (docs.volcengine.com/docs/doubao-voice/console-usage-faq and api-key-usage, checked 2026-11-05);
+    // the old console is being retired.
     ProviderSpec {
         id: ProviderId::VolcengineSpeech,
         asr: Some(ServicePreset {
@@ -652,12 +673,14 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         ]),
         lists_models: false,
         on_device: false,
-        console_url: Some("https://console.volcengine.com/speech/app"),
+        console_url: Some("https://console.volcengine.com/speech/new/setting/apikeys?projectName=default"),
         quota_url: None,
+        setup_url: Some("https://console.volcengine.com/speech/new/setting/activate?projectName=default"),
     },
     // Tencent Cloud ASR (cloud.tencent.com/document/product/1093, checked 2026-11-04): the model is
     // the `engine_model_type`. `16k_zh_en` is the big model of the 1.0 plan, `Hy-ASR-3.0-preview` the
-    // 2.0 plan's (at most five minutes a take), `16k_zh` the general engine.
+    // 2.0 plan's (at most five minutes a take), `16k_zh` the general engine. The ASR console activates
+    // the service, the AppId is in 账号中心 (document/product/1093/54362, checked 2026-11-05).
     ProviderSpec {
         id: ProviderId::Tencent,
         asr: Some(ServicePreset { base_url: "https://asr.cloud.tencent.com", models: &["16k_zh_en", "Hy-ASR-3.0-preview", "16k_zh"], sites: &[] }),
@@ -671,9 +694,11 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         on_device: false,
         console_url: Some("https://console.cloud.tencent.com/cam/capi"),
         quota_url: None,
+        setup_url: Some("https://console.cloud.tencent.com/asr"),
     },
     // iFlytek dictation (www.xfyun.cn/doc/asr/voicedictation/API.html, checked 2026-11-04): one
     // service, at most 60 seconds a session; its hot words are the app's list in the console only.
+    // The credentials belong to an app created under 我的应用 (checked 2026-11-05).
     ProviderSpec {
         id: ProviderId::Iflytek,
         asr: Some(ServicePreset { base_url: "https://iat-api.xfyun.cn", models: &["iat"], sites: &[] }),
@@ -684,9 +709,12 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         on_device: false,
         console_url: Some("https://console.xfyun.cn/services/iat"),
         quota_url: None,
+        setup_url: Some("https://console.xfyun.cn/app/myapp"),
     },
     // iFlytek realtime transcription (www.xfyun.cn/doc/asr/rtasr/API.html, checked 2026-11-04): no
-    // length limit; the console shows it an APIKey of its own.
+    // length limit; the console shows it an APIKey of its own. Its product page hands out the
+    // standard edition's free package; the app list leads to the service page with the APIKey (no
+    // official page names that service page's address, checked 2026-11-05).
     ProviderSpec {
         id: ProviderId::IflytekRtasr,
         asr: Some(ServicePreset { base_url: "https://rtasr.xfyun.cn", models: &["rtasr"], sites: &[] }),
@@ -695,11 +723,14 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         credential: Credential::Sets(&[CredentialSet { id: "default", fields: &[field("app_id", false), field("api_key", true)] }]),
         lists_models: false,
         on_device: false,
-        console_url: Some("https://console.xfyun.cn/services/rta"),
+        console_url: Some("https://console.xfyun.cn/app/myapp"),
         quota_url: None,
+        setup_url: Some("https://www.xfyun.cn/services/rtasr"),
     },
     // Baidu AI Cloud realtime recognition (ai.baidu.com/ai-doc/SPEECH, checked 2026-11-04): the model
     // is the `dev_pid` — 15372 Mandarin with full punctuation, 1537 Mandarin, 15376 Chinese dialects.
+    // The speech console hands out the free test resources and lists the apps
+    // (cloud.baidu.com/doc/SPEECH/s/4l9mh6qf9, checked 2026-11-05).
     ProviderSpec {
         id: ProviderId::Baidu,
         asr: Some(ServicePreset { base_url: "https://vop.baidu.com", models: &["15372", "1537", "15376"], sites: &[] }),
@@ -708,8 +739,9 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         credential: Credential::Sets(&[CredentialSet { id: "default", fields: &[field("app_id", false), field("api_key", true)] }]),
         lists_models: false,
         on_device: false,
-        console_url: Some("https://console.bce.baidu.com/ai/#/ai/speech/app/list"),
+        console_url: Some("https://console.bce.baidu.com/ai-engine/speech/overview/index"),
         quota_url: None,
+        setup_url: None,
     },
     // StepFun (platform.stepfun.com/docs, checked 2026-11-04): `stepaudio-2.5-asr` takes whole files,
     // `stepaudio-2.5-asr-stream` recognises while the user speaks. The two sites keep separate
@@ -731,6 +763,7 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         on_device: false,
         console_url: Some("https://platform.stepfun.com/interface-key"),
         quota_url: None,
+        setup_url: None,
     },
     ProviderSpec {
         id: ProviderId::Deepseek,
@@ -742,6 +775,8 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         on_device: false,
         console_url: Some("https://platform.deepseek.com/api_keys"),
         quota_url: None,
+        // 充值: a 402 余额不足 points there (api-docs.deepseek.com error codes, checked 2026-11-05).
+        setup_url: Some("https://platform.deepseek.com/top_up"),
     },
     // Kimi (platform.kimi.com, checked 2026-10-25): the K3 models always reason and take
     // `reasoning_effort`; K2 closes to new accounts on 2026-10-31. The two sites keep separate
@@ -763,6 +798,7 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         on_device: false,
         console_url: Some("https://platform.kimi.com/console/api-keys"),
         quota_url: None,
+        setup_url: None,
     },
     // GLM (docs.bigmodel.cn and docs.z.ai, checked 2026-10-25): `glm-5.3-flash` is the newest fast
     // model, `glm-4.7-flash` costs nothing on either site; `glm-asr-2512` recognises up to 30 seconds
@@ -799,6 +835,7 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         on_device: false,
         console_url: Some("https://bigmodel.cn/usercenter/proj-mgmt/apikeys"),
         quota_url: None,
+        setup_url: None,
     },
     // Volcengine Ark (docs.volcengine.com/docs/ark/model-list, checked 2026-10-25): its model ids
     // carry their release date, and a model answers only once it is enabled in the console.
@@ -816,6 +853,8 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         on_device: false,
         console_url: Some("https://ark.volcengine.com/region:cn-beijing/apikey"),
         quota_url: None,
+        // 开通管理 (docs.volcengine.com/docs/ark/activation-management, checked 2026-11-05).
+        setup_url: Some("https://ark.volcengine.com/region:cn-beijing/openManagement"),
     },
     // Tencent Hunyuan (cloud.tencent.com/document/product/1823, checked 2026-10-25): Tencent Cloud
     // retired the old Hunyuan platform's models on 2026-06-22 for TokenHub, which also serves other
@@ -830,6 +869,8 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         on_device: false,
         console_url: Some("https://console.cloud.tencent.com/tokenhub/apikey"),
         quota_url: None,
+        // 启用管理 (cloud.tencent.com/document/product/1823/130053, checked 2026-11-05).
+        setup_url: Some("https://console.cloud.tencent.com/tokenhub/open-management"),
     },
     // Xiaomi MiMo (mimo.mi.com/docs, checked 2026-10-25): the 2.5 chat models were retired on
     // 2026-10-21; `mimo-v2.5-asr` is its recognition model (checked 2026-11-04).
@@ -843,6 +884,8 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         on_device: false,
         console_url: Some("https://platform.xiaomimimo.com/#/console/api-keys"),
         quota_url: None,
+        // 账户余额, where the account is topped up (mimo.mi.com/docs payment FAQ, checked 2026-11-05).
+        setup_url: Some("https://platform.xiaomimimo.com/#/console/balance"),
     },
     // OpenRouter (openrouter.ai/api/v1/models, checked 2026-10-25): three fast, inexpensive models
     // of different vendors; its model list needs no key.
@@ -860,6 +903,8 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         on_device: false,
         console_url: Some("https://openrouter.ai/settings/keys"),
         quota_url: None,
+        // The Credits page (openrouter.ai/docs/faq, checked 2026-11-05).
+        setup_url: Some("https://openrouter.ai/settings/credits"),
     },
     ProviderSpec {
         id: ProviderId::Ollama,
@@ -871,6 +916,8 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         on_device: true,
         console_url: None,
         quota_url: None,
+        // The download (checked 2026-11-05); its models are what the user pulls.
+        setup_url: Some("https://ollama.com/download"),
     },
     ProviderSpec {
         id: ProviderId::Custom,
@@ -882,6 +929,7 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         on_device: false,
         console_url: None,
         quota_url: None,
+        setup_url: None,
     },
 ];
 
@@ -1310,6 +1358,25 @@ mod tests {
         assert_eq!(ProviderId::Groq.console_page(ConsolePage::Key, Some(SiteId::Intl)), Ok("https://console.groq.com/keys"));
         assert!(ProviderId::Kimi.console_page(ConsolePage::Quota, Some(SiteId::Cn)).is_err());
         assert_eq!(serde_json::to_string(&SiteId::Intl).unwrap(), r#""intl""#);
+    }
+
+    /// docs/dictation.md §3.16: 配置方法 opens a vendor's setup page from the catalogue, like its
+    /// key page; the built-in service and this device have nothing to set up.
+    #[test]
+    fn setup_pages_are_catalogue_addresses() {
+        for spec in PROVIDERS {
+            if let Some(url) = spec.setup_url {
+                assert!(url.starts_with("https://") && url::Url::parse(url).is_ok(), "{:?}: {url}", spec.id);
+                assert_ne!(Some(url), spec.console_url, "{:?}: the key page has its own button", spec.id);
+            }
+            assert_eq!(spec.id.console_page(ConsolePage::Setup, None).ok(), spec.setup_url, "{:?}", spec.id);
+            assert_eq!(spec.id.console_page(ConsolePage::Setup, Some(SiteId::Intl)).ok(), spec.setup_url, "{:?}", spec.id);
+        }
+        for id in [ProviderId::Builtin, ProviderId::Local] {
+            assert!(id.console_page(ConsolePage::Setup, None).unwrap_err().ends_with("no setup page"), "{id:?}");
+        }
+        assert_eq!(serde_json::to_string(&ConsolePage::Setup).unwrap(), r#""setup""#);
+        assert_eq!(serde_json::from_str::<ConsolePage>(r#""setup""#).unwrap(), ConsolePage::Setup);
     }
 
     #[test]

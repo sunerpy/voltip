@@ -1346,6 +1346,7 @@ fn provider_statuses(
                 on_device: spec.on_device,
                 console: spec.console_url.is_some(),
                 quota: spec.quota_url.is_some(),
+                setup: spec.setup_url.is_some(),
                 asr,
                 llm,
             })
@@ -1377,6 +1378,10 @@ pub struct ProviderStatus {
     /// `page: quota`, docs/dictation.md §3.5).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub quota: bool,
+    /// The shell can open the vendor's page where the service is activated or the credential's app
+    /// is created (`provider_console_open` with `page: setup`, docs/dictation.md §3.16).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub setup: bool,
     /// Recognition, when the provider offers it in this build.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asr: Option<ServiceStatus>,

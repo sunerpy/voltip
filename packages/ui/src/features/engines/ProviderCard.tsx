@@ -27,6 +27,8 @@ import {
   providerTagline,
   realtimeModel,
   secretStateLabel,
+  setupPageLabel,
+  setupSteps,
   siteOf,
   siteUrl,
   withProvider,
@@ -427,6 +429,64 @@ function Help({ children, ...rest }: { children: ReactNode; "data-testid"?: stri
   );
 }
 
+/** 配置方法 (docs/dictation.md §3.16): what to do at the vendor before the form works, with its
+ *  pages: where the service is activated, where the key is made, and this provider's section of
+ *  the guide. The shell opens the catalogue's addresses; the webview only names them. */
+function SetupGuide({ provider, site }: { provider: ProviderStatus; site: SiteId | undefined }) {
+  const { backend } = useBackend();
+  const { t, locale, messages } = useI18n();
+  const steps = setupSteps(provider.id, messages);
+  return (
+    <Group title={t("engines.setup.title")}>
+      {steps.length > 0 && (
+        <ol
+          className="flex list-decimal flex-col gap-1 pl-5 text-[12px] leading-5 text-fg-muted"
+          data-testid="provider-setup-steps">
+          {steps.map((step) => (
+            <li key={step}>{step}</li>
+          ))}
+        </ol>
+      )}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        {provider.setup === true && (
+          <Button
+            size="sm"
+            variant="text"
+            icon="external"
+            data-testid="provider-setup"
+            onClick={() => {
+              void backend.providerConsoleOpen(provider.id, "setup");
+            }}>
+            {setupPageLabel(provider.id, messages)}
+          </Button>
+        )}
+        {provider.console && (
+          <Button
+            size="sm"
+            variant="text"
+            icon="external"
+            data-testid="provider-console"
+            onClick={() => {
+              void backend.providerConsoleOpen(provider.id, undefined, site);
+            }}>
+            {t("engines.getKey")}
+          </Button>
+        )}
+        <Button
+          size="sm"
+          variant="text"
+          icon="external"
+          data-testid="provider-guide"
+          onClick={() => {
+            backend.guideOpen("providers", locale, provider.id).catch(() => undefined);
+          }}>
+          {t("engines.setup.guide")}
+        </Button>
+      </div>
+    </Group>
+  );
+}
+
 /** Under a recognition model (docs/dictation.md §3.15): how `model` hears a take and where the
  *  dictionary's terms go, for the shell this is. */
 function AbilityHelp({
@@ -765,6 +825,7 @@ function ProviderForm({
             </>
           )}
         </Group>
+        <SetupGuide provider={provider} site={site} />
         <Group title={t("engines.detail.connection")}>
           {sites.length > 1 && (
             <div className="flex flex-col gap-1" data-testid="provider-site" data-site={site}>
@@ -850,17 +911,6 @@ function ProviderForm({
                 <LampText tone={secret.tone} size="sm">
                   <span data-testid="provider-key-state">{secret.text}</span>
                 </LampText>
-                {provider.console && (
-                  <Button
-                    size="sm"
-                    variant="text"
-                    icon="external"
-                    onClick={() => {
-                      void backend.providerConsoleOpen(provider.id, undefined, site);
-                    }}>
-                    {t("engines.getKey")}
-                  </Button>
-                )}
                 {provider.quota === true && (
                   <Button
                     size="sm"

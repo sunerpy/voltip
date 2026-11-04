@@ -3,7 +3,7 @@
 // how it folds into `EngineSettings` (`settings_set_engines` is all or nothing), the model choices,
 // the checks before a save and the probe's answer as a line. Moved here from
 // `apps/desktop/src/pages/settings/engines/helpers.ts`, which re-exports it.
-import { zhT, type TFunction } from "./i18n";
+import { zhT, type Messages, type TFunction } from "./i18n";
 import { asrStreams, glossaryRoute } from "./providers";
 import type {
   EngineSettings,
@@ -549,4 +549,21 @@ export function languageOptions(t: TFunction = zhT.t): { value: string; label: s
     value,
     label: value === "" ? t("language.auto") : t(`language.${value}`),
   }));
+}
+
+/** The steps of `provider`'s 配置方法 in the language of `messages` (docs/dictation.md §3.16), in
+ *  order: what to activate at the vendor, where its credential is and what goes into the form.
+ *  None for the built-in service and this device, which need no setting up. */
+export function setupSteps(provider: ProviderId, messages: Messages): string[] {
+  const steps: Partial<Record<ProviderId, Readonly<Record<string, string>>>> =
+    messages.engines.setup.steps;
+  return Object.values(steps[provider] ?? {});
+}
+
+/** What the button that opens `provider`'s setup page (`provider_console_open` with `page:
+ *  "setup"`) says that page is for: activating the service, creating the app, adding credit or
+ *  downloading the program (§3.16). */
+export function setupPageLabel(provider: ProviderId, messages: Messages): string {
+  const labels: Partial<Record<ProviderId, string>> = messages.engines.setup.page;
+  return labels[provider] ?? messages.engines.setup.console;
 }

@@ -1599,6 +1599,18 @@ describe("MockBackend history, engines and secrets", () => {
       await expect(backend.providerConsoleOpen("groq", "quota")).rejects.toThrow(
         "groq: no quota page",
       );
+      // §3.16: a setup page for the vendors that have a step besides the key.
+      await backend.providerConsoleOpen("tencent", "setup");
+      expect(backend.setupPagesOpened).toEqual(["tencent"]);
+      await expect(backend.providerConsoleOpen("groq", "setup")).rejects.toThrow(
+        "groq: no setup page",
+      );
+      await backend.guideOpen("providers", "en", "tencent");
+      expect(backend.guidesOpened.at(-1)).toEqual({
+        page: "providers",
+        locale: "en",
+        provider: "tencent",
+      });
       expect(
         backend
           .peek()

@@ -3,6 +3,9 @@ import {
   type ProviderId,
   type ServiceKind,
   defaultEngineSettings,
+  setupPageLabel,
+  setupSteps,
+  zhCN,
   zhT,
 } from "@voltip/shared";
 import { MOCK_PROBE_MS, MockBackend } from "@voltip/shared/mock";
@@ -897,11 +900,55 @@ describe("ProviderCards (desktop model pages and phone settings)", () => {
     renderCard(backend, { id: "builtin", kind: "asr" });
     expect(await screen.findByText(t("engines.builtinBody"))).toBeInTheDocument();
     expect(screen.queryByTestId("provider-form")).toBeNull();
+    // Nothing to set up for either (docs/dictation.md §3.16).
+    expect(screen.queryByTestId("provider-setup-steps")).toBeNull();
+    expect(screen.queryByTestId("provider-guide")).toBeNull();
     backend.destroy();
     const desktop = new MockBackend();
     renderCard(desktop, { id: "local", kind: "asr", localBody: <p>本地模型库</p> });
     expect(await screen.findByText("本地模型库")).toBeInTheDocument();
+    expect(screen.queryByTestId("provider-guide")).toBeNull();
     desktop.destroy();
+  });
+
+  it("docs/dictation.md §3.16: 配置方法 lists the provider's steps and opens its pages and its guide section", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend();
+    renderCard(backend, { id: "ollama", kind: "llm" });
+    const form = await screen.findByTestId("provider-form");
+    expect(within(form).getByRole("heading", { name: t("engines.setup.title") })).toBeVisible();
+    const steps = within(within(form).getByTestId("provider-setup-steps")).getAllByRole("listitem");
+    expect(steps.map((step) => step.textContent)).toEqual(setupSteps("ollama", zhCN));
+    // Ollama has no key: its setup page is the download, and there is no key page.
+    await user.click(within(form).getByTestId("provider-setup"));
+    expect(backend.setupPagesOpened).toEqual(["ollama"]);
+    expect(within(form).getByTestId("provider-setup")).toHaveTextContent(
+      setupPageLabel("ollama", zhCN),
+    );
+    expect(within(form).queryByRole("button", { name: t("engines.getKey") })).toBeNull();
+    await user.click(within(form).getByRole("button", { name: t("engines.setup.guide") }));
+    expect(backend.guidesOpened).toEqual([
+      { page: "providers", locale: "zh-CN", provider: "ollama" },
+    ]);
+    backend.destroy();
+  });
+
+  it("puts 获取密钥 under 配置方法, out of the key row, and shows no setup page a vendor lacks", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend();
+    renderCard(backend, { id: "groq", kind: "asr" });
+    const form = await screen.findByTestId("provider-form");
+    expect(within(form).queryByTestId("provider-setup")).toBeNull();
+    const getKey = within(form).getAllByRole("button", { name: t("engines.getKey") });
+    expect(getKey).toHaveLength(1);
+    expect(getKey[0]).toHaveAttribute("data-testid", "provider-console");
+    await user.click(getKey[0] as HTMLElement);
+    expect(backend.consolesOpened).toEqual(["groq"]);
+    await user.click(within(form).getByTestId("provider-guide"));
+    expect(backend.guidesOpened).toEqual([
+      { page: "providers", locale: "zh-CN", provider: "groq" },
+    ]);
+    backend.destroy();
   });
 });
 

@@ -1755,6 +1755,122 @@ export const zhCN = {
     viewQuota: "查看额度",
     quotaHelp:
       "剩余额度和用量请在百炼控制台查看，百炼不提供查询接口。为模型打开「免费额度用完即停」后，额度用完时服务会拒绝请求而不是计费，Voltip 随即改用「额度用完后改用其他模型」中的下一个模型。",
+    /** docs/dictation.md §3.16: the drawer's 配置方法, the vendor's pages and the guide's section.
+     *  `page` names what each setup page is for, `steps` are each provider's, in order (the same
+     *  number in both languages); the built-in service and this device have none. */
+    setup: {
+      title: "配置方法",
+      console: "打开控制台",
+      guide: "完整说明",
+      page: {
+        openai: "添加余额",
+        siliconflow: "实名认证",
+        aliyun: "开通百炼",
+        volcengine_speech: "开通服务",
+        tencent: "开通语音识别",
+        iflytek: "创建应用",
+        iflytek_rtasr: "领取免费额度",
+        deepseek: "充值",
+        volcengine: "开通模型",
+        hunyuan: "启用模型",
+        mimo: "充值",
+        openrouter: "充值",
+        ollama: "下载 Ollama",
+      },
+      steps: {
+        openai: {
+          s1: "登录 OpenAI Platform，在「Billing」中添加余额：API 按用量计费。",
+          s2: "在「API keys」页面创建密钥，填到下方。",
+        },
+        groq: {
+          s1: "登录 GroqCloud 控制台，免费套餐即可使用。",
+          s2: "在「API Keys」页面创建密钥，填到下方。",
+        },
+        google: {
+          s1: "用 Google 账号登录 Google AI Studio，并接受服务条款。",
+          s2: "在「API Keys」页面复制或创建密钥，填到下方。",
+        },
+        siliconflow: {
+          s1: "登录硅基流动，在「实名认证」中完成认证：认证后才能使用全部免费模型和充值。",
+          s2: "在「API 密钥」页面选择「新建 API 密钥」，填到下方。",
+        },
+        aliyun: {
+          s1: "完成阿里云实名认证后，打开华北2（北京）地域的百炼控制台，同意服务协议即开通百炼并获得免费额度。",
+          s2: "语音识别模型还需要在百炼的业务空间中开通权限后才能调用。",
+          s3: "在「API Key」页面创建 API Key，填到下方；各地域的 API Key 不通用。",
+        },
+        volcengine_speech: {
+          s1: "注册火山引擎账号并完成实名认证，在豆包语音控制台的「开通管理」中开通流式语音识别模型。",
+          s2: "在「API Key 管理」中创建 API Key，填到下方；使用旧版控制台时，在「凭据类型」中改选 App ID 与 Access Token。",
+          s3: "模型选择与已开通的服务一致的资源 ID。",
+        },
+        tencent: {
+          s1: "在语音识别控制台完成实名认证，勾选用户协议后选择「立即开通」，开通后每月有免费额度。",
+          s2: "在「API 密钥管理」中新建密钥，复制 SecretId 和 SecretKey。",
+          s3: "在「账号中心」复制 APPID，三项一并填到下方。",
+        },
+        iflytek: {
+          s1: "登录讯飞开放平台，在「我的应用」中创建应用。",
+          s2: "在语音听写的服务页复制 APPID、APIKey 和 APISecret，填到下方。",
+        },
+        iflytek_rtasr: {
+          s1: "在实时语音转写的产品页领取「实时语音转写标准版」的免费试用包；大模型版的套餐在这里不能使用。",
+          s2: "在「我的应用」中打开应用，进入实时语音转写的服务页。",
+          s3: "复制 APPID 和这项服务的 APIKey，填到下方；它与语音听写的 APIKey 不同。",
+        },
+        baidu: {
+          s1: "注册百度智能云账号并完成实名认证，打开语音技术控制台，免费测试资源随后自动发放。",
+          s2: "在左侧「应用列表」中选择「创建应用」。",
+          s3: "复制应用的 AppID 和 API Key，填到下方。",
+        },
+        stepfun: {
+          s1: "在阶跃星辰开放平台注册，中国站和国际站的账号不通用；中国站需要先完成实名认证。",
+          s2: "在「接口密钥」页面创建 API Key，填到下方，并在「站点」中选择注册的站点。",
+        },
+        deepseek: {
+          s1: "登录 DeepSeek 开放平台，在「充值」页面充值：余额不足时请求会被拒绝。",
+          s2: "在「API keys」页面创建 API key，填到下方。",
+        },
+        kimi: {
+          s1: "在 Kimi 开放平台注册，中国站和国际站的账号与余额不通用。",
+          s2: "推荐的 K3.1 Pro 模型需要先充值：中国站最低 10 元，国际站最低 1 美元。",
+          s3: "在「API Keys」页面创建 API Key，填到下方，并在「站点」中选择注册的站点。",
+        },
+        glm: {
+          s1: "在智谱开放平台（中国站）或 Z.ai（国际站）注册，两个站点的账号和密钥不通用。",
+          s2: "在「API Keys」中创建标准 API Key；Coding Plan 套餐的密钥与它不通用。",
+          s3: "把密钥填到下方，并在「站点」中选择注册的站点。",
+        },
+        volcengine: {
+          s1: "在火山方舟控制台的「开通管理」中开通要使用的模型。",
+          s2: "在「API Key 管理」中创建 API Key，填到下方；豆包语音的凭据在这里不能使用。",
+        },
+        hunyuan: {
+          s1: "完成腾讯云实名认证后登录 TokenHub 控制台，按提示开通服务。",
+          s2: "在「启用管理」中启用要使用的模型，可以领取免费资源；免费额度用完后需要开启按量付费。",
+          s3: "在「API Key 管理」中选择地域「广州」并创建 API Key，填到下方。",
+        },
+        mimo: {
+          s1: "用小米账号登录 Xiaomi MiMo 开放平台；中国大陆的账号需要先完成实名认证才能充值。",
+          s2: "在「账户余额」中充值：余额不足时请求会被拒绝。",
+          s3: "在「API Keys」中创建 API Key，填到下方。",
+        },
+        openrouter: {
+          s1: "注册 OpenRouter 账号，在「Credits」页面充值；免费模型每天可请求 50 次。",
+          s2: "在「Keys」页面创建密钥（可以设置额度上限），填到下方。",
+        },
+        ollama: {
+          s1: "下载并安装 Ollama，保持它在这台电脑上运行。",
+          s2: "在终端运行「ollama pull 模型名称」，下载要使用的模型。",
+          s3: "接口地址留空即使用这台电脑上的 Ollama，然后在下方选择模型。",
+        },
+        custom: {
+          s1: "填写 OpenAI 兼容接口的地址，例如 http://127.0.0.1:8000/v1。",
+          s2: "接口需要密钥时填写密钥，然后填写或选择模型。",
+          s3: "选择「测试连接」，确认地址和密钥可用。",
+        },
+      },
+    },
     save: "保存",
     saved: "已保存 · {provider}",
     savedKey: " · 密钥已写入系统钥匙串",

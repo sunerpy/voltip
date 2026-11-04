@@ -2,6 +2,7 @@
 // every model the provider lists, headed with 测试连接's count and asked for again as it opens;
 // Model Studio's sheet and its fallback note link the console page of free quota and usage.
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react-native";
+import { setupPageLabel, setupSteps, zhCN } from "@voltip/shared";
 import { MOCK_PROBE_MS, MockBackend } from "@voltip/shared/mock";
 
 import { openTab, renderApp } from "../test/render";
@@ -330,6 +331,31 @@ describe("a provider's sheet", () => {
     await waitFor(() => {
       expect(backend.peek().settings.engines.asr_provider).toBe("builtin");
     });
+    // Nothing to set up (docs/dictation.md §3.16).
+    expect(sheet.queryByTestId("provider-setup-guide")).toBeNull();
+  });
+
+  it("docs/dictation.md §3.16: 配置方法 lists the provider's steps and opens its pages and its guide section", async () => {
+    const { backend } = await renderApp();
+    const sheet = await openSheet("settings-speech", "asr", "tencent", "腾讯云语音识别");
+    const steps = setupSteps("tencent", zhCN);
+    expect(sheet.getByTestId("provider-setup-steps")).toHaveTextContent(
+      steps.map((step, index) => `${index + 1}. ${step}`).join(""),
+    );
+    // The button's text follows its icon's glyph.
+    expect(sheet.getByTestId("provider-setup")).toHaveTextContent(setupPageLabel("tencent", zhCN), {
+      exact: false,
+    });
+    await fireEvent.press(sheet.getByTestId("provider-setup"));
+    expect(backend.setupPagesOpened).toEqual(["tencent"]);
+    await fireEvent.press(sheet.getByTestId("provider-console"));
+    expect(backend.consolesOpened).toEqual(["tencent"]);
+    // The key row no longer carries its own 获取密钥.
+    expect(sheet.getAllByText("获取密钥")).toHaveLength(1);
+    await fireEvent.press(sheet.getByTestId("provider-guide"));
+    expect(backend.guidesOpened).toEqual([
+      { page: "providers", locale: "zh-CN", provider: "tencent" },
+    ]);
   });
 });
 
