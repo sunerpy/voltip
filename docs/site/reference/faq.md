@@ -16,6 +16,15 @@ Check the overlay and the latest entry in the history; they say what happened.
 - **"No speech detected"**: the recording was silent or shorter than about a third of a second. Press **Test microphone** on the home page and watch the ring around **Start dictation** move with your voice, and check the input device: click the microphone name on the home page, or open **Settings → Recording source**.
 - **An error**: the recognition service could not be reached, or a key or model is missing. The home page shows which service is in use and what it needs.
 
+### The overlay shows no text while I speak {#no-live-text}
+
+With a provider that recognises while you speak, the overlay shows the words that service returns. If none appear, first check that the model selected on the Speech models page is marked **realtime** and that **Live preview** is on; with **Live preview** off, the recording is sent when you release the shortcut.
+
+Then open the entry's details in the history. If they say "Live transcription stopped; the whole recording was transcribed instead", the connection to the service dropped while you spoke, or the service returned no text; Voltip recognised the whole recording instead, so no words are lost. The reason after it names how often the service answered, how long the audio sent was and its loudest level (this part is in Chinese):
+
+- If it says the audio was nearly silent or silent (「几乎没有声音」, 「均为静音」), or the loudest level is very low, check the microphone and the recording source: press **Test microphone** on the home page.
+- If the level is normal and the service returned no text, check in the provider's console that the selected model is activated and that the credentials match the model; see [Provider setup](/recognition/providers). Volcengine Doubao Speech also gives a log ID (日志 ID); give it to Volcengine's support when you contact them.
+
 ### The shortcut does nothing
 
 Another app may hold the same key combination; **Settings → Shortcuts** shows whether it is registered. On a pure Wayland session, apps cannot register global shortcuts: bind a system shortcut to `voltip-desktop --toggle`.

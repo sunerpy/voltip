@@ -27,7 +27,7 @@ The built-in service counts each device's use by day. Every device can use 60 mi
 - Recordings a phone sends to a computer count toward that computer; recordings a phone recognises itself count toward the phone.
 - For a while after this feature arrives, the built-in service only counts, without a limit, and the app shows **No limit yet**.
 
-On a computer, the **Usage** card in the sidebar shows both services and the time of the reset; click it to open the **Usage** page: the last 7 days, where today's use came from, and other providers' use this month as this computer recorded it. The home page, under each model, and the built-in service's cards on the Speech models and AI models pages show today's use too. On a phone, the **Talk** page shows today's use while the phone recognises, and **Settings › Usage** has the details.
+On a computer, the **Usage** card in the sidebar shows both services and the time of the reset; click it to open the **Usage** page: the last 7 days, where today's use came from, and other providers' use this month as this computer recorded it (a dictation recognised while you speak counts the audio sent). The home page, under each model, and the built-in service's cards on the Speech models and AI models pages show today's use too. On a phone, the **Talk** page shows today's use while the phone recognises, and **Settings › Usage** has the details.
 
 From 80 % of a limit, the home page (on a phone, the **Talk** page) says how much is left. Once a limit is used up:
 
@@ -68,7 +68,7 @@ A provider that offers both services uses one key for both. The provider cards s
 
 What each provider needs to be activated and where its credentials are is in [Provider setup](/recognition/providers).
 
-While you speak, the overlay shows the words, and release only waits for the last sentence. This needs **Live preview** (on by default); with it off, the recording is recognised when you release the shortcut. If the connection drops or the service fails during a recording, Voltip recognises the whole recording instead, and the dictation still goes through. Whether the correct spellings in your [dictionary](/recognition/dictionary) go to each recognition service is in the dictionary page's table.
+While you speak, the overlay shows the words, and release only waits for the last sentence. This needs **Live preview** (on by default); with it off, the recording is recognised when you release the shortcut. If the connection drops, the service fails, or it returns no text at all, Voltip recognises the whole recording instead, the dictation still goes through, and the entry's details in the history say why; see [The overlay shows no text while I speak](/reference/faq#no-live-text). Whether the correct spellings in your [dictionary](/recognition/dictionary) go to each recognition service is in the dictionary page's table.
 
 Recognition can also run on a GPU server of your own, used as the custom endpoint; see [Self-hosted recognition](/recognition/self-host).
 
