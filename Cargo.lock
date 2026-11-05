@@ -7807,12 +7807,14 @@ name = "voltip-desktop"
 version = "0.0.0"
 dependencies = [
  "async-trait",
+ "base64 0.23.1",
  "block2",
  "clap",
  "core-foundation 0.10.1",
  "core-foundation-sys",
  "directories",
  "flate2",
+ "futures-util",
  "json-patch 4.2.0",
  "libc",
  "objc2",
@@ -7837,6 +7839,7 @@ dependencies = [
  "tauri-utils",
  "tempfile",
  "tokio",
+ "tokio-tungstenite 0.30.0",
  "tracing",
  "tracing-subscriber",
  "uuid",
