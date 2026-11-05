@@ -20,6 +20,8 @@ use voltip_core::dictation::{
     DictationError, LIVE_SAMPLE_RATE_HZ, Segment, StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber, Transcriber, Transcript,
 };
 
+use crate::fed::Fed;
+
 /// How long [`StreamingSession::finish`] waits for the service's last sentence: it answers within
 /// a second of the last audio when the take was streamed as it was spoken.
 pub const FINISH_TIMEOUT: Duration = Duration::from_secs(30);
@@ -87,7 +89,7 @@ impl StreamingTranscriber for DashscopeStreaming {
             }
             let _ = done_tx.send(result.map_err(DictationError::Asr));
         });
-        Ok(Box::new(DashscopeSession { commands, events, done, finish_timeout: self.finish_timeout, model, glossary_sent }))
+        Ok(Box::new(DashscopeSession { commands, events, done, finish_timeout: self.finish_timeout, model, glossary_sent, fed: Fed::default() }))
     }
 
     /// Nothing to load: the model is the service's.
@@ -108,10 +110,13 @@ struct DashscopeSession {
     model: String,
     /// Its task carries the glossary as hot words (docs/dictation.md §30.6).
     glossary_sent: bool,
+    /// The audio it was fed.
+    fed: Fed,
 }
 
 impl StreamingSession for DashscopeSession {
     fn feed(&mut self, pcm16k: &[f32]) {
+        self.fed.add(pcm16k);
         let pcm: Vec<u8> = pcm16k.iter().flat_map(|&x| ((x.clamp(-1.0, 1.0) * f32::from(i16::MAX)).round() as i16).to_le_bytes()).collect();
         // A task that already ended has said why through `poll`.
         let _ = self.commands.send(Command::Audio(pcm));
@@ -129,10 +134,15 @@ impl StreamingSession for DashscopeSession {
         Some(self.glossary_sent)
     }
 
+    /// The session's last sentences; one that gave no text at all says the audio it was sent.
     fn finish(self: Box<Self>) -> Result<StreamFinal, DictationError> {
         let _ = self.commands.send(Command::Finish);
         match self.done.recv_timeout(self.finish_timeout) {
-            Ok(result) => result.map(|fin| StreamFinal { glossary_sent: Some(self.glossary_sent), ..fin }),
+            Ok(result) => result.map(|fin| {
+                let silent = fin.committed.is_empty() && fin.tail.trim().is_empty();
+                let note = silent.then(|| self.fed.note(None));
+                StreamFinal { glossary_sent: Some(self.glossary_sent), note, ..fin }
+            }),
             // docs/dictation.md §3.14: the service went silent, a timeout.
             Err(_) => Err(DictationError::Unreachable {
                 service: voltip_core::ServiceKind::Asr,
@@ -178,7 +188,7 @@ async fn drive(options: &DuplexOptions, mut inbox: mpsc::UnboundedReceiver<Comma
                 DuplexEvent::Finished => {
                     sender.close().await;
                     // A sentence the service never closed is the tail.
-                    return Ok(StreamFinal { committed, tail: current, model: Some(options.model.clone()), provider: None, fallback: None, glossary_sent: None });
+                    return Ok(StreamFinal { committed, tail: current, model: Some(options.model.clone()), provider: None, fallback: None, glossary_sent: None, note: None });
                 }
             },
         }
@@ -403,6 +413,54 @@ pub(crate) mod tests {
         );
         // The session gave up: its task closes the connection, so the server's read ends.
         tokio::time::timeout(Duration::from_secs(20), server).await.expect("the connection is closed").unwrap();
+    }
+
+    /// regression: a task that finished without any text left the take's history with "实时识别未得
+    /// 到文本" alone; the session now says the audio it sent (docs/dictation.md §12), here a take of
+    /// silence. A task with text says nothing.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn regression_a_task_without_text_says_what_it_was_sent() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        // Starts the task, then finishes it without a word.
+        tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let socket = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            let (mut sink, mut stream) = socket.split();
+            let event = |name: &str| Message::text(json!({ "header": { "task_id": "t", "event": name }, "payload": {} }).to_string());
+            while let Some(Ok(message)) = stream.next().await {
+                let Message::Text(text) = message else { continue };
+                let value: Value = serde_json::from_str(text.as_str()).unwrap();
+                match value.pointer("/header/action").and_then(Value::as_str) {
+                    Some("run-task") => drop(sink.send(event("task-started")).await),
+                    Some("finish-task") => drop(sink.send(event("task-finished")).await),
+                    _ => {}
+                }
+            }
+        });
+        let streaming = transcriber(&origin, "fun-asr-realtime", DashscopeMode::Duplex).streaming(&[]).unwrap();
+        let fin = tokio::task::spawn_blocking(move || {
+            let mut session = streaming.open(None).unwrap();
+            session.feed(&[0.0; 1600]);
+            session.finish()
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(fin.committed.is_empty() && fin.tail.is_empty(), "{fin:?}");
+        assert_eq!(fin.note.as_deref(), Some("已发送 0.1 秒音频，均为静音"));
+
+        let (origin, _) = serve(None).await;
+        let streaming = transcriber(&origin, "fun-asr-realtime", DashscopeMode::Duplex).streaming(&[]).unwrap();
+        let fin = tokio::task::spawn_blocking(move || {
+            let mut session = streaming.open(None).unwrap();
+            session.feed(&[0.25; 1600]);
+            session.finish()
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!((fin.committed.len(), fin.note), (1, None), "a task with text needs no note");
     }
 
     #[test]

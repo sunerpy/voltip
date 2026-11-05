@@ -146,7 +146,7 @@ pub async fn transcribe_whole(
             while let Some(event) = events.recv().await {
                 match event {
                     RealtimeEvent::Sentence { text, .. } => sentences.push(text),
-                    RealtimeEvent::Partial { .. } => {}
+                    RealtimeEvent::Partial { .. } | RealtimeEvent::Note { .. } => {}
                     RealtimeEvent::Finished => break,
                 }
             }

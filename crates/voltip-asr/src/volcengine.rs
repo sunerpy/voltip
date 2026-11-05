@@ -9,9 +9,11 @@
 //! type and its flags, serialization and compression), the payload's size (4 bytes, big-endian)
 //! and the payload. The client sends one full client request (the JSON parameters), then
 //! audio-only requests of 200 ms of PCM, the last one flagged `0b0010`. The service answers with
-//! full server responses (a sequence number before the size; the last one flagged `0b0011`), or
-//! with an error frame (a code and a message). The client gzips its payloads; the service answers
-//! with the compression each frame's header names.
+//! full server responses, acknowledgements it reads past, or an error frame (a code and a
+//! message). A response's flags say what follows the header, as the official demos read them: a
+//! sequence number (`0b0001`), an event number (`0b0100`), and whether it is the last (`0b0010`).
+//! A response may carry an error of its own in its JSON (`code`, `message`). The client gzips its
+//! payloads; the service answers with the compression each frame's header names.
 
 use std::io::{Read as _, Write as _};
 use std::time::Duration;
@@ -72,16 +74,18 @@ const FULL_CLIENT_REQUEST: u8 = 0b0001;
 const AUDIO_ONLY_REQUEST: u8 = 0b0010;
 /// Message type: a result.
 const FULL_SERVER_RESPONSE: u8 = 0b1001;
+/// Message type: an acknowledgement, which says nothing about the take.
+const SERVER_ACK: u8 = 0b1011;
 /// Message type: the service's error frame.
 const ERROR_RESPONSE: u8 = 0b1111;
 /// Flags: no sequence number follows the header.
 const NO_SEQUENCE: u8 = 0b0000;
 /// Flags: a sequence number follows the header.
 const SEQUENCE: u8 = 0b0001;
-/// Flags: the last packet, without a sequence number (the client's last audio).
+/// Flags: the last packet (the client's last audio, the service's last response).
 const LAST_PACKET: u8 = 0b0010;
-/// Flags: the last result, a negative sequence number following (the service's last response).
-const LAST_RESULT: u8 = 0b0011;
+/// Flags: an event number follows the sequence number.
+const EVENT: u8 = 0b0100;
 /// Serialization: none (audio).
 const RAW: u8 = 0b0000;
 /// Serialization: JSON.
@@ -159,23 +163,24 @@ impl VolcengineAsr {
         Ok(request)
     }
 
-    /// Connect to `url` and send the full client request with `parameters`.
-    async fn open(&self, url: &Url, parameters: &Value) -> Result<(Outgoing, Incoming), AsrError> {
+    /// Connect to `url` and send the full client request with `parameters`; the session's log id
+    /// when the handshake named one.
+    async fn open(&self, url: &Url, parameters: &Value) -> Result<(Outgoing, Incoming, Option<String>), AsrError> {
         let (socket, response) = realtime::connect(self.handshake(url)?, &self.config.network).await.map_err(refused)?;
         // The service's log id identifies the session in a report to Volcengine; it is no secret.
-        let logid = response.headers().get("x-tt-logid").and_then(|v| v.to_str().ok()).unwrap_or_default();
-        tracing::debug!(path = url.path(), model = %self.model, logid, "豆包语音 connected");
+        let logid = response.headers().get("x-tt-logid").and_then(|v| v.to_str().ok()).map(str::trim).filter(|id| !id.is_empty()).map(str::to_owned);
+        tracing::debug!(path = url.path(), model = %self.model, logid = logid.as_deref().unwrap_or_default(), "豆包语音 connected");
         let (mut outgoing, mut incoming) = socket.split();
         let json = serde_json::to_vec(parameters).map_err(|e| AsrError::InvalidConfig(format!("request parameters: {e}")))?;
         send(&mut outgoing, &mut incoming, client_frame(FULL_CLIENT_REQUEST, NO_SEQUENCE, JSON, &json)?).await?;
-        Ok((outgoing, incoming))
+        Ok((outgoing, incoming, logid))
     }
 
     /// One `bigmodel_nostream` session over `pcm`: its packets at [`WHOLE_PACE`], the last one
     /// flagged, while reading the answers; the last answer's payload. An empty `pcm` goes as one
     /// packet of silence.
     async fn whole(&self, pcm: &[u8], parameters: &Value) -> Result<Value, AsrError> {
-        let (mut outgoing, mut incoming) = self.open(&self.whole_url, parameters).await?;
+        let (mut outgoing, mut incoming, _) = self.open(&self.whole_url, parameters).await?;
         let silence = [0u8; FRAME_BYTES];
         let frames: Vec<&[u8]> = if pcm.is_empty() { vec![&silence[..]] } else { pcm.chunks(FRAME_BYTES).collect() };
         // Packets go out on a fixed schedule from the first one, so a slow send does not add up.
@@ -249,8 +254,10 @@ impl VendorAsr for VolcengineAsr {
         events: RealtimeEvents,
     ) -> Result<(), AsrError> {
         let parameters = self.parameters(true, language, glossary);
-        let (mut outgoing, mut incoming) = self.open(&self.live_url, &parameters).await?;
+        let (mut outgoing, mut incoming, logid) = self.open(&self.live_url, &parameters).await?;
         let mut results = Utterances::default();
+        // The responses the service sent: what a session without text tells its history.
+        let mut replies = 0usize;
         let mut pending: Vec<u8> = Vec::new();
         // Audio sent, in bytes: the times of an utterance that comes without them.
         let mut sent = 0usize;
@@ -281,8 +288,13 @@ impl VendorAsr for VolcengineAsr {
                 },
                 response = next_response(&mut incoming) => {
                     let (last, payload) = response?;
+                    replies += 1;
                     results.read(&payload, last, played_ms(sent), &events);
                     if last {
+                        tracing::info!(replies, sent_ms = played_ms(sent), said = results.said, logid = logid.as_deref().unwrap_or_default(), "豆包语音 session ended");
+                        if !results.said {
+                            let _ = events.send(RealtimeEvent::Note { text: silent_note(replies, logid.as_deref()) });
+                        }
                         let _ = events.send(RealtimeEvent::Finished);
                         let _ = outgoing.close().await;
                         return Ok(());
@@ -305,6 +317,8 @@ struct Utterances {
     end_ms: u64,
     /// The partial last passed on.
     partial: String,
+    /// Whether any text was passed on, as a sentence or as the sentence being spoken.
+    said: bool,
 }
 
 impl Utterances {
@@ -312,8 +326,9 @@ impl Utterances {
     /// rest as the sentence being spoken. The `last` response finishes every utterance it lists.
     /// `sent_ms` is the audio sent so far, the end of an utterance the service gave no time.
     fn read(&mut self, payload: &Value, last: bool, sent_ms: u64, events: &RealtimeEvents) {
-        let result = payload.get("result");
-        let Some(utterances) = result.and_then(|r| r.get("utterances")).and_then(Value::as_array) else {
+        let result = result_of(payload);
+        let listed = result.and_then(|r| r.get("utterances")).and_then(Value::as_array).filter(|u| !u.is_empty());
+        let Some(utterances) = listed else {
             // A response without utterances: its text is everything said so far.
             let text = result.and_then(|r| r.get("text")).and_then(Value::as_str).unwrap_or_default();
             if self.committed == 0 {
@@ -354,6 +369,7 @@ impl Utterances {
         self.end_ms = end_ms;
         let text = text.trim();
         if !text.is_empty() {
+            self.said = true;
             let _ = events.send(RealtimeEvent::Sentence { text: text.to_owned(), begin_ms, end_ms });
         }
     }
@@ -363,15 +379,33 @@ impl Utterances {
         if text != self.partial {
             text.clone_into(&mut self.partial);
             if !text.is_empty() {
+                self.said = true;
                 let _ = events.send(RealtimeEvent::Partial { text: text.to_owned() });
             }
         }
     }
 }
 
+/// What a live session that passed on no text says about it (docs/dictation.md §3.15): how often the
+/// service replied, and the log id that finds the session in a report to Volcengine.
+fn silent_note(replies: usize, logid: Option<&str>) -> String {
+    match logid {
+        Some(logid) => format!("豆包语音返回了 {replies} 次结果，均不含文字；日志 ID {logid}"),
+        None => format!("豆包语音返回了 {replies} 次结果，均不含文字"),
+    }
+}
+
+/// A response's `result`: the object, or the first of a list (the doc types it a list).
+fn result_of(payload: &Value) -> Option<&Value> {
+    match payload.get("result")? {
+        Value::Array(list) => list.first(),
+        result => Some(result),
+    }
+}
+
 /// The text of a recorded take's last answer: `result.text`, else its utterances joined.
 fn whole_text(payload: &Value) -> String {
-    let result = payload.get("result");
+    let result = result_of(payload);
     if let Some(text) = result.and_then(|r| r.get("text")).and_then(Value::as_str) {
         return text.trim().to_owned();
     }
@@ -389,8 +423,9 @@ async fn send(outgoing: &mut Outgoing, incoming: &mut Incoming, frame: Vec<u8>) 
     })
 }
 
-/// The service's next response: whether it is the last, and its JSON. An error frame, a frame
-/// that cannot be read, or a connection that ends is an error.
+/// The service's next response: whether it is the last, and its JSON. Acknowledgements are read
+/// past. An error frame, an error inside a response, a frame that cannot be read, or a connection
+/// that ends is an error.
 async fn next_response(incoming: &mut Incoming) -> Result<(bool, Value), AsrError> {
     loop {
         let bytes = match incoming.next().await {
@@ -400,11 +435,34 @@ async fn next_response(incoming: &mut Incoming) -> Result<(bool, Value), AsrErro
             Some(Ok(_)) => continue,
             Some(Err(e)) => return Err(realtime::map_ws(e)),
         };
-        return match server_frame(&bytes)? {
-            ServerFrame::Response { last, payload } => Ok((last, payload)),
-            ServerFrame::Error { code, message } => Err(frame_error(code, &message)),
-        };
+        match server_frame(&bytes)? {
+            ServerFrame::Ack => {}
+            ServerFrame::Response { last, payload } => {
+                return match in_band_error(&payload) {
+                    Some(error) => Err(error),
+                    None => Ok((last, payload)),
+                };
+            }
+            ServerFrame::Error { code, message } => return Err(frame_error(u64::from(code), &message)),
+        }
     }
+}
+
+/// The error a full server response carries in its JSON (`code` and `message`, as the older API
+/// and some gateways answer): any code but a success (`1000`, `20000000`), the service's
+/// "processing" and "queued" (`20000001`, `20000002`) or a take without speech (`1013`,
+/// `20000003`).
+fn in_band_error(payload: &Value) -> Option<AsrError> {
+    let code = match payload.get("code")? {
+        Value::Number(number) => number.as_u64()?,
+        Value::String(text) => text.trim().parse().ok()?,
+        _ => return None,
+    };
+    if matches!(code, 0 | 1000 | 1013 | 20_000_000..=20_000_003) {
+        return None;
+    }
+    let message = payload.get("message").and_then(Value::as_str).unwrap_or_default();
+    Some(frame_error(code, message))
 }
 
 /// One client frame: the header, the gzipped payload's size, the gzipped payload.
@@ -434,9 +492,11 @@ fn gunzip(bytes: &[u8]) -> Result<Vec<u8>, AsrError> {
 /// What the service sent in one binary frame.
 #[derive(Clone, Debug, PartialEq)]
 enum ServerFrame {
-    /// A full server response: whether it answers the last packet (`0b0011`), and its JSON
-    /// (`null` when it carries none).
+    /// A full server response: whether it is the last (`0b0010`), and its JSON (`null` when it
+    /// carries none).
     Response { last: bool, payload: Value },
+    /// An acknowledgement.
+    Ack,
     /// An error frame: its code and message.
     Error { code: u32, message: String },
 }
@@ -450,16 +510,23 @@ fn server_frame(bytes: &[u8]) -> Result<ServerFrame, AsrError> {
         return Err(bad("a header size of 0"));
     }
     let (message_type, flags, compression) = (header[1] >> 4, header[1] & 0x0F, header[2] & 0x0F);
+    if message_type == SERVER_ACK {
+        return Ok(ServerFrame::Ack);
+    }
     let mut word = || {
         let value = bytes.get(at..at + 4).map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]));
         at += 4;
         value.ok_or_else(|| bad("cut short"))
     };
+    // The sequence number, then the event number, when the flags say they follow.
+    if flags & SEQUENCE != 0 {
+        word()?;
+    }
+    if flags & EVENT != 0 {
+        word()?;
+    }
     match message_type {
         FULL_SERVER_RESPONSE => {
-            if flags & SEQUENCE != 0 {
-                word()?;
-            }
             let size = usize::try_from(word()?).unwrap_or(usize::MAX);
             let payload = bytes.get(at..at.saturating_add(size)).ok_or_else(|| bad("its payload is cut short"))?;
             let payload = if compression == GZIP { gunzip(payload)? } else { payload.to_vec() };
@@ -470,7 +537,7 @@ fn server_frame(bytes: &[u8]) -> Result<ServerFrame, AsrError> {
                     AsrError::BadResponse(format!("豆包语音 response: {e}: {}", truncate_chars(&String::from_utf8_lossy(&payload), MAX_ERROR_BODY_CHARS)))
                 })?
             };
-            Ok(ServerFrame::Response { last: flags & LAST_RESULT == LAST_RESULT, payload })
+            Ok(ServerFrame::Response { last: flags & LAST_PACKET != 0, payload })
         }
         ERROR_RESPONSE => {
             let code = word()?;
@@ -493,7 +560,7 @@ fn server_frame(bytes: &[u8]) -> Result<ServerFrame, AsrError> {
 /// ran out (`45000081`), audio the service could not read (`45000151`), a busy server
 /// (`55000031`) or another internal error (`550xxxxx`), and the service's own code for the rest
 /// (`45000001` parameters, `45000002` empty audio).
-fn frame_error(code: u32, message: &str) -> AsrError {
+fn frame_error(code: u64, message: &str) -> AsrError {
     let said = voltip_reply::clean(message);
     let with_code = || if said.is_empty() { code.to_string() } else { format!("{code}: {said}") };
     if says_arrears(message) {
@@ -662,6 +729,9 @@ mod tests {
     use super::*;
     use crate::dashscope::tests::wav;
 
+    /// Flags of the service's last response: the last, a negative sequence number following.
+    const LAST_RESULT: u8 = 0b0011;
+
     const API_KEY: &str = r#"{"set":"api_key","api_key":"volc-test-key"}"#;
     const APP_TOKEN: &str = r#"{"set":"app_token","app_id":"1234567890","access_token":"volc-test-token"}"#;
     const MODEL: &str = "volc.seedasr.sauc.duration";
@@ -713,6 +783,8 @@ mod tests {
         after_last: Vec<Vec<u8>>,
         /// Drop the connection after the client's frame of this index.
         drop_after: Option<usize>,
+        /// The `X-Tt-Logid` the handshake answers with.
+        logid: Option<&'static str>,
     }
 
     type Seen = Arc<Mutex<Vec<Connection>>>;
@@ -746,8 +818,8 @@ mod tests {
             seen.len() - 1
         };
         let record = Arc::clone(&seen);
-        let refuse = script.refuse;
-        let callback = move |request: &Handshake, response: Answer| -> Result<Answer, ErrorResponse> {
+        let (refuse, logid) = (script.refuse, script.logid);
+        let callback = move |request: &Handshake, mut response: Answer| -> Result<Answer, ErrorResponse> {
             let mut seen = record.lock().unwrap();
             seen[index].path = request.uri().path().to_owned();
             seen[index].headers = request.headers().iter().map(|(n, v)| (n.as_str().to_owned(), v.to_str().unwrap_or_default().to_owned())).collect();
@@ -757,7 +829,12 @@ mod tests {
                     *refusal.status_mut() = StatusCode::from_u16(status).unwrap();
                     Err(refusal)
                 }
-                None => Ok(response),
+                None => {
+                    if let Some(logid) = logid {
+                        response.headers_mut().insert("x-tt-logid", HeaderValue::from_static(logid));
+                    }
+                    Ok(response)
+                }
             }
         };
         let Ok(socket) = tokio_tungstenite::accept_hdr_async(tcp, callback).await else { return };
@@ -823,12 +900,15 @@ mod tests {
         out
     }
 
-    /// A full server response as the service sends one: header, sequence number, size, JSON.
+    /// A full server response as the service sends one: header, sequence number (when its flags
+    /// say one follows), size, JSON.
     fn response(flags: u8, sequence: i32, payload: &Value, gzipped: bool) -> Vec<u8> {
         let json = payload.to_string().into_bytes();
         let body = if gzipped { gz(&json) } else { json };
         let mut frame = vec![0x11, 0x90 | flags, 0x10 | u8::from(gzipped), 0x00];
-        frame.extend_from_slice(&sequence.to_be_bytes());
+        if flags & SEQUENCE != 0 {
+            frame.extend_from_slice(&sequence.to_be_bytes());
+        }
         frame.extend_from_slice(&(body.len() as u32).to_be_bytes());
         frame.extend_from_slice(&body);
         frame
@@ -1095,7 +1175,7 @@ mod tests {
         let script = Script { after_last: vec![response(LAST_RESULT, -3, &json!({ "result": { "text": "" } }), false)], ..Script::default() };
         let (base, seen, mut ended) = serve(script).await;
         let (result, said) = live(&client(&base, API_KEY), &[], &[vec![7; 6400]], true).await;
-        assert_eq!((result, said), (Ok(()), vec![RealtimeEvent::Finished]));
+        assert_eq!((result, said), (Ok(()), vec![RealtimeEvent::Note { text: "豆包语音返回了 1 次结果，均不含文字".into() }, RealtimeEvent::Finished]));
         wait(&mut ended).await;
         let seen = seen.lock().unwrap();
         let audio = seen[0].audio();
@@ -1315,5 +1395,155 @@ mod tests {
         let err = client("http://127.0.0.1:9", API_KEY).transcribe(&wav(800, 8_000), None, &[]).await.unwrap_err();
         assert!(matches!(&err, AsrError::Audio(m) if m.contains("8000 Hz")), "{err:?}");
         assert_eq!(client("http://127.0.0.1:9", API_KEY).transcribe(&wav(0, 16_000), None, &[]).await.unwrap().text, "", "an empty take sends nothing");
+    }
+
+    /// A full server response with an event number after its sequence number (`0b0100`), as the
+    /// official demos read one: header, sequence, event, size, payload.
+    fn response_with_event(flags: u8, sequence: i32, event: u32, payload: &Value) -> Vec<u8> {
+        let body = gz(payload.to_string().as_bytes());
+        let mut frame = vec![0x11, 0x90 | flags | 0b0100, 0x11, 0x00];
+        frame.extend_from_slice(&sequence.to_be_bytes());
+        frame.extend_from_slice(&event.to_be_bytes());
+        frame.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        frame.extend_from_slice(&body);
+        frame
+    }
+
+    /// The last result of a session: one finished sentence.
+    fn last_result(text: &str) -> Vec<u8> {
+        response(
+            LAST_RESULT,
+            -9,
+            &json!({ "result": { "text": text, "utterances": [{ "text": text, "definite": true, "start_time": 0, "end_time": 300 }] } }),
+            true,
+        )
+    }
+
+    /// regression: the official demos read an event number after the sequence number when the
+    /// flags carry `0b0100`; such a response was read as its size and failed the session.
+    #[tokio::test]
+    async fn regression_a_response_with_an_event_number_is_read() {
+        let speaking = json!({ "result": { "text": "你好", "utterances": [{ "text": "你好", "definite": false }] } });
+        let script =
+            Script {
+                after: vec![(1, vec![response_with_event(SEQUENCE, 2, 451, &speaking)])], after_last: vec![last_result("你好。")], ..Script::default()
+            };
+        let (base, _, _) = serve(script).await;
+        let (result, said) = live(&client(&base, API_KEY), &[], &[vec![1; 6400], vec![2; 6400]], true).await;
+        assert_eq!((result, said), (Ok(()), vec![partial("你好"), sentence("你好。", 0, 300), RealtimeEvent::Finished]));
+    }
+
+    /// regression: the doc gives `result` the type list; a result listed as an array was read as
+    /// no text at all, and the take got no preview.
+    #[tokio::test]
+    async fn regression_a_result_listed_as_an_array_is_read() {
+        let listed = |text: &str, definite: bool| json!({ "result": [{ "text": text, "utterances": [{ "text": text, "definite": definite, "start_time": 0, "end_time": 300 }] }] });
+        let script = Script {
+            after: vec![(1, vec![response(SEQUENCE, 2, &listed("你好", false), true)])],
+            after_last: vec![response(LAST_RESULT, -3, &listed("你好。", true), true)],
+            ..Script::default()
+        };
+        let (base, _, _) = serve(script).await;
+        let (result, said) = live(&client(&base, API_KEY), &[], &[vec![1; 6400], vec![2; 6400]], true).await;
+        assert_eq!((result, said), (Ok(()), vec![partial("你好"), sentence("你好。", 0, 300), RealtimeEvent::Finished]));
+    }
+
+    /// regression: a response whose `utterances` are empty while `result.text` holds the text (the
+    /// other clients take the text) gave no preview and an empty last result.
+    #[tokio::test]
+    async fn regression_text_without_utterances_is_what_is_being_said() {
+        let bare = |text: &str| json!({ "result": { "text": text, "utterances": [] } });
+        let script = Script {
+            after: vec![(1, vec![response(SEQUENCE, 2, &bare("你好"), true)])],
+            after_last: vec![response(LAST_RESULT, -3, &bare("你好世界"), true)],
+            ..Script::default()
+        };
+        let (base, _, _) = serve(script).await;
+        let (result, said) = live(&client(&base, API_KEY), &[], &[vec![1; 6400], vec![2; 6400]], true).await;
+        assert_eq!(result, Ok(()));
+        assert_eq!(said, vec![partial("你好"), sentence("你好世界", 0, 400), RealtimeEvent::Finished]);
+    }
+
+    /// regression: a full server response that carries the service's error in its JSON (`code`
+    /// and `message`) was read as a result without text; the session ended well with nothing, and
+    /// the history said only that the live preview got no text.
+    #[tokio::test]
+    async fn regression_an_error_inside_a_response_ends_the_session_with_it() {
+        let script = Script {
+            after: vec![(1, vec![response(SEQUENCE, 2, &json!({ "code": 45_000_001, "message": "invalid hotwords" }), true)])],
+            after_last: vec![last_result("你好。")],
+            ..Script::default()
+        };
+        let (base, _, _) = serve(script).await;
+        let (result, said) = live(&client(&base, API_KEY), &[], &[vec![1; 6400], vec![2; 6400]], true).await;
+        assert_eq!(result, Err(AsrError::Service { code: "45000001".into(), message: "invalid hotwords".into() }));
+        assert!(!said.contains(&RealtimeEvent::Finished));
+        // The service's success codes and its "no speech" are no errors.
+        for code in [0, 1000, 1013, 20_000_000, 20_000_003] {
+            let script = Script {
+                after: vec![(1, vec![response(SEQUENCE, 2, &json!({ "code": code, "message": "ok", "result": { "text": "" } }), true)])],
+                after_last: vec![last_result("好。")],
+                ..Script::default()
+            };
+            let (base, _, _) = serve(script).await;
+            let (result, said) = live(&client(&base, API_KEY), &[], &[vec![1; 6400], vec![2; 6400]], true).await;
+            assert_eq!((result, said), (Ok(()), vec![sentence("好。", 0, 300), RealtimeEvent::Finished]), "code {code}");
+        }
+    }
+
+    /// regression: an acknowledgement frame (message type `0b1011`, which other clients skip)
+    /// failed the session as an unexpected message type.
+    #[tokio::test]
+    async fn regression_an_acknowledgement_frame_is_skipped() {
+        let mut ack = vec![0x11, 0xB1, 0x00, 0x00];
+        ack.extend_from_slice(&2i32.to_be_bytes());
+        ack.extend_from_slice(&0u32.to_be_bytes());
+        let script = Script { after: vec![(1, vec![ack])], after_last: vec![last_result("你好。")], ..Script::default() };
+        let (base, _, _) = serve(script).await;
+        let (result, said) = live(&client(&base, API_KEY), &[], &[vec![1; 6400], vec![2; 6400]], true).await;
+        assert_eq!((result, said), (Ok(()), vec![sentence("你好。", 0, 300), RealtimeEvent::Finished]));
+    }
+
+    /// regression: the official demos take the `0b0010` bit as the last result, with or without a
+    /// sequence number; a last result flagged `0b0010` alone left the session waiting until it
+    /// timed out.
+    #[tokio::test]
+    async fn regression_the_last_flag_alone_ends_the_session() {
+        let payload = json!({ "result": { "text": "你好。", "utterances": [{ "text": "你好。", "definite": true, "start_time": 0, "end_time": 300 }] } });
+        let body = gz(payload.to_string().as_bytes());
+        let mut last = vec![0x11, 0x92, 0x11, 0x00];
+        last.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        last.extend_from_slice(&body);
+        let (base, _, _) = serve(Script { after_last: vec![last], ..Script::default() }).await;
+        let (result, said) = live(&client_with_timeout(&base, Duration::from_secs(5)), &[], &[vec![1; 6400]], true).await;
+        assert_eq!((result, said), (Ok(()), vec![sentence("你好。", 0, 300), RealtimeEvent::Finished]));
+    }
+
+    /// A session that ends without any text says what the service answered — how often it replied
+    /// and the log id of its handshake — so the take's history can tell a silent service from a
+    /// silent take (docs/dictation.md §11.9).
+    #[tokio::test]
+    async fn regression_a_session_without_text_says_what_the_service_answered() {
+        let script = Script {
+            logid: Some("20261105140442ABCDEF"),
+            after: vec![
+                (0, vec![response(NO_SEQUENCE, 0, &json!({ "result": { "additions": { "log_id": "x" } } }), true)]),
+                (1, vec![response(SEQUENCE, 2, &json!({ "audio_info": { "duration": 200 } }), true)]),
+            ],
+            after_last: vec![response(LAST_RESULT, -3, &json!({ "audio_info": { "duration": 400 }, "result": { "text": "" } }), true)],
+            ..Script::default()
+        };
+        let (base, _, _) = serve(script).await;
+        let (result, said) = live(&client(&base, API_KEY), &[], &[vec![1; 6400], vec![2; 6400]], true).await;
+        assert_eq!(result, Ok(()));
+        assert_eq!(
+            said,
+            vec![RealtimeEvent::Note { text: "豆包语音返回了 3 次结果，均不含文字；日志 ID 20261105140442ABCDEF".into() }, RealtimeEvent::Finished]
+        );
+        // Without a log id, the replies alone.
+        let script = Script { after_last: vec![response(LAST_RESULT, -2, &json!({ "result": { "text": "" } }), true)], ..Script::default() };
+        let (base, _, _) = serve(script).await;
+        let (_, said) = live(&client(&base, API_KEY), &[], &[vec![1; 6400]], true).await;
+        assert_eq!(said, vec![RealtimeEvent::Note { text: "豆包语音返回了 1 次结果，均不含文字".into() }, RealtimeEvent::Finished]);
     }
 }

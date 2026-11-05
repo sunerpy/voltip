@@ -19,6 +19,7 @@ use voltip_core::AsrProtocol;
 use voltip_core::dictation::{DictationError, Segment, StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber, Transcriber, Transcript};
 
 use crate::dashscope::FINISH_TIMEOUT;
+use crate::fed::Fed;
 
 /// The vendor client of `protocol`, when it is one of theirs.
 pub fn vendor_of(protocol: AsrProtocol) -> Option<Vendor> {
@@ -106,7 +107,7 @@ impl StreamingTranscriber for VendorStreaming {
             }
             let _ = done_tx.send(result.map_err(crate::asr_error));
         });
-        Ok(Box::new(VendorSession { input: input_tx, events, done, finish_timeout: self.finish_timeout, model, glossary_sent }))
+        Ok(Box::new(VendorSession { input: input_tx, events, done, finish_timeout: self.finish_timeout, model, glossary_sent, fed: Fed::default() }))
     }
 
     /// Nothing to load: the model is the service's.
@@ -122,10 +123,13 @@ struct VendorSession {
     model: String,
     /// Its requests carry the glossary (docs/dictation.md §30.6).
     glossary_sent: bool,
+    /// The audio it was fed.
+    fed: Fed,
 }
 
 impl StreamingSession for VendorSession {
     fn feed(&mut self, pcm16k: &[f32]) {
+        self.fed.add(pcm16k);
         let pcm: Vec<u8> = pcm16k.iter().flat_map(|&x| ((x.clamp(-1.0, 1.0) * f32::from(i16::MAX)).round() as i16).to_le_bytes()).collect();
         // A session that already ended has said why through `poll`.
         let _ = self.input.send(RealtimeInput::Audio(pcm));
@@ -143,10 +147,16 @@ impl StreamingSession for VendorSession {
         Some(self.glossary_sent)
     }
 
+    /// The session's last sentences; one that gave no text at all says what the service answered
+    /// and the audio it was sent.
     fn finish(self: Box<Self>) -> Result<StreamFinal, DictationError> {
         let _ = self.input.send(RealtimeInput::Finish);
         match self.done.recv_timeout(self.finish_timeout) {
-            Ok(result) => result.map(|fin| StreamFinal { glossary_sent: Some(self.glossary_sent), ..fin }),
+            Ok(result) => result.map(|fin| {
+                let silent = fin.committed.is_empty() && fin.tail.trim().is_empty();
+                let note = silent.then(|| self.fed.note(fin.note.as_deref()));
+                StreamFinal { glossary_sent: Some(self.glossary_sent), note, ..fin }
+            }),
             // docs/dictation.md §3.14: the service went silent, a timeout.
             Err(_) => Err(DictationError::Unreachable {
                 service: voltip_core::ServiceKind::Asr,
@@ -169,7 +179,7 @@ async fn drive(
     let (out_tx, mut out) = mpsc::unbounded_channel();
     let session = client.realtime(language, glossary, input, out_tx);
     let fold = async {
-        let (mut committed, mut current, mut finished) = (Vec::new(), String::new(), false);
+        let (mut committed, mut current, mut finished, mut note) = (Vec::new(), String::new(), false, None);
         while let Some(event) = out.recv().await {
             match event {
                 RealtimeEvent::Partial { text } => {
@@ -181,21 +191,22 @@ async fn drive(
                     committed.push(Segment { text: text.clone(), refined: None, start_ms: begin_ms, end_ms });
                     let _ = events.send(StreamEvent::Endpoint { text, start_ms: begin_ms, end_ms });
                 }
+                RealtimeEvent::Note { text } => note = Some(text),
                 RealtimeEvent::Finished => {
                     finished = true;
                     break;
                 }
             }
         }
-        (committed, current, finished)
+        (committed, current, finished, note)
     };
-    let (result, (committed, current, finished)) = tokio::join!(session, fold);
+    let (result, (committed, current, finished, note)) = tokio::join!(session, fold);
     result?;
     if !finished {
         return Err(voltip_asr::realtime::closed_early());
     }
     // A sentence the service never closed is the tail.
-    Ok(StreamFinal { committed, tail: current, model: Some(client.model().to_owned()), provider: None, fallback: None, glossary_sent: None })
+    Ok(StreamFinal { committed, tail: current, model: Some(client.model().to_owned()), provider: None, fallback: None, glossary_sent: None, note })
 }
 
 #[cfg(test)]
@@ -205,12 +216,21 @@ mod tests {
 
     use super::*;
 
-    /// A scripted realtime client: a partial and a sentence per 100 ms of audio, the rest at
-    /// `Finish`; or failing, or ending without `Finished`.
+    /// A scripted realtime client: a partial per packet of audio and a sentence at `Finish`; or
+    /// failing, or ending without `Finished`, or without any text.
     struct Scripted {
         fail: Option<AsrError>,
         finishes: bool,
         audio: Arc<Mutex<usize>>,
+        says: Says,
+    }
+
+    /// What a scripted session says.
+    #[derive(Clone, Copy)]
+    enum Says {
+        Text,
+        /// No text at all; its remark at the end, when it has one.
+        Nothing(Option<&'static str>),
     }
 
     #[async_trait]
@@ -254,11 +274,21 @@ mod tests {
                     RealtimeInput::Audio(pcm) => {
                         sent += pcm.len();
                         *self.audio.lock().unwrap() += pcm.len();
-                        let _ = events.send(RealtimeEvent::Partial { text: "你".into() });
+                        if matches!(self.says, Says::Text) {
+                            let _ = events.send(RealtimeEvent::Partial { text: "你".into() });
+                        }
                     }
                     RealtimeInput::Finish => {
                         let end = u64::try_from(sent / 32).unwrap();
-                        let _ = events.send(RealtimeEvent::Sentence { text: "你好。".into(), begin_ms: 0, end_ms: end });
+                        match self.says {
+                            Says::Text => {
+                                let _ = events.send(RealtimeEvent::Sentence { text: "你好。".into(), begin_ms: 0, end_ms: end });
+                            }
+                            Says::Nothing(Some(remark)) => {
+                                let _ = events.send(RealtimeEvent::Note { text: remark.into() });
+                            }
+                            Says::Nothing(None) => {}
+                        }
                         if self.finishes {
                             let _ = events.send(RealtimeEvent::Finished);
                         }
@@ -271,8 +301,12 @@ mod tests {
     }
 
     fn streaming(fail: Option<AsrError>, finishes: bool) -> (Arc<dyn StreamingTranscriber>, Arc<Mutex<usize>>) {
+        scripted(fail, finishes, Says::Text)
+    }
+
+    fn scripted(fail: Option<AsrError>, finishes: bool, says: Says) -> (Arc<dyn StreamingTranscriber>, Arc<Mutex<usize>>) {
         let audio = Arc::new(Mutex::new(0));
-        let client: Arc<dyn VendorAsr> = Arc::new(Scripted { fail, finishes, audio: Arc::clone(&audio) });
+        let client: Arc<dyn VendorAsr> = Arc::new(Scripted { fail, finishes, audio: Arc::clone(&audio), says });
         let t = VendorTranscriber { client };
         (t.streaming(&["术语".into()]).expect("a realtime client streams"), audio)
     }
@@ -296,6 +330,31 @@ mod tests {
         assert_eq!(fin.committed.len(), 1);
         assert_eq!((fin.committed[0].text.as_str(), fin.committed[0].end_ms), ("你好。", 100));
         assert_eq!((fin.model.as_deref(), fin.glossary_sent), (Some("scripted"), Some(true)));
+        assert_eq!(fin.note, None, "a session with text needs no note");
+    }
+
+    /// regression: a session that ended without any text left the take's history with "实时识别未得到
+    /// 文本" alone, which tells neither the user nor support what happened. It now says what the
+    /// service remarked and the audio it was sent (docs/dictation.md §12).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn regression_a_session_without_text_says_what_it_was_sent() {
+        for (says, want) in [
+            (Says::Nothing(Some("豆包语音返回了 2 次结果，均不含文字")), "豆包语音返回了 2 次结果，均不含文字；已发送 0.2 秒音频，最大音量 -20 dB"),
+            (Says::Nothing(None), "已发送 0.2 秒音频，最大音量 -20 dB"),
+        ] {
+            let (stream, _) = scripted(None, true, says);
+            let fin = tokio::task::spawn_blocking(move || {
+                let mut session = stream.open(None).unwrap();
+                session.feed(&[0.1; 1600]);
+                session.feed(&[-0.1; 1600]);
+                session.finish()
+            })
+            .await
+            .unwrap()
+            .unwrap();
+            assert!(fin.committed.is_empty() && fin.tail.is_empty(), "{fin:?}");
+            assert_eq!(fin.note.as_deref(), Some(want));
+        }
     }
 
     /// A failed session says why through `poll` and keeps the error's kind for `finish`; one that
@@ -327,7 +386,7 @@ mod tests {
     #[tokio::test]
     async fn a_whole_take_keeps_its_receipt_and_error_kinds() {
         let audio = Arc::new(Mutex::new(0));
-        let t = VendorTranscriber { client: Arc::new(Scripted { fail: None, finishes: true, audio: Arc::clone(&audio) }) };
+        let t = VendorTranscriber { client: Arc::new(Scripted { fail: None, finishes: true, audio: Arc::clone(&audio), says: Says::Text }) };
         let ok = t.transcribe(b"wav", None, &["术语".into()]).await.unwrap();
         assert_eq!((ok.text.as_str(), ok.model.as_deref(), ok.glossary_sent), ("整段", Some("scripted"), true));
         for (error, check) in [
@@ -339,7 +398,7 @@ mod tests {
             (AsrError::Network("reset".into()), DictationError::is_outage),
             (AsrError::Timeout, DictationError::is_outage),
         ] {
-            let t = VendorTranscriber { client: Arc::new(Scripted { fail: Some(error.clone()), finishes: true, audio: Arc::clone(&audio) }) };
+            let t = VendorTranscriber { client: Arc::new(Scripted { fail: Some(error.clone()), finishes: true, audio: Arc::clone(&audio), says: Says::Text }) };
             let failed = t.transcribe(b"wav", None, &[]).await.unwrap_err();
             assert!(check(&failed), "{error:?} → {failed:?}");
         }

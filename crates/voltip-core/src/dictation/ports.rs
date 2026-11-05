@@ -639,6 +639,10 @@ pub struct StreamFinal {
     /// Whether the session's requests carried the glossary (docs/dictation.md §30.6); `None` when
     /// the session cannot say.
     pub glossary_sent: Option<bool>,
+    /// What a session that ended without any text knows about why, for the reason the take's
+    /// history gives (docs/dictation.md §3.15): what the service answered, the audio it was sent.
+    /// `None` when it gave text or cannot say.
+    pub note: Option<String>,
 }
 
 impl StreamFinal {
@@ -1158,7 +1162,7 @@ mod tests {
         assert_eq!(serde_json::to_string(&segment).unwrap(), r#"{"text":"你好。","start_ms":120,"end_ms":1480}"#);
         assert_eq!(
             StreamFinal::default(),
-            StreamFinal { committed: Vec::new(), tail: String::new(), model: None, provider: None, fallback: None, glossary_sent: None }
+            StreamFinal { committed: Vec::new(), tail: String::new(), model: None, provider: None, fallback: None, glossary_sent: None, note: None }
         );
         assert_eq!(PARTIAL_THROTTLE, Duration::from_millis(80));
         assert_eq!(LIVE_CHUNK_SAMPLES as u32 * 10, LIVE_SAMPLE_RATE_HZ, "one chunk is 100 ms");

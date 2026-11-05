@@ -68,6 +68,13 @@ pub enum RealtimeEvent {
         /// End.
         end_ms: u64,
     },
+    /// What the service answered in a session about to end without any text, in the words the
+    /// take's history shows: how often it replied, its id for the session (docs/dictation.md
+    /// §3.15). Sent before [`RealtimeEvent::Finished`]; a session with text sends none.
+    Note {
+        /// The remark.
+        text: String,
+    },
     /// Everything was said: the last event of a session that ended well.
     Finished,
 }

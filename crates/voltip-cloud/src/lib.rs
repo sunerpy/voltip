@@ -13,6 +13,7 @@
 
 pub mod access;
 pub mod dashscope;
+mod fed;
 pub mod feedback;
 pub mod vendor;
 

@@ -1310,7 +1310,7 @@ pub(crate) mod tests {
             match event {
                 RealtimeEvent::Partial { text } => assert!(expected.as_deref().is_some_and(|s| s.starts_with(text.as_str())), "{text} before {expected:?}"),
                 RealtimeEvent::Sentence { .. } => expected = next.next(),
-                RealtimeEvent::Finished => {}
+                RealtimeEvent::Note { .. } | RealtimeEvent::Finished => {}
             }
         }
         let seen = seen.lock().unwrap();
