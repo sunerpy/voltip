@@ -4,10 +4,12 @@
 //! over `wss://…/realtime/asr/stream`:
 //!
 //! 1. the service says `session.created`; the client sends `session.update` (16 kHz PCM, the model,
-//!    the language, the glossary as the `prompt`, the service's own pause detection);
+//!    the language, the glossary as the `prompt`, the service's own pause detection), and the audio
+//!    waits until the service confirms it with `session.updated`;
 //! 2. `input_audio_buffer.append` frames of base64 PCM; the pause detection cuts the take into
-//!    items, and the service answers each with `…transcription.delta` (the item's whole text so
-//!    far) and, once the item is committed, `…transcription.completed`;
+//!    items, and the service answers each with `…transcription.delta` (the item's text so far: its
+//!    settled part `text`, then the tail it may still correct, `stash`) and, once the item is
+//!    committed, `…transcription.completed`;
 //! 3. at the end of the take the client sends a second of silence, so the pause detection closes the
 //!    sentence being spoken, then commits what is left, and waits for the items still open.
 //!
@@ -73,6 +75,8 @@ pub(crate) struct StepfunAsr {
     stream: Url,
     models: Url,
     http: Client,
+    /// How long a live session may take to open, from the connection to `session.updated`.
+    opening: Duration,
     ending: Ending,
 }
 
@@ -96,7 +100,7 @@ impl StepfunAsr {
             .user_agent(concat!("voltip-asr/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|e| AsrError::InvalidConfig(format!("http client: {e}")))?;
-        Ok(Self { config, key, transcriptions, stream, models, http, ending: ENDING })
+        Ok(Self { config, key, transcriptions, stream, models, http, opening: realtime::CONNECT_TIMEOUT, ending: ENDING })
     }
 
     fn realtime_model(&self) -> bool {
@@ -206,20 +210,12 @@ impl VendorAsr for StepfunAsr {
         request.headers_mut().insert("authorization", bearer);
         let (socket, _) = realtime::connect(request, &self.config.network).await?;
         let (mut sink, mut stream) = socket.split();
-        // The session opens with `session.created`; the configuration follows it.
-        tokio::time::timeout(realtime::CONNECT_TIMEOUT, async {
-            loop {
-                match next_event(&mut stream).await? {
-                    Some(event) if event_type(&event) == "session.created" => return Ok(()),
-                    Some(event) if event_type(&event) == "error" => return Err(service_event_error(&event)),
-                    Some(_) => {}
-                    None => return Err(realtime::closed_early()),
-                }
-            }
-        })
-        .await
-        .map_err(|_| AsrError::Timeout)??;
+        // The session opens with `session.created`; the configuration follows it, and the audio
+        // waits in `input` until the service confirms the configuration (the doc's order).
+        let opened_by = tokio::time::Instant::now() + self.opening;
+        wait_for(&mut stream, "session.created", opened_by).await?;
         sink.send(Message::text(self.session_update(language, glossary).to_string())).await.map_err(realtime::map_ws)?;
+        wait_for(&mut stream, "session.updated", opened_by).await?;
 
         let mut session = Session::default();
         // After the take's end: the final commit's event id, when the service last spoke, the deadline.
@@ -376,8 +372,11 @@ impl Session {
                 let id = event.pointer("/item/id").and_then(Value::as_str).unwrap_or(&item).to_owned();
                 self.opened(&id);
             }
+            // The item's text so far is its settled part and the tail the service may still
+            // correct, which is all there is when an item starts.
             "conversation.item.input_audio_transcription.delta" => {
-                let text = event.get("text").and_then(Value::as_str).unwrap_or_default().trim().to_owned();
+                let part = |key: &str| event.get(key).and_then(Value::as_str).unwrap_or_default();
+                let text = format!("{}{}", part("text"), part("stash")).trim().to_owned();
                 if !text.is_empty() {
                     return Ok(Some(RealtimeEvent::Partial { text }));
                 }
@@ -428,6 +427,26 @@ impl Session {
         let end = spoken.map(|d| begin + d).or_else(|| self.stopped.get(item).copied()).unwrap_or(self.sent_ms).max(begin);
         (begin, end)
     }
+}
+
+/// Wait until the service sends an event of `kind`, by `deadline`; its `error` event, a closed
+/// connection or the deadline fails the session.
+async fn wait_for<S>(stream: &mut S, kind: &str, deadline: tokio::time::Instant) -> Result<(), AsrError>
+where
+    S: futures_util::Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin,
+{
+    tokio::time::timeout_at(deadline, async {
+        loop {
+            match next_event(stream).await? {
+                Some(event) if event_type(&event) == kind => return Ok(()),
+                Some(event) if event_type(&event) == "error" => return Err(service_event_error(&event)),
+                Some(_) => {}
+                None => return Err(realtime::closed_early()),
+            }
+        }
+    })
+    .await
+    .map_err(|_| AsrError::Timeout)?
 }
 
 /// The next service event, `None` when the connection closed.
@@ -606,6 +625,8 @@ mod tests {
         appends: Vec<Vec<u8>>,
         committed: bool,
         closed: bool,
+        /// The client sent something after `session.update` before the service confirmed it.
+        early_audio: bool,
     }
 
     /// How the scripted endpoint answers the final commit (and the first audio).
@@ -626,6 +647,12 @@ mod tests {
         FailAtOnce,
         /// The service fails after the end.
         FailAtTheEnd,
+        /// One sentence spoken as the doc's deltas show it, its tail in `stash`; then silence.
+        Stash,
+        /// `session.updated` comes 300 ms after `session.update`; then one sentence and silence.
+        UpdatesLate,
+        /// The service never confirms the configuration.
+        NeverUpdates,
     }
 
     // tungstenite's handshake callback returns its `ErrorResponse` by value.
@@ -663,7 +690,17 @@ mod tests {
                         match event_type(&value) {
                             "session.update" => {
                                 seen.lock().unwrap().update = Some(value.clone());
-                                say.push(json!({ "type": "session.updated" }));
+                                match script {
+                                    Script::NeverUpdates => {}
+                                    Script::UpdatesLate => {
+                                        // Whatever the client sends before the confirmation comes too early.
+                                        if tokio::time::timeout(Duration::from_millis(300), stream.next()).await.is_ok() {
+                                            seen.lock().unwrap().early_audio = true;
+                                        }
+                                        say.push(json!({ "type": "session.updated" }));
+                                    }
+                                    _ => say.push(json!({ "type": "session.updated" })),
+                                }
                             }
                             "input_audio_buffer.append" => {
                                 let bytes = base64::engine::general_purpose::STANDARD.decode(value["audio"].as_str().unwrap()).unwrap();
@@ -674,6 +711,17 @@ mod tests {
                                         say.push(json!({ "type": "error", "error": { "type": "invalid_request_error", "code": "invalid_value", "message": "bad audio" } }));
                                         continue;
                                     }
+                                    if script == Script::Stash {
+                                        say.extend([
+                                            json!({ "type": "input_audio_buffer.speech_started", "audio_start_ms": 0, "item_id": "i1" }),
+                                            json!({ "type": "conversation.item.input_audio_transcription.delta", "item_id": "i1", "text": "", "stash": "今天" }),
+                                            json!({ "type": "conversation.item.input_audio_transcription.delta", "item_id": "i1", "text": "今天天气", "stash": "不错" }),
+                                            json!({ "type": "input_audio_buffer.speech_stopped", "audio_start_ms": 900, "item_id": "i1" }),
+                                            json!({ "type": "input_audio_buffer.committed", "item_id": "i1" }),
+                                            json!({ "type": "conversation.item.input_audio_transcription.completed", "item_id": "i1", "transcript": "今天天气不错。", "words": [{ "word": "今", "start": 0.1, "end": 0.3 }, { "word": "错", "start": 0.6, "end": 0.8 }] }),
+                                        ]);
+                                        continue;
+                                    }
                                     say.extend([
                                         json!({ "type": "input_audio_buffer.speech_started", "audio_start_ms": 0, "item_id": "i1" }),
                                         json!({ "type": "conversation.item.input_audio_transcription.delta", "item_id": "i1", "text": "你好" }),
@@ -682,7 +730,7 @@ mod tests {
                                         json!({ "type": "conversation.item.created", "item": { "id": "i1", "status": "in_progress" } }),
                                         json!({ "type": "conversation.item.input_audio_transcription.completed", "item_id": "i1", "transcript": "你好。", "words": [{ "word": "你", "start": 0.1, "end": 0.3 }, { "word": "好", "start": 0.3, "end": 0.8 }] }),
                                     ]);
-                                    if script != Script::Silent {
+                                    if !matches!(script, Script::Silent | Script::UpdatesLate) {
                                         say.extend([
                                             json!({ "type": "input_audio_buffer.speech_started", "audio_start_ms": 1200, "item_id": "i2" }),
                                             json!({ "type": "conversation.item.input_audio_transcription.delta", "item_id": "i2", "text": "世" }),
@@ -711,7 +759,12 @@ mod tests {
                                     ]),
                                     Script::NeverCompletes => say.push(json!({ "type": "input_audio_buffer.committed", "item_id": "i2" })),
                                     Script::FailAtTheEnd => say.push(json!({ "type": "error", "error": { "type": "internal_error", "code": "internal_error", "message": "boom" } })),
-                                    Script::Silent | Script::SpeakingForever | Script::FailAtOnce => {}
+                                    Script::Silent
+                                    | Script::SpeakingForever
+                                    | Script::FailAtOnce
+                                    | Script::Stash
+                                    | Script::UpdatesLate
+                                    | Script::NeverUpdates => {}
                                 }
                             }
                             _ => {}
@@ -840,6 +893,44 @@ mod tests {
         .expect("the connection closes");
         let seen = seen.lock().unwrap();
         assert!(seen.appends.is_empty() && !seen.committed, "nothing more went out");
+    }
+
+    /// regression: StepFun's delta carries the item's settled `text` and the tail it may still
+    /// correct (`stash`); the preview showed `text` alone, so nothing while an item started (all of
+    /// it in the stash) and never its last words.
+    #[tokio::test]
+    async fn regression_the_preview_is_the_text_and_its_stash() {
+        let (base, _) = serve(Script::Stash).await;
+        let (result, events) = run(&live(&base), &[pcm(1)], true).await;
+        assert_eq!(result, Ok(()));
+        assert_eq!(
+            events,
+            vec![
+                RealtimeEvent::Partial { text: "今天".into() },
+                RealtimeEvent::Partial { text: "今天天气不错".into() },
+                RealtimeEvent::Sentence { text: "今天天气不错。".into(), begin_ms: 0, end_ms: 700 },
+                RealtimeEvent::Finished,
+            ]
+        );
+    }
+
+    /// regression: the audio went out right after `session.update`, before the service confirmed
+    /// the configuration with `session.updated` (the doc's order). Now it waits; a service that
+    /// never confirms fails the session within its opening time, so the take is recognised whole.
+    #[tokio::test]
+    async fn regression_audio_waits_for_the_configuration_to_be_confirmed() {
+        let (base, seen) = serve(Script::UpdatesLate).await;
+        let (result, events) = run(&live(&base), &[pcm(1)], true).await;
+        assert_eq!(result, Ok(()));
+        assert_eq!(events.first(), Some(&RealtimeEvent::Partial { text: "你好".into() }));
+        assert!(!seen.lock().unwrap().early_audio, "nothing went out before session.updated");
+
+        let (base, seen) = serve(Script::NeverUpdates).await;
+        let mut c = live(&base);
+        c.opening = Duration::from_millis(500);
+        let (result, events) = run(&c, &[pcm(1)], true).await;
+        assert_eq!((result, events), (Err(AsrError::Timeout), vec![]));
+        assert!(seen.lock().unwrap().appends.is_empty(), "no audio went to a session that was not configured");
     }
 
     #[test]
