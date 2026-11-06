@@ -35,7 +35,7 @@
 ## 2. 总体结构
 
 ```
-apps/mobile-rn (Expo SDK 57 · RN 0.86.3 · React 19.2.3 · react-native-paper 5 MD3 · React Navigation 7)
+apps/mobile-rn (Expo SDK 58 · RN 0.88.1 · React 19.3.0 · react-native-paper 5 MD3 · React Navigation 7)
   src/          界面：页面、主题、导航；@voltip/shared 的 TauriBackend + RN 传输层
   modules/voltip-native   本地 Expo 模块（Kotlin）：invoke / 事件 / 平台回调；Keyring.kt
   rust/         crate voltip-mobile-rn → libvoltip_rn.so（cdylib）：命令分发 + UniFFI 接口（ffi.rs）
@@ -210,9 +210,10 @@ JS ◀──sendEvent("voltip://event")── Kotlin VoltipHost（PlatformHost�
   录音、词典、规则（导入 / 导出）、场景、记录设置、电脑设置、关于、反馈。
 - **文字**：全部走 `@voltip/shared` 的类型化字典（`zh-CN.ts` 定义键，`en.ts` 对应），新增文案两种语言同时加；
   用语按现有产品文案的标准（memory `feedback-ui-copy-register`）。
-- **React 版本**：RN 0.86 要求 React 19.2.3，仓库其余部分是 19.3.0，所以 RN 版不能引用 `@voltip/ui`
-  （会出现两份 React）。`BackendProvider`、`I18nProvider`、`useNow`、`useHistoryList` 等不依赖 DOM 的
-  hooks 复制到 `apps/mobile-rn/src/backend`，逻辑本身仍在 `@voltip/shared`。
+- **React 版本**：RN 0.88 内置的渲染器是 React 19.3.0，Expo SDK 58 也固定这个版本；仓库其余部分是
+  19.3.1，所以 RN 版不能引用 `@voltip/ui`（会出现两份 React）。`BackendProvider`、`I18nProvider`、
+  `useNow`、`useHistoryList` 等不依赖 DOM 的 hooks 复制到 `apps/mobile-rn/src/backend`，逻辑本身仍在
+  `@voltip/shared`。
 
 ## 6. 构建
 
@@ -348,7 +349,7 @@ scripts/build-android-rn.sh --unsigned  # 不签名：…_android_arm64-unsigned
 
 ## 9. 风险与取舍
 
-- 两份 React（19.2.3 / 19.3.0）与复制的 hooks：并存期间的代价；RN 胜出后把不依赖 DOM 的 hooks 抽到一个以
+- 两份 React（19.3.0 / 19.3.1）与复制的 hooks：并存期间的代价；RN 胜出后把不依赖 DOM 的 hooks 抽到一个以
   react 为 peer 依赖的包。
 - 复制的 Rust 外壳模块：同上，二选一后合并。
 - APK 体积：实测 64.0 MB（arm64；`libvoltip_rn.so` 19.8 MB，许可证文本压缩后约 0.13 MB），比预估的 45–50 MB 大；RN 胜出后再看
