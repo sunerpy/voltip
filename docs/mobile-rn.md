@@ -250,8 +250,11 @@ scripts/build-android-rn.sh --unsigned  # 不签名：…_android_arm64-unsigned
      `withOptimizedRelease` 保证模板 release 构建类型用 `proguard-android-optimize.txt`：Expo SDK 57 的模板写的是
      `getDefaultProguardFile("proguard-android.txt")`，插件把它换掉；SDK 58 的模板本来就用优化版，原样保留；两者都没有就报错
      （`plugins/release.test.js`）。不开 `shrinkResources`。
-   - keep 规则只写在本地模块的 `consumer-rules.pro`，随模块交给应用：UniFFI 与 JNA 按名字查找的类，以及
-     `-keepattributes SourceFile,LineNumberTable` 和 `-renamesourcefileattribute SourceFile`（堆栈保留行号，用 mapping 还原）。
+   - 针对类的 keep 规则只写在本地模块的 `consumer-rules.pro`，随模块交给应用：UniFFI 与 JNA 按名字查找的类。
+     保留堆栈行号的 `-keepattributes SourceFile,LineNumberTable` 和 `-renamesourcefileattribute SourceFile`（用 mapping 还原）
+     是全局选项，写在 `app.json` 的 `expo-build-properties` `android.extraProguardRules`，由 `expo prebuild` 写进应用的
+     `proguard-rules.pro`：Android Gradle Plugin 9（Expo SDK 58）不允许库的 consumer 规则带全局选项，本地模块的构建在
+     `exportReleaseConsumerProguardFiles` 失败，预编译 AAR 里的则被应用的 R8 忽略（2026-11-07，`plugins/release.test.js`）。
    - 2026-10-28 的构建：AAB 的 `BUNDLE-METADATA/com.android.tools/r8.json` 中混淆、优化、缩减分别覆盖 80.8 %、80.4 %、81.0 %
      （`stats.noObfuscationPercentage` 等为 19.2、19.6、19.0）；APK 由约 33 MB 降到 30.3 MB；R8 没有报缺少的类。
    - mapping：脚本把 `app/build/outputs/mapping/release/mapping.txt` 复制为

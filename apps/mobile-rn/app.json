@@ -38,7 +38,8 @@
             "targetSdkVersion": 36,
             "buildArchs": ["arm64-v8a"],
             "useLegacyPackaging": true,
-            "enableMinifyInReleaseBuilds": true
+            "enableMinifyInReleaseBuilds": true,
+            "extraProguardRules": "-keepattributes SourceFile,LineNumberTable\n-renamesourcefileattribute SourceFile"
           }
         }
       ],

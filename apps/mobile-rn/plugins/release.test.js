@@ -163,4 +163,29 @@ describe("the release config", () => {
     // React Native looks resources up by name: shrinking them gains nothing Play measures.
     expect(properties.enableShrinkResourcesInReleaseBuilds).toBeUndefined();
   });
+
+  it("regression: keeps the stack traces' line numbers in the app's own rules, which Android Gradle Plugin 9 still reads", () => {
+    // 2026-11-07, Expo SDK 58 (AGP 9.2): a global option in a library's consumer rules fails the
+    // module's build ("Global keep option -renamesourcefileattribute was specified as a
+    // consumerProguardFile"), and the app's R8 run leaves out those a library brings. The two that
+    // keep the line numbers go to the app's proguard-rules.pro, through expo-build-properties.
+    const appJson = require("../app.json").expo;
+    const properties = appJson.plugins.find(
+      (plugin) => Array.isArray(plugin) && plugin[0] === "expo-build-properties",
+    )[1].android;
+    expect(properties.extraProguardRules.split("\n")).toEqual([
+      "-keepattributes SourceFile,LineNumberTable",
+      "-renamesourcefileattribute SourceFile",
+    ]);
+    const consumer = require("node:fs")
+      .readFileSync(require.resolve("../modules/voltip-native/android/consumer-rules.pro"), "utf8")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line !== "" && !line.startsWith("#"));
+    expect(consumer.length).toBeGreaterThan(0);
+    // Only rules about the module's own classes: keep rules (not -keepattributes) and -dontwarn.
+    for (const rule of consumer) {
+      expect(rule).toMatch(/^-(keep|keepclassmembers|keepclasseswithmembers|keepnames|keepclassmembernames|keepclasseswithmembernames|dontwarn) /);
+    }
+  });
 });
