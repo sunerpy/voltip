@@ -21,7 +21,7 @@ android-keystore = ["dep:keyring-core", "dep:android-native-keyring-store"]
 
 [dependencies]
 keyring = { workspace = true, optional = true }
-keyring-core = { version = "=1.0.0", optional = true }
+keyring-core = { version = "=1.0.1", optional = true }
 parking_lot.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -1278,7 +1278,7 @@ Wayland 剪贴板：arboard `wayland-data-control`（wl-clipboard-rs；KDE 与 w
   - `files`：`Resources/{en,zh-Hans}.lproj/InfoPlist.strings`，源文件在 `src-tauri/macos/`。
 - `src-tauri/Info.plist`：`NSMicrophoneUsageDescription`。打包器自动合并，`generate_context!` 在 dev 构建里嵌入二进制，所以 `cargo run` 也带着这条说明。系统弹窗的语言跟随 macOS 系统语言。
 - Windows：`webviewInstallMode { embedBootstrapper, silent }`、`allowDowngrades false`、`nsis.installMode currentUser`（仅在 Windows 构建上覆盖 `both`）、`nsis.installerHooks ./nsis/installer-hooks.nsh`（应用内更新时安装器不显示窗口，§9）。引导程序（约 1.8 MB）打进安装包而不是安装时下载：在 Linux 上交叉构建的安装器用系统 NSIS 的 `NSISdl` 插件下载，它取不到 `https://go.microsoft.com` 的引导程序地址，没有 WebView2 的机器上静默安装会以退出码 2 中止（2026-09-26 CI `windows-native`，Windows Server 2022）。Windows 10 / 11 通常已带 WebView2，不走这条路径。
-- `resources/macos/` 不入库。`tests/bundle.rs` 用 `tauri-utils` 2.9.3 的 `config::parse::read_from` 合并各目标配置，再按 `Config` schema 解析并逐项断言。
+- `resources/macos/` 不入库。`tests/bundle.rs` 用 `tauri-utils` 2.10.2 的 `config::parse::read_from` 合并各目标配置，再按 `Config` schema 解析并逐项断言。
 - ggml CPU 基线（2026-09-26）：`.cargo/config.toml` 的 `TRANSCRIBE_CMAKE_ARGS` 为所有构建钉住 `GGML_NATIVE=OFF` + x86_64 Haswell 档（SSE4.2 / AVX / AVX2 / FMA / F16C / BMI2）。此前 Linux 构建用 `-march=native`（在 CI 的 AVX-512 主机上打包会让旧处理器非法指令崩溃），Windows 交叉构建则关掉了全部 SIMD。实测 Qwen3-ASR-0.6B、16 s 中文：native 1.57 s、Haswell 档 1.77 s、仅 SSE4.2 7.3 s、无 SIMD（旧 Windows 包）14.4 s。低于该档的处理器由 `gguf.rs` 在加载前拒绝并说明原因（改用「轻量」或云端），不会崩溃；SenseVoice / Paraformer / 流式模型（ONNX Runtime 运行时分派）不受影响。aarch64 上 x86 选项无效，`GGML_NATIVE=OFF` 保留编译器默认目标（macOS 为 apple-m1）；Intel Mac 的包同样是 Haswell 档。
 
 ### 15.6 跨目标检查门与真机运行
