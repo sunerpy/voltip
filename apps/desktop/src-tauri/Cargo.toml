@@ -111,11 +111,13 @@ sherpa-onnx-sys.workspace = true
 
 # The tray (src/platform/tray.rs) exists where the shell is a background utility. Linux keeps the
 # base feature set: `tray-icon` there needs libayatana-appindicator at link time, and the Linux
-# shell has no tray. `macos-private-api` is the base table's: Tauri CLI 2.12 writes the features
-# the config asks for into every tauri table, so each lists them (tests/bundle.rs,
-# regression_every_tauri_table_lists_the_features_the_tauri_cli_writes).
+# shell has no tray. The macOS and Windows tables inherit `tauri` from the workspace: Tauri CLI
+# 2.12 merges the features of every `tauri` table it reads, whatever their target, and a
+# `tray-icon` among them makes a Linux bundle require appindicator and depend on it
+# (tauri-apps/tauri#16250); it neither reads nor writes a table that inherits (tests/bundle.rs,
+# regression_no_tauri_table_the_tauri_cli_reads_turns_the_tray_on).
 [target.'cfg(target_os = "macos")'.dependencies]
-tauri = { version = "=2.12.5", default-features = false, features = ["macos-private-api", "wry", "tray-icon"] }
+tauri = { workspace = true, features = ["tray-icon"] }
 # TCC checks / requests for the microphone and Accessibility (docs/dictation.md §15.1). Called
 # from Rust (`src/platform/macos.rs`); the plugin's own webview commands are not
 # registered, so no capability grants them.
@@ -153,7 +155,7 @@ raw-window-handle = "=0.6.2"
 libc = "=0.2.191"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-tauri = { version = "=2.12.5", default-features = false, features = ["macos-private-api", "wry", "tray-icon"] }
+tauri = { workspace = true, features = ["tray-icon"] }
 # Same version tokio / tempfile / mio already pull, so the cross-build compiles it once. Feature
 # set = exactly what src/platform/windows.rs calls: foreground window → process → token integrity
 # level, the input desktop name, the CapabilityAccessManager consent store in the registry, for

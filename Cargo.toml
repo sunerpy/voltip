@@ -160,6 +160,9 @@ subtle = "=2.6.1"
 # offered. `id3v2`: the probe skips an MP3's ID3v2 tag, which cover art makes larger than the
 # megabyte it searches for a first frame (Symphonia 0.5 always read it).
 symphonia = { version = "=0.6.1", default-features = false, features = ["aac", "alac", "flac", "id3v2", "isomp4", "mkv", "mp3", "ogg", "pcm", "vorbis", "wav"] }
+# For the desktop shell's macOS and Windows tables only (apps/desktop/src-tauri/Cargo.toml): the
+# version and default features of the `tauri` in its [dependencies], which the Tauri CLI manages.
+tauri = { version = "=2.12.5", default-features = false }
 tempfile = "=3.27.0"
 thiserror = "=2.0.21"
 tokio = { version = "=1.54.1", features = [

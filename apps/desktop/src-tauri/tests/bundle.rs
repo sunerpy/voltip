@@ -354,28 +354,44 @@ fn regression_the_transparent_pill_has_the_macos_private_api() {
     assert!(tauri.contains("\"macos-private-api\""), "{tauri}");
 }
 
+/// The `tauri` entries of the desktop manifest's dependency tables, as `(table, entry)` lines:
+/// `[dependencies]` and every `[target.*.dependencies]`, where the Tauri CLI looks for `tauri`.
+fn tauri_entries() -> Vec<(String, String)> {
+    let manifest = read(&tauri_dir().join("Cargo.toml"));
+    let mut table = String::new();
+    let mut entries = Vec::new();
+    for line in manifest.lines() {
+        if line.starts_with('[') {
+            table = line.to_owned();
+        } else if line.starts_with("tauri = ") && (table == "[dependencies]" || (table.starts_with("[target.") && table.ends_with(".dependencies]"))) {
+            entries.push((table.clone(), line.to_owned()));
+        }
+    }
+    entries
+}
+
+/// The features an entry lists (`features = [...]`).
+fn listed_features(entry: &str) -> Vec<&str> {
+    let Some(start) = entry.find("features = [") else { return Vec::new() };
+    let rest = &entry[start + "features = [".len()..];
+    rest[..rest.find(']').expect("features array")].split(',').map(|f| f.trim().trim_matches('"')).filter(|f| !f.is_empty()).collect()
+}
+
 /// `cargo tauri build` and `cargo tauri dev` write the tauri features the CLI manages
 /// (`AppConfig::all_features` but `tray-icon`) as the config asks for them (`AppConfig::features`)
-/// into every `tauri` table of `[dependencies]` and `[target.*.dependencies]`. Tauri CLI 2.11 wrote
-/// `[dependencies]` only, 2.12 writes the target tables too: the local Linux package build of
-/// 2026-11-07 left the macOS and Windows tables changed, and the tree it built no longer matched
-/// the commit. Each table lists them already, so the CLI has nothing to write.
+/// into every `tauri` table of `[dependencies]` and `[target.*.dependencies]` that does not inherit
+/// from the workspace. Tauri CLI 2.11 wrote `[dependencies]` only, 2.12 writes the target tables
+/// too: the local Linux package build of 2026-11-07 left the macOS and Windows tables changed, and
+/// the tree it built no longer matched the commit. `[dependencies]` lists them already, and the
+/// macOS and Windows tables inherit (regression_no_tauri_table_the_tauri_cli_reads_turns_the_tray_on),
+/// so the CLI has nothing to write.
 #[test]
 fn regression_every_tauri_table_lists_the_features_the_tauri_cli_writes() {
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
-    let out = std::process::Command::new(cargo)
-        .args(["metadata", "--format-version", "1", "--no-deps", "--offline", "--manifest-path"])
-        .arg(tauri_dir().join("Cargo.toml"))
-        .output()
-        .expect("cargo metadata");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    let meta: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    let desktop = meta["packages"].as_array().unwrap().iter().find(|p| p["name"] == "voltip-desktop").expect("voltip-desktop in the workspace");
-    let tables: Vec<&serde_json::Value> = desktop["dependencies"].as_array().unwrap().iter().filter(|d| d["name"] == "tauri" && d["kind"].is_null()).collect();
-    let targets: Vec<&serde_json::Value> = tables.iter().map(|t| &t["target"]).collect();
+    let entries = tauri_entries();
+    let tables: Vec<&str> = entries.iter().map(|(table, _)| table.as_str()).collect();
     assert_eq!(
-        targets,
-        [&serde_json::Value::Null, &serde_json::json!("cfg(target_os = \"macos\")"), &serde_json::json!("cfg(target_os = \"windows\")")],
+        tables,
+        ["[dependencies]", "[target.'cfg(target_os = \"macos\")'.dependencies]", "[target.'cfg(target_os = \"windows\")'.dependencies]"],
         "[dependencies] and the macOS and Windows tables"
     );
     let managed: Vec<&str> = tauri_utils::config::AppConfig::all_features().into_iter().filter(|f| *f != "tray-icon").collect();
@@ -383,11 +399,43 @@ fn regression_every_tauri_table_lists_the_features_the_tauri_cli_writes() {
         let config = merged(target);
         let mut asked: Vec<&str> = config.app.features().into_iter().filter(|f| managed.contains(f)).collect();
         asked.sort_unstable();
-        for table in &tables {
-            let mut listed: Vec<&str> = table["features"].as_array().unwrap().iter().map(|f| f.as_str().unwrap()).filter(|f| managed.contains(f)).collect();
+        for (table, entry) in &entries {
+            if entry.contains("workspace = true") {
+                continue;
+            }
+            let mut listed: Vec<&str> = listed_features(entry).into_iter().filter(|f| managed.contains(f)).collect();
             listed.sort_unstable();
-            assert_eq!(listed, asked, "{target:?} build, the table for {}", table["target"]);
+            assert_eq!(listed, asked, "{target:?} build, the table {table}");
         }
+    }
+}
+
+/// The tray (src/platform/tray.rs) is on macOS and Windows only. Tauri CLI 2.12 merges the
+/// features of every `tauri` table it reads, whatever their target, and on a Linux host a
+/// `tray-icon` among them makes the bundler look for appindicator (tauri-apps/tauri#16250): CI's
+/// cross-build of the Windows installer stopped at "Can't detect any appindicator library"
+/// (2026-11-07), and the local Linux deb and rpm came out depending on libayatana-appindicator3,
+/// which the Linux shell does not use. The CLI neither reads nor writes a table that inherits from
+/// the workspace, so the macOS and Windows tables take the tray that way; the builds there still
+/// have it.
+#[test]
+fn regression_no_tauri_table_the_tauri_cli_reads_turns_the_tray_on() {
+    let entries = tauri_entries();
+    for (table, entry) in &entries {
+        if !entry.contains("workspace = true") {
+            assert!(!listed_features(entry).contains(&"tray-icon"), "{table}: {entry}");
+        }
+    }
+    let workspace = read(&tauri_dir().join("../../../Cargo.toml"));
+    let inherited = workspace.lines().find(|l| l.starts_with("tauri = ")).expect("tauri in [workspace.dependencies]");
+    let base = &entries.iter().find(|(table, _)| table == "[dependencies]").expect("[dependencies]").1;
+    let version = |entry: &str| entry.split("version = \"").nth(1).and_then(|v| v.split('"').next()).map(str::to_owned);
+    assert_eq!(version(inherited), version(base), "{inherited}");
+    assert!(inherited.contains("default-features = false") && listed_features(inherited).is_empty(), "{inherited}");
+    for os in ["macos", "windows"] {
+        let (table, entry) = entries.iter().find(|(table, _)| table.contains(&format!("target_os = \"{os}\""))).expect("the table");
+        assert!(entry.contains("workspace = true"), "{table}: {entry}");
+        assert!(listed_features(entry).contains(&"tray-icon"), "{table}: {entry}");
     }
 }
 
