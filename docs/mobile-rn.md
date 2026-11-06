@@ -270,7 +270,8 @@ scripts/build-android-rn.sh --unsigned  # 不签名：…_android_arm64-unsigned
      「下一发布版本的待处理问题」只剩这一条 Android 15 无边框提示（指向 2001）；Android 16 的大屏提示和 DEX 1 % 的提示已经消失。
 4. 发布前扫描：APK 和 AAB 的每个条目都过 `voltip_scan_provider_keys`；JS 包是 Hermes 字节码，字符串表首尾相接，图标名
    （`task-outline` 等）会被误认成 `sk-…`，所以它改为扫描 Metro 打包前的源码（packager source map 的
-   `sourcesContent`），并检查构建环境里的密钥值不在字节码中。`.env.build` 以外的生产主机名不得出现在源码树里
+   `sourcesContent`，由 `scripts/release/bundled-sources.py` 取出；React Native 0.88 的 Metro 把它写成按模块分段的
+   index map，2026-11-07 起逐段读取），并检查构建环境里的密钥值不在字节码中。`.env.build` 以外的生产主机名不得出现在源码树里
    （`check-no-production-hosts.sh` 照常覆盖 `apps/mobile-rn`）。
 5. 发布（`docs/runbook.md` 发布 · Android；0.0.50 起是这条腿唯一的应用）：发布候选的 `bundle-android` 腿在签名之前
    运行 `build-android-rn.sh --unsigned`（注入内置服务的值），签名一步用发布密钥签 APK 和 AAB
