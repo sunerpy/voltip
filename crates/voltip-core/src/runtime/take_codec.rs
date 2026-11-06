@@ -139,8 +139,13 @@ mod tests {
         assert!(encoder.finish().unwrap().is_empty(), "nothing pending after the flush");
         let mut decoder = TakeDecoder::new().unwrap();
         assert_eq!(decoder.decode(&tail).len(), TAKE_OPUS_FRAME_SAMPLES * 2);
-        // A packet whose table of contents asks for two channels does not decode on a mono decoder.
+        // A code 3 packet that holds no frame is malformed (RFC 6716 §3.4, R5): it does not
+        // decode, and the take goes on with the next packet.
+        let malformed = ByteBuf::from(vec![0x03, 0x00]);
+        assert_eq!(decoder.decode(&[malformed, tail[0].clone()]).len(), TAKE_OPUS_FRAME_SAMPLES * 2);
+        // A packet whose table of contents asks for two channels is mixed down to mono, as libopus
+        // does it: 10 ms of SILK, two bytes a sample. opus-rs 0.1.34 refused it.
         let stereo = ByteBuf::from(vec![0x04, 0, 0]);
-        assert_eq!(decoder.decode(&[stereo]).len(), 0);
+        assert_eq!(decoder.decode(&[stereo]).len(), TAKE_SAMPLE_RATE_HZ as usize / 100 * 2);
     }
 }
