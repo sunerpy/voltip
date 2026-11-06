@@ -128,7 +128,7 @@ rtrb = "=0.4.1"
 rubato = "=5.0.1"
 # The history database (docs/dictation.md §4): `bundled` compiles SQLite itself from C for every
 # target (the Windows cross-build, Android), so no system library is needed anywhere.
-rusqlite = { version = "=0.40.2", features = ["bundled"] }
+rusqlite = { version = "=0.41.1", features = ["bundled"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_bytes = "=0.11.19"
 serde_json = "=1.0.154"
