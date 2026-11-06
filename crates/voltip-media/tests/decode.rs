@@ -250,6 +250,22 @@ fn a_file_cut_off_is_damaged_and_leaves_nothing_behind() {
     }
 }
 
+/// The import shows a damaged file's reason after 文件已损坏或不完整. For a file whose end is
+/// missing it stays "end of stream", Symphonia 0.5's words: 0.6's Ogg reader says "unexpected end
+/// of file", and its MP4 and Matroska readers report a format they do not support (mp4.rs and
+/// mkv.rs find the missing end). A Matroska or WebM file cut off made 0.5 panic; it reads the same.
+#[test]
+fn regression_a_file_cut_off_says_end_of_stream_as_before_symphonia_0_6() {
+    let dir = tempfile::tempdir().unwrap();
+    for name in ["tone.m4a", "tone.mp4", "tone.mov", "tone.ogg", "tone.mkv", "tone.webm", "ac3.mkv", "video-only.mp4"] {
+        let bytes = std::fs::read(fixture(name)).unwrap();
+        let cut = dir.path().join(format!("cut-{name}"));
+        std::fs::write(&cut, &bytes[..bytes.len() / 2]).unwrap();
+        assert_eq!(decode_path(&cut).0, Err(MediaError::Corrupt("end of stream".into())), "{name}");
+        assert_eq!(Decoder.probe(&cut), Err(MediaError::Corrupt("end of stream".into())), "{name}");
+    }
+}
+
 fn part(out: &Path) -> PathBuf {
     let mut name = out.file_name().unwrap().to_os_string();
     name.push(".part");

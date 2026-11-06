@@ -42,6 +42,10 @@ pub const RATE: u32 = voltip_core::dictation::PCM_SAMPLE_RATE_HZ;
 const BLOCK: usize = 4096;
 /// Progress is reported at most this often, in milliseconds of the file.
 const PROGRESS_EVERY_MS: u64 = 250;
+/// Why a file whose end is missing is damaged, in Symphonia 0.5's words: the import shows it
+/// after 文件已损坏或不完整, and it did not change with the readers of 0.6, which say "unexpected
+/// end of file" (Ogg) or report a format they do not support (MP4, Matroska).
+const END_OF_STREAM: &str = "end of stream";
 
 /// The file extensions of what the decoder reads: the containers above under their usual names.
 pub const EXTENSIONS: &[&str] = &["wav", "mp3", "m4a", "m4b", "aac", "flac", "ogg", "oga", "opus", "mp4", "m4v", "mov", "mkv", "mka", "webm"];
@@ -182,9 +186,10 @@ impl Source {
                 // The MP4 and Matroska readers stop at a box or element that runs past the end of
                 // the file and then miss the index or the segment: a file cut off, not one of
                 // another format.
-                (Error::Unsupported(_), Some("mp4" | "mov")) if mp4::cut_off(&mut file) => MediaError::Corrupt("the file is cut off".into()),
-                (Error::Unsupported(_), Some("mkv" | "webm")) if mkv::cut_off(&mut file) => MediaError::Corrupt("the file is cut off".into()),
+                (Error::Unsupported(_), Some("mp4" | "mov")) if mp4::cut_off(&mut file) => MediaError::Corrupt(END_OF_STREAM.into()),
+                (Error::Unsupported(_), Some("mkv" | "webm")) if mkv::cut_off(&mut file) => MediaError::Corrupt(END_OF_STREAM.into()),
                 (Error::Unsupported(_), _) | (_, None) => MediaError::UnsupportedFormat,
+                (Error::IoError(e), Some(_)) if e.kind() == ErrorKind::UnexpectedEof => MediaError::Corrupt(END_OF_STREAM.into()),
                 (e, Some(_)) => MediaError::Corrupt(e.to_string()),
             })?;
         let tracks: Vec<&Track> = format.tracks().iter().filter(|t| audio_params(t).is_some()).collect();
