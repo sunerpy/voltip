@@ -108,6 +108,31 @@ export const en: Messages = {
       },
       tier: { preview: "PREVIEW", final: "FINAL" },
       livePreview: "Preview",
+      livePreviewFrom: "Preview · {source}",
+      sourceName: {
+        builtin: "Built-in",
+        local: "Local model",
+        openai: "OpenAI",
+        groq: "Groq",
+        google: "Google",
+        siliconflow: "SiliconFlow",
+        aliyun: "Model Studio",
+        volcengine_speech: "Doubao Speech",
+        tencent: "Tencent Cloud",
+        iflytek: "iFlytek Dictation",
+        iflytek_rtasr: "iFlytek Transcription",
+        baidu: "Baidu",
+        stepfun: "StepFun",
+        deepseek: "DeepSeek",
+        kimi: "Kimi",
+        glm: "Zhipu",
+        volcengine: "Volcengine Ark",
+        hunyuan: "Hunyuan",
+        mimo: "MiMo",
+        openrouter: "OpenRouter",
+        ollama: "Ollama",
+        custom: "Custom endpoint",
+      },
       waitingMic: "Waiting for mic",
       lockedHint: "Locked · press again to stop",
       injectedTitle: "Already typed into the current window",
@@ -466,6 +491,8 @@ export const en: Messages = {
     fallback: "Live transcription model not downloaded · running as All at once",
     fallbackPaused:
       "The fallback model in use does not transcribe in real time · running as All at once",
+    fallbackOff: "Live preview is off · running as All at once",
+    previewOff: "Live preview off",
     streamed:
       "The selected model is a realtime model: it transcribes while you speak, so takes run as “While you speak”, and the text is still inserted once on release.",
     effective: "In effect",
@@ -1689,13 +1716,13 @@ export const en: Messages = {
       hotwords: "Hot words",
       realtimeHelp:
         "Realtime: it recognises while you speak, so only the last sentence is left after you let go.",
-      realtimeOffHelp:
-        "This model can recognise while you speak, but Live preview is off, so it recognises the whole recording after you let go.",
+      realtimeHiddenHelp:
+        "Realtime: it recognises while you speak, so only the last sentence is left after you let go; “Provider's live text” is off, so the overlay does not show the provider's words.",
       previewHelp:
         "The built-in service shows a preview while you speak, updated about every 2 seconds, and recognises the whole recording after you let go.",
       wholeHelp: "Recognises the whole recording after you let go.",
       wholePreviewHelp:
-        "Recognises the whole recording after you let go; to see words while you speak, use Live preview under Recognition.",
+        "Recognises the whole recording after you let go; to see words while you speak, turn on “Local model preview” under Live preview in Recognition and download its model.",
       wholeLocalHelp:
         "Recognises the whole recording after you let go; the Live preview model on this computer shows a preview while you speak.",
       hotwordsHelp: "The dictionary's terms go to the service as hot words.",
@@ -1992,12 +2019,17 @@ export const en: Messages = {
     installedCount: "{installed} / {total} installed",
     livePreview: {
       title: "Live preview",
-      note: "While you hold the shortcut, the overlay shows the words as you speak. With the built-in service, the service itself provides the preview, updated about every 2 seconds, and the whole recording is still transcribed on release; with a realtime model (such as Model Studio's qwen-audio-3.1-asr-flash-streaming) the words are transcribed as you speak and release only finishes the last sentence; with another provider or a local model, download the Live preview model below, and the preview does not change the final text.",
-      toggle: "Live preview",
+      note: "While you hold the shortcut, the overlay shows the words as you speak, with a tag saying where they come from. With both switches on, the provider's words come first; the local model is used only when the provider gives none.",
+      provider: "Provider's live text",
+      providerHelp:
+        "With the built-in service, the preview updates about every 2 seconds and the whole recording is still transcribed on release; with a realtime model (such as Model Studio's qwen-audio-3.1-asr-flash-streaming) the words are transcribed as you speak and release only finishes the last sentence. Off, these words are not shown: a realtime model still transcribes as you speak, with the same result and speed, and the built-in service sends no preview requests.",
+      local: "Local model preview",
+      localHelp:
+        "When the provider gives no live text, the Live preview model below transcribes on this computer and shows the words; download it first. The preview does not change the final text.",
+      localModel: "Local model",
       state: {
-        ready: "Ready",
-        cloud: "Ready · built-in service",
-        stream: "Ready · realtime model",
+        showing: "In use · {source}",
+        hidden: "Not shown · real-time transcription continues",
         paused: "Unavailable · the fallback model does not transcribe in real time",
         missing: "Model not downloaded",
         off: "Off",
@@ -2005,7 +2037,7 @@ export const en: Messages = {
     },
     outputMode: {
       title: "Output mode",
-      note: "How the final text is produced and when it is inserted. The last two modes need the live preview: with the built-in service or a realtime model it is there already; otherwise download the Live preview model first. Without it they run as “All at once”.",
+      note: "How the final text is produced and when it is inserted. The last two modes need words while you speak: a realtime model has them already; the built-in service needs “Provider's live text” on; otherwise turn on “Local model preview” and download the Live preview model. Without them they run as “All at once”.",
       label: "Output mode",
     },
     vadTrim: {

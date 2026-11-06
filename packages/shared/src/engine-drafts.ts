@@ -337,31 +337,35 @@ export function asrCardAbilities(
   return out;
 }
 
-/** What the shell's live preview can do for a model that takes whole recordings: nothing (`none`,
- *  a phone), once the Live preview model is downloaded (`missing`), or now (`installed`). */
-export type LocalPreview = "none" | "missing" | "installed";
+/** What the shell's local model preview can do for a take the service gives no words of: nothing
+ *  (`none`, a phone), nothing while 本地模型预览 is off (`off`), once the Live preview model is
+ *  downloaded (`missing`), or now (`installed`). */
+export type LocalPreview = "none" | "off" | "missing" | "installed";
 
 /** The lines under a recognition drawer's model (docs/dictation.md §3.15): how `model` hears a
- *  take — a realtime model recognises the whole recording while 实时预览 is off — and where the
+ *  take — a realtime model recognises it as it is spoken whatever the switches say, and the pill
+ *  shows its words while 服务商的实时文字 (`providerPreview`) is on (§11.10) — and where the
  *  dictionary's terms go. */
 export function asrAbilityHelp(
   provider: ProviderId,
   url: string,
   model: string,
-  shell: { previews: boolean; livePreview: boolean; localPreview: LocalPreview },
+  shell: { previews: boolean; providerPreview: boolean; localPreview: LocalPreview },
   t: TFunction = zhT.t,
 ): string[] {
   const { live, glossary } = asrAbilities(provider, url, model, shell.previews);
+  // A shell without a live preview (the phone) shows no words, so the switch says nothing there.
+  const shown = !shell.previews || shell.providerPreview;
   const hears =
     live === "realtime"
-      ? shell.livePreview
+      ? shown
         ? t("engines.ability.realtimeHelp")
-        : t("engines.ability.realtimeOffHelp")
-      : live === "preview" && shell.livePreview
+        : t("engines.ability.realtimeHiddenHelp")
+      : live === "preview" && shown
         ? t("engines.ability.previewHelp")
-        : live === "whole" && shell.livePreview && shell.localPreview === "installed"
+        : shell.localPreview === "installed"
           ? t("engines.ability.wholeLocalHelp")
-          : live === "whole" && shell.localPreview !== "none"
+          : shell.localPreview !== "none"
             ? t("engines.ability.wholePreviewHelp")
             : t("engines.ability.wholeHelp");
   const terms =

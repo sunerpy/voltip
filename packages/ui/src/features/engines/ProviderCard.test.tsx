@@ -352,6 +352,35 @@ describe("ProviderCards (desktop model pages and phone settings)", () => {
     backend.destroy();
   });
 
+  it("follows the live preview switches (docs/dictation.md §11.10): the built-in service's preview off, a realtime model's words hidden", async () => {
+    const backend = new MockBackend({
+      settings: {
+        engines: {
+          ...defaultEngineSettings(),
+          provider_preview: false,
+          local_preview: false,
+          providers: { stepfun: { asr_model: "stepaudio-2.5-asr-stream" } },
+        },
+      },
+    });
+    shell(
+      backend,
+      <>
+        <Detail id="builtin" kind="asr" previews onClose={() => undefined} />
+        <Detail id="stepfun" kind="asr" previews onClose={() => undefined} />
+      </>,
+    );
+    const builtin = await screen.findByTestId("provider-asr-builtin-detail");
+    expect(within(builtin).getByTestId("provider-abilities-help")).toHaveTextContent(
+      t("engines.ability.wholePreviewHelp"),
+    );
+    const stepfun = await screen.findByTestId("provider-asr-stepfun-detail");
+    expect(within(stepfun).getByTestId("provider-abilities-help")).toHaveTextContent(
+      t("engines.ability.realtimeHiddenHelp"),
+    );
+    backend.destroy();
+  });
+
   it("switches Kimi between its China and international sites, each with its own key page", async () => {
     const user = userEvent.setup();
     const backend = new MockBackend();

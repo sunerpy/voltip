@@ -38,7 +38,7 @@ Windows sometimes stops Voltip from watching the single key, for example when th
 
 While you dictate, a small overlay at the bottom of the screen shows what is happening:
 
-- **Recording**: the input level, the elapsed time, what is being recorded (Microphone, Computer audio or Mixed) and, with the live transcription model installed, the words recognised so far. A padlock appears when a recording is locked. After the first two minutes of a long recording, it also shows how many segments have been recognised.
+- **Recording**: the input level, the elapsed time, what is being recorded (Microphone, Computer audio or Mixed) and the [words recognised while you speak](#live-text-while-you-speak). A padlock appears when a recording is locked. After the first two minutes of a long recording, it also shows how many segments have been recognised.
 - **Processing**: the step in progress — recognition, AI polish or insertion — with the time it has taken. For a long recording, recognition shows how many of its segments are done.
 - **Done**: how many characters were inserted, or why the text stayed on the clipboard. When the text was not written, the window changed or recognition failed, the overlay keeps a [result card](/dictation/output#result-cards) with buttons to paste or copy the text.
 
@@ -49,6 +49,25 @@ These can still cover the overlay:
 - **Windows**: a game running in exclusive full screen, and system screens such as the Start menu or the notification centre.
 - **Mac**: an app in full screen; the overlay does not appear in its full-screen space.
 - **Linux**: the window manager decides the order of windows. A full-screen window in front stays above the overlay; some desktops, such as GNOME, do not move the overlay back to the top while it shows; on a pure Wayland session, the order is entirely up to the desktop.
+
+### Live text while you speak
+
+The words the overlay shows while you record come from the provider's real-time recognition or from the local model on this computer, and a tag names where they come from, such as **Preview · Doubao Speech**, **Preview · Built-in** or **Preview · Local model**. They are a preview only; the final text follows the [output mode](/dictation/output#output-modes).
+
+<ScreenFigure src="/screens/overlay-live-en-light.webp" dark="/screens/overlay-live-en-dark.webp" width="1376" height="178"
+  alt="The overlay while recording: the top line shows the words being spoken, Pull this logic out into a helper, followed by the tag Preview · Built-in; the bottom line shows the waveform, the timer, Microphone, Cloud and Esc Cancel."
+  caption="With the built-in service, the overlay's tag reads Preview · Built-in." />
+
+**Live preview** on the Recognition tab of the **Speech models** page has two switches, both on by default:
+
+- **Provider's live text**: shows the built-in service's preview and a realtime model's words. With it off, the overlay shows none of them: a realtime model still recognises while you speak, with the same result and speed, and the built-in service sends no preview requests.
+- **Local model preview**: when the provider gives no live text, or **Provider's live text** is off, the live transcription model on this computer shows the words; download it first (169 MB, see [Local recognition](/recognition/local)).
+
+With both on, the provider's words are shown. The status line of **Live preview** names the source in use.
+
+<ScreenFigure src="/screens/live-preview-en-light.webp" width="1440" height="900"
+  alt="Live preview on the Recognition tab of the Speech models page: the status line reads In use · Built-in service, with the Provider's live text and Local model preview switches and the live transcription model's card below."
+  caption="Live preview under Speech models → Recognition, with the built-in service." />
 
 ## Cancelling
 

@@ -18,6 +18,7 @@ import type {
   DictationStatus,
   FailureReason,
   HistoryOutcome,
+  LiveSource,
   LiveText,
   ModelTier,
   OutputMode,
@@ -26,6 +27,7 @@ import type {
   PresetId,
   PresetRef,
   ProcessingStage,
+  ProviderId,
   RecordingSource,
   RelayStatus,
   SecretState,
@@ -640,6 +642,40 @@ export function liveCaptionParts(live: Pick<LiveText, "committed" | "current">):
     committed: joinLiveText(live.committed.map((s) => s.text)),
     current: live.current.trim(),
   };
+}
+
+/** The pill's preview tag (docs/dictation.md §11.10): `预览 · 豆包语音`, `预览 · 本地模型` — the
+ *  service's short name, or the local model's; plain `预览` while the core does not say whose
+ *  words they are. */
+export function livePreviewTag(
+  live: Pick<LiveText, "source" | "provider">,
+  locale: Locale = DEFAULT_LOCALE,
+): string {
+  const name =
+    live.provider !== undefined
+      ? translate(locale, `ui.pill.sourceName.${live.provider}`)
+      : live.source === "local"
+        ? translate(locale, "ui.pill.sourceName.local")
+        : undefined;
+  return name === undefined
+    ? translate(locale, "ui.pill.livePreview")
+    : translate(locale, "ui.pill.livePreviewFrom", { source: name });
+}
+
+/** Whose words the pill shows, as the 实时预览 status line names it (docs/dictation.md §11.10):
+ *  the service's name, or 本地模型 — also for a model of this device standing in for the
+ *  built-in service (§3.5). A core that names no provider gets the source's own name. */
+export function previewSourceName(
+  source: LiveSource,
+  provider: ProviderId | undefined,
+  locale: Locale = DEFAULT_LOCALE,
+): string {
+  if (source === "local" || provider === "local")
+    return translate(locale, "engines.livePreview.localModel");
+  if (provider !== undefined) return translate(locale, `engines.provider.${provider}`);
+  return source === "cloud"
+    ? translate(locale, "engines.provider.builtin")
+    : translate(locale, "engines.ability.realtime");
 }
 
 // ---- local models (docs/dictation.md §10) --------------------------------------------------

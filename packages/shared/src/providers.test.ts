@@ -81,17 +81,22 @@ describe("Model Studio's recognition protocols (docs/dictation.md §3.4)", () =>
   });
 
   it("the preview resolves a realtime model's stream as the live source and its text as final", () => {
-    const input = (model: string, live_preview = true) => ({
+    // The streaming model is installed: 本地模型预览 is ready while its switch is on.
+    const input = (
+      model: string,
+      switches: { provider_preview?: boolean; local_preview?: boolean } = {},
+      localPreviewReady = switches.local_preview ?? true,
+    ) => ({
       settings: {
         ...defaultEngineSettings(),
         asr_provider: "aliyun" as const,
-        live_preview,
+        ...switches,
         providers: { aliyun: { asr_model: model } },
       },
       userKeys: new Set(["provider-key.aliyun"]),
       builtIn: {},
       local: { id: "qwen3-asr-0.6b", name: "均衡", installed: false },
-      liveReady: true,
+      localPreviewReady,
     });
     const streaming = resolveEngineStatus(input("qwen-audio-3.1-asr-flash-streaming"));
     expect(streaming.asr_ready).toBe(true);
@@ -101,12 +106,108 @@ describe("Model Studio's recognition protocols (docs/dictation.md §3.4)", () =>
     const whole = resolveEngineStatus(input("qwen-audio-3.1-asr-flash"));
     expect(whole.live_source).toBe("local");
     expect(whole.effective_output_mode).toBe("whole_take");
-    const off = resolveEngineStatus(input("qwen-audio-3.1-asr-flash-streaming", false));
-    expect(off.live_source).toBeUndefined();
-    expect(off.effective_output_mode).toBe("whole_take");
+    // docs/dictation.md §11.10: the provider's words off, the realtime model still streams the
+    // take; only nothing of it is shown.
+    const hidden = resolveEngineStatus(
+      input("qwen-audio-3.1-asr-flash-streaming", {
+        provider_preview: false,
+        local_preview: false,
+      }),
+    );
+    expect(hidden).toMatchObject({ live_ready: true, live_source: "stream" });
+    expect(hidden.preview_source).toBeUndefined();
+    expect(hidden.effective_output_mode).toBe("streaming_final");
     const card = streaming.providers.find((p) => p.id === "aliyun");
     expect(card?.asr?.presets[0]).toBe("qwen-audio-3.1-asr-flash-streaming");
     expect(card?.llm?.default_base_url).toBe("https://dashscope.aliyuncs.com/compatible-mode/v1");
     expect(card?.console).toBe(true);
+  });
+
+  it("the two live preview switches pick their own sources and the provider's words come first (docs/dictation.md §11.10)", () => {
+    const REALTIME = "qwen-audio-3.1-asr-flash-streaming";
+    const WHOLE = "qwen-audio-3.1-asr-flash";
+    const resolve = (
+      provider: "aliyun" | "builtin" | "custom",
+      model: string,
+      provider_preview: boolean,
+      local_preview: boolean,
+      installed: boolean,
+    ) =>
+      resolveEngineStatus({
+        settings: {
+          ...defaultEngineSettings(),
+          asr_provider: provider,
+          provider_preview,
+          local_preview,
+          providers: {
+            aliyun: { asr_model: model },
+            custom: { asr_url: "http://127.0.0.1:9000/v1", asr_model: model },
+          },
+        },
+        userKeys: new Set(["provider-key.aliyun"]),
+        builtIn: { asr: { model: "Qwen/Qwen3-ASR-1.7B", key: true, preview: true } },
+        local: { id: "qwen3-asr-0.6b", name: "均衡", installed: false },
+        localPreviewReady: local_preview && installed,
+      });
+    const cases = [
+      // [provider, model, 服务商的实时文字, 本地模型预览, model installed] → [live_source, preview_source, preview_provider, effective]
+      [
+        ["aliyun", REALTIME, true, true, true],
+        ["stream", "stream", "aliyun", "streaming_final"],
+      ],
+      [
+        ["aliyun", REALTIME, false, true, true],
+        ["stream", "local", undefined, "streaming_final"],
+      ],
+      [
+        ["aliyun", REALTIME, false, false, true],
+        ["stream", undefined, undefined, "streaming_final"],
+      ],
+      [
+        ["aliyun", REALTIME, false, true, false],
+        ["stream", undefined, undefined, "streaming_final"],
+      ],
+      [
+        ["aliyun", REALTIME, true, false, false],
+        ["stream", "stream", "aliyun", "streaming_final"],
+      ],
+      [
+        ["aliyun", WHOLE, true, true, true],
+        ["local", "local", undefined, "whole_take"],
+      ],
+      [
+        ["aliyun", WHOLE, true, false, true],
+        [undefined, undefined, undefined, "whole_take"],
+      ],
+      [
+        ["builtin", "", true, true, true],
+        ["cloud", "cloud", "builtin", "whole_take"],
+      ],
+      [
+        ["builtin", "", false, true, true],
+        ["local", "local", undefined, "whole_take"],
+      ],
+      [
+        ["builtin", "", false, false, true],
+        [undefined, undefined, undefined, "whole_take"],
+      ],
+      [
+        ["custom", "whisper", true, true, true],
+        ["local", "local", undefined, "whole_take"],
+      ],
+    ] as const;
+    for (const [[provider, model, pp, lp, installed], [live, shown, by, effective]] of cases) {
+      const st = resolve(provider, model, pp, lp, installed);
+      expect(
+        [
+          st.live_source,
+          st.preview_source,
+          st.preview_provider,
+          st.effective_output_mode,
+          st.live_ready,
+        ],
+        `${provider} ${model} provider_preview=${pp} local_preview=${lp} installed=${installed}`,
+      ).toEqual([live, shown, by, effective, live !== undefined]);
+    }
   });
 });

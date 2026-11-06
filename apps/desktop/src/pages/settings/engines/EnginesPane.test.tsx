@@ -1,6 +1,7 @@
 import {
   type ProviderId,
   type ServiceKind,
+  createTranslator,
   defaultEngineSettings,
   engineReady,
   providerStatus,
@@ -30,6 +31,7 @@ import {
   formatBytes,
   languageSummary,
   livePreviewState,
+  livePreviewStateText,
   modelAction,
   modelChoices,
   modelDescription,
@@ -1128,13 +1130,16 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
       within(modelCard("高精度")).getByText("qwen3-asr-1.7b · transcribe.cpp"),
     ).toBeInTheDocument();
     expect(within(modelCard("高精度")).getAllByText("1692.6 MB").length).toBeGreaterThan(0);
-    // The 实时预览 block (识别设置): eyebrow, switch on, ready (the model is installed), one card.
+    // The 实时预览 block (识别设置): eyebrow, both switches on, the local model's words showing (the
+    // model is installed and the built-in service here gives none), one card.
     await openTab(user, "识别设置");
     const live = screen.getByTestId("live-preview");
-    expect(live).toHaveAttribute("data-state", "ready");
+    expect(live).toHaveAttribute("data-state", "showing");
+    expect(live).toHaveAttribute("data-source", "local");
     expect(within(live).getByText("实时预览", { selector: ".eyebrow" })).toBeInTheDocument();
-    expect(within(live).getByTestId("live-preview-state")).toHaveTextContent("已就绪");
-    expect(within(live).getByRole("switch", { name: "实时预览" })).toBeChecked();
+    expect(within(live).getByTestId("live-preview-state")).toHaveTextContent("使用中 · 本地模型");
+    expect(within(live).getByRole("switch", { name: "服务商的实时文字" })).toBeChecked();
+    expect(within(live).getByRole("switch", { name: "本地模型预览" })).toBeChecked();
     const card = within(live).getByRole("article", { name: "实时预览" });
     expect(
       within(card).getByText(`${MOCK_STREAMING_MODEL_ID} · Zipformer 流式`),
@@ -1157,7 +1162,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
       }),
     );
     await waitFor(() => {
-      expect(backend.peek().engines.live_preview_ready).toBe(false);
+      expect(backend.peek().engines.live_ready).toBe(false);
     });
     expect(live).toHaveAttribute("data-state", "missing");
     expect(within(live).getByTestId("live-preview-state")).toHaveTextContent("模型未下载");
@@ -1169,7 +1174,7 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     );
   });
 
-  it("with the built-in service the 实时预览 block is ready without the model, and the streaming output modes take effect (docs/dictation.md section 11.8)", async () => {
+  it("with the built-in service the 实时预览 block shows its words without the model, and the streaming output modes take effect (docs/dictation.md section 11.8)", async () => {
     // M8 2026-10-02 (user request 2026-09-30: Qwen3-ASR previews itself): a release build's
     // built-in service previews while recording; no model needs downloading.
     const user = userEvent.setup();
@@ -1184,12 +1189,13 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     });
     await openTab(user, "识别设置");
     const live = await screen.findByTestId("live-preview");
-    expect(live).toHaveAttribute("data-state", "cloud");
-    expect(within(live).getByTestId("live-preview-state")).toHaveTextContent("已就绪 · 内置服务");
-    expect(live).toHaveTextContent("使用内置服务时，预览由内置服务提供");
+    expect(live).toHaveAttribute("data-state", "showing");
+    expect(live).toHaveAttribute("data-source", "cloud");
+    expect(within(live).getByTestId("live-preview-state")).toHaveTextContent("使用中 · 内置服务");
+    expect(live).toHaveTextContent("使用内置服务时，预览约每 2 秒更新一次");
   });
 
-  it("regression: on Model Studio's realtime model the 实时预览 block is ready without the model, and 整段输出 says it runs as 边说边识别 (docs/dictation.md section 11.9)", async () => {
+  it("regression: on Model Studio's realtime model the 实时预览 block shows its words without the model, and 整段输出 says it runs as 边说边识别 (docs/dictation.md section 11.9)", async () => {
     // Goal 2026-10-03: qwen-audio-3.1-asr-flash-streaming failed; it streams the take itself now.
     const user = userEvent.setup();
     renderApp({
@@ -1201,10 +1207,9 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     });
     await openTab(user, "识别设置");
     const live = await screen.findByTestId("live-preview");
-    expect(live).toHaveAttribute("data-state", "stream");
-    expect(within(live).getByTestId("live-preview-state")).toHaveTextContent(
-      "已就绪 · 实时识别模型",
-    );
+    expect(live).toHaveAttribute("data-state", "showing");
+    expect(live).toHaveAttribute("data-source", "stream");
+    expect(within(live).getByTestId("live-preview-state")).toHaveTextContent("使用中 · 阿里云百炼");
     const mode = screen.getByTestId("output-mode");
     expect(mode).toHaveAttribute("data-mode", "whole_take");
     expect(mode).toHaveAttribute("data-effective", "streaming_final");
@@ -1241,30 +1246,36 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     expect(screen.queryByTestId("output-mode-streamed")).toBeNull();
   });
 
-  it("regression: the 实时预览 toggle writes live_preview through settings_set_engines and the state line follows live_preview_ready", async () => {
+  it("regression: the 实时预览 block's two switches write provider_preview and local_preview through settings_set_engines, each on its own, and the state line names whose words the pill shows (docs/dictation.md section 11.10)", async () => {
     const user = userEvent.setup();
     const { backend } = renderApp({ path: "/speech" });
     await openTab(user, "识别设置");
     const live = await screen.findByTestId("live-preview");
-    // Default: on, but the streaming model is not downloaded.
-    expect(backend.peek().settings.engines.live_preview).toBe(true);
+    const providerSwitch = () => within(live).getByRole("switch", { name: "服务商的实时文字" });
+    const localSwitch = () => within(live).getByRole("switch", { name: "本地模型预览" });
+    const stateLine = () => within(live).getByTestId("live-preview-state");
+    // Default: both on; the built-in service here gives no preview and the streaming model is not
+    // downloaded.
+    expect(backend.peek().settings.engines.provider_preview).toBe(true);
+    expect(backend.peek().settings.engines.local_preview).toBe(true);
+    expect(providerSwitch()).toBeChecked();
+    expect(localSwitch()).toBeChecked();
     expect(live).toHaveAttribute("data-state", "missing");
-    expect(within(live).getByTestId("live-preview-state")).toHaveTextContent("模型未下载");
-    const toggle = within(live).getByRole("switch", { name: "实时预览" });
-    expect(toggle).toBeChecked();
-    await user.click(toggle);
+    expect(stateLine()).toHaveTextContent("模型未下载");
+    // 本地模型预览 off: the whole engines block goes out with only local_preview flipped.
+    await user.click(localSwitch());
     await waitFor(() => {
-      expect(backend.peek().settings.engines.live_preview).toBe(false);
+      expect(backend.peek().settings.engines.local_preview).toBe(false);
     });
-    // The whole engines block went out with only live_preview flipped.
     expect(backend.peek().settings.engines).toEqual({
       ...defaultEngineSettings(),
-      live_preview: false,
+      local_preview: false,
     });
     expect(live).toHaveAttribute("data-state", "off");
-    expect(within(live).getByTestId("live-preview-state")).toHaveTextContent("已关闭");
-    expect(within(live).getByRole("switch", { name: "实时预览" })).not.toBeChecked();
-    // Installing the model while off: still off. Switching back on: ready.
+    expect(stateLine()).toHaveTextContent("已关闭");
+    expect(localSwitch()).not.toBeChecked();
+    expect(providerSwitch()).toBeChecked();
+    // Installing the model while it is off: still off. Switching it back on: its words show.
     act(() => {
       backend.publish({
         type: "models",
@@ -1283,16 +1294,116 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
       });
     });
     expect(live).toHaveAttribute("data-state", "off");
-    await user.click(within(live).getByRole("switch", { name: "实时预览" }));
+    await user.click(localSwitch());
     await waitFor(() => {
-      expect(backend.peek().engines.live_preview_ready).toBe(true);
+      expect(backend.peek().engines.preview_source).toBe("local");
     });
-    expect(live).toHaveAttribute("data-state", "ready");
-    expect(within(live).getByTestId("live-preview-state")).toHaveTextContent("已就绪");
+    expect(backend.peek().engines.live_ready).toBe(true);
+    expect(live).toHaveAttribute("data-state", "showing");
+    expect(live).toHaveAttribute("data-source", "local");
+    expect(stateLine()).toHaveTextContent("使用中 · 本地模型");
     expect(backend.peek().settings.engines).toEqual(defaultEngineSettings());
-    expect(backend.log.filter((e) => e.type === "settings")).toHaveLength(2);
+    // 服务商的实时文字 off leaves 本地模型预览 alone: the local model still shows.
+    await user.click(providerSwitch());
+    await waitFor(() => {
+      expect(backend.peek().settings.engines.provider_preview).toBe(false);
+    });
+    expect(backend.peek().settings.engines).toEqual({
+      ...defaultEngineSettings(),
+      provider_preview: false,
+    });
+    expect(providerSwitch()).not.toBeChecked();
+    expect(localSwitch()).toBeChecked();
+    expect(live).toHaveAttribute("data-state", "showing");
+    expect(stateLine()).toHaveTextContent("使用中 · 本地模型");
+    expect(backend.log.filter((e) => e.type === "settings")).toHaveLength(3);
     // No words about the streaming path being a recognition engine anywhere on the page.
     expect(modelsPage().textContent).not.toMatch(/计划中|尚未接入|示例/);
+  });
+
+  it("regression: on a realtime model with the streaming model installed, the provider's words come first, 本地模型预览 shows when 服务商的实时文字 is off, and with both off the model still recognises as it is spoken (docs/dictation.md section 11.10)", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend({
+      providerKeys: [{ provider: "aliyun", kind: "asr" }],
+      models: {
+        [MOCK_STREAMING_MODEL_ID]: {
+          kind: "installed",
+          path: `${MOCK_MODELS_ROOT}/${MOCK_STREAMING_MODEL_ID}`,
+          installed_at: 1_790_100_000,
+        },
+      },
+    });
+    const state = await backend.getState();
+    await backend.invoke("settings_set_engines", {
+      engines: { ...state.settings.engines, asr_provider: "aliyun" },
+    });
+    renderApp({ path: "/speech", backend });
+    await openTab(user, "识别设置");
+    const live = await screen.findByTestId("live-preview");
+    const mode = screen.getByTestId("output-mode");
+    const stateLine = () => within(live).getByTestId("live-preview-state");
+    const flip = async (name: string, key: "provider_preview" | "local_preview", on: boolean) => {
+      await user.click(within(live).getByRole("switch", { name }));
+      await waitFor(() => {
+        expect(backend.peek().settings.engines[key]).toBe(on);
+      });
+    };
+    // Both on: the realtime model's words.
+    expect(live).toHaveAttribute("data-state", "showing");
+    expect(live).toHaveAttribute("data-source", "stream");
+    expect(stateLine()).toHaveTextContent("使用中 · 阿里云百炼");
+    // 服务商的实时文字 off: the local model's words; the realtime model still streams the take.
+    await flip("服务商的实时文字", "provider_preview", false);
+    await waitFor(() => {
+      expect(live).toHaveAttribute("data-source", "local");
+    });
+    expect(stateLine()).toHaveTextContent("使用中 · 本地模型");
+    expect(mode).toHaveAttribute("data-effective", "streaming_final");
+    // Both off: nothing shows, and the take is still recognised as it is spoken.
+    await flip("本地模型预览", "local_preview", false);
+    await waitFor(() => {
+      expect(live).toHaveAttribute("data-state", "hidden");
+    });
+    expect(stateLine()).toHaveTextContent("不显示 · 实时识别照常进行");
+    expect(backend.peek().engines).toMatchObject({ live_ready: true, live_source: "stream" });
+    expect(backend.peek().engines.preview_source).toBeUndefined();
+    expect(mode).toHaveAttribute("data-effective", "streaming_final");
+    expect(within(mode).getByTestId("output-mode-streamed")).toBeInTheDocument();
+    expect(within(mode).queryByText("实时预览已关闭")).toBeNull();
+    // 服务商的实时文字 back on without the local model: the realtime model's words again.
+    await flip("服务商的实时文字", "provider_preview", true);
+    await waitFor(() => {
+      expect(live).toHaveAttribute("data-source", "stream");
+    });
+    expect(stateLine()).toHaveTextContent("使用中 · 阿里云百炼");
+  });
+
+  it("regression: with both switches off and a model that needs a preview, the streaming cards say the preview is off and a streaming mode runs whole (docs/dictation.md section 11.10)", async () => {
+    const user = userEvent.setup();
+    const { backend } = renderApp({
+      path: "/speech",
+      mock: {
+        settings: {
+          engines: {
+            ...defaultEngineSettings(),
+            provider_preview: false,
+            local_preview: false,
+            output_mode: "streaming_final",
+          },
+        },
+      },
+    });
+    await openTab(user, "识别设置");
+    const live = await screen.findByTestId("live-preview");
+    const mode = screen.getByTestId("output-mode");
+    expect(live).toHaveAttribute("data-state", "off");
+    expect(backend.peek().engines.live_ready).toBe(false);
+    expect(mode).toHaveAttribute("data-effective", "whole_take");
+    expect(within(mode).getByTestId("output-mode-fallback")).toHaveTextContent(
+      "实时预览已关闭，当前按整段输出运行",
+    );
+    expect(within(mode).getAllByText("实时预览已关闭")).toHaveLength(2);
+    expect(within(mode).queryByText("模型未下载")).toBeNull();
   });
 
   it("regression: the output mode cards (出字方式) write output_mode through settings_set_engines; a streaming mode without the model stays selected but runs as 整段输出 (status line, card note, 当前生效 badge follow effective_output_mode); live_inject with polish on shows the no-polish note; 静音裁剪 is disabled under cloud and writes vad_trim under local (docs/dictation.md §12)", async () => {
@@ -1383,7 +1494,9 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
       backend.publish({
         type: "engines",
         ...backend.peek().engines,
-        live_preview_ready: true,
+        live_ready: true,
+        live_source: "local",
+        preview_source: "local",
         effective_output_mode: "live_inject",
       });
     });
@@ -1650,15 +1763,44 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     expect(streamingModel(shuffled)?.id).toBe(MOCK_STREAMING_MODEL_ID);
     expect(streamingModel([])).toBeUndefined();
     expect(offlineModelsByTier([])).toEqual([]);
-    expect(livePreviewState({ live_preview: false }, { live_preview_ready: false })).toBe("off");
-    expect(livePreviewState({ live_preview: false }, { live_preview_ready: true })).toBe("off");
-    expect(livePreviewState({ live_preview: true }, { live_preview_ready: false })).toBe("missing");
-    expect(livePreviewState({ live_preview: true }, { live_preview_ready: true })).toBe("ready");
-    for (const source of ["cloud", "stream", "local"] as const) {
-      expect(
-        livePreviewState({ live_preview: true }, { live_preview_ready: true, live_source: source }),
-      ).toBe(source === "local" ? "ready" : source);
-    }
+    // docs/dictation.md section 11.10: whose words the pill shows, or why it shows none.
+    const off = { local_preview: false };
+    const on = { local_preview: true };
+    expect(livePreviewState(off, { live_ready: false })).toEqual({ kind: "off" });
+    expect(livePreviewState(on, { live_ready: false })).toEqual({ kind: "missing" });
+    expect(
+      livePreviewState(on, { live_ready: true, live_source: "local", preview_source: "local" }),
+    ).toEqual({ kind: "showing", source: "local" });
+    expect(
+      livePreviewState(off, {
+        live_ready: true,
+        live_source: "cloud",
+        preview_source: "cloud",
+        preview_provider: "builtin",
+      }),
+    ).toEqual({ kind: "showing", source: "cloud", provider: "builtin" });
+    // A realtime model recognising unseen: hidden with the local switch off, missing with it on.
+    expect(livePreviewState(off, { live_ready: true, live_source: "stream" })).toEqual({
+      kind: "hidden",
+    });
+    expect(livePreviewState(on, { live_ready: true, live_source: "stream" })).toEqual({
+      kind: "missing",
+    });
+    // A whole-recording model standing in for the realtime one (section 3.5).
+    expect(livePreviewState(on, { live_ready: false, live_source: "stream" })).toEqual({
+      kind: "paused",
+    });
+    const text = (state: Parameters<typeof livePreviewStateText>[0], locale: "zh-CN" | "en") =>
+      livePreviewStateText(state, createTranslator(locale).t, locale);
+    expect(
+      text({ kind: "showing", source: "stream", provider: "volcengine_speech" }, "zh-CN"),
+    ).toBe("使用中 · 火山引擎豆包语音");
+    expect(text({ kind: "showing", source: "local" }, "zh-CN")).toBe("使用中 · 本地模型");
+    expect(text({ kind: "showing", source: "cloud", provider: "builtin" }, "en")).toBe(
+      "In use · Built-in service",
+    );
+    expect(text({ kind: "hidden" }, "zh-CN")).toBe("不显示 · 实时识别照常进行");
+    expect(text({ kind: "off" }, "en")).toBe("Off");
   });
 
   it("regression: the Chinese script choice writes chinese_script through settings_set_engines with the three single-language options", async () => {
@@ -1786,7 +1928,8 @@ describe("fallback models on the engines pages (docs/dictation.md §3.5)", () =>
     await openTab(user, "识别设置");
     const live = await screen.findByTestId("live-preview");
     const mode = screen.getByTestId("output-mode");
-    expect(live).toHaveAttribute("data-state", "stream");
+    expect(live).toHaveAttribute("data-state", "showing");
+    expect(live).toHaveAttribute("data-source", "stream");
     expect(mode).toHaveAttribute("data-effective", "streaming_final");
     act(() => {
       backend.simulateQuotaExhausted("asr", Date.now() + 86_400_000);
@@ -1813,8 +1956,9 @@ describe("fallback models on the engines pages (docs/dictation.md §3.5)", () =>
       await backend.invoke("engines_quota_reset", { kind: "asr" });
     });
     await waitFor(() => {
-      expect(live).toHaveAttribute("data-state", "stream");
+      expect(live).toHaveAttribute("data-state", "showing");
     });
+    expect(live).toHaveAttribute("data-source", "stream");
     expect(mode).toHaveAttribute("data-effective", "streaming_final");
   });
 

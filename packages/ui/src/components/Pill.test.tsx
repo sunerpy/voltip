@@ -96,6 +96,36 @@ describe("Pill cancel hint and step time (user feedback 2026-09-29)", () => {
 });
 
 describe("Pill live preview (docs/dictation.md §11)", () => {
+  it("the preview tag names whose words the caption shows (docs/dictation.md §11.10), plain 预览 when it is not said", () => {
+    const { rerender } = render(
+      <Pill state="listening" live={{ committed: "", current: "你好", tag: "预览 · 豆包语音" }} />,
+    );
+    expect(screen.getByTestId("pill-live-tag")).toHaveTextContent(/^预览 · 豆包语音$/);
+    expect(screen.getByTestId("pill-live")).toHaveTextContent(/你好\s*预览 · 豆包语音$/);
+    rerender(
+      <Pill state="listening" live={{ committed: "", current: "你好", tag: "预览 · 本地模型" }} />,
+    );
+    expect(screen.getByTestId("pill-live-tag")).toHaveTextContent(/^预览 · 本地模型$/);
+    rerender(<Pill state="listening" live={{ committed: "", current: "你好" }} />);
+    expect(screen.getByTestId("pill-live-tag")).toHaveTextContent(/^预览$/);
+  });
+
+  it("regression: a caption clipped to its tail keeps the preview tag that names its source (docs/dictation.md §11.10)", () => {
+    const long = "把这段逻辑抽成一个 helper，然后在 session assembly 里复用，再补一个回归测试";
+    expect(Array.from(long).length).toBeGreaterThan(LIVE_CAPTION_MAX_CHARS);
+    expect(clipLiveCaption({ committed: long, current: "", tag: "预览 · 豆包语音" })).toMatchObject(
+      {
+        clipped: true,
+        tag: "预览 · 豆包语音",
+      },
+    );
+    render(
+      <Pill state="listening" live={{ committed: long, current: "好", tag: "预览 · 本地模型" }} />,
+    );
+    expect(screen.getByTestId("pill-live")).toHaveAttribute("data-clipped", "true");
+    expect(screen.getByTestId("pill-live-tag")).toHaveTextContent(/^预览 · 本地模型$/);
+  });
+
   it("regression: listening draws a two-tone live caption above the waveform with a 预览 chip; the capsule grows to two rows", () => {
     const { rerender } = render(
       <Pill

@@ -7,10 +7,12 @@
 //! to. A notification for an older session is dropped, which is all the cancellation the pipeline
 //! needs.
 //!
-//! The live preview (§11) is a second, optional path next to the recording: when a
-//! [`StreamingTranscriber`] is plugged in and `live_preview_ready`, the capture's 16 kHz tap is
-//! decoded on a blocking thread ([`run_live`]) and its partials land in `Listening.live`; on stop
-//! the text moves to `Processing.preview`.
+//! The live preview (§11) is a second, optional path next to the recording: when something
+//! recognises the take while it is spoken (`live_ready`: the built-in service's preview, a realtime
+//! model, the library's streaming model), the capture's 16 kHz tap is decoded on a blocking thread
+//! ([`run_live`]) and its partials land in `Listening.live`; on stop the text moves to
+//! `Processing.preview`. A realtime model whose words are not shown (§11.10) still recognises the
+//! take, and the local model may show its own words from a second copy of the tap ([`tee`]).
 //!
 //! Every recogniser's text is first brought to the configured Chinese script (§17): whole takes,
 //! the live worker's partials / sentences / flush, and the `live_inject` remainder.
@@ -63,13 +65,14 @@ use super::ports::{
     StreamingSession, StreamingTranscriber, SwitchReason, Transcriber, Transcript, UnconfirmedWhy, Via, max_recording,
 };
 use super::redecode::RedecodeStreaming;
+use super::tee;
 use super::{
     DictationPhase, DictationStatus, FailureCode, LiveText, OutputMode, ProcessingStage, RefineFailure, SegmentProgress, TakeKind, TakeTiming,
     inject_separator, join_text,
 };
 use super::{steps, wav};
 use crate::audio_cache::{KeptAudio, KeptStatus, NewRecording};
-use crate::engines::{ChineseScript, FallbackTarget, InjectMode, LiveSource, ResolvedEngines, SwitchedWindow};
+use crate::engines::{ChineseScript, FallbackTarget, InjectMode, LivePlan, LiveSource, LiveSources, ResolvedEngines, SwitchedWindow};
 use crate::history::{EditRecord, HistoryEntry, Outcome};
 use crate::hotkey::Modifier;
 use crate::models::ModelManager;
@@ -98,8 +101,8 @@ pub struct DictationPorts {
     /// then report an empty library and refuse the model commands.
     pub models: Option<Arc<dyn ModelManager>>,
     /// Streaming recogniser for the live preview (docs/dictation.md §11); `None` on shells without
-    /// one (the phone). Used only while `EngineSettings.live_preview` is on and the streaming model
-    /// is installed.
+    /// one (the phone). Used only while `EngineSettings.local_preview` is on and the streaming model
+    /// is installed (§11.10).
     pub streaming: Option<Arc<dyn StreamingTranscriber>>,
     /// Names the application in front when a take starts (docs/dictation.md §18.2); `None` on
     /// shells without one (the phone, the fakes): takes then run without a scene, as before.
@@ -137,6 +140,19 @@ impl LivePiece {
             Self::Switched | Self::CalledOff => None,
         }
     }
+}
+
+/// What the local model's session next to a hidden realtime stream reports
+/// (docs/dictation.md §11.10): only the pill uses it.
+pub enum ShownEvent {
+    /// The current sentence changed.
+    Partial(String),
+    /// A sentence was committed.
+    Segment(Segment),
+    /// It stopped following the audio.
+    Degraded(String),
+    /// It flushed: the whole text it heard.
+    Finished(String),
 }
 
 /// Notifications from spawned work back to the state machine.
@@ -209,6 +225,22 @@ pub enum Internal {
         /// Who wrote the stream's text before the flush: the receipt when the flush failed after
         /// `live_inject` pasted sentences (docs/dictation.md §3.5).
         before: Receipt,
+    },
+    /// The take's live session says whose model its words come from (docs/dictation.md §11.10): a
+    /// fallback model's stream standing in for the selected one (§3.5) names its own provider.
+    LiveServed {
+        /// Session.
+        session: u64,
+        /// The provider.
+        provider: ProviderId,
+    },
+    /// The local model's session next to a realtime model whose words are not shown
+    /// (docs/dictation.md §11.10): what the pill shows, and nothing else.
+    Shown {
+        /// Session.
+        session: u64,
+        /// What it reports.
+        event: ShownEvent,
     },
     /// `live_inject` (docs/dictation.md §12): one sentence's injection came back.
     LiveInjected {
@@ -319,6 +351,17 @@ impl std::fmt::Debug for Internal {
             Self::StreamDegraded { session, reason, .. } => f.debug_struct("StreamDegraded").field("session", session).field("reason", reason).finish(),
             Self::StreamFinished { session, result, .. } => {
                 f.debug_struct("StreamFinished").field("session", session).field("segments", &result.as_ref().map(|r| r.committed.len())).finish()
+            }
+            Self::LiveServed { session, provider } => f.debug_struct("LiveServed").field("session", session).field("provider", provider).finish(),
+            // The local model's words never reach the log either.
+            Self::Shown { session, event } => {
+                let event = match event {
+                    ShownEvent::Partial(_) => "partial",
+                    ShownEvent::Segment(_) => "segment",
+                    ShownEvent::Degraded(_) => "degraded",
+                    ShownEvent::Finished(_) => "finished",
+                };
+                f.debug_struct("Shown").field("session", session).field("event", &event).finish()
             }
             Self::LiveInjected { session, idx, result } => {
                 f.debug_struct("LiveInjected").field("session", session).field("idx", idx).field("result", &result.as_ref().map(LivePiece::via)).finish()
@@ -792,6 +835,12 @@ struct Take {
     /// The live worker will report (`StreamFinished` / `StreamDegraded`) — it was spawned and has
     /// not reported yet.
     worker_pending: bool,
+    /// The take's live sources, decided when the device opened (docs/dictation.md §11.10): what
+    /// recognises the take while it is spoken and whose words the pill shows.
+    live_plan: LivePlan,
+    /// The provider whose words the pill shows when they are the service's, as its session says
+    /// (`Internal::LiveServed`): the selected one until a fallback model's stream says otherwise.
+    live_provider: Option<ProviderId>,
     /// Set when the take is cancelled while listening: the live worker then ends without its flush,
     /// so nothing more of a take the person abandoned reaches a recogniser (docs/dictation.md §11.8).
     live_cancelled: Arc<AtomicBool>,
@@ -880,6 +929,8 @@ impl Take {
             mode: requested,
             live_error: None,
             worker_pending: false,
+            live_plan: LivePlan::default(),
+            live_provider: None,
             live_cancelled: Arc::new(AtomicBool::new(false)),
             recording: None,
             flushed: None,
@@ -926,11 +977,9 @@ pub struct DictationEngine {
     injector: Arc<dyn Injector>,
     factory: EngineFactory,
     streaming: Option<Arc<dyn StreamingTranscriber>>,
-    /// `ResolvedEngines::live_preview_ready()` of the last configuration: whether the next start
-    /// opens a live tap and a streaming session.
-    live_ready: bool,
-    /// `ResolvedEngines::live_source()` of the last configuration: which port the session uses.
-    live_source: Option<LiveSource>,
+    /// `ResolvedEngines::live_sources()` of the last configuration (docs/dictation.md §11.10): what
+    /// the next start can recognise the take with while it is spoken, and what the pill shows.
+    live: LiveSources,
     /// `EngineSettings.output_mode` of the last configuration; resolved per run at `start`.
     output_mode: OutputMode,
     /// `EngineSettings.switched_window` of the last configuration (docs/dictation.md §14.3).
@@ -1171,8 +1220,7 @@ impl DictationEngine {
             injector: ports.injector,
             factory: ports.factory,
             streaming: ports.streaming,
-            live_ready: engines.live_preview_ready(),
-            live_source: engines.live_source(),
+            live: engines.live_sources(),
             output_mode: engines.output_mode,
             switched_window: engines.switched_window,
             inject_mode: engines.inject,
@@ -1366,8 +1414,7 @@ impl DictationEngine {
         self.refine_model = engines.refine_model.clone();
         self.asr_provider = engines.asr_provider;
         self.refine_provider = engines.llm_provider;
-        self.live_ready = engines.live_preview_ready();
-        self.live_source = engines.live_source();
+        self.live = engines.live_sources();
         self.output_mode = engines.output_mode;
         self.switched_window = engines.switched_window;
         self.inject_mode = engines.inject;
@@ -1384,24 +1431,26 @@ impl DictationEngine {
         self.warm_transcriber();
     }
 
-    /// Whether the next start previews: live preview is on and its source is here — the built-in
-    /// service (always, through the transcriber), a realtime model whose client streams, or the
-    /// library's model with a streaming port plugged in.
-    pub fn live_enabled(&self) -> bool {
-        self.live_ready
-            && match self.live_source {
-                Some(LiveSource::Cloud) => true,
-                Some(LiveSource::Stream) => self.transcriber.streaming(&[]).is_some(),
-                Some(LiveSource::Local) => self.streaming.is_some(),
-                None => false,
-            }
+    /// The next start's live sources (docs/dictation.md §11.10): the configuration's, as the ports
+    /// here allow — a realtime model streams when its client streams now (a fallback model taking
+    /// whole recordings may stand in for it, §3.5), the library's model needs a streaming port.
+    fn live_plan(&self) -> LivePlan {
+        let stream_now = self.live.stream && self.transcriber.streaming(&[]).is_some();
+        LiveSources { local: self.live.local && self.streaming.is_some(), ..self.live }.plan(stream_now)
     }
 
-    /// The streaming port this take previews with (docs/dictation.md §11.8, §11.9): the take's
-    /// transcriber deciding the sentence again as it grows, hinted with the take's glossary; the
-    /// realtime model's own stream, hinted the same way; or the library's streaming model.
-    fn live_port(&self) -> Option<Arc<dyn StreamingTranscriber>> {
-        match self.live_source? {
+    /// Whether the next start recognises the take while it is spoken: the built-in service's
+    /// preview, a realtime model whose client streams, or the library's model with a streaming port
+    /// plugged in (docs/dictation.md §11.10) — shown on the pill or not.
+    pub fn live_enabled(&self) -> bool {
+        self.live_plan().text.is_some()
+    }
+
+    /// The streaming port `source` runs on in this take (docs/dictation.md §11.8, §11.9): the
+    /// take's transcriber deciding the sentence again as it grows, hinted with the take's glossary;
+    /// the realtime model's own stream, hinted the same way; or the library's streaming model.
+    fn live_port(&self, source: LiveSource) -> Option<Arc<dyn StreamingTranscriber>> {
+        match source {
             // The streaming modes take their text from the flush; a whole take decodes it itself.
             LiveSource::Cloud => Some(Arc::new(
                 RedecodeStreaming::new(self.transcriber.clone(), self.take.vocabulary.glossary().to_vec())
@@ -1432,11 +1481,12 @@ impl DictationEngine {
     /// sentences are the take's text, and sending the whole take once more would recognise (and
     /// bill) it twice, and may take as long as the take played.
     fn resolve_output_mode(&self, mode: OutputMode) -> (OutputMode, Option<&'static str>) {
+        let text = self.live_plan().text;
         match mode {
-            OutputMode::WholeTake if self.live_source == Some(LiveSource::Stream) && self.live_enabled() => (OutputMode::StreamingFinal, None),
+            OutputMode::WholeTake if text == Some(LiveSource::Stream) => (OutputMode::StreamingFinal, None),
             OutputMode::WholeTake => (OutputMode::WholeTake, None),
-            mode if self.live_enabled() => (mode, None),
-            _ if !self.live_ready => (OutputMode::WholeTake, Some("live preview is not ready (switched off or streaming model not installed)")),
+            mode if text.is_some() => (mode, None),
+            _ if !self.live.any() => (OutputMode::WholeTake, Some("live preview is not ready (switched off or streaming model not installed)")),
             _ => (OutputMode::WholeTake, Some("this shell has no streaming recogniser")),
         }
     }
@@ -1447,10 +1497,13 @@ impl DictationEngine {
     }
 
     /// Preload the streaming model (2.6 s measured) so the first partial is not late. No-op when
-    /// live preview is not ready; the port itself makes it idempotent.
+    /// the next take does not use it; the port itself makes it idempotent.
     fn warm_streaming(&self) {
         // The built-in service and a realtime model have nothing to load.
-        if let (true, Some(LiveSource::Local), Some(streaming)) = (self.live_ready, self.live_source, &self.streaming) {
+        let plan = self.live_plan();
+        if (plan.text == Some(LiveSource::Local) || plan.shown == Some(LiveSource::Local))
+            && let Some(streaming) = &self.streaming
+        {
             streaming.warm();
         }
     }
@@ -1900,10 +1953,31 @@ impl DictationEngine {
         if !matches!(self.status.phase, DictationPhase::Listening { .. } | DictationPhase::Processing { .. }) {
             return Vec::new();
         }
-        if let Some(streaming) = self.live_port() {
-            self.spawn_live(self.status.session, pcm, streaming);
-        }
+        self.start_live(self.status.session, pcm);
         Vec::new()
+    }
+
+    /// Start the take's live sessions on `pcm` (docs/dictation.md §11, §11.10): the one that
+    /// recognises the take and, next to a realtime model whose words are not shown, the local
+    /// model's, which only shows its own — each reading its own copy of the tap.
+    fn start_live(&mut self, session: u64, pcm: Box<dyn LivePcm>) {
+        let plan = self.take.live_plan;
+        let Some(text) = plan.text else { return };
+        let Some(streaming) = self.live_port(text) else { return };
+        // The service's words are the selected provider's until its session names another.
+        self.take.live_provider = (text != LiveSource::Local).then_some(self.asr_provider);
+        let local = match plan.shown {
+            Some(LiveSource::Local) if text != LiveSource::Local => self.live_port(LiveSource::Local),
+            _ => None,
+        };
+        match local {
+            Some(local) => {
+                let (text_pcm, shown_pcm) = tee::tee(pcm);
+                self.spawn_live(session, text_pcm, streaming, LiveRole::Text);
+                self.spawn_live(session, shown_pcm, local, LiveRole::Shown);
+            }
+            None => self.spawn_live(session, pcm, streaming, LiveRole::Text),
+        }
     }
 
     /// Match `app` against the take's scenes and apply the first match to this take: the output
@@ -1940,7 +2014,7 @@ impl DictationEngine {
             self.take.requested = requested;
             self.take.mode = mode;
             // The globals' fallback is visible on the settings page; a scene's is not: say it in `live_error`.
-            self.take.live_error = reason.map(|_| if self.live_ready { SCENE_MODE_NO_STREAMING } else { SCENE_MODE_NOT_READY }.to_owned());
+            self.take.live_error = reason.map(|_| if self.live.any() { SCENE_MODE_NO_STREAMING } else { SCENE_MODE_NOT_READY }.to_owned());
             tracing::info!(session, requested = requested.as_str(), mode = mode.as_str(), "scene output mode");
         }
         // §18.10: a built-in scene's term pack joins this take's glossary after the dictionary's.
@@ -2109,19 +2183,23 @@ impl DictationEngine {
         Ok(vec![self.set_phase(DictationPhase::Processing { stage, started_at, stage_started_at: started_at, preview })])
     }
 
-    /// Start the live decode worker for this session on a blocking thread (docs/dictation.md §11).
-    /// It ends by itself when the tap closes (the capture stopped or was released).
-    fn spawn_live(&mut self, session: u64, pcm: Box<dyn LivePcm>, streaming: Arc<dyn StreamingTranscriber>) {
+    /// Start a live decode worker for this session on a blocking thread (docs/dictation.md §11).
+    /// It ends by itself when the tap closes (the capture stopped or was released). Only the text
+    /// session's report is waited for.
+    fn spawn_live(&mut self, session: u64, pcm: Box<dyn LivePcm>, streaming: Arc<dyn StreamingTranscriber>, role: LiveRole) {
         let job = LiveJob {
             session,
             pcm,
             streaming,
+            role,
             language: self.take_language(),
             script: self.take_script(),
             cancelled: self.take.live_cancelled.clone(),
             tx: self.internal.clone(),
         };
-        self.take.worker_pending = true;
+        if role == LiveRole::Text {
+            self.take.worker_pending = true;
+        }
         tokio::task::spawn_blocking(move || run_live(job));
     }
 
@@ -2243,6 +2321,8 @@ impl DictationEngine {
                 self.on_segment(session, segment)
             }
             Internal::StreamDegraded { session, reason, served } => self.on_stream_degraded(session, reason, served),
+            Internal::LiveServed { session, provider } => self.on_live_served(session, provider),
+            Internal::Shown { session, event } => self.on_shown(session, event),
             Internal::StreamFinished { session, result, before } => self.on_stream_finished(session, result, before),
             Internal::LiveInjected { session, idx, result } => self.on_live_injected(session, idx, result),
             Internal::Remainder { session, result } => self.on_remainder(session, result),
@@ -2282,8 +2362,12 @@ impl DictationEngine {
         }
     }
 
-    /// The streaming recogniser's current sentence changed: it replaces `Listening.live.current`.
+    /// The streaming recogniser's current sentence changed: it replaces `Listening.live.current`
+    /// (nothing while its words are not shown, docs/dictation.md §11.10).
     fn on_partial(&mut self, session: u64, current: String) -> Vec<Effect> {
+        if self.text_hidden() {
+            return Vec::new();
+        }
         self.on_live(session, |live| {
             if live.current == current {
                 return false;
@@ -2297,6 +2381,7 @@ impl DictationEngine {
     /// returns whether anything changed; a degraded preview ignores further partials. Nothing
     /// happens outside `Listening` or for another session.
     fn on_live(&mut self, session: u64, update: impl FnOnce(&mut LiveText) -> bool) -> Vec<Effect> {
+        let (source, provider) = self.shown_label();
         match &self.status.phase {
             DictationPhase::Listening { started_at, ready, live, locked } if session == self.status.session => {
                 let (started_at, ready, locked) = (*started_at, *ready, *locked);
@@ -2307,9 +2392,81 @@ impl DictationEngine {
                 if !update(&mut live) {
                     return Vec::new();
                 }
+                // docs/dictation.md §11.10: the pill's 预览 tag names whose words these are.
+                (live.source, live.provider) = (source, provider);
                 vec![self.set_phase(DictationPhase::Listening { started_at, ready, live: Some(live), locked })]
             }
             _ => Vec::new(),
+        }
+    }
+
+    /// The take's text session runs while its words are not shown (docs/dictation.md §11.10): a
+    /// realtime model with 服务商的实时文字 off. Its words then reach neither `Listening.live` nor
+    /// `Processing.preview`; the pill shows the local model's, or none.
+    fn text_hidden(&self) -> bool {
+        matches!(self.take.live_plan, LivePlan { text: Some(text), shown } if shown != Some(text))
+    }
+
+    /// Whose words the pill shows this take (docs/dictation.md §11.10): the local model's, or the
+    /// service's with the provider whose model gives them.
+    fn shown_label(&self) -> (Option<LiveSource>, Option<ProviderId>) {
+        match self.take.live_plan.shown {
+            Some(LiveSource::Local) => (Some(LiveSource::Local), None),
+            Some(source) => (Some(source), self.take.live_provider),
+            None => (None, None),
+        }
+    }
+
+    /// The take's live session says its words come from `provider`'s model (docs/dictation.md
+    /// §11.10): the 预览 tag follows, at once when the pill shows them already.
+    fn on_live_served(&mut self, session: u64, provider: ProviderId) -> Vec<Effect> {
+        if session != self.status.session || self.take.live_provider == Some(provider) {
+            return Vec::new();
+        }
+        self.take.live_provider = Some(provider);
+        let shown = matches!(self.take.live_plan.shown, Some(LiveSource::Cloud | LiveSource::Stream));
+        if shown && matches!(self.status.phase, DictationPhase::Listening { live: Some(_), .. }) {
+            return self.on_live(session, |_| true);
+        }
+        Vec::new()
+    }
+
+    /// The local model's session next to a hidden realtime stream (docs/dictation.md §11.10): its
+    /// words are what the pill shows while listening and, after the flush, while processing. The
+    /// take's text and output mode never depend on them.
+    fn on_shown(&mut self, session: u64, event: ShownEvent) -> Vec<Effect> {
+        if session != self.status.session {
+            return Vec::new();
+        }
+        match event {
+            ShownEvent::Partial(current) => self.on_live(session, |live| {
+                if live.current == current {
+                    return false;
+                }
+                live.current = current;
+                true
+            }),
+            ShownEvent::Segment(segment) => self.on_live(session, |live| {
+                live.committed.push(segment);
+                live.current.clear();
+                true
+            }),
+            ShownEvent::Degraded(reason) => {
+                tracing::warn!(session, reason = %reason, "the local model's preview degraded; the take goes on without it");
+                self.on_live(session, |live| {
+                    live.degraded = Some(reason);
+                    true
+                })
+            }
+            ShownEvent::Finished(text) => match &self.status.phase {
+                DictationPhase::Processing { stage, started_at, stage_started_at, preview }
+                    if !text.is_empty() && preview.as_deref() != Some(text.as_str()) =>
+                {
+                    let (stage, started_at, stage_started_at) = (*stage, *started_at, *stage_started_at);
+                    vec![self.set_phase(DictationPhase::Processing { stage, started_at, stage_started_at, preview: Some(text) })]
+                }
+                _ => Vec::new(),
+            },
         }
     }
 
@@ -2326,6 +2483,9 @@ impl DictationEngine {
         {
             self.take.inject.seen += 1;
             self.queue_sentence(segment.clone());
+        }
+        if self.text_hidden() {
+            return Vec::new();
         }
         let pasted = self.take.inject.pasted;
         self.on_live(session, |live| {
@@ -2364,10 +2524,15 @@ impl DictationEngine {
             // Sentences of the stream were taken: they came from its model.
             self.served_by(served);
         }
-        let mut effects = self.on_live(session, |live| {
-            live.degraded = Some(reason.clone());
-            true
-        });
+        // A hidden stream's failure is not the pill's: it shows the local model's words, or none.
+        let mut effects = if self.text_hidden() {
+            Vec::new()
+        } else {
+            self.on_live(session, |live| {
+                live.degraded = Some(reason.clone());
+                true
+            })
+        };
         effects.extend(self.degrade(reason));
         effects
     }
@@ -2446,9 +2611,10 @@ impl DictationEngine {
             self.served_by(receipt);
         }
         let final_text = LiveText { committed: fin.committed.clone(), current: fin.tail.clone(), ..LiveText::default() }.preview();
+        let hidden = self.text_hidden();
         let mut effects = match &self.status.phase {
             DictationPhase::Processing { stage, started_at, stage_started_at, preview }
-                if !final_text.is_empty() && preview.as_deref() != Some(final_text.as_str()) =>
+                if !hidden && !final_text.is_empty() && preview.as_deref() != Some(final_text.as_str()) =>
             {
                 let (stage, started_at, stage_started_at) = (*stage, *started_at, *stage_started_at);
                 vec![self.set_phase(DictationPhase::Processing { stage, started_at, stage_started_at, preview: Some(final_text) })]
@@ -2741,8 +2907,10 @@ impl DictationEngine {
             }
         }
         let pasted = li.pasted;
+        let hidden = self.text_hidden();
         let mut effects = match &self.status.phase {
-            DictationPhase::Listening { started_at, ready, live: Some(live), locked } if live.injected != pasted => {
+            // The pill shows the local model's words next to a hidden stream: no pasted marks there.
+            DictationPhase::Listening { started_at, ready, live: Some(live), locked } if live.injected != pasted && !hidden => {
                 let (started_at, ready, locked, mut live) = (*started_at, *ready, *locked, live.clone());
                 live.injected = pasted;
                 vec![self.set_phase(DictationPhase::Listening { started_at, ready, live: Some(live), locked })]
@@ -2929,12 +3097,15 @@ impl DictationEngine {
             Ok(mut capture) => match then {
                 None => {
                     self.take.timing.device_open.get_or_insert(at);
-                    let (mut worker, mut no_tap) = (None, false);
-                    if self.live_enabled() {
+                    let (mut tap, mut no_tap) = (None, false);
+                    let plan = self.live_plan();
+                    if plan.text.is_some() {
+                        // docs/dictation.md §11.10: decided once, for both of the take's sessions.
+                        self.take.live_plan = plan;
                         match capture.live_pcm() {
                             // §30.2: the scene's language and terms are known once the probe answered.
                             Some(pcm) if self.take.probe == Some(ProbeWait::Alongside) => *self.take.live_tap.get_mut() = Some(pcm),
-                            Some(pcm) => worker = self.live_port().map(|streaming| (pcm, streaming)),
+                            Some(pcm) => tap = Some(pcm),
                             None => no_tap = true,
                         }
                     }
@@ -2944,8 +3115,8 @@ impl DictationEngine {
                     if self.take.long_requested {
                         self.start_long(session, stream);
                     }
-                    if let Some((pcm, streaming)) = worker {
-                        self.spawn_live(session, pcm, streaming);
+                    if let Some(pcm) = tap {
+                        self.start_live(session, pcm);
                     }
                     if no_tap {
                         tracing::debug!(session, "capture has no live tap; no preview this run");
@@ -3787,10 +3958,21 @@ fn long_history_segments(l: &LongTake) -> Vec<Segment> {
         .collect()
 }
 
+/// Which of a take's live sessions a worker runs (docs/dictation.md §11.10).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LiveRole {
+    /// The session that recognises the take: its sentences are the streaming modes' text, and
+    /// the pill shows them unless they are hidden.
+    Text,
+    /// The local model's next to a hidden realtime stream: only the pill uses its words.
+    Shown,
+}
+
 struct LiveJob {
     session: u64,
     pcm: Box<dyn LivePcm>,
     streaming: Arc<dyn StreamingTranscriber>,
+    role: LiveRole,
     language: Option<String>,
     /// The script partials, sentences and the flush are normalised to (docs/dictation.md §17).
     script: ChineseScript,
@@ -3806,15 +3988,33 @@ struct LiveJob {
 /// failure — open, tap overrun, decoder error, a panic in the recogniser — becomes one
 /// [`Internal::StreamDegraded`] and ends the worker; the recording never notices.
 fn run_live(job: LiveJob) {
-    let LiveJob { session, mut pcm, streaming, language, script, cancelled, tx } = job;
+    let LiveJob { session, mut pcm, streaming, role, language, script, cancelled, tx } = job;
     let degrade = |reason: String, served: Receipt| {
-        let _ = tx.blocking_send(Internal::StreamDegraded { session, reason, served });
+        let event = match role {
+            LiveRole::Text => Internal::StreamDegraded { session, reason, served },
+            LiveRole::Shown => Internal::Shown { session, event: ShownEvent::Degraded(reason) },
+        };
+        let _ = tx.blocking_send(event);
     };
     let mut stream = match std::panic::catch_unwind(AssertUnwindSafe(|| streaming.open(language.as_deref()))) {
         Ok(Ok(s)) => s,
         Ok(Err(e)) => return degrade(format!("open: {e}"), Receipt::default()),
         Err(_) => return degrade("open: recogniser panicked".to_owned(), Receipt::default()),
     };
+    // docs/dictation.md §11.10: whose model the text session's words come from, for the pill's tag
+    // — known at the open for a fallback chain's stream, after the first answer for a preview
+    // decoded again.
+    let mut served: Option<ProviderId> = None;
+    let mut report_served = |stream: &dyn StreamingSession| {
+        if role == LiveRole::Text
+            && let (Some(provider), _) = stream.served()
+            && served != Some(provider)
+        {
+            served = Some(provider);
+            let _ = tx.blocking_send(Internal::LiveServed { session, provider });
+        }
+    };
+    report_served(stream.as_ref());
     let mut buf = vec![0.0_f32; LIVE_CHUNK_SAMPLES];
     let mut pending: Vec<f32> = Vec::with_capacity(LIVE_CHUNK_SAMPLES * 2);
     let mut throttle = PartialThrottle::default();
@@ -3835,17 +4035,29 @@ fn run_live(job: LiveJob) {
             let mut drain = |stream: &mut Box<dyn StreamingSession>| -> Result<(), String> {
                 loop {
                     match stream.poll() {
-                        StreamEvent::Idle => return Ok(()),
+                        StreamEvent::Idle => {
+                            report_served(stream.as_ref());
+                            return Ok(());
+                        }
                         StreamEvent::Error(e) => return Err(e),
                         StreamEvent::Endpoint { text, start_ms, end_ms } => {
                             throttle.reset();
                             let segment = Segment { text: normalized(script, &text), refined: None, start_ms, end_ms };
-                            let _ = tx.blocking_send(Internal::Segment { session, segment });
+                            let event = match role {
+                                LiveRole::Text => Internal::Segment { session, segment },
+                                LiveRole::Shown => Internal::Shown { session, event: ShownEvent::Segment(segment) },
+                            };
+                            let _ = tx.blocking_send(event);
                         }
                         StreamEvent::Partial { current } => {
                             // The throttle compares the recogniser's text; only what goes out is converted.
                             if throttle.admit(&current, Instant::now()) {
-                                let _ = tx.blocking_send(Internal::Partial { session, current: normalized(script, &current) });
+                                let current = normalized(script, &current);
+                                let event = match role {
+                                    LiveRole::Text => Internal::Partial { session, current },
+                                    LiveRole::Shown => Internal::Shown { session, event: ShownEvent::Partial(current) },
+                                };
+                                let _ = tx.blocking_send(event);
                             }
                         }
                     }
@@ -3893,7 +4105,15 @@ fn run_live(job: LiveJob) {
         glossary_sent: fin.glossary_sent,
         note: fin.note,
     });
-    let _ = tx.blocking_send(Internal::StreamFinished { session, result, before });
+    let event = match (role, result) {
+        (LiveRole::Text, result) => Internal::StreamFinished { session, result, before },
+        (LiveRole::Shown, Ok(fin)) => {
+            let text = LiveText { committed: fin.committed, current: fin.tail, ..LiveText::default() }.preview();
+            Internal::Shown { session, event: ShownEvent::Finished(text) }
+        }
+        (LiveRole::Shown, Err(e)) => Internal::Shown { session, event: ShownEvent::Degraded(format!("flush: {e}")) },
+    };
+    let _ = tx.blocking_send(event);
 }
 
 /// Why a take fell back to the whole recording after its stream ended without text
@@ -4341,8 +4561,8 @@ mod tests {
     use super::*;
     use crate::dictation::ClipboardCode;
     use crate::dictation::fakes::{
-        FAKE_LATENCY_MS, FAKE_REFINE_MODEL, FAKE_STREAMING_MODEL_ID, FAKE_TRANSCRIPT, FakeAudio, FakeInjector, FakeModels, FakeProbe, FakeRefiner,
-        FakeStreaming, FakeTranscriber, ports_with,
+        FAKE_LATENCY_MS, FAKE_LIVE_WORDS, FAKE_REFINE_MODEL, FAKE_STREAMING_MODEL_ID, FAKE_TRANSCRIPT, FakeAudio, FakeInjector, FakeModels, FakeProbe,
+        FakeRefiner, FakeStreaming, FakeTranscriber, ports_with,
     };
     use crate::engines::{BuiltIn, EngineSettings, ProviderId, ProviderSettings, ServiceKind, UserSecrets};
     use crate::history::EditRecord;
@@ -4369,9 +4589,9 @@ mod tests {
     }
 
     /// A configuration whose library has the streaming model installed: live preview is ready
-    /// (unless `live_preview` is switched off).
+    /// (unless `live_preview` is false, which switches off both of its switches).
     fn resolved_live(live_preview: bool) -> ResolvedEngines {
-        let settings = EngineSettings { refine_enabled: false, live_preview, ..EngineSettings::default() };
+        let settings = EngineSettings { refine_enabled: false, provider_preview: live_preview, local_preview: live_preview, ..EngineSettings::default() };
         let library = FakeModels::new(1).with_installed(FAKE_STREAMING_MODEL_ID).scan();
         ResolvedEngines::resolve_with_models(&settings, &UserSecrets::default(), &TEST_BUILT_IN, &library)
     }
@@ -5464,8 +5684,10 @@ mod tests {
         assert!(r.engine.live_enabled(), "no streaming port, and still a preview");
         r.start_open().await;
         assert_eq!(r.audio.live_requests(), 1, "the capture was asked for a tap");
-        // The 1.5 s take's first second went out for a preview, and the answer shows.
-        r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if l.current == FAKE_TRANSCRIPT)).await;
+        // The 1.5 s take's first second went out for a preview, and the answer shows, tagged as the
+        // built-in service's (docs/dictation.md §11.10).
+        let phases = r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if l.current == FAKE_TRANSCRIPT)).await;
+        assert!(captions(&phases).iter().all(|l| (l.source, l.provider) == (Some(LiveSource::Cloud), Some(ProviderId::Builtin))), "{phases:?}");
         let fx = r.engine.stop().unwrap();
         assert!(matches!(phase(&fx), DictationPhase::Processing { stage: ProcessingStage::Transcribing, .. }), "{fx:?}");
         let fx = r.run_to_terminal().await;
@@ -5538,7 +5760,8 @@ mod tests {
             asr_provider: ProviderId::Aliyun,
             providers: [(ProviderId::Aliyun, choice)].into(),
             refine_enabled: false,
-            live_preview,
+            provider_preview: live_preview,
+            local_preview: live_preview,
             output_mode,
             ..EngineSettings::default()
         };
@@ -5585,20 +5808,12 @@ mod tests {
         }
     }
 
-    /// docs/dictation.md §11.9: a realtime model without the live preview, or a stream that fails,
-    /// still recognises the take — the whole take goes to the service after the take; a client
-    /// that cannot stream leaves `whole_take` alone.
+    /// docs/dictation.md §11.9: a realtime model whose stream fails still recognises the take — the
+    /// whole take goes to the service after the take; a client that cannot stream leaves
+    /// `whole_take` alone. (With 服务商的实时文字 off it still streams, §11.10:
+    /// [`regression_with_the_providers_words_off_a_realtime_model_still_streams_unseen`].)
     #[tokio::test(start_paused = true)]
     async fn a_realtime_model_without_its_stream_recognises_the_whole_take() {
-        // Preview off: no stream at all.
-        let stream = Arc::new(FakeStreaming::script());
-        let mut r = rig_stream(FakeTranscriber::ok(FAKE_TRANSCRIPT).with_stream(stream.clone()), false, OutputMode::WholeTake);
-        assert_eq!(r.engine.effective_output_mode(), (OutputMode::WholeTake, None));
-        r.start_open().await;
-        r.engine.stop().unwrap();
-        let fx = r.run_to_terminal().await;
-        assert!(matches!(phase(&fx), DictationPhase::Done { text, mode: OutputMode::WholeTake, .. } if text == FAKE_TRANSCRIPT), "{fx:?}");
-        assert_eq!((r.transcriber.calls(), stream.opens()), (1, 0));
         // The stream fails before its first sentence: the take falls back to the whole take.
         let stream = Arc::new(FakeStreaming::failing_open("WebSocket: connection refused"));
         let mut r = rig_stream(FakeTranscriber::ok(FAKE_TRANSCRIPT).with_stream(stream.clone()), true, OutputMode::WholeTake);
@@ -5623,6 +5838,213 @@ mod tests {
         let fx = r.run_to_terminal().await;
         assert!(matches!(phase(&fx), DictationPhase::Done { mode: OutputMode::WholeTake, .. }), "{fx:?}");
         assert_eq!(r.transcriber.calls(), 1);
+    }
+
+    /// Regression (D39, 2026-11-06): with 服务商的实时文字 off a realtime model recognised the whole
+    /// recording after the take. It recognises the take while it is spoken as before — the same
+    /// text, no second recognition — and only its words stay off the pill (docs/dictation.md §11.10).
+    #[tokio::test(start_paused = true)]
+    async fn regression_with_the_providers_words_off_a_realtime_model_still_streams_unseen() {
+        for configured in [OutputMode::WholeTake, OutputMode::StreamingFinal] {
+            let stream = Arc::new(FakeStreaming::script());
+            let mut r = rig_stream(FakeTranscriber::ok("整段识别的结果").with_stream(stream.clone()), false, configured);
+            assert_eq!(r.engine.effective_output_mode(), (OutputMode::StreamingFinal, None), "{configured:?}");
+            let mut fx = r.start_open().await;
+            assert_eq!(r.audio.live_requests(), 1, "the capture was asked for a tap");
+            // Every word went out while listening; fold what the session reported.
+            wait_until(|| stream.feeds() >= FAKE_LIVE_WORDS.len() + 2).await;
+            r.settle().await;
+            while let Ok(ev) = r.rx.try_recv() {
+                fx.extend(r.engine.on_internal(ev));
+            }
+            assert!(matches!(r.engine.status().phase, DictationPhase::Listening { live: None, .. }), "{:?}", r.engine.status());
+            fx.extend(r.engine.stop().unwrap());
+            fx.extend(r.run_to_terminal().await);
+            let shown = fx.iter().any(|e| {
+                matches!(e, Effect::Status(st) if matches!(&st.phase, DictationPhase::Listening { live: Some(_), .. } | DictationPhase::Processing { preview: Some(_), .. }))
+            });
+            assert!(!shown, "{configured:?}: no words on the pill: {fx:?}");
+            assert!(
+                matches!(phase(&fx), DictationPhase::Done { text, mode: OutputMode::StreamingFinal, live_error: None, .. } if text == "你好，世界。今天天气"),
+                "{configured:?}: {fx:?}"
+            );
+            assert_eq!(r.transcriber.calls(), 0, "{configured:?}: the take is not recognised a second time");
+            assert_eq!((stream.opens(), stream.finishes()), (1, 1));
+        }
+    }
+
+    /// A realtime model's configuration with the library's streaming model installed and plugged
+    /// in, with each switch as given (docs/dictation.md §11.10).
+    fn rig_stream_local(transcriber: FakeTranscriber, local: Arc<FakeStreaming>, provider_preview: bool, local_preview: bool, mode: OutputMode) -> Rig {
+        let mut secrets = UserSecrets::default();
+        secrets.set(ProviderId::Aliyun, ServiceKind::Asr, Some("sk-test".into()));
+        let choice = ProviderSettings { asr_model: Some("qwen-audio-3.1-asr-flash-streaming".into()), ..Default::default() };
+        let settings = EngineSettings {
+            asr_provider: ProviderId::Aliyun,
+            providers: [(ProviderId::Aliyun, choice)].into(),
+            refine_enabled: false,
+            provider_preview,
+            local_preview,
+            output_mode: mode,
+            ..EngineSettings::default()
+        };
+        let library = FakeModels::new(1).with_installed(FAKE_STREAMING_MODEL_ID).scan();
+        let engines = ResolvedEngines::resolve_with_models(&settings, &secrets, &TEST_BUILT_IN, &library);
+        let (audio, transcriber, injector) = (Arc::new(FakeAudio::speech()), Arc::new(transcriber), Arc::new(FakeInjector::paste()));
+        let (levels_tx, levels) = broadcast::channel(64);
+        let ports = DictationPorts { streaming: Some(local), ..ports_with(audio.clone(), transcriber.clone(), None, injector.clone()) };
+        let (engine, rx) = DictationEngine::new(ports, &engines, levels_tx);
+        Rig { engine, rx, audio, transcriber, refiner: None, injector, levels }
+    }
+
+    /// The local model's words, unlike [`FakeStreaming::script`]'s: `本地预览。` is committed.
+    fn local_words() -> Arc<FakeStreaming> {
+        Arc::new(FakeStreaming::words(vec!["本地".into(), "本地预览".into(), "本地预览。".into()], 3))
+    }
+
+    /// The live captions of `phases`, in order.
+    fn captions(phases: &[DictationPhase]) -> Vec<LiveText> {
+        phases.iter().filter_map(|p| if let DictationPhase::Listening { live: Some(l), .. } = p { Some(l.clone()) } else { None }).collect()
+    }
+
+    /// docs/dictation.md §11.10 (D37–D39): next to a realtime model whose words are not shown, the
+    /// local model shows its own on the same audio — tagged as the local model's — while the
+    /// realtime model's sentences are the take's text. Switched on, the realtime model's words win
+    /// over the local model's, tagged with its provider.
+    #[tokio::test(start_paused = true)]
+    async fn the_local_model_shows_its_words_next_to_a_realtime_model_whose_words_are_hidden() {
+        let stream = Arc::new(FakeStreaming::script());
+        let local = local_words();
+        let mut r = rig_stream_local(FakeTranscriber::ok("整段").with_stream(stream.clone()), local.clone(), false, true, OutputMode::WholeTake);
+        assert_eq!(r.engine.effective_output_mode(), (OutputMode::StreamingFinal, None));
+        r.start_open().await;
+        let phases = r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if !l.committed.is_empty())).await;
+        let lives = captions(&phases);
+        assert!(!lives.is_empty(), "{phases:?}");
+        assert!(lives.iter().all(|l| (l.source, l.provider) == (Some(LiveSource::Local), None)), "{lives:?}");
+        assert_eq!(lives.last().map(|l| l.committed[0].text.as_str()), Some("本地预览。"));
+        let fx = {
+            let mut fx = r.engine.stop().unwrap();
+            fx.extend(r.run_to_terminal().await);
+            fx
+        };
+        let realtime_words_shown = fx.iter().any(|e| match e {
+            Effect::Status(st) => match &st.phase {
+                DictationPhase::Listening { live: Some(l), .. } => l.preview().contains("你好"),
+                DictationPhase::Processing { preview: Some(p), .. } => p.contains("你好"),
+                _ => false,
+            },
+            _ => false,
+        });
+        assert!(!realtime_words_shown && lives.iter().all(|l| !l.preview().contains("你好")), "{fx:?}");
+        assert!(
+            matches!(phase(&fx), DictationPhase::Done { text, mode: OutputMode::StreamingFinal, .. } if text == "你好，世界。今天天气"),
+            "the realtime model's sentences are the take's text: {fx:?}"
+        );
+        assert_eq!(r.transcriber.calls(), 0);
+        // The take waits for the text session only: the local model's session ends on its own
+        // thread once the tap closes, which can come after `Done`.
+        wait_until(|| local.finishes() == 1).await;
+        assert_eq!((stream.opens(), stream.finishes(), local.opens(), local.finishes()), (1, 1, 1, 1));
+
+        // Both switches on: the realtime model's words, its provider on the tag; the local model
+        // opens no session.
+        let (stream, local) = (Arc::new(FakeStreaming::script()), local_words());
+        let mut r = rig_stream_local(FakeTranscriber::ok("整段").with_stream(stream.clone()), local.clone(), true, true, OutputMode::WholeTake);
+        r.start_open().await;
+        let phases = r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if l.current == "今天")).await;
+        assert!(captions(&phases).iter().all(|l| (l.source, l.provider) == (Some(LiveSource::Stream), Some(ProviderId::Aliyun))), "{phases:?}");
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { text, .. } if text == "你好，世界。今天天气"), "{fx:?}");
+        assert_eq!((stream.opens(), local.opens()), (1, 0));
+    }
+
+    /// docs/dictation.md §11.10 (D39): with 服务商的实时文字 off the built-in service sends no
+    /// preview requests: the local model shows the words when its switch is on, and with both off
+    /// the capture is not even asked for a tap. The whole take is recognised as before.
+    #[tokio::test(start_paused = true)]
+    async fn with_the_providers_words_off_the_built_in_service_sends_no_preview_requests() {
+        const PREVIEWING: BuiltIn = BuiltIn { asr_live_preview: true, ..TEST_BUILT_IN };
+        for local_preview in [true, false] {
+            let settings = EngineSettings { refine_enabled: false, provider_preview: false, local_preview, ..EngineSettings::default() };
+            let library = FakeModels::new(1).with_installed(FAKE_STREAMING_MODEL_ID).scan();
+            let engines = ResolvedEngines::resolve_with_models(&settings, &UserSecrets::default(), &PREVIEWING, &library);
+            let local = local_words();
+            let (audio, transcriber, injector) =
+                (Arc::new(FakeAudio::speech()), Arc::new(FakeTranscriber::ok(FAKE_TRANSCRIPT)), Arc::new(FakeInjector::paste()));
+            let (levels_tx, levels) = broadcast::channel(64);
+            let ports = DictationPorts { streaming: Some(local.clone()), ..ports_with(audio.clone(), transcriber.clone(), None, injector.clone()) };
+            let (engine, rx) = DictationEngine::new(ports, &engines, levels_tx);
+            let mut r = Rig { engine, rx, audio, transcriber, refiner: None, injector, levels };
+            r.start_open().await;
+            if local_preview {
+                let phases = r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if !l.committed.is_empty())).await;
+                assert!(captions(&phases).iter().all(|l| l.source == Some(LiveSource::Local)), "{phases:?}");
+            }
+            r.engine.stop().unwrap();
+            let fx = r.run_to_terminal().await;
+            assert!(matches!(phase(&fx), DictationPhase::Done { text, .. } if text == FAKE_TRANSCRIPT), "{fx:?}");
+            assert_eq!(r.transcriber.durations_ms(), [1500], "local {local_preview}: only the whole take, no preview of the first second");
+            assert_eq!((r.audio.live_requests(), local.opens()), (usize::from(local_preview), usize::from(local_preview)));
+        }
+    }
+
+    /// docs/dictation.md §3.5, §11.10: the 预览 tag names the provider whose model gives the words —
+    /// a realtime fallback model of another vendor standing in for the selected one names that
+    /// vendor, as its stream says; a fallback model taking whole recordings has no words, and the
+    /// local model shows its own and is what the take recognises with while it is spoken.
+    #[tokio::test(start_paused = true)]
+    async fn the_preview_tag_names_the_model_that_stands_in() {
+        use crate::engines::{FallbackModel, FallbackSettings};
+        let mut secrets = UserSecrets::default();
+        secrets.set(ProviderId::Aliyun, ServiceKind::Asr, Some("sk-test".into()));
+        secrets.set(ProviderId::Stepfun, ServiceKind::Asr, Some("sk-step".into()));
+        for (fallback, streams) in [("step-asr-1-stream", true), ("step-asr", false)] {
+            let settings = EngineSettings {
+                asr_provider: ProviderId::Aliyun,
+                providers: [(ProviderId::Aliyun, ProviderSettings { asr_model: Some("qwen-audio-3.1-asr-flash-streaming".into()), ..Default::default() })]
+                    .into(),
+                refine_enabled: false,
+                asr_fallback: FallbackSettings {
+                    enabled: true,
+                    on_outage: false,
+                    models: vec![FallbackModel { provider: ProviderId::Stepfun, model: fallback.into() }],
+                },
+                ..EngineSettings::default()
+            };
+            let library = FakeModels::new(1).with_installed(FAKE_STREAMING_MODEL_ID).scan();
+            let engines = ResolvedEngines::resolve_with_models(&settings, &secrets, &TEST_BUILT_IN, &library);
+            let selected = Arc::new(FakeTranscriber::quota().with_stream(Arc::new(FakeStreaming::script())));
+            let stepfun = FakeTranscriber::ok("阶跃整段");
+            let stepfun = Arc::new(if streams { stepfun.with_stream(Arc::new(FakeStreaming::script())) } else { stepfun });
+            let (audio, injector) = (Arc::new(FakeAudio::speech()), Arc::new(FakeInjector::paste()));
+            let (levels_tx, levels) = broadcast::channel(64);
+            let factory = crate::dictation::fakes::factory_by_model(&[("qwen-audio-3.1-asr-flash-streaming", selected), (fallback, stepfun)], &[]);
+            let local = local_words();
+            let unused = Arc::new(FakeTranscriber::ok("unused"));
+            let ports = DictationPorts { factory, streaming: Some(local.clone()), ..ports_with(audio.clone(), unused.clone(), None, injector.clone()) };
+            let (engine, rx) = DictationEngine::new(ports, &engines, levels_tx);
+            let mut r = Rig { engine, rx, audio, transcriber: unused, refiner: None, injector, levels };
+            r.engine.quota().mark(&asr_key(&engines, "qwen-audio-3.1-asr-flash-streaming"), crate::dictation::SwitchReason::Quota);
+            let status = engines.status_with(r.engine.quota());
+            r.start_open().await;
+            let phases = r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if !l.committed.is_empty())).await;
+            let last = captions(&phases).pop().unwrap();
+            if streams {
+                assert_eq!((last.source, last.provider), (Some(LiveSource::Stream), Some(ProviderId::Stepfun)), "{phases:?}");
+                assert_eq!(last.committed[0].text, "你好，世界。");
+            } else {
+                assert_eq!((last.source, last.provider), (Some(LiveSource::Local), None), "{phases:?}");
+                assert_eq!(last.committed[0].text, "本地预览。");
+            }
+            // The settings page says the same before the take.
+            assert_eq!((status.preview_source, status.preview_provider), (last.source, last.provider), "{fallback}");
+            r.engine.stop().unwrap();
+            let fx = r.run_to_terminal().await;
+            let text = if streams { "你好，世界。今天天气" } else { "阶跃整段" };
+            assert!(matches!(phase(&fx), DictationPhase::Done { text: t, .. } if t == text), "{fallback}: {fx:?}");
+        }
     }
 
     /// Partials the script produces in the default session (before and after the endpoint).
@@ -5736,7 +6158,7 @@ mod tests {
         );
     }
 
-    /// Live preview is gated twice: by the configuration (`live_preview_ready`) and by the port
+    /// Live preview is gated twice: by the configuration (`live_ready`) and by the port
     /// being there. Either missing → no tap, no session, no `live`; switching the setting on via
     /// `configure` enables the next run.
     #[tokio::test(start_paused = true)]
@@ -5809,6 +6231,7 @@ mod tests {
             session: 1,
             pcm: Box::new(FakeLivePcm::new(tone, closed.clone())),
             streaming: Arc::new(RedecodeStreaming::new(transcriber.clone(), Vec::new()).flushing(false)),
+            role: LiveRole::Text,
             language: None,
             script: ChineseScript::AsIs,
             cancelled: Arc::new(AtomicBool::new(false)),
@@ -5849,6 +6272,7 @@ mod tests {
                 session: 1,
                 pcm: Box::new(FakeLivePcm::new(tone.clone(), Arc::new(AtomicBool::new(true)))),
                 streaming: Arc::new(RedecodeStreaming::new(transcriber.clone(), Vec::new())),
+                role: LiveRole::Text,
                 language: None,
                 script: ChineseScript::AsIs,
                 cancelled: Arc::new(AtomicBool::new(cancelled)),
@@ -5868,7 +6292,8 @@ mod tests {
 
     /// A configuration with the streaming model installed and `output_mode` set.
     fn resolved_mode(mode: OutputMode, live_preview: bool, refine_enabled: bool) -> ResolvedEngines {
-        let settings = EngineSettings { refine_enabled, live_preview, output_mode: mode, ..EngineSettings::default() };
+        let settings =
+            EngineSettings { refine_enabled, provider_preview: live_preview, local_preview: live_preview, output_mode: mode, ..EngineSettings::default() };
         let library = FakeModels::new(1).with_installed(FAKE_STREAMING_MODEL_ID).scan();
         ResolvedEngines::resolve_with_models(&settings, &UserSecrets::default(), &TEST_BUILT_IN, &library)
     }
@@ -8000,7 +8425,8 @@ mod tests {
             llm_provider: ProviderId::Aliyun,
             providers: [(ProviderId::Aliyun, choice)].into(),
             refine_enabled: !llm.is_empty(),
-            live_preview,
+            provider_preview: live_preview,
+            local_preview: live_preview,
             output_mode,
             asr_fallback: FallbackSettings { enabled: true, on_outage: false, models: entries(asr, skip) },
             llm_fallback: FallbackSettings { enabled: true, on_outage: false, models: entries(llm, 1) },
@@ -8297,11 +8723,7 @@ mod tests {
             let mut r = rig_fallback(&engines, &[("qwen-audio-3.1-asr-flash-streaming", realtime), (stand_in, next)], &[], FakeInjector::paste());
             let agrees = |r: &Rig, mode: OutputMode| {
                 let status = engines.status_with(r.engine.quota());
-                assert_eq!(
-                    (status.effective_output_mode, status.live_preview_ready),
-                    (r.engine.effective_output_mode().0, r.engine.live_enabled()),
-                    "{stand_in}"
-                );
+                assert_eq!((status.effective_output_mode, status.live_ready), (r.engine.effective_output_mode().0, r.engine.live_enabled()), "{stand_in}");
                 assert_eq!((status.effective_output_mode, status.live_source), (mode, Some(LiveSource::Stream)), "{stand_in}");
             };
             agrees(&r, OutputMode::StreamingFinal);

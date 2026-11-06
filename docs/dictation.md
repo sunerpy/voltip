@@ -137,7 +137,8 @@ pub struct EngineSettings {                                  // Settings.engines
     pub local_model: Option<String>,                         // §10
     pub local_device: LocalDevice, pub local_gpu: Option<String>, pub local_threads: Option<u16>, // §10.6
     pub language: Option<String>,                            // None → 自动；"zh" / "en" …
-    pub live_preview: bool, pub output_mode: OutputMode, pub vad_trim: bool,                   // §11 §12
+    pub provider_preview: bool, pub local_preview: bool,     // §11.10：服务商的实时文字、本地模型预览
+    pub output_mode: OutputMode, pub vad_trim: bool,         // §12
     pub chinese_script: ChineseScript,                       // §17
     pub inject: InjectMode,                                  // Paste（默认）| ClipboardOnly
     pub asr_fallback: FallbackSettings, pub llm_fallback: FallbackSettings, // §3.5，关闭且为空时不写出
@@ -201,7 +202,7 @@ Kimi（`api.moonshot.cn` / `api.moonshot.ai`）和智谱 GLM（智谱开放平�
 - 错误：`InvalidApiKey`/401 → `Unauthorized`；`AllocationQuota.FreeTierOnly`（控制台「免费额度用完即停」生效）→ `QuotaExhausted { code, message }`（§3.5）；`Throttling…`/429 → `RateLimited`；其他带 `code` 的 4xx 与 `task-failed` → `Service { code, message }`；5xx 仍可重试。
 - 实测（2026-10-04，开发机直连北京业务空间，16 s 中文样音，只用有免费额度的模型）：`qwen-audio-3.1-asr-flash` 整段 1.4 s；`qwen-audio-3.1-asr-flash-streaming` 整段一次发完 2.8 s。`crates/voltip-cloud/tests/real_dashscope.rs`（`#[ignore]`，需要 `VOLTIP_REAL_DASHSCOPE_URL` / `_KEY`）。
 
-**界面看到的**是 `EngineStatus`（`UiState.engines`）：两项服务各自的服务商、就绪状态与原因、模型、用户填写的接口主机（内置服务与本机为空字符串），`local_model` / `local_ready`、`live_preview_ready`、`effective_output_mode`、语言、润色开关、注入方式，以及每家服务商的 `ProviderStatus`（模型、预设、服务商列出的模型 `listed`（§3.3）、密钥状态、是否在用、能否打开密钥页 `console` 与额度页 `quota`），供引擎页的服务商卡片渲染；还有两项服务的候补模型状态 `asr_fallback` / `llm_fallback`（§3.5）。
+**界面看到的**是 `EngineStatus`（`UiState.engines`）：两项服务各自的服务商、就绪状态与原因、模型、用户填写的接口主机（内置服务与本机为空字符串），`local_model` / `local_ready`、`live_ready` / `live_source` / `preview_source` / `preview_provider`（§11.10）、`effective_output_mode`、语言、润色开关、注入方式，以及每家服务商的 `ProviderStatus`（模型、预设、服务商列出的模型 `listed`（§3.3）、密钥状态、是否在用、能否打开密钥页 `console` 与额度页 `quota`），供引擎页的服务商卡片渲染；还有两项服务的候补模型状态 `asr_fallback` / `llm_fallback`（§3.5）。
 
 ### 3.5 候补模型：额度用完后改用其他模型（2026-10-04）
 
@@ -213,7 +214,7 @@ Kimi（`api.moonshot.cn` / `api.moonshot.ai`）和智谱 GLM（智谱开放平�
 - **链与账本**（`voltip_core::dictation::fallback`，不依赖具体服务商和端口）：`QuotaLedger` 记哪些模型（`QuotaKey { kind, provider, model, url }`）何时用完，用 `tokio::sync::watch` 通知变化；`first_with_quota` 按顺序调用仍有额度的项，额度用完就记账并试下一项，其他错误原样返回，成功则清掉该项的记录；全部用完时只再试第一项（用户可能已续上）。`FallbackTranscriber` / `FallbackRefiner` 把链放在识别、润色端口后面。账本归 `DictationEngine` 所有，配置变化时客户端重建，账本不变；引擎经 `ResolvedEngines::with_candidate` 为每个候补再调一次外壳的客户端工厂，外壳不用改。
 - **重试**：用完的模型 `QUOTA_RETRY_AFTER = 24 h` 内跳过，之后再试一次（被拒的请求不计费）。记录只在内存里，重启后从第一个重新开始。命令 `engines_quota_reset { kind }`（「重新检查」）清除该服务的记录；保存或删除某服务商的密钥清除该服务商的记录（可能换了账号）。账本变化时运行时重发 `CoreEvent::Engines`（`status_with(ledger)`）。
 - **收尾**：沿用现有规则。整段识别、语音编辑的指令、一段都没识别出来的长录音以新的失败码 `quota`（「模型额度已用完」）结束；开关关闭时额度用完同样报 `quota`。已有部分文字时保留部分结果：`live_inject` 已插入句子后补齐失败，照旧以已插入的内容结束，原因写进 `live_error`；长录音某段两次都失败，照旧留下占位、交付其余文字。润色失败照旧插入原文。旧版手机把 `quota` 当普通失败解析（`take_state_for` 的 `_ => TakeFailure::Failed`）。
-- **实时识别**：边说边识别仍只在当前选择是实时模型时启用（`asr_streams` 不变，不影响「当前选择非实时 + 本机实时预览」）。录音开始用第一个仍有额度的项：实时模型就推流，否则整段识别。实时模型在录音中报额度用完时预览降级，录音结束后整段走候补链（第一次多一次被拒请求，之后跳过它）。当前选择不是实时模型时，排在后面的实时模型只做整段识别。界面看到的状态按同一顺序计算（`status_with(ledger)` 经 `open_order` 取第一个仍有额度的项，与引擎的链一致）：顶替实时模型的是整段识别模型时，`live_preview_ready` 为 `false`、`live_source` 仍是 `stream`、`effective_output_mode` 为整段输出，「实时预览」显示「暂不可用 · 候补模型不支持实时识别」，不提示下载模型（goal 评审 2026-10-04：此前状态仍显示边说边识别生效，而实际按整段运行，回归测试 `regression_the_status_shows_the_mode_the_next_take_runs_with`）。
+- **实时识别**：边说边识别仍只在当前选择是实时模型时启用（`asr_streams` 不变，不影响「当前选择非实时 + 本地模型预览」）。录音开始用第一个仍有额度的项：实时模型就推流，否则整段识别。实时模型在录音中报额度用完时预览降级，录音结束后整段走候补链（第一次多一次被拒请求，之后跳过它）。当前选择不是实时模型时，排在后面的实时模型只做整段识别。界面看到的状态按同一顺序计算（`status_with(ledger)` 经 `open_order` 取第一个仍有额度的项，与引擎的链一致）：顶替实时模型的是整段识别模型时，本地模型能接上（「本地模型预览」打开且模型已下载）就由本地模型边说边识别；不能时 `live_ready` 为 `false`、`live_source` 仍是 `stream`、`effective_output_mode` 为整段输出，「实时预览」显示「暂不可用 · 候补模型不支持实时识别」，不提示下载模型。顶替的是另一家的实时模型时，悬浮窗的预览标签写这一家（§11.10）（goal 评审 2026-10-04：此前状态仍显示边说边识别生效，而实际按整段运行，回归测试 `regression_the_status_shows_the_mode_the_next_take_runs_with`）。
 - **历史里的模型**：记这次听写最后一段文字实际来自的模型，由实际执行识别的客户端报告：`Transcript.model`（HTTP、百炼、本机客户端都报告，候补链在为空时补上所用项的模型）、`StreamingSession::model()`（流降级时读）、`StreamFinal.model`（flush 完成后由会话填写：内置服务的边说边识别在 `finish()` 里还会发出最后几次请求）。`Take.served_asr_model` 只被带来非空文字的结果覆盖；没有回执时（fake、本机实时预览模型）沿用配置的模型。客户端仍在每一步取引擎当前的那个，录音中改了设置时记新客户端报告的模型。
 - **界面**（`packages/ui` `FallbackSection`，桌面「语音模型」「AI 模型」两页与手机两页）：开关、模型顺序（当前选择在第一行）、每行的状态（使用中 / 可用 / 额度已用完 · 何时再试 / 缺少密钥等 / 与当前选择相同 / 已在列表中）、上移下移和红色文字的「移除」（读屏时为「移除 {模型}」）、与服务商和模型在同一行的「添加」（窄时换行）、「重新检查」（2026-10-26 用户要求：「添加按钮应与provider和model位于一行，且有数据时，额度池列表中的各个项自动出展示删除按钮」，原来的移除是灰色小图标）；有百炼时说明「免费额度用完即停」。「查看额度」打开百炼控制台的免费额度页（`provider_console_open { page: quota }`），百炼的服务商设置里也有这个入口和说明。「当前：服务商 · 模型」在候补顶替时注明「（候补）」；隐私说明在候补链运行时（`in_use`：开关打开且当前选择可用）列出额度用完时会收到音频或文字的其他服务商，开关关闭或当前选择不可用时不列。两者是 `packages/ui` 的 `CurrentService` / `ServicePrivacy`：桌面在服务商区块的标题旁与列表下方，手机在服务商卡片下方。
 - **不做**：读取剩余额度、替用户改控制台开关；欠费（`Arrearage`）时切换；账本持久化与同步到手机；一次听写记多个识别模型。本机模型作为候补、限流和网络错误时切换见 §3.14。
@@ -419,9 +420,9 @@ Kimi（`api.moonshot.cn` / `api.moonshot.ai`）和智谱 GLM（智谱开放平�
 - 百度：START、一帧 160 ms 静音（5120 B）、FINISH，服务端在 FINISH 之后正常关闭连接即成功；`-3004`（鉴权失败）是失败，`-3005`（无效音频）与 `-3003` 只针对一句话，静音本来就没有句子，不算失败。
 - 阶跃、智谱、MiMo：`GET /models`，与润色相同（识别只保留含 `asr` 的模型，§3.3）。
 
-**实时会话**（`VendorAsr::realtime`）：调用方送来 16 kHz 16-bit 单声道 PCM（`RealtimeInput::Audio`，任意长度，客户端按各家要求分帧）和结束（`RealtimeInput::Finish`）；客户端回报正在说的句子（`RealtimeEvent::Partial`，到目前为止的整句）、说完的句子（`Sentence { text, begin_ms, end_ms }`，时间是整次会话的音频时间，跨连接时加上之前发出的音频）和结束（`Finished`）；没有给出任何文字的会话在 `Finished` 之前另发一条说明（`Note`，见下文「实时识别没有文字时」）。输入在 `Finish` 之前关闭（取消这次听写）时立即关闭连接，不再发送任何内容。会话出错，或连接在 `Finished` 之前断开，按错误结束：引擎照 §12 降级为整段识别，整段识别照常走候补链（§3.5、§3.14），这次听写照常完成。实时会话需要开启实时预览（`LiveSource::Stream`，与百炼的实时模型相同，§11.9）。
+**实时会话**（`VendorAsr::realtime`）：调用方送来 16 kHz 16-bit 单声道 PCM（`RealtimeInput::Audio`，任意长度，客户端按各家要求分帧）和结束（`RealtimeInput::Finish`）；客户端回报正在说的句子（`RealtimeEvent::Partial`，到目前为止的整句）、说完的句子（`Sentence { text, begin_ms, end_ms }`，时间是整次会话的音频时间，跨连接时加上之前发出的音频）和结束（`Finished`）；没有给出任何文字的会话在 `Finished` 之前另发一条说明（`Note`，见下文「实时识别没有文字时」）。输入在 `Finish` 之前关闭（取消这次听写）时立即关闭连接，不再发送任何内容。会话出错，或连接在 `Finished` 之前断开，按错误结束：引擎照 §12 降级为整段识别，整段识别照常走候补链（§3.5、§3.14），这次听写照常完成。选了实时识别模型就边说边识别（`LiveSource::Stream`，与百炼的实时模型相同，§11.9），不受实时预览的两个开关影响：「服务商的实时文字」只决定悬浮窗是否显示它的文字（§11.10）。
 
-**整段识别**（录音已在手上：实时预览关闭、重新识别、降级、长录音分段）：
+**整段识别**（录音已在手上：重新识别、降级、长录音分段；实时识别模型在「服务商的实时文字」关闭时照样推流，§11.10）：
 
 | 服务商 | 怎么发 | 单次上限与切段 |
 |---|---|---|
@@ -645,7 +646,7 @@ pub struct HistoryEntry {
 | `dictation_start` | `DictationStart` | — |
 | `dictation_stop` | `DictationStop` | — |
 | `dictation_cancel` | `DictationCancel` | — |
-| `settings_set_engines` | `SettingsSetEngines { engines }` | `EngineSettings` 全量（含 `asr_provider` / `local_model` / `live_preview`，§3 §10 §11；`output_mode` / `vad_trim`，§12） |
+| `settings_set_engines` | `SettingsSetEngines { engines }` | `EngineSettings` 全量（含 `asr_provider` / `local_model` / `provider_preview` / `local_preview`，§3 §10 §11.10；`output_mode` / `vad_trim`，§12） |
 | `provider_key_set` | `ProviderKeySet { provider, kind, value }` | `kind: "asr" \| "llm"`，`value: string \| null`（§3） |
 | `provider_probe` | `ProviderProbe { provider, kind, base_url, key, model }` | 测试连接，结果为 `provider_probe` 事件（§3） |
 | `history_delete` | `HistoryDelete { id }` | uuid |
@@ -666,8 +667,9 @@ pub struct HistoryEntry {
 |---|---|---|
 | `DictationPhase::listening` | `ready: bool`；`live?: { committed: [{ text, start_ms, end_ms }], current: string, degraded?: string }` | 设备已送出音频；流式预览（§11） |
 | `DictationPhase::processing` | `preview?: string` | 松开时带过来的 `committed + current`，终稿到达前显示 |
-| `EngineSettings` | `live_preview: bool`（默认 `true`） | 实时预览开关 |
-| `EngineStatus` | `live_preview_ready: bool` | `live_preview && 流式模型已安装`，与识别服务商无关 |
+| `EngineSettings` | `provider_preview: bool`、`local_preview: bool`（默认都为 `true`；旧文件的 `live_preview` 同时写入两者） | 「服务商的实时文字」「本地模型预览」两个开关（§11.10） |
+| `EngineStatus` | `live_ready: bool`、`live_source`、`preview_source`、`preview_provider` | 这次听写有没有边说边识别的来源、来源是谁、悬浮窗显示谁的文字、那是哪家服务商（§11.10） |
+| `LiveText` | `source`、`provider` | 这些文字的来源与服务商，悬浮窗的预览标签据此写明（§11.10） |
 | `ModelState` | `tier: "balanced" \| "accurate" \| "light" \| "streaming"`；`capabilities: ("offline" \| "streaming")[]` | 产品档位；能力（§10）。`silero-vad`（`tier: auxiliary`、`capabilities: ["vad"]`）**不进** `UiState.models`（§12） |
 | `DictationPhase::listening` | `live.injected: usize` | `live_inject` 已粘贴的句数（§12） |
 | `DictationPhase::processing` | `stage: "finalizing"` | 流式模式等终稿（§12） |
@@ -759,7 +761,7 @@ pub struct HistoryEntry {
 
 ```rust
 pub local_model: Option<String>,  // 目录 id；None = 目录默认 qwen3-asr-0.6b
-pub live_preview: bool,           // 默认 true（§11）
+pub local_preview: bool,          // 本地模型预览，默认 true（§11.10）
 ```
 
 `ResolvedEngines` 带 `local_model: Option<LocalModelRef { id, name, installed }>`；本地识别时远端地址与密钥不参与、`asr_model` = 模型显示名、`EngineStatus.asr_host = ""`。`SetEngines` 校验 `local_model` 在目录中；若模型未安装，解析仍成功但 `EngineStatus.local_ready = false`、`asr_ready = false`，首页按钮禁用并提示「模型未下载」。
@@ -770,7 +772,7 @@ pub struct EngineStatus {                // 与本地识别有关的字段
     pub asr_ready: bool,                 // 本机识别时 = local_ready
     pub local_model: Option<String>,     // 目录 id
     pub local_ready: bool,               // 本机识别且模型文件齐全、校验通过
-    pub live_preview_ready: bool,        // live_preview && 流式模型已安装（§11；与识别服务商无关）
+    pub live_ready: bool,                // 有边说边识别的来源（§11.10；本地模型：local_preview && 流式模型已安装）
 }
 ```
 
@@ -859,7 +861,7 @@ issue #192「模型下载，不能设置保存路径？C 盘满了」。用户�
 
 ## 11. 流式识别（边说边出字，2026-09-25 契约）
 
-**目标**：按住热键说话时，胶囊实时显示识别中的文字（部分结果），松开后仍走完整流水线（整段音频 → 最终识别 → 润色 → 注入 → 历史）。流式只改变**听写过程中的显示**，不改变最终文本的来源：最终文本以整段识别为准（本地 SenseVoice / Paraformer 或云端），流式只是预览。这样流式引擎不可用时行为与今天完全一致。
+**目标**：按住热键说话时，胶囊实时显示识别中的文字（部分结果），松开后仍走完整流水线（整段音频 → 最终识别 → 润色 → 注入 → 历史）。这一版流式只改变**听写过程中的显示**，不改变最终文本的来源：最终文本以整段识别为准（本地 SenseVoice / Paraformer 或云端），流式只是预览，流式引擎不可用时行为与之前一致。之后的流式输出方式（§12）和服务商的实时识别模型（§11.9）用实时识别的句子作为最终文本，失败时退回整段识别；悬浮窗显示谁的文字由 §11.10 的两个开关决定。
 
 **引擎**：`sherpa-onnx` `OnlineRecognizer`（流式 Zipformer transducer，`enable_endpoint = true`，`greedy_search`，2 线程）。目录新增第三条：
 
@@ -877,7 +879,7 @@ issue #192「模型下载，不能设置保存路径？C 盘满了」。用户�
 pub trait StreamingTranscriber: Send + Sync {
     /// 同步；模型在首次 open 时加载（2.6 s），核心在解码线程上调用。
     fn open(&self, language: Option<&str>) -> Result<Box<dyn StreamingSession>, DictationError>;
-    /// 后台预热（应用启动且 live_preview_ready、每次热键按下）；失败只记 warn。幂等。
+    /// 后台预热（应用启动且下一次听写用本地模型、每次热键按下）；失败只记 warn。幂等。
     fn warm(&self);
 }
 pub trait StreamingSession: Send {
@@ -889,7 +891,7 @@ pub struct Segment { pub text: String, pub start_ms: u64, pub end_ms: u64 }
 pub trait LivePcm: Send { fn read(&mut self, out: &mut [f32]) -> usize; fn overrun(&self) -> bool; fn is_closed(&self) -> bool; }
 ```
 
-`AudioSource::start(device_id, on_level, on_ready, live)`；`Capture::live_pcm() -> Option<Box<dyn LivePcm>>`（桌面壳把 `voltip_audio::LiveConsumer` 包成 `LiveTap`，核心不依赖 rtrb）。`DictationPorts.streaming: Option<Arc<dyn StreamingTranscriber>>`：桌面壳总是插入 `LocalStreamingTranscriber`（同一模型库根目录），手机壳为 `None`；核心只在 `ResolvedEngines::live_preview_ready()`（`live_preview && 流式模型已安装`）时使用它，并在构造 / `configure` / 每次 `start` 时调用 `warm()`。
+`AudioSource::start(device_id, on_level, on_ready, live)`；`Capture::live_pcm() -> Option<Box<dyn LivePcm>>`（桌面壳把 `voltip_audio::LiveConsumer` 包成 `LiveTap`，核心不依赖 rtrb）。`DictationPorts.streaming: Option<Arc<dyn StreamingTranscriber>>`：桌面壳总是插入 `LocalStreamingTranscriber`（同一模型库根目录），手机壳为 `None`；核心只在这次听写用到本地模型时使用它（`LivePlan.text` 或 `LivePlan.shown` 为 `Local`，§11.10；本地模型可用的条件是 `ResolvedEngines::local_preview_ready()`：`local_preview && 流式模型已安装`），并在这种情况下于构造 / `configure` / 每次 `start` 时调用 `warm()`。
 
 **解码线程（`engine.rs` `run_live`，`spawn_blocking`）**：`CaptureStarted` 成功且 live 启用 → 取 `live_pcm()` → 线程内 `open()`；循环读 ≥ 1600 样本（100 ms）→ `feed` → `poll` 直到 `Idle`；`Partial` 经 `PartialThrottle` 节流 ≥ 80 ms 且文本有变才发 `Internal::Partial`，`Endpoint` 立即发 `Internal::Segment` 并重置节流；`open` 失败 / `overrun` / `Error` / 识别器 panic（`catch_unwind`）→ 一次 `Internal::StreamDegraded { reason }` 后线程结束；tap 关闭（录音停止或取消释放）→ `finish()` → `Internal::StreamFinished { result }`。
 
@@ -899,13 +901,18 @@ pub trait LivePcm: Send { fn read(&mut self, out: &mut [f32]) -> usize; fn overr
 
 ```rust
 Listening { started_at: u64, ready: bool, live: Option<LiveText> }
-pub struct LiveText { pub committed: Vec<Segment>, pub current: String, pub degraded: Option<String> }
+pub struct LiveText {
+    pub committed: Vec<Segment>, pub current: String, pub degraded: Option<String>,
+    pub injected: usize,              // §12 live_inject 已粘贴的句数
+    pub source: Option<LiveSource>,   // §11.10 这些文字的来源（cloud / stream / local）
+    pub provider: Option<ProviderId>, // §11.10 给出文字的服务商（本地模型为 None）
+}
 Processing { stage: ProcessingStage, started_at: u64, preview: Option<String> }
 ```
 
-新 `Internal`：`CaptureReady { session }`（`ready = true` 并重新取 `started_at`，胶囊计时不含设备启动；对过期 session 或非 `Listening` 忽略）、`Partial { session, current }`、`Segment { session, segment }`（推进 `committed`、清空 `current`）、`StreamDegraded { session, reason }`（置 `live.degraded`，之后的 `Partial` 忽略，已显示文本保留）、`StreamFinished { session, result }`（仍在 `Processing` 时用 `committed + tail` 替换 `preview`，失败保留原预览）。`Partial / Segment / StreamDegraded` 只在 `Listening` 且 session 匹配时折叠；`DictationStop` 把 `LiveText::preview()`（`committed + current`；中日韩边界不加空格，拉丁边界加空格）作为 `Processing.preview`，最终识别完成后替换。本增量**只有 whole_take 一条终稿路径**：流式任一环节失败都只降级预览，最终文本永远来自整段识别（本地或云端）。部分结果仍通过 `UiEvent::Dictation` 全量推送（≤ 12.5 Hz）；独立的 `dictation_live_subscribe` 事件流是后续增量。
+新 `Internal`：`CaptureReady { session }`（`ready = true` 并重新取 `started_at`，胶囊计时不含设备启动；对过期 session 或非 `Listening` 忽略）、`Partial { session, current }`、`Segment { session, segment }`（推进 `committed`、清空 `current`）、`StreamDegraded { session, reason }`（置 `live.degraded`，之后的 `Partial` 忽略，已显示文本保留）、`StreamFinished { session, result }`（仍在 `Processing` 时用 `committed + tail` 替换 `preview`，失败保留原预览）。2026-11-06 起另有 `LiveServed { session, provider }`（候补链的实时流打开时、重复识别的预览第一次回答后报告给出文字的服务商，改写 `LiveText.provider`）与 `Shown { session, event: ShownEvent }`（实时识别模型的文字不显示时，本地模型那一路的部分结果、句子、降级与收尾，只更新悬浮窗，§11.10）。`Partial / Segment / StreamDegraded` 只在 `Listening` 且 session 匹配时折叠；`DictationStop` 把 `LiveText::preview()`（`committed + current`；中日韩边界不加空格，拉丁边界加空格）作为 `Processing.preview`，最终识别完成后替换。这一版**只有 whole_take 一条终稿路径**：流式任一环节失败都只降级预览，最终文本来自整段识别（本地或云端）；流式输出方式（§12）与实时识别模型（§11.9）之后另有终稿路径。部分结果仍通过 `UiEvent::Dictation` 全量推送（≤ 12.5 Hz）；独立的 `dictation_live_subscribe` 事件流是后续增量。
 
-**设置**：`EngineSettings.live_preview: bool`（`#[serde(default = true)]`，仅当流式模型已安装才生效，与识别服务商无关——云端识别时也可用本地 Zipformer 预览）；`EngineStatus.live_preview_ready: bool`。设置对话框「引擎」组增加「实时预览」开关 + 未安装时的「下载 Zipformer 流式模型」提示。
+**设置**：最初是一个开关 `EngineSettings.live_preview`；2026-11-06 起分成「服务商的实时文字」（`provider_preview`）和「本地模型预览」（`local_preview`）两个开关，规则见 §11.10。本地模型预览仅当流式模型已安装才生效，与识别服务商无关：云端识别时也可用本地 Zipformer 预览。「识别设置」的「实时预览」块里是这两个开关和流式模型的卡片（未安装时可下载）。
 
 **胶囊**：`listening` 态在波形上方渲染 `committed`（正常色）+ `current`（弱化色）两段，单行省略，最多显示末尾 40 字；`processing` 态用 `preview` 替代「转写中…」文案直到最终结果到达。
 
@@ -918,7 +925,7 @@ Processing { stage: ProcessingStage, started_at: u64, preview: Option<String> }
 - **做法**（`dictation/redecode.rs` `RedecodeStreaming`）：正在说的这句话每多出 1 s 音频，就整句发给本次录音的识别客户端再识别一次，同一时间只有一个请求，最新的回答就是预览（`Partial`）。停顿 0.8 s（20 ms 帧的 RMS 低于 0.01），或一句满 20 s，这句话整句再识别一次，作为它的最终结果（`Endpoint`）。说话前的静音只保留 0.3 s；静音超过 0.2 s 后不再发预览请求。识别提示与本次录音相同（语言、词典）。预览请求失败只记日志，下一步再问；句子的最终识别失败则预览降级（`StreamDegraded`），整段识别不受影响。
 - **读取回答**：远端的回答随时可能回来，解码线程在喂入音频之后、以及没有新音频时（每 10 ms）都读取会话的事件；只在喂入之后读取时，最后一块音频之后才回来的回答没人读，预览就停住了（`regression_an_answer_after_the_last_feed_still_reaches_the_preview`）。
 - **收尾**：「边说边识别」「边说边输入」以收尾结果作为文字：结束时还在说的那句整句识别，作为 `tail`；之前因停顿已经结束、结果还没回来的句子等它回来（上限 30 s）。「整段输出」不发收尾请求，因为整段识别本来就要识别同样的音频，最后一次预览就是 `tail`。
-- **来源**（`ResolvedEngines::live_source`）：实时预览开启时，如果用内置服务识别，而且这个构建的内置服务提供预览（`BuiltIn::asr_live_preview`，编入了内置识别的构建都开启），来源为 `cloud`；否则本地流式模型已安装时为 `local`；都不满足时没有来源。内置服务优先于本地模型，因为预览来自最终识别用的同一个模型。其他云端服务商不做重复识别：每次预览都是一次计费请求。`EngineStatus.live_source` 告诉界面来源，「实时预览」显示「已就绪 · 内置服务」。
+- **来源**（`ResolvedEngines::live_sources`，§11.10）：「服务商的实时文字」打开时，如果用内置服务识别，而且这个构建的内置服务提供预览（`BuiltIn::asr_live_preview`，编入了内置识别的构建都开启），来源为 `cloud`；否则「本地模型预览」打开且本地流式模型已安装时为 `local`；都不满足时没有来源。内置服务优先于本地模型，因为预览来自最终识别用的同一个模型。其他云端服务商不做重复识别：每次预览都是一次计费请求。`EngineStatus.live_source` 告诉界面来源，「实时预览」显示「使用中 · 内置服务」。关闭「服务商的实时文字」后，内置服务不再发送预览请求。
 - **手机**：手机界面不显示实时预览，`CoreConfig::shows_live_preview = false` 让内置服务在手机上不发预览请求。
 - **隐私**：开启后，说话过程中音频就会发给内置服务；以前只在松开快捷键后发送。取消这次听写时，已经发送的部分已经到达内置服务；录音中取消后不再发送任何内容，实时线程不收尾就结束（`LiveJob.cancelled`，`regression_a_cancelled_take_sends_nothing_more_to_the_recogniser`）。站点的隐私页写明了这一点，以及如何关闭。
 - **为什么不用服务端流式**（2026-10-02 只读查看 GPU 主机）：vLLM 0.29 自带 `/v1/realtime`（`Qwen3ASRRealtimeGeneration`），但它固定每 5 s 切一段、各段单独识别，预览要 5 s 才更新一次，而且要把生产的 vLLM 换成这个模型类；另起一个流式服务要再加载一份模型，而 L40S 只剩约 5.4 GB 显存。客户端重复识别不需要改服务器。实测（这台开发机经内置服务的边缘，`/tmp/voltip-sample.wav` 截取的窗口，各 3 次）：2 s 音频 1.2–2.0 s，4 s 1.5–2.5 s，8 s 1.9–2.0 s，16 s 2.4–3.2 s；相邻窗口的识别结果前缀一致。端到端（`crates/voltip-cloud/tests/real_preview.rs`，同一段 16 s 样音按麦克风的节奏输入）：说话从 0.9 s 开始，第一个预览在 3.4 s 出现，之后在 4.8、7.7、10.7、12.6、15.1 s 更新；整段没有 0.8 s 的停顿，是一句话，最后的整句识别用了 1.9 s。句子越长，每次重新识别的音频越多，间隔从 1.4 s 增加到约 3 s。
@@ -929,17 +936,62 @@ Processing { stage: ProcessingStage, started_at: u64, preview: Option<String> }
 
 百炼的实时模型（`AsrProtocol::streams`，§3.4）在说话时就识别，它自己就是预览和终稿的来源：
 
-- **来源**：`ResolvedEngines.asr_streams` 为真且实时预览开启时，`live_source` 为 `stream`（排在本地流式模型之前，不需要下载 Zipformer）；`EngineStatus.live_source = "stream"`，「实时预览」显示「已就绪 · 实时识别模型」。
+- **来源**：`ResolvedEngines.asr_streams` 为真时 `live_source` 为 `stream`，不论两个开关（排在本地流式模型之前，不需要下载 Zipformer）；`EngineStatus.live_source = "stream"`。「服务商的实时文字」打开时悬浮窗显示它的文字，「实时预览」显示「使用中 · 阿里云百炼」一类；关闭时它照样边说边识别，悬浮窗不显示它的文字（§11.10）。
 - **端口**：`Transcriber::streaming(glossary) -> Option<Arc<dyn StreamingTranscriber>>`（默认 `None`）。`voltip_cloud::dashscope::DashscopeStreaming::open` 立即返回，在核心运行时上起一个任务连 WebSocket：`feed` 把 16-bit PCM 排进通道，`poll` 读中间结果（`Partial`）和整句（`Endpoint`），`finish` 发 `finish-task` 并等 `task-finished`（上限 30 s），返回全部整句和未结束的一句（`tail`）。实时会话额外请求 `heartbeat`（停顿时不断线）和 `-message` 模型的 `intermediate_result_enabled`。会话被丢弃（取消）时任务关闭连接，不再发送任何内容。
-- **输出方式**：`effective_output_mode` 把 `whole_take` 解析为 `streaming_final`（引擎的 `resolve_output_mode` 同样，场景覆盖也一样）：实时模型的整句就是这次听写的文字，整段录音不再发第二遍（既不重复计费，也不用等它按播放速度再识别一遍）。插入仍在松开后一次完成，润色照常。流在第一句之前失败时回落整段识别（`transcribe_whole`），`live_error` 记原因。实时预览关闭时没有流，松开后整段发送。语音编辑的口述要求很短，始终整段识别。
+- **输出方式**：`effective_output_mode` 把 `whole_take` 解析为 `streaming_final`（引擎的 `resolve_output_mode` 同样，场景覆盖也一样）：实时模型的整句就是这次听写的文字，整段录音不再发第二遍（既不重复计费，也不用等它按播放速度再识别一遍）。插入仍在松开后一次完成，润色照常。流在第一句之前失败时回落整段识别（`transcribe_whole`），`live_error` 记原因。「服务商的实时文字」关闭时流照样运行，结果和速度不变（§11.10）。语音编辑的口述要求很短，始终整段识别。
 - **界面**：「输出方式」选「整段输出」而模型是实时模型时，卡片注明「按『边说边识别』运行」，「当前生效」落在「边说边识别」上。
 - **实测**（`real_dashscope.rs@real_realtime_models_stream_a_spoken_take`，16 s 样音按麦克风节奏输入）：`qwen-audio-3.1-asr-flash-streaming` 开始说话后约 1.6 s 出第一个中间结果，松开后 0.07 s 收到最后一句；`qwen-audio-3.1-asr-flash-message` 0.46 s。
 - **手机**：手机的麦克风也有实时分接，手机单独识别时同样推流。
 - **候补模型**（§3.5）：推流用第一个仍有额度的项；实时模型额度用完时预览降级，整段走候补链。
 
+### 11.10 实时预览的两个开关与文字的来源（2026-11-06）
+
+用户 2026-11-06 测试后说，悬浮窗能显示实时文字，但看不出是本地实时模型还是服务商的流式结果，希望服务商的实时文字和本地实时识别各有一个开关，关闭一个不影响另一个，都开时优先使用服务商。用户随后选定（D37–D40），协调会话补充了 D37 的解读和 D41：
+
+- 「识别设置」的「实时预览」块里有两个开关：「服务商的实时文字」（`EngineSettings.provider_preview`）和「本地模型预览」（`EngineSettings.local_preview`），默认都打开，各管各的来源。状态行写明正在用的来源。
+- 两个都开时显示服务商的文字；服务商没有实时文字时才用本地模型。「服务商的实时文字」关闭而「本地模型预览」打开时，显示本地模型的文字。
+- 悬浮窗的预览标签写明来源，例如「预览 · 豆包语音」「预览 · 本地模型」。
+- 关闭「服务商的实时文字」后，实时识别模型仍边说边识别，结果和速度不变，只是悬浮窗不显示文字；内置服务不再发送预览请求。
+- 已安装的设置升级后，两个开关都取原来的 `live_preview`（D41）。随 0.3.0 发布。
+
+**来源**（`ResolvedEngines::live_sources() -> LiveSources { cloud, stream, provider_shown, local }`，`LiveSources::plan(stream_now) -> LivePlan { text, shown }`）：
+
+| 字段 | 为真的条件 |
+|---|---|
+| `cloud` | 用内置服务识别，内置服务提供预览（§11.8），且「服务商的实时文字」打开 |
+| `stream` | 当前选择是实时识别模型（§11.9），不论两个开关 |
+| `provider_shown` | 「服务商的实时文字」打开 |
+| `local` | 「本地模型预览」打开，且流式模型已安装 |
+
+- `text`：这次听写边说边识别用谁。依次是 `cloud`、`stream`（实时识别模型此刻在推流；顶替它的候补模型只做整段识别时不推流，§3.5）、`local`；都没有时为空。流式输出方式用 `text` 的整句作为文字（§12）。
+- `shown`：悬浮窗显示谁的文字。一般就是 `text`；`text` 为 `stream` 而「服务商的实时文字」关闭时，本地模型可用就显示本地模型的文字，否则不显示。
+
+| 服务商的实时文字 | 本地模型预览 | 内置服务（提供预览） | 实时识别模型 | 其他服务商 |
+|---|---|---|---|---|
+| 开 | 开 | 内置服务的文字 | 实时识别模型的文字 | 本地模型的文字 |
+| 开 | 关 | 内置服务的文字 | 实时识别模型的文字 | 不显示 |
+| 关 | 开 | 本地模型的文字 | 本地模型的文字；实时识别模型照常推流 | 本地模型的文字 |
+| 关 | 关 | 不显示 | 不显示；实时识别模型照常推流 | 不显示 |
+
+表中「本地模型的文字」都要求流式模型已下载，否则不显示。
+
+**两路识别**：实时识别模型的文字不显示、本地模型显示自己的文字时，录音的 16 kHz 分接分成两份（`dictation/tee.rs`），实时识别模型和本地模型各读一份，各在一个解码线程上。只有实时识别模型这一路决定这次听写的文字和输出方式，收尾时引擎只等它；本地模型那一路只给悬浮窗（`Internal::Shown`），它落后超过 2 s、出错或先结束都不影响另一路。这时实时识别模型的中间结果、整句和降级都不进 `Listening.live` 与 `Processing.preview`。
+
+**标签**：`LiveText.source` / `provider` 写明这些文字的来源和服务商，`EngineStatus.preview_source` / `preview_provider` 写明下一次听写悬浮窗会显示谁的文字。服务商是选中的那家；候补模型的实时流顶替它时（§3.5），是候补模型的服务商（候补链的实时流在打开时、重复识别的预览在第一次回答后报 `Internal::LiveServed`，标签随之改写）。悬浮窗用短名（`ui.pill.sourceName`：「预览 · 豆包语音」「预览 · 百炼」「预览 · 内置服务」「预览 · 本地模型」），状态行用全名（「使用中 · 火山引擎豆包语音」「使用中 · 阿里云百炼」）。没有来源字段的文字（旧版本的核心）只显示「预览」。文字超过 40 个字符、只显示末尾时，标签不变（`clipLiveCaption` 保留 `tag`，`Pill.test.tsx` 的回归测试）。
+
+**状态行**（`livePreviewState`）：有 `preview_source` 时为「使用中 · 来源」；实时识别模型被只做整段识别的候补模型顶替、本地模型又接不上时为「暂不可用 · 候补模型不支持实时识别」；「本地模型预览」打开而模型没有下载时为「模型未下载」；实时识别模型照常识别、两个开关都不显示它的文字时为「不显示 · 实时识别照常进行」；其余为「已关闭」。
+
+**输出方式**（§12）：「边说边识别」「边说边输入」需要 `EngineStatus.live_ready`（`text` 不为空），与悬浮窗显示与否无关：实时识别模型（不论开关）、内置服务的预览（「服务商的实时文字」打开）、本地模型（「本地模型预览」打开且已下载）三者之一。都没有时按整段输出运行，卡片注明原因：模型未下载、实时预览已关闭、候补模型不支持实时识别。实时识别模型把「整段输出」解析为「边说边识别」（§11.9），它的文字不显示时也一样。
+
+**升级**（D41）：`EngineSettings` 的 `Deserialize` 先读成 JSON，旧文件里的 `live_preview` 写入缺少的两个新开关（文件里已有的新开关保留），再按派生规则读取；写出时不再有 `live_preview`。旧版本读取新文件时不认识这两个键，它的 `live_preview` 取默认值 `true`。设置不进备份（§4.6）。
+
+**手机**：手机不显示实时预览，界面和行为不变：`CoreConfig::shows_live_preview = false` 仍让内置服务在手机上不发预览请求，手机上的识别能力说明不受这两个开关影响。
+
+**测试**：核心 `the_two_switches_pick_their_own_sources_and_the_providers_words_come_first`、`the_shown_source_follows_the_model_that_stands_in`、`regression_settings_with_the_single_live_preview_switch_read_it_into_both`（`engines.rs`），`regression_with_the_providers_words_off_a_realtime_model_still_streams_unseen`、`the_local_model_shows_its_words_next_to_a_realtime_model_whose_words_are_hidden`、`with_the_providers_words_off_the_built_in_service_sends_no_preview_requests`、`the_preview_tag_names_the_model_that_stands_in`（`dictation/engine.rs`），`tee.rs` 的四个单测；桌面端到端 `live_services.rs@with_the_providers_words_off_volcengine_still_streams_and_the_pill_shows_nothing`（假服务只在 127.0.0.1）与每个实时识别服务商的来源标签；前端的开关块、状态行与悬浮窗标签（`EnginesPane.test.tsx`、`Overlay.test.tsx`、`packages/shared` 的 `livePlan` 与 `livePreviewTag`）。
+
 ## 12. 输出模式（2026-09-25）
 
-`EngineSettings.output_mode: OutputMode`（`#[serde(default)]`，wire `"whole_take"`（默认）| `"streaming_final"` | `"live_inject"`）与 `EngineSettings.vad_trim: bool`（默认 `false`）。`EngineStatus.effective_output_mode: OutputMode` = 本次 `DictationStart` 时真正会走的模式（`streaming_final` / `live_inject` 需要 `live_preview_ready`，否则回落 `whole_take`；实时识别模型把 `whole_take` 解析为 `streaming_final`，§11.9）。
+`EngineSettings.output_mode: OutputMode`（`#[serde(default)]`，wire `"whole_take"`（默认）| `"streaming_final"` | `"live_inject"`）与 `EngineSettings.vad_trim: bool`（默认 `false`）。`EngineStatus.effective_output_mode: OutputMode` = 本次 `DictationStart` 时真正会走的模式（`streaming_final` / `live_inject` 需要 `live_ready`，即有边说边识别的来源（§11.10），否则回落 `whole_take`；实时识别模型把 `whole_take` 解析为 `streaming_final`，§11.9）。
 
 | 模式 | 终稿来源 | 阶段序列 | 润色 | 降级 |
 |---|---|---|---|---|
@@ -1580,7 +1632,7 @@ DictationStart ─▶ Listening（立即上报，胶囊跟手）
 - 探针先于设备打开：`Internal::Context` 总在该 session 的 `CaptureStarted` 之前到达，所以解码线程（§11 的 `open(language)` 与字形）和录音上限都用覆盖后的值。代价是设备晚开探针那点时间（Windows / macOS 微秒级、本机 X11 约 1 ms、最坏 100 ms）；胶囊的 `Listening` 不等探针。2026-11-01 起（§30.2）这只用于语音编辑和有场景可能改输出方式的时候；其余听写的设备在按下时就打开，录音上限按全局的输出方式（场景改不了它），解码线程等探针回答后再开始，之前的声音留在 live tap 里。
 - 探针超时、报错、panic 或返回 `None`：没有 context，没有场景，按全局设置。探针返回前就松开（比探针还快的点按）：这一次没有场景（Context 到达时已不在 `Listening`；设备照旧打开再立即关闭，与今天的快速点按相同）。探针返回前取消：设备不再打开。
 - 覆盖只作用于这一次，从不写进设置；下一次重新探测。每次运行在 `start` 时取场景列表与隐私开关的快照（与 §16 词典快照相同），运行中的修改从下一次起生效。
-- 覆盖的解析：`refine_enabled` / `refine_preset`（§21）/ `language`（`auto` = 不给提示）/ `chinese_script` 直接替换全局值；`output_mode` 与全局设置同一套规则——流式两种要 `live_preview_ready`，否则本次按 `whole_take` 运行，并在 `Done.live_error` 与历史里写明原因（全局设置的同类回落不写 `live_error`，因为设置页一直显示「当前生效」；场景的回落没有别处可看）；运行中的降级照 §12。`live_inject` 永不润色（§12）。
+- 覆盖的解析：`refine_enabled` / `refine_preset`（§21）/ `language`（`auto` = 不给提示）/ `chinese_script` 直接替换全局值；`output_mode` 与全局设置同一套规则——流式两种要 `live_ready`（有边说边识别的来源，§11.10），否则本次按 `whole_take` 运行，并在 `Done.live_error` 与历史里写明原因（全局设置的同类回落不写 `live_error`，因为设置页一直显示「当前生效」；场景的回落没有别处可看）；运行中的降级照 §12。`live_inject` 永不润色（§12）。
 - 覆盖用到的地方：云端 / 本地识别的语言提示、解码线程的语言与字形、整段与 remainder 的字形、润色的开关 / 风格 / 语言提示 / 上下文块。**ASR 永远收不到上下文**：语言覆盖只是普通的语言提示。
 
 ### 18.5 发给 LLM 的上下文与隐私

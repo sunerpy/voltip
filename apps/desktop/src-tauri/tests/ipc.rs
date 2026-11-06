@@ -18,7 +18,7 @@ use voltip_core::dictation::{DictationPorts, fakes};
 use voltip_core::import::{ImportState, ImportsView};
 use voltip_core::ui::{UI_EVENT_NAME, UiState, UpdateStatus};
 use voltip_core::{
-    Activation, ContextSharing, CoreConfig, DictationPhase, EdgeSource, FailureCode, InjectMode, Locale, ModelInstallState, SecretSource, Settings,
+    Activation, ContextSharing, CoreConfig, DictationPhase, EdgeSource, FailureCode, InjectMode, LiveSource, Locale, ModelInstallState, SecretSource, Settings,
     SettingsStore, TakeKind, ThemeId,
 };
 use voltip_desktop_lib::keychain_notice::{self, KeychainUnavailable, MainWindow};
@@ -1397,8 +1397,8 @@ fn with_model_library_the_catalogue_is_listed_and_local_mode_reports_readiness()
             assert!(st.models[0].recommended);
             assert_eq!(st.models[0].tier, "balanced");
             assert!(st.models[4].is_streaming());
-            assert!(!st.engines.live_preview_ready, "the streaming model is not installed");
-            assert!(st.settings.engines.live_preview, "the setting defaults to on");
+            assert!(!st.engines.live_ready, "the streaming model is not installed");
+            assert!(st.settings.engines.provider_preview && st.settings.engines.local_preview, "both switches default to on");
             let ev = wait_event(&rx, "models", |e| e["type"] == "models");
             assert_eq!(ev["models"][0]["state"], json!({ "kind": "not_installed" }));
             assert_eq!(ev["models"][0]["capabilities"], json!(["offline"]));
@@ -1461,9 +1461,11 @@ fn with_model_library_the_catalogue_is_listed_and_local_mode_reports_readiness()
 
 /// The live preview (docs/dictation.md §11) through the command layer on the mock runtime: the
 /// core's fakes plus a scripted streaming session and a library whose streaming model is
-/// installed. `engines.live_preview_ready` is true, `dictation_start` produces `listening` events
-/// whose `phase.live` carries partials and a committed segment, `dictation_stop` produces a
-/// `processing` event with `preview`, and the final text is still the whole-take transcript.
+/// installed. `engines.live_ready` is true, `dictation_start` produces `listening` events whose
+/// `phase.live` carries partials and a committed segment, tagged with the local model as their
+/// source (§11.10), `dictation_stop` produces a `processing` event with `preview`, and the final
+/// text is still the whole-take transcript. Turning off 服务商的实时文字 leaves the local model's
+/// preview; turning off 本地模型预览 ends it.
 #[test]
 fn live_preview_events_carry_partials_and_the_processing_preview() {
     let dir = tempfile::tempdir().unwrap();
@@ -1482,7 +1484,11 @@ fn live_preview_events_carry_partials_and_the_processing_preview() {
         let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
             wait_for(|| handle.try_state::<Bridge>().map(|_| ()));
             let st = wait_state(&webview, |s| s.identity.is_some() && !s.models.is_empty());
-            assert!(st.engines.live_preview_ready, "streaming model installed + setting on");
+            assert!(st.engines.live_ready, "streaming model installed + setting on");
+            assert_eq!(
+                (st.engines.live_source, st.engines.preview_source, st.engines.preview_provider),
+                (Some(LiveSource::Local), Some(LiveSource::Local), None)
+            );
             assert!(st.models.iter().any(|m| m.is_streaming() && m.state.is_installed()));
             assert_eq!(invoke(&webview, "dictation_start", json!({})), Ok(Value::Null));
             let ev = wait_event(&rx, "dictation/listening", |e| e["type"] == "dictation" && e["phase"]["phase"] == "listening");
@@ -1493,6 +1499,8 @@ fn live_preview_events_carry_partials_and_the_processing_preview() {
             });
             assert_eq!(ev["phase"]["ready"], true);
             assert_eq!(ev["phase"]["live"]["current"], "你好", "the first word shows at once: {ev}");
+            assert_eq!(ev["phase"]["live"]["source"], "local", "the pill names the local model: {ev}");
+            assert!(ev["phase"]["live"].get("provider").is_none(), "no provider for the local model: {ev}");
             assert_eq!(ev["phase"]["live"]["committed"], json!([]));
             assert!(ev["phase"]["live"].get("degraded").is_none());
             let ev = wait_event(&rx, "dictation/listening+segment", |e| {
@@ -1511,13 +1519,20 @@ fn live_preview_events_carry_partials_and_the_processing_preview() {
             assert!(matches!(&st.dictation.phase, DictationPhase::Done { text, .. } if text == fakes::FAKE_TRANSCRIPT), "{:?}", st.dictation.phase);
             assert_eq!(streaming.opens(), 1);
             assert!(streaming.warms() >= 1);
-            // Switching the setting off: readiness drops, the next run has no `live`.
+            // §11.10: the provider's words off leave the local model's preview as it was.
             let mut off = serde_json::to_value(fake_engines()).unwrap();
-            off["live_preview"] = false.into();
+            off["provider_preview"] = false.into();
             off["refine_enabled"] = false.into();
+            assert_eq!(invoke(&webview, "settings_set_engines", json!({ "engines": off.clone() })), Ok(Value::Null));
+            let st = wait_state(&webview, |s| !s.settings.engines.provider_preview);
+            assert!(st.settings.engines.local_preview);
+            assert_eq!((st.engines.live_ready, st.engines.preview_source), (true, Some(LiveSource::Local)), "the local model still previews");
+            // Switching 本地模型预览 off: readiness drops, the next run has no `live`.
+            off["local_preview"] = false.into();
             assert_eq!(invoke(&webview, "settings_set_engines", json!({ "engines": off })), Ok(Value::Null));
-            let st = wait_state(&webview, |s| !s.engines.live_preview_ready);
-            assert!(!st.settings.engines.live_preview);
+            let st = wait_state(&webview, |s| !s.engines.live_ready);
+            assert!(!st.settings.engines.local_preview);
+            assert_eq!(st.engines.preview_source, None);
             assert_eq!(invoke(&webview, "dictation_cancel", json!({})), Ok(Value::Null));
             wait_state(&webview, |s| s.dictation.phase == DictationPhase::Idle);
             assert_eq!(invoke(&webview, "dictation_start", json!({})), Ok(Value::Null));

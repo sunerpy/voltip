@@ -34,11 +34,11 @@ use voltip_core::ui::{
 use voltip_core::{
     Activation, AppRef, BuiltIn, BuiltinScene, CAPABILITY_OFFLINE, CAPABILITY_STREAMING, ChineseScript, ClipboardAfter, ContextSharing, DeviceConnection,
     DeviceView, DictationPhase, DictationStatus, DictionaryDraft, DictionaryEntry, EditRecord, EngineSettings, EngineStatus, EntrySource, FallbackModel,
-    FallbackSettings, HistoryEntry, HistoryHits, HistoryPage, HistoryQuery, HistoryStats, HistoryStatsBucket, ImportMode, InjectMode, LiveText, LocalDevice,
-    Locale, ModelFileView, ModelInstallState, ModelPackageView, ModelState, Outcome, OutputMode, PackageProblem, ProbeFailure, ProbeOutcome, ProbeReport,
-    ProviderId, ProviderSettings, RefineFailure, RelaySource, RelayStatus, ReplacementRule, ResolvedEngines, RuleDraft, RuleKind, Scene, SceneDraft,
-    SceneMatch, SceneOverrides, SceneRef, Segment, ServiceKind, Settings, SoloKey, SoloLoss, SwitchedWindow, TakeContext, TakeKind, ThemeId, UserSecrets,
-    VocabularyHit, VocabularyHits,
+    FallbackSettings, HistoryEntry, HistoryHits, HistoryPage, HistoryQuery, HistoryStats, HistoryStatsBucket, ImportMode, InjectMode, LiveSource, LiveText,
+    LocalDevice, Locale, ModelFileView, ModelInstallState, ModelPackageView, ModelState, Outcome, OutputMode, PackageProblem, ProbeFailure, ProbeOutcome,
+    ProbeReport, ProviderId, ProviderSettings, RefineFailure, RelaySource, RelayStatus, ReplacementRule, ResolvedEngines, RuleDraft, RuleKind, Scene,
+    SceneDraft, SceneMatch, SceneOverrides, SceneRef, Segment, ServiceKind, Settings, SoloKey, SoloLoss, SwitchedWindow, TakeContext, TakeKind, ThemeId,
+    UserSecrets, VocabularyHit, VocabularyHits,
 };
 use voltip_core::{EntryOrigin, FailureKind, OriginKind, RelayFailure};
 use voltip_crypto::{PublicKey, SafetyCode};
@@ -318,7 +318,9 @@ fn engine_settings() -> EngineSettings {
         local_gpu: None,
         local_threads: None,
         language: Some("zh".into()),
-        live_preview: true,
+        // docs/dictation.md §11.10: both switches on, so the built-in service's words come first.
+        provider_preview: true,
+        local_preview: true,
         output_mode: OutputMode::WholeTake,
         vad_trim: false,
         chinese_script: ChineseScript::Simplified,
@@ -998,6 +1000,8 @@ fn local_engine_settings() -> EngineSettings {
         output_mode: OutputMode::StreamingFinal,
         vad_trim: true,
         chinese_script: ChineseScript::Traditional,
+        // docs/dictation.md §11.10: 服务商的实时文字 off, away from its default.
+        provider_preview: false,
         ..engine_settings()
     }
 }
@@ -1163,6 +1167,9 @@ fn live_text() -> LiveText {
         current: LIVE_CURRENT.into(),
         degraded: None,
         injected: 0,
+        // docs/dictation.md §11.10: the library's model shows these words.
+        source: Some(LiveSource::Local),
+        provider: None,
     }
 }
 
@@ -1787,7 +1794,13 @@ fn all_events() -> Vec<UiEvent> {
         }),
         // `live_inject` (docs/dictation.md §12): the first committed sentence is already pasted.
         UiEvent::Dictation(DictationStatus {
-            phase: DictationPhase::Listening { started_at: AT_MS + 180, ready: true, live: Some(LiveText { injected: 1, ..live_text() }), locked: false },
+            // A realtime model's words (docs/dictation.md §11.10), tagged with its provider.
+            phase: DictationPhase::Listening {
+                started_at: AT_MS + 180,
+                ready: true,
+                live: Some(LiveText { injected: 1, source: Some(LiveSource::Stream), provider: Some(ProviderId::Aliyun), ..live_text() }),
+                locked: false,
+            },
             session: 7,
             context: None,
             kind: TakeKind::Dictation,
@@ -2092,7 +2105,16 @@ fn all_events() -> Vec<UiEvent> {
         }]),
         history_event(Vec::new()),
         UiEvent::Engines(engine_status()),
-        UiEvent::Engines(EngineStatus { live_preview_ready: false, ..engine_status() }),
+        UiEvent::Engines(EngineStatus { live_ready: false, live_source: None, preview_source: None, preview_provider: None, ..engine_status() }),
+        // docs/dictation.md §11.10: a realtime model recognises while its words are hidden, and the
+        // local model shows its own.
+        UiEvent::Engines(EngineStatus {
+            live_source: Some(LiveSource::Stream),
+            preview_source: Some(LiveSource::Local),
+            preview_provider: None,
+            effective_output_mode: OutputMode::StreamingFinal,
+            ..engine_status()
+        }),
         // A streaming output mode in effect (§12): the preview is ready and the setting asks for it.
         UiEvent::Engines(EngineStatus { effective_output_mode: OutputMode::LiveInject, ..engine_status() }),
         UiEvent::Engines(EngineStatus::default()),
@@ -2213,7 +2235,7 @@ fn all_events() -> Vec<UiEvent> {
             phase: DictationPhase::Listening {
                 started_at: AT_MS + 180,
                 ready: true,
-                live: Some(LiveText { committed: Vec::new(), current: EDIT_INSTRUCTION.into(), degraded: None, injected: 0 }),
+                live: Some(LiveText { committed: Vec::new(), current: EDIT_INSTRUCTION.into(), ..live_text() }),
                 locked: false,
             },
             session: 20,
@@ -2901,8 +2923,15 @@ fn state_fixture_matches_serde_output() {
     assert_eq!(json["update"]["state"], "available");
     assert_eq!(json["settings"]["engines"]["asr_provider"], "builtin");
     assert_eq!(json["engines"]["local_ready"], false);
-    assert_eq!(json["engines"]["live_preview_ready"], true, "remote ASR with the streaming model installed previews");
-    assert_eq!(json["settings"]["engines"]["live_preview"], true);
+    assert_eq!(json["engines"]["live_ready"], true, "remote ASR with the streaming model installed previews");
+    // docs/dictation.md §11.10: both switches on, the built-in service's preview comes first; with
+    // the sample's ledger (§3.5, §3.14) this device's model stands in, and the status names it.
+    assert_eq!(
+        (json["engines"]["live_source"].as_str(), json["engines"]["preview_source"].as_str(), json["engines"]["preview_provider"].as_str()),
+        (Some("cloud"), Some("cloud"), Some("local"))
+    );
+    assert_eq!((json["settings"]["engines"]["provider_preview"].as_bool(), json["settings"]["engines"]["local_preview"].as_bool()), (Some(true), Some(true)));
+    assert!(json["settings"]["engines"].get("live_preview").is_none(), "the single switch is not written any more");
     assert!(json["engines"].get("local_model").is_none(), "None is omitted for remote recognition");
     assert_eq!(json["models"].as_array().map(Vec::len), Some(4), "the library is never empty in the sample state");
     assert_eq!(json["models"][0]["state"]["kind"], "installed");

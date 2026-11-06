@@ -588,8 +588,8 @@ pub fn production_ports(models_root: PathBuf, network: &Arc<voltip_net::Network>
 
 /// Wiring over any audio backend and hub (tests use `voltip_audio::FakeBackend`); the model
 /// library lives under `models_root`. The streaming transcriber is always plugged in: the core
-/// only opens it when `live_preview` is on and the streaming model is installed (docs/dictation.md
-/// §11), and it loads nothing until then. A long take is cut where the Silero VAD hears a pause
+/// only opens it when 本地模型预览 (`local_preview`) is on and the streaming model is installed
+/// (docs/dictation.md §11, §11.10), and it loads nothing until then. A long take is cut where the Silero VAD hears a pause
 /// (§22); the first long take without the model fetches it.
 pub fn ports_with_backend(backend: Arc<dyn Backend + Send + Sync>, hub: Arc<AudioHub>, models_root: PathBuf, network: &Arc<voltip_net::Network>) -> ShellPorts {
     let prefs = InsertPrefs::shared(InjectMode::default());

@@ -18,7 +18,7 @@ Check the overlay and the latest entry in the history; they say what happened.
 
 ### The overlay shows no text while I speak {#no-live-text}
 
-With a provider that recognises while you speak, the overlay shows the words that service returns. If none appear, first check that the model selected on the Speech models page is marked **realtime** and that **Live preview** is on; with **Live preview** off, the recording is sent when you release the shortcut.
+With a provider that recognises while you speak, the overlay shows the words that service returns, with a tag naming where they come from, such as **Preview · Doubao Speech**. If none appear, first check that the model selected on the Speech models page is marked **realtime** and that **Provider's live text** is on under **Live preview** on the Recognition tab; with it off, a realtime model still recognises while you speak, and the overlay only shows no words. When the tag reads **Preview · Local model**, the words come from the live transcription model on this computer, not from the provider.
 
 Then open the entry's details in the history. If they say "Live transcription stopped; the whole recording was transcribed instead", the connection to the service dropped while you spoke, or the service returned no text; Voltip recognised the whole recording instead, so no words are lost. The reason after it names how often the service answered, how long the audio sent was and its loudest level (this part is in Chinese):
 

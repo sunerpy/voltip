@@ -68,7 +68,7 @@ To upgrade, run the install script again. The access tokens and the settings sta
 3. Choose **Test connection**, then **Set as current**.
 
 - **Hotwords**: the right spellings in the [dictionary](/recognition/dictionary) are sent as hotwords, and Qwen3-ASR prefers them. In a recording that names "陈诗瞳" and "林小雁", for example, recognition without the dictionary wrote "陈思彤" and "林小燕"; with both names in the dictionary, it wrote them correctly (measured 2026-10-24 with Qwen3-ASR 1.7B). Hotwords make those spellings more likely, not certain; a spelling that still comes out wrong can go into the entry as a **heard as** form, which is replaced with the right spelling after recognition.
-- **Live preview**: the preview while you speak comes from the on-device realtime model, which has to be downloaded on the **Speech models** page first (169 MB, see [Local recognition](/recognition/local)); the final text still comes from your server.
+- **Live preview**: the preview while you speak comes from the on-device realtime model: turn on **Local model preview** under **Live preview** on the Recognition tab, and download the model on the **Speech models** page first (169 MB, see [Local recognition](/recognition/local)); the final text still comes from your server.
 - **Upload size**: recordings are uploaded as WAV, about 1.9 MB a minute.
 
 ## Access tokens

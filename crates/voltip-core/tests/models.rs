@@ -129,7 +129,7 @@ async fn download_progress_install_active_and_readiness_through_the_core() {
     assert_eq!(models[0].tier, "balanced");
     assert_eq!(models[0].capabilities, ["offline"]);
     assert!(models[2].is_streaming() && models[2].tier == "streaming");
-    assert!(!engines.live_preview_ready, "live preview waits for the streaming model");
+    assert!(!engines.live_ready, "live preview waits for the streaming model");
 
     // Switch to local mode before anything is installed: allowed, `active` marks the default
     // model, `local_ready` is false and a start is refused with the documented reason.
@@ -156,20 +156,21 @@ async fn download_progress_install_active_and_readiness_through_the_core() {
     assert!(matches!(state_of(&models, DEFAULT_LOCAL_MODEL_ID), ModelInstallState::Installed { path, .. } if path.contains("qwen3-asr-0.6b")));
     assert!(models[0].active);
     assert_eq!(fake.downloads(), 1);
-    assert!(!engines.live_preview_ready, "an offline model does not make live preview ready");
+    assert!(!engines.live_ready, "an offline model does not make live preview ready");
 
-    // Installing the streaming model flips `live_preview_ready` (the setting defaults to on);
-    // switching the setting off flips it back without touching the library.
+    // Installing the streaming model flips `live_ready` and the shown source (本地模型预览
+    // defaults to on); switching it off flips them back without touching the library.
     node.handle.send(CoreCommand::ModelDownload("zipformer-stream-zh-en".into())).await.unwrap();
-    let engines = wait_engines(&mut node, |s| s.live_preview_ready).await;
+    let engines = wait_engines(&mut node, |s| s.live_ready).await;
+    assert_eq!(engines.preview_source, Some(voltip_core::engines::LiveSource::Local));
     assert!(engines.local_ready, "unrelated to local readiness, which stays");
     let models = wait_models(&mut node, |m| state_of(m, "zipformer-stream-zh-en").is_installed()).await;
     assert!(!models[2].active, "the streaming model is never the active (final-text) model");
-    node.handle.send(CoreCommand::SetEngines(EngineSettings { live_preview: false, ..local(None) })).await.unwrap();
-    let engines = wait_engines(&mut node, |s| !s.live_preview_ready).await;
-    assert!(engines.local_ready);
+    node.handle.send(CoreCommand::SetEngines(EngineSettings { local_preview: false, ..local(None) })).await.unwrap();
+    let engines = wait_engines(&mut node, |s| !s.live_ready).await;
+    assert!(engines.local_ready && engines.preview_source.is_none());
     node.handle.send(CoreCommand::SetEngines(local(None))).await.unwrap();
-    wait_engines(&mut node, |s| s.live_preview_ready).await;
+    wait_engines(&mut node, |s| s.live_ready).await;
 
     // Refusals: downloading an installed model, an unknown id, cancelling nothing.
     node.handle.send(CoreCommand::ModelDownload(DEFAULT_LOCAL_MODEL_ID.into())).await.unwrap();

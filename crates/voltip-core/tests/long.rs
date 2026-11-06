@@ -70,7 +70,7 @@ fn start_with(
 ) -> Node {
     let recording = RecordingSettings { max_minutes, ..RecordingSettings::default() };
     let engines = match &streaming {
-        Some((_, mode)) => EngineSettings { output_mode: *mode, live_preview: true, refine_enabled: false, ..fake_engines() },
+        Some((_, mode)) => EngineSettings { output_mode: *mode, provider_preview: true, local_preview: true, refine_enabled: false, ..fake_engines() },
         None => fake_engines(),
     };
     SettingsStore::new(dir.path()).save(&Settings { relay_enabled: false, engines, recording, ..Settings::default() }).unwrap();

@@ -467,12 +467,12 @@ function AbilityHints({
   model: string;
 }) {
   const { t } = useI18n();
-  const state = useUiState();
   const lines = asrAbilityHelp(
     provider,
     url,
     model,
-    { previews: false, livePreview: state.settings.engines.live_preview, localPreview: "none" },
+    // The phone shows no live words (docs/dictation.md §11.10): the desktop's switches do not apply.
+    { previews: false, providerPreview: true, localPreview: "none" },
     t,
   );
   return (

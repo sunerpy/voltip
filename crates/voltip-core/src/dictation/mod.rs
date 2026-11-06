@@ -15,6 +15,7 @@ pub mod ports;
 pub mod redecode;
 pub mod remote;
 pub mod steps;
+pub mod tee;
 pub mod wav;
 
 use serde::{Deserialize, Serialize};
@@ -77,6 +78,13 @@ pub struct LiveText {
     /// far; `0` in the other modes.
     #[serde(default)]
     pub injected: usize,
+    /// Whose words these are (docs/dictation.md §11.10): the pill's 预览 tag names it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<crate::engines::LiveSource>,
+    /// The provider that gave them when `source` is `cloud` or `stream`: the selected one, or the
+    /// fallback model's that stands in for it (§3.5). `None` for the local model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<crate::providers::ProviderId>,
 }
 
 impl LiveText {
@@ -509,6 +517,8 @@ mod tests {
             current: "今天".into(),
             degraded: None,
             injected: 0,
+            source: None,
+            provider: None,
         };
         assert_eq!(live.preview(), "你好。hello world.今天");
         let listening = DictationPhase::Listening { started_at: 5, ready: true, live: Some(live.clone()), locked: false };
@@ -525,6 +535,16 @@ mod tests {
         assert_eq!(serde_json::from_str::<DictationPhase>(&json).unwrap(), listening);
         let legacy_live: LiveText = serde_json::from_str(r#"{"committed":[],"current":"a"}"#).unwrap();
         assert_eq!(legacy_live.injected, 0, "a live text written before §12 parses");
+        assert_eq!((legacy_live.source, legacy_live.provider), (None, None), "and one written before §11.10");
+        // docs/dictation.md §11.10: whose words they are, for the pill's 预览 tag.
+        let labelled = LiveText {
+            source: Some(crate::engines::LiveSource::Stream),
+            provider: Some(crate::providers::ProviderId::VolcengineSpeech),
+            ..LiveText::default()
+        };
+        let json = serde_json::to_string(&labelled).unwrap();
+        assert!(json.ends_with(r#""injected":0,"source":"stream","provider":"volcengine_speech"}"#), "{json}");
+        assert_eq!(serde_json::from_str::<LiveText>(&json).unwrap(), labelled);
         let degraded = LiveText { degraded: Some("tap overrun".into()), ..live };
         assert!(serde_json::to_string(&degraded).unwrap().contains(r#""degraded":"tap overrun""#));
         assert_eq!(LiveText::default().preview(), "");

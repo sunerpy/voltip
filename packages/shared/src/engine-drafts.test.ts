@@ -456,7 +456,7 @@ describe("credentials of several fields (docs/dictation.md §3.15, the core's me
       credentialSets: set === undefined ? {} : { [entry]: set },
       builtIn: {},
       local: { id: "", name: "", installed: false },
-      liveReady: false,
+      localPreviewReady: false,
     });
     const found = status.providers.find((p) => p.id === id);
     if (found === undefined) throw new Error(id);
@@ -626,7 +626,7 @@ describe("what a recognition model does with a take and the dictionary (docs/dic
       credentialSets: {},
       builtIn: { asr: { model: "Qwen/Qwen3-ASR-1.7B", key: true } },
       local: { id: "", name: "", installed: false },
-      liveReady: false,
+      localPreviewReady: false,
     });
     const found = status.providers.find((p) => p.id === id);
     if (found === undefined) throw new Error(id);
@@ -712,8 +712,8 @@ describe("what a recognition model does with a take and the dictionary (docs/dic
   });
 
   it("says under the model how it hears a take and where the terms go, for the shell", () => {
-    const desktop = { previews: true, livePreview: true, localPreview: "missing" as const };
-    const phone = { previews: false, livePreview: true, localPreview: "none" as const };
+    const desktop = { previews: true, providerPreview: true, localPreview: "missing" as const };
+    const phone = { previews: false, providerPreview: true, localPreview: "none" as const };
     const help = (
       id: (typeof PROVIDER_IDS)[number],
       model: string,
@@ -723,9 +723,17 @@ describe("what a recognition model does with a take and the dictionary (docs/dic
       t("engines.ability.realtimeHelp"),
       t("engines.ability.hotwordsHelp"),
     ]);
-    // A realtime model recognises the whole recording while 实时预览 is off.
-    expect(help("tencent", "16k_zh_en", { ...desktop, livePreview: false })[0]).toBe(
-      t("engines.ability.realtimeOffHelp"),
+    // docs/dictation.md §11.10: with 服务商的实时文字 off a realtime model still recognises while you
+    // speak; the pill shows none of its words. The phone shows none anyway.
+    expect(help("tencent", "16k_zh_en", { ...desktop, providerPreview: false })[0]).toBe(
+      t("engines.ability.realtimeHiddenHelp"),
+    );
+    expect(help("tencent", "16k_zh_en", { ...phone, providerPreview: false })[0]).toBe(
+      t("engines.ability.realtimeHelp"),
+    );
+    // 本地模型预览 off: the help says where to turn it on.
+    expect(help("mimo", "mimo-v2.5-asr", { ...desktop, localPreview: "off" })[0]).toBe(
+      t("engines.ability.wholePreviewHelp"),
     );
     expect(help("mimo", "mimo-v2.5-asr", desktop)).toEqual([
       t("engines.ability.wholePreviewHelp"),
@@ -740,8 +748,19 @@ describe("what a recognition model does with a take and the dictionary (docs/dic
       t("engines.ability.previewHelp"),
       t("engines.ability.promptHelp"),
     ]);
-    expect(help("builtin", "Qwen/Qwen3-ASR-1.7B", { ...desktop, livePreview: false })[0]).toBe(
-      t("engines.ability.wholeHelp"),
+    // The built-in service's words off: it sends no previews, and the local model may show its own.
+    expect(help("builtin", "Qwen/Qwen3-ASR-1.7B", { ...desktop, providerPreview: false })[0]).toBe(
+      t("engines.ability.wholePreviewHelp"),
+    );
+    expect(
+      help("builtin", "Qwen/Qwen3-ASR-1.7B", {
+        ...desktop,
+        providerPreview: false,
+        localPreview: "installed",
+      })[0],
+    ).toBe(t("engines.ability.wholeLocalHelp"));
+    expect(t("engines.ability.realtimeHiddenHelp")).toBe(
+      "边说边识别：说话时就开始识别，松开后只等最后一句；「服务商的实时文字」已关闭，悬浮窗不显示服务商的文字。",
     );
     expect(help("builtin", "Qwen/Qwen3-ASR-1.7B", phone)[0]).toBe(t("engines.ability.wholeHelp"));
     expect(help("stepfun", "stepaudio-2.5-asr-stream", phone)).toEqual([

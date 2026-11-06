@@ -27,6 +27,9 @@ export interface PillLiveCaption {
   committed: string;
   current: string;
   injected?: string;
+  /** The preview tag naming whose words these are (`预览 · 豆包语音`, docs/dictation.md §11.10);
+   *  plain `预览` when absent. */
+  tag?: string;
 }
 
 /** How many characters (code points) of the live caption stay visible: the tail, so the words
@@ -35,7 +38,7 @@ export const LIVE_CAPTION_MAX_CHARS = 40;
 
 /** Keep the caption's tail: drop leading characters — the pasted text first, then the committed
  *  text — until at most `max` remain, marking the cut with a leading ellipsis on the first part
- *  that survives. Counted in code points (one CJK char = 1). */
+ *  that survives. Counted in code points (one CJK char = 1). The preview tag stays as it is. */
 export function clipLiveCaption(
   live: PillLiveCaption,
   max = LIVE_CAPTION_MAX_CHARS,
@@ -64,6 +67,8 @@ export function clipLiveCaption(
     ...(live.injected === undefined ? {} : { injected: shownInjected }),
     committed: shownCommitted,
     current: shownCurrent,
+    // The tag names whose words these are (§11.10); clipping the words does not change that.
+    ...(live.tag === undefined ? {} : { tag: live.tag }),
     clipped: true,
   };
 }
@@ -449,8 +454,10 @@ export function Pill({
                   )}
                 </span>
               </span>
-              <span className="mono rounded-6 bg-inset px-1.5 py-0.5 text-[10px] text-fg-subtle">
-                {t("ui.pill.livePreview")}
+              <span
+                className="mono shrink-0 rounded-6 bg-inset px-1.5 py-0.5 text-[10px] text-fg-subtle"
+                data-testid="pill-live-tag">
+                {caption.tag ?? t("ui.pill.livePreview")}
               </span>
             </span>
             <span className="flex items-center gap-2.5">{listeningRow}</span>

@@ -72,7 +72,7 @@ Google 的模型有时会因请求过多暂时不可用（HTTP 503），这时�
 
 百炼的语音识别模型使用百炼自己的接口，Voltip 按模型名称选择对应的接口：
 
-- **实时识别模型**（默认的 qwen-audio-3.1-asr-flash-streaming，以及 qwen-audio-3.1-asr-flash-message、fun-asr-realtime、paraformer-realtime-v2 等）：录音的同时发送给百炼并完成识别，悬浮窗显示识别中的文字，松开快捷键后只需等待最后一句，整段录音不会再识别一次。这需要开启「实时预览」（默认开启）；关闭后，录音在松开快捷键后才发送，等待时间可能接近录音时长。输出方式选择「整段输出」时，按「边说边识别」运行，文字仍在松开后一次插入。
+- **实时识别模型**（默认的 qwen-audio-3.1-asr-flash-streaming，以及 qwen-audio-3.1-asr-flash-message、fun-asr-realtime、paraformer-realtime-v2 等）：录音的同时发送给百炼并完成识别，悬浮窗显示识别中的文字，松开快捷键后只需等待最后一句，整段录音不会再识别一次。悬浮窗的标签显示「预览 · 百炼」。在「实时预览」中关闭「服务商的实时文字」后，录音仍在说话过程中发送并识别，结果和等待时间不变，只是悬浮窗不显示文字。输出方式选择「整段输出」时，按「边说边识别」运行，文字仍在松开后一次插入。
 - **整段识别模型**（qwen-audio-3.1-asr-flash、qwen3-asr-flash、fun-asr-flash）：松开快捷键后识别整段录音，单次录音最长约 4 分钟。
 - 名称中含 filetrans 的模型、fun-asr、paraformer-v2 和 sensevoice-v1 只能在后台转写录音文件，不能用于听写；qwen3-asr-flash-realtime 暂不支持。模型列表中不列出这些模型；手动填写并选择它们时，听写会提示改用其他模型。
 

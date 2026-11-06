@@ -771,7 +771,7 @@ describe("Home page", () => {
     }
   });
 
-  it("regression: the engine card shows the 实时预览 chip when live_preview_ready and a one-line note when the live preview degraded; the local model name follows the core", async () => {
+  it("regression: the engine card shows the 实时预览 chip while the pill would show live words (preview_source) and a one-line note when the live preview degraded; the local model name follows the core", async () => {
     const backend = new MockBackend({
       now: () => Date.now(),
       models: {
@@ -789,7 +789,7 @@ describe("Home page", () => {
     });
     renderApp({ backend });
     const engine = await screen.findByTestId("home-engine");
-    expect(backend.peek().engines.live_preview_ready).toBe(true);
+    expect(backend.peek().engines.preview_source).toBe("local");
     expect(within(engine).getByTestId("home-live-preview")).toHaveTextContent("实时预览");
     expect(screen.queryByTestId("home-live-degraded")).toBeNull();
     // The note appears only while the take is listening with a degraded preview, and names no
@@ -812,10 +812,21 @@ describe("Home page", () => {
       await backend.invoke("dictation_cancel");
     });
     expect(screen.queryByTestId("home-live-degraded")).toBeNull();
-    // Switching live preview off drops the chip; local mode shows the core's tier name.
+    // docs/dictation.md section 11.10: 服务商的实时文字 off keeps the local model's chip; 本地模型预览
+    // off drops it; local mode shows the core's tier name.
     await act(async () => {
       await backend.invoke("settings_set_engines", {
-        engines: { ...backend.peek().settings.engines, asr_provider: "local", live_preview: false },
+        engines: { ...backend.peek().settings.engines, provider_preview: false },
+      });
+    });
+    expect(within(engine).getByTestId("home-live-preview")).toBeInTheDocument();
+    await act(async () => {
+      await backend.invoke("settings_set_engines", {
+        engines: {
+          ...backend.peek().settings.engines,
+          asr_provider: "local",
+          local_preview: false,
+        },
       });
     });
     expect(within(engine).queryByTestId("home-live-preview")).toBeNull();

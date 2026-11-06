@@ -640,7 +640,8 @@ describe("Onboarding wizard", () => {
     const current = {
       ...defaultEngineSettings(),
       local_model: "sense-voice-small",
-      live_preview: false,
+      provider_preview: false,
+      local_preview: false,
       output_mode: "streaming_final" as const,
       vad_trim: true,
       chinese_script: "traditional" as const,

@@ -360,8 +360,11 @@ describe("locale", () => {
       });
       const live = await screen.findByTestId("live-preview");
       expect(within(live).getByText("Live preview", { selector: ".eyebrow" })).toBeInTheDocument();
-      expect(within(live).getByTestId("live-preview-state")).toHaveTextContent("Ready");
-      expect(within(live).getByRole("switch", { name: "Live preview" })).toBeChecked();
+      expect(within(live).getByTestId("live-preview-state")).toHaveTextContent(
+        "In use · Local model",
+      );
+      expect(within(live).getByRole("switch", { name: "Provider's live text" })).toBeChecked();
+      expect(within(live).getByRole("switch", { name: "Local model preview" })).toBeChecked();
       expect(within(live).getByRole("article", { name: "Live preview" })).toBeInTheDocument();
       expect(
         within(live).getByText(`${MOCK_STREAMING_MODEL_ID} · Zipformer streaming`),
@@ -408,6 +411,7 @@ describe("locale", () => {
         await vi.advanceTimersByTimeAsync(MOCK_MIC_READY_MS + MOCK_LIVE_STEP_MS + 10);
       });
       expect(screen.getByTestId("pill-live")).toHaveTextContent("Preview");
+      expect(screen.getByTestId("pill-live-tag")).toHaveTextContent(/^Preview · Local model$/);
       expect(screen.getByTestId("pill-live-current")).toHaveTextContent(
         MOCK_LIVE_SCRIPT[0]?.current ?? "",
       );

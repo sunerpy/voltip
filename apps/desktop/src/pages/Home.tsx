@@ -544,7 +544,8 @@ export function Home() {
                     {t("home.engine.local")}
                   </span>
                 )}
-                {engines.live_preview_ready && (
+                {/* docs/dictation.md §11.10: the pill shows words while the take is spoken. */}
+                {engines.preview_source !== undefined && (
                   <span
                     className="shrink-0 rounded-pill bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent-text"
                     data-testid="home-live-preview">

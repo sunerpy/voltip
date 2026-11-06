@@ -11,6 +11,7 @@ import {
   MOCK_DICTATION_FAILED_DWELL_MS,
   MOCK_EDIT_TEXT,
   MOCK_DICTATION_TEXT,
+  MOCK_ENGINE_BUILTIN,
   MOCK_FINALIZE_MS,
   MOCK_LIVE_SCRIPT,
   MOCK_LIVE_STEP_MS,
@@ -645,7 +646,7 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
           },
         },
       });
-      expect(backend.peek().engines.live_preview_ready).toBe(true);
+      expect(backend.peek().engines.preview_source).toBe("local");
       renderApp({ path: "/overlay?state=live", backend });
       await screen.findByTestId("overlay-window");
       await act(async () => {
@@ -666,6 +667,8 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
       expect(screen.getByTestId("pill-live-committed")).toBeEmptyDOMElement();
       expect(screen.getByTestId("pill-live-current")).toHaveTextContent(second.current);
       expect(screen.getByTestId("pill-live")).toHaveTextContent("预览");
+      // docs/dictation.md section 11.10: the tag names whose words they are.
+      expect(screen.getByTestId("pill-live-tag")).toHaveTextContent(/^预览 · 本地模型$/);
       expect(screen.queryByTestId("pill-waiting")).toBeNull();
       // The endpoint commits the first sentence; the second one grows underneath it.
       await act(async () => {
@@ -717,6 +720,97 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
         pillLiveCaption({ committed: [], current: "", degraded: "x", injected: 0 }),
       ).toBeUndefined();
       expect(pillLiveCaption(last)).toEqual({ committed, current: last.current });
+      // A preview that says where it comes from gets the tag naming that source.
+      expect(pillLiveCaption({ ...last, source: "local" })).toEqual({
+        committed,
+        current: last.current,
+        tag: "预览 · 本地模型",
+      });
+      expect(
+        pillLiveCaption({ ...last, source: "stream", provider: "volcengine_speech" }, "en"),
+      ).toEqual({ committed, current: last.current, tag: "Preview · Doubao Speech" });
+      expect(
+        pillLiveCaption({ ...last, injected: 1, source: "cloud", provider: "builtin" }),
+      ).toEqual({
+        injected: committed,
+        committed: "",
+        current: last.current,
+        tag: "预览 · 内置服务",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("regression: the pill's preview tag names whose words it shows, the built-in service, the realtime model's provider or the local model, and shows none when both switches hide a realtime model's words (docs/dictation.md section 11.10)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const models = {
+        [MOCK_STREAMING_MODEL_ID]: {
+          kind: "installed" as const,
+          path: `~/.local/share/voltip/models/${MOCK_STREAMING_MODEL_ID}`,
+          installed_at: 1_758_600_000,
+        },
+      };
+      const realtime = (switches: { provider_preview?: boolean; local_preview?: boolean }) => ({
+        providerKeys: [{ provider: "aliyun" as const, kind: "asr" as const }],
+        models,
+        settings: {
+          engines: { ...defaultEngineSettings(), asr_provider: "aliyun" as const, ...switches },
+        },
+      });
+      const cases = [
+        {
+          options: {
+            builtIn: { asr: { model: MOCK_ENGINE_BUILTIN.asr_model, key: true, preview: true } },
+            models,
+          },
+          tag: "预览 · 内置服务",
+          source: "cloud",
+        },
+        { options: realtime({}), tag: "预览 · 百炼", source: "stream" },
+        {
+          options: realtime({ provider_preview: false }),
+          tag: "预览 · 本地模型",
+          source: "stream",
+        },
+        // The realtime model still recognises the take; the pill only shows no words.
+        {
+          options: realtime({ provider_preview: false, local_preview: false }),
+          tag: undefined,
+          source: "stream",
+        },
+      ];
+      const seen = [];
+      for (const { options } of cases) {
+        const backend = new MockBackend({ now: () => Date.now(), ...options });
+        const view = renderApp({ path: "/overlay?state=live", backend });
+        await screen.findByTestId("overlay-window");
+        await act(async () => {
+          await backend.invoke("dictation_start");
+          await vi.advanceTimersByTimeAsync(MOCK_MIC_READY_MS + MOCK_LIVE_STEP_MS * 2 + 10);
+        });
+        expect(screen.getByRole("status")).toHaveAttribute("data-state", "listening");
+        const { live_ready, live_source } = backend.peek().engines;
+        seen.push({
+          caption: screen.queryByTestId("pill-live") !== null,
+          tag: screen.queryByTestId("pill-live-tag")?.textContent ?? undefined,
+          live_ready,
+          live_source,
+        });
+        await act(async () => {
+          await backend.invoke("dictation_cancel");
+        });
+        view.unmount();
+      }
+      expect(seen).toEqual(
+        cases.map(({ tag, source }) => ({
+          caption: tag !== undefined,
+          tag,
+          live_ready: true,
+          live_source: source,
+        })),
+      );
     } finally {
       vi.useRealTimers();
     }

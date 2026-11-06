@@ -189,9 +189,7 @@ export function SceneEditor({
     });
   };
   const streamingNotReady =
-    draft.outputMode !== "" &&
-    isStreamingOutputMode(draft.outputMode) &&
-    !state.engines.live_preview_ready;
+    draft.outputMode !== "" && isStreamingOutputMode(draft.outputMode) && !state.engines.live_ready;
   const chars = scenePromptChars(draft.prompt);
 
   return (
