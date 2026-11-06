@@ -1,7 +1,19 @@
 import {
   choosesInterface,
   applyProviderDraft,
+  asrAbilities,
+  asrAbilityHelp,
+  asrCardAbilities,
+  checkCredentialDraft,
+  checkProbeDraft,
   checkProviderDraft,
+  clearedSecret,
+  credentialDraft,
+  credentialFieldLabel,
+  credentialHelp,
+  credentialSetLabel,
+  credentialValue,
+  draftSecret,
   endpointHost,
   languageOptions,
   modelChoices,
@@ -12,6 +24,7 @@ import {
   providerDraft,
   providerTagline,
   providersFor,
+  realtimeModel,
   serviceTarget,
   shortModel,
   siteOf,
@@ -19,8 +32,16 @@ import {
   withProvider,
 } from "./engine-drafts";
 import { defaultEngineSettings } from "./schema";
+import { PROVIDER_IDS } from "./schema";
+import { keyEntry, providerSpec, resolveEngineStatus } from "./providers";
 import { createTranslator, zhT } from "./i18n";
-import type { EngineSettings, EngineStatus, ProviderStatus, ServiceStatus } from "./schema";
+import type {
+  EngineSettings,
+  EngineStatus,
+  ProbeReport,
+  ProviderStatus,
+  ServiceStatus,
+} from "./schema";
 
 const t = zhT.t;
 
@@ -422,5 +443,310 @@ describe("engine drafts (provider cards, desktop and phone)", () => {
       "ko",
     ]);
     expect(languageOptions().length).toBe(6);
+  });
+});
+
+describe("credentials of several fields (docs/dictation.md §3.15, the core's merge_credentials)", () => {
+  /** A vendor's card as the engines status shows it, with its credential stored of `set`. */
+  const card = (id: "tencent" | "volcengine_speech", set?: string) => {
+    const entry = keyEntry(id, "asr") ?? "";
+    const status = resolveEngineStatus({
+      settings: defaultEngineSettings(),
+      userKeys: new Set(set === undefined ? [] : [entry]),
+      credentialSets: set === undefined ? {} : { [entry]: set },
+      builtIn: {},
+      local: { id: "", name: "", installed: false },
+      liveReady: false,
+    });
+    const found = status.providers.find((p) => p.id === id);
+    if (found === undefined) throw new Error(id);
+    return found;
+  };
+  const en = createTranslator("en").t;
+
+  it("opens with the stored set, else the first, every field empty", () => {
+    expect(credentialDraft(card("volcengine_speech"), card("volcengine_speech").asr)).toEqual({
+      set: "api_key",
+      fields: {},
+    });
+    const old = card("volcengine_speech", "app_token");
+    expect(credentialDraft(old, old.asr)).toEqual({ set: "app_token", fields: {} });
+    expect(credentialDraft(provider(), service())).toBeUndefined();
+  });
+
+  it("checks a draft by the core's rule, case by case", () => {
+    const fresh = card("tencent");
+    const stored = card("tencent", "default");
+    const cases: [string, ProviderStatus, Record<string, string>, string | undefined][] = [
+      [
+        "nothing stored: every field",
+        fresh,
+        { app_id: "125", secret_id: "test-secret-id", secret_key: "sk" },
+        undefined,
+      ],
+      ["nothing stored: a field missing", fresh, { app_id: "125" }, "请填写 SecretId、SecretKey"],
+      [
+        "nothing stored: blanks count as missing",
+        fresh,
+        { app_id: " ", secret_id: "test-secret-id", secret_key: "sk" },
+        "请填写 App ID",
+      ],
+      ["the same set: blanks keep the stored values", stored, {}, undefined],
+      ["the same set: one field replaced", stored, { secret_key: "new" }, undefined],
+    ];
+    expect(
+      cases.map(([what, status, fields]) => [
+        what,
+        checkCredentialDraft({ set: "default", fields }, status, status.asr, t),
+      ]),
+    ).toEqual(cases.map(([what, , , want]) => [what, want]));
+    // 豆包语音: another set than the stored one needs all of its fields.
+    const old = card("volcengine_speech", "app_token");
+    expect(checkCredentialDraft({ set: "api_key", fields: {} }, old, old.asr, t)).toBe(
+      "请填写 API Key",
+    );
+    expect(
+      checkCredentialDraft({ set: "api_key", fields: { api_key: "k" } }, old, old.asr, t),
+    ).toBeUndefined();
+    expect(checkCredentialDraft({ set: "app_token", fields: {} }, old, old.asr, t)).toBeUndefined();
+    expect(checkCredentialDraft({ set: "other", fields: {} }, old, old.asr, t)).toBe(
+      t("engines.check.missingKey"),
+    );
+    expect(checkCredentialDraft({ set: "default", fields: {} }, fresh, fresh.asr, en)).toBe(
+      "Enter App ID, SecretId, SecretKey",
+    );
+  });
+
+  it("sends the set and the fields typed, and nothing when none is", () => {
+    expect(
+      credentialValue({
+        set: "default",
+        fields: { app_id: " 125 ", secret_id: "", secret_key: "sk" },
+      }),
+    ).toBe('{"set":"default","app_id":"125","secret_key":"sk"}');
+    expect(credentialValue({ set: "default", fields: { app_id: "  " } })).toBeUndefined();
+    const draft = {
+      model: "",
+      baseUrl: "",
+      key: "",
+      credential: { set: "api_key", fields: { api_key: "k" } },
+    };
+    expect(draftSecret(draft)).toBe('{"set":"api_key","api_key":"k"}');
+    expect(clearedSecret(draft)).toEqual({ ...draft, credential: { set: "api_key", fields: {} } });
+    expect(draftSecret({ model: "", baseUrl: "", key: " gsk " })).toBe("gsk");
+    expect(draftSecret({ model: "", baseUrl: "", key: " " })).toBeUndefined();
+  });
+
+  it("checks a card's draft with its credential instead of a key", () => {
+    const fresh = card("tencent");
+    const draft = { model: "", baseUrl: "", key: "" };
+    expect(checkProviderDraft(draft, fresh, "asr", t)).toBe("请填写 App ID、SecretId、SecretKey");
+    expect(
+      checkProviderDraft(
+        {
+          ...draft,
+          credential: { set: "default", fields: { app_id: "1", secret_id: "2", secret_key: "3" } },
+        },
+        fresh,
+        "asr",
+        t,
+      ),
+    ).toBeUndefined();
+    const stored = card("tencent", "default");
+    expect(checkProviderDraft(draft, stored, "asr", t)).toBeUndefined();
+  });
+
+  it("regression: 测试连接 names the missing fields of a credential of several fields, not an API key", () => {
+    // 2026-11-04, the packaged app: 测试连接 with the old console's fields empty sent nothing, and the
+    // core's answer read 请先填写 API 密钥, a field the form does not have.
+    const fresh = card("volcengine_speech");
+    const blank = { model: "", baseUrl: "", key: "" };
+    const old = (fields: Record<string, string>) => ({
+      ...blank,
+      credential: { set: "app_token", fields },
+    });
+    expect(checkProbeDraft(old({}), fresh, "asr", t)).toBe("请填写 App ID、Access Token");
+    expect(checkProbeDraft(old({ app_id: "1" }), fresh, "asr", en)).toBe("Enter Access Token");
+    expect(
+      checkProbeDraft(old({ app_id: "1", access_token: "2" }), fresh, "asr", t),
+    ).toBeUndefined();
+    // The stored set left blank is tested as saved; another set is filled in whole first.
+    const stored = card("volcengine_speech", "app_token");
+    expect(checkProbeDraft(old({}), stored, "asr", t)).toBeUndefined();
+    expect(checkProbeDraft(blank, stored, "asr", t)).toBeUndefined();
+    expect(
+      checkProbeDraft({ ...blank, credential: { set: "api_key", fields: {} } }, stored, "asr", t),
+    ).toBe("请填写 API Key");
+    // A single key is the core's to check: left blank, the saved one is tested.
+    expect(checkProbeDraft(blank, provider({ asr: service() }), "asr", t)).toBeUndefined();
+  });
+
+  it("names every field and set of the catalogue, and where each vendor's fields are found", () => {
+    const sets = (id: (typeof PROVIDER_IDS)[number]) => providerSpec(id).credential ?? [];
+    const vendors = PROVIDER_IDS.filter((id) => sets(id).length > 0);
+    expect(vendors).toEqual(["volcengine_speech", "tencent", "iflytek", "iflytek_rtasr", "baidu"]);
+    expect(PROVIDER_IDS.filter((id) => !vendors.includes(id) && credentialHelp(id, t))).toEqual([]);
+    expect(vendors.filter((id) => !credentialHelp(id, t) || !credentialHelp(id, en))).toEqual([]);
+    const fields = vendors.flatMap((id) => sets(id).flatMap((set) => set.fields.map((f) => f.id)));
+    expect(
+      fields.filter(
+        (id) => credentialFieldLabel(id, t) === id || credentialFieldLabel(id, en) === id,
+      ),
+    ).toEqual([]);
+    const named = vendors.flatMap((id) => (sets(id).length > 1 ? sets(id).map((s) => s.id) : []));
+    expect(named).toEqual(["api_key", "app_token"]);
+    expect(named.filter((id) => credentialSetLabel(id, t) === id)).toEqual([]);
+    expect(credentialFieldLabel("token", t)).toBe("token");
+    expect(credentialSetLabel("default", t)).toBe("default");
+  });
+
+  it("says a vendor without a model list checked the credential, and that its list is the presets", () => {
+    const report: ProbeReport = {
+      provider: "tencent",
+      kind: "asr",
+      result: "ok",
+      models: ["16k_zh_en"],
+      latency_ms: 40,
+    };
+    expect(probeText(report, t, true)).toEqual({ ok: true, text: "凭据有效 · 40 ms" });
+    expect(probeText(report, t).text).toBe("连接正常 · 1 个模型 · 40 ms");
+    const fresh = card("tencent");
+    expect(modelListHelp(fresh, fresh.asr ?? service(), t)).toBe(
+      t("engines.field.modelHelpPresets"),
+    );
+  });
+});
+
+describe("what a recognition model does with a take and the dictionary (docs/dictation.md §3.15)", () => {
+  /** The recognition card of `id` as the engines status shows it, with nothing saved. */
+  const asrCard = (id: (typeof PROVIDER_IDS)[number]) => {
+    const status = resolveEngineStatus({
+      settings: defaultEngineSettings(),
+      userKeys: new Set(),
+      credentialSets: {},
+      builtIn: { asr: { model: "Qwen/Qwen3-ASR-1.7B", key: true } },
+      local: { id: "", name: "", installed: false },
+      liveReady: false,
+    });
+    const found = status.providers.find((p) => p.id === id);
+    if (found === undefined) throw new Error(id);
+    return found;
+  };
+  const en = createTranslator("en").t;
+
+  it("names on each card whether a model recognises while you speak and takes hot words", () => {
+    const named = (id: (typeof PROVIDER_IDS)[number], previews = false) =>
+      asrCardAbilities(asrCard(id), previews, t);
+    const realtime = t("engines.ability.realtime");
+    const hotwords = t("engines.ability.hotwords");
+    expect(named("volcengine_speech")).toEqual([realtime, hotwords]);
+    expect(named("tencent")).toEqual([realtime, hotwords]);
+    expect(named("aliyun")).toEqual([realtime, hotwords]);
+    // StepFun: its stream model recognises while you speak, its whole-file model takes hot words.
+    expect(named("stepfun")).toEqual([realtime, hotwords]);
+    expect(named("iflytek")).toEqual([realtime]);
+    expect(named("iflytek_rtasr")).toEqual([realtime]);
+    expect(named("baidu")).toEqual([realtime]);
+    expect(named("glm")).toEqual([hotwords]);
+    expect(named("groq")).toEqual([hotwords]);
+    expect(named("mimo")).toEqual([]);
+    expect(named("local")).toEqual([]);
+    // The built-in service previews where the shell shows its preview (the desktop).
+    expect(named("builtin", true)).toEqual([t("engines.ability.preview"), hotwords]);
+    expect(named("builtin")).toEqual([hotwords]);
+    expect(asrCardAbilities(asrCard("baidu"), false, en)).toEqual(["Realtime"]);
+  });
+
+  it("follows the address and the model as the core's protocol does", () => {
+    const dashscope = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+    expect(asrAbilities("aliyun", dashscope, "qwen-audio-3.1-asr-flash-streaming")).toEqual({
+      live: "realtime",
+      glossary: "hotwords",
+    });
+    expect(asrAbilities("aliyun", dashscope, "fun-asr-realtime")).toEqual({
+      live: "realtime",
+      glossary: "prompt",
+    });
+    expect(asrAbilities("custom", "https://example.test/v1", "whisper-1")).toEqual({
+      live: "whole",
+      glossary: "prompt",
+    });
+    // A vendor's protocol does not depend on the address: a proxy is still the vendor.
+    expect(asrAbilities("baidu", "https://proxy.example.test", "15372")).toEqual({
+      live: "realtime",
+      glossary: "not_supported",
+    });
+    expect(asrAbilities("local", "", "qwen3-asr-0.6b")).toEqual({
+      live: "whole",
+      glossary: "not_supported",
+    });
+  });
+
+  it("marks the realtime models in a recognition select, suggested and listed alike", () => {
+    const stepfun = asrCard("stepfun").asr ?? service();
+    const marked = modelOptions(
+      { ...stepfun, listed: ["stepaudio-2.5-asr-stream", "stepaudio-2-asr"] },
+      [],
+      t,
+      undefined,
+      realtimeModel("stepfun", stepfun.base_url ?? ""),
+    );
+    expect(marked.map((o) => [o.value, o.label])).toEqual([
+      ["stepaudio-2.5-asr", "stepaudio-2.5-asr"],
+      [
+        "stepaudio-2.5-asr-stream",
+        t("engines.field.modelRealtime", { model: "stepaudio-2.5-asr-stream" }),
+      ],
+      ["stepaudio-2-asr", "stepaudio-2-asr"],
+      [
+        "stepaudio-2.5-asr-stream",
+        t("engines.field.modelRealtime", { model: "stepaudio-2.5-asr-stream" }),
+      ],
+    ]);
+    expect(t("engines.field.modelRealtime", { model: "m" })).toBe("m · 边说边识别");
+    // Without the rule (clean-up, the switchers' other services) the labels are the ids.
+    expect(modelOptions(stepfun, [], t).map((o) => o.label)).toEqual([
+      "stepaudio-2.5-asr",
+      "stepaudio-2.5-asr-stream",
+    ]);
+  });
+
+  it("says under the model how it hears a take and where the terms go, for the shell", () => {
+    const desktop = { previews: true, livePreview: true, localPreview: "missing" as const };
+    const phone = { previews: false, livePreview: true, localPreview: "none" as const };
+    const help = (
+      id: (typeof PROVIDER_IDS)[number],
+      model: string,
+      shell: Parameters<typeof asrAbilityHelp>[3],
+    ) => asrAbilityHelp(id, "", model, shell, t);
+    expect(help("tencent", "16k_zh_en", desktop)).toEqual([
+      t("engines.ability.realtimeHelp"),
+      t("engines.ability.hotwordsHelp"),
+    ]);
+    // A realtime model recognises the whole recording while 实时预览 is off.
+    expect(help("tencent", "16k_zh_en", { ...desktop, livePreview: false })[0]).toBe(
+      t("engines.ability.realtimeOffHelp"),
+    );
+    expect(help("mimo", "mimo-v2.5-asr", desktop)).toEqual([
+      t("engines.ability.wholePreviewHelp"),
+      t("engines.ability.noGlossaryHelp"),
+    ]);
+    expect(help("mimo", "mimo-v2.5-asr", { ...desktop, localPreview: "installed" })[0]).toBe(
+      t("engines.ability.wholeLocalHelp"),
+    );
+    // The phone keeps no models and shows no preview.
+    expect(help("mimo", "mimo-v2.5-asr", phone)[0]).toBe(t("engines.ability.wholeHelp"));
+    expect(help("builtin", "Qwen/Qwen3-ASR-1.7B", desktop)).toEqual([
+      t("engines.ability.previewHelp"),
+      t("engines.ability.promptHelp"),
+    ]);
+    expect(help("builtin", "Qwen/Qwen3-ASR-1.7B", { ...desktop, livePreview: false })[0]).toBe(
+      t("engines.ability.wholeHelp"),
+    );
+    expect(help("builtin", "Qwen/Qwen3-ASR-1.7B", phone)[0]).toBe(t("engines.ability.wholeHelp"));
+    expect(help("stepfun", "stepaudio-2.5-asr-stream", phone)).toEqual([
+      t("engines.ability.realtimeHelp"),
+      t("engines.ability.promptHelp"),
+    ]);
   });
 });

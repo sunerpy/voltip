@@ -215,7 +215,7 @@ async fn a_test_with_the_saved_values_fills_the_list_and_a_draft_does_not() {
     let saved = models(&["openai/gpt-oss-120b", "qwen/qwen3.8-27b"]);
 
     // 测试连接 answers with the count the select offers, and the select has them.
-    node.send(CoreCommand::ProbeProvider { provider: ProviderId::Groq, kind: ServiceKind::Llm, base_url: None, key: None }).await;
+    node.send(CoreCommand::ProbeProvider { provider: ProviderId::Groq, kind: ServiceKind::Llm, base_url: None, key: None, model: None }).await;
     let report = node.wait(|e| if let CoreEvent::ProviderProbe(r) = e { Some(r.clone()) } else { None }).await;
     assert!(matches!(&report.outcome, ProbeOutcome::Ok { models, .. } if *models == saved), "{report:?}");
     node.engines_where(|s| listed(s, ProviderId::Groq, ServiceKind::Llm) == saved).await;
@@ -223,10 +223,12 @@ async fn a_test_with_the_saved_values_fills_the_list_and_a_draft_does_not() {
     // The same test with the saved address typed out counts as the saved values too; a key
     // typed in the form is only tried.
     lists.answer(GROQ, "gsk_a", Ok(groq_list("qwen3.9-32b")));
-    node.send(CoreCommand::ProbeProvider { provider: ProviderId::Groq, kind: ServiceKind::Llm, base_url: Some(format!(" {GROQ} ")), key: None }).await;
+    node.send(CoreCommand::ProbeProvider { provider: ProviderId::Groq, kind: ServiceKind::Llm, base_url: Some(format!(" {GROQ} ")), key: None, model: None })
+        .await;
     let newer = models(&["openai/gpt-oss-120b", "qwen/qwen3.9-32b"]);
     node.engines_where(|s| listed(s, ProviderId::Groq, ServiceKind::Llm) == newer).await;
-    node.send(CoreCommand::ProbeProvider { provider: ProviderId::Groq, kind: ServiceKind::Llm, base_url: None, key: Some("gsk_draft".into()) }).await;
+    node.send(CoreCommand::ProbeProvider { provider: ProviderId::Groq, kind: ServiceKind::Llm, base_url: None, key: Some("gsk_draft".into()), model: None })
+        .await;
     let report = node.wait(|e| if let CoreEvent::ProviderProbe(r) = e { Some(r.clone()) } else { None }).await;
     assert!(matches!(&report.outcome, ProbeOutcome::Ok { models, .. } if models.contains(&"qwen/draft-model".to_owned())), "{report:?}");
     // A key refused on a refresh drops the list.

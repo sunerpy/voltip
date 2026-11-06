@@ -405,7 +405,21 @@ describe("Onboarding wizard", () => {
       within(provider)
         .getAllByRole("option")
         .map((o) => o.textContent),
-    ).toEqual(["OpenAI", "Groq", "硅基流动", "阿里云百炼", "自定义接口"]);
+    ).toEqual([
+      "OpenAI",
+      "Groq",
+      "硅基流动",
+      "阿里云百炼",
+      "火山引擎豆包语音",
+      "腾讯云语音识别",
+      "讯飞语音听写",
+      "讯飞实时语音转写",
+      "百度智能云语音",
+      "阶跃星辰",
+      "智谱 GLM",
+      "小米 MiMo",
+      "自定义接口",
+    ]);
     await user.selectOptions(provider, "groq");
     const next = screen.getByRole("button", { name: "保存并继续" });
     expect(next).toBeDisabled();
@@ -434,6 +448,98 @@ describe("Onboarding wizard", () => {
     expect(JSON.stringify(backend.peek())).not.toContain("gsk_secret_42");
     expect(document.body.textContent).not.toContain("gsk_secret_42");
     expect(screen.getByTestId("trial-note")).toHaveTextContent("whisper-large-v3 · Groq");
+  });
+
+  it("docs/dictation.md §3.15: a vendor with several credential fields fills them in on step 3, checked before 保存并继续", async () => {
+    const user = userEvent.setup();
+    const { backend } = renderApp({ path: "/onboarding?step=3" });
+    const invoke = vi.spyOn(backend, "invoke");
+    await screen.findByRole("heading", { name: "选择语音模型", level: 2 });
+    await user.click(screen.getByRole("radio", { name: /其他服务商/ }));
+    const form = screen.getByTestId("onboarding-provider");
+    await user.selectOptions(within(form).getByLabelText("服务商"), "tencent");
+    expect(within(form).queryByLabelText("API 密钥")).toBeNull();
+    const next = screen.getByRole("button", { name: "保存并继续" });
+    expect(next).toBeDisabled();
+    expect(screen.getByText("请填写 App ID、SecretId、SecretKey")).toBeInTheDocument();
+    await user.type(within(form).getByLabelText("App ID"), "1250000000");
+    await user.type(within(form).getByLabelText("SecretId"), "onboarding-secret-id");
+    expect(screen.getByText("请填写 SecretKey")).toBeInTheDocument();
+    const secretKey = within(form).getByLabelText("SecretKey");
+    expect(secretKey).toHaveAttribute("type", "password");
+    await user.type(secretKey, "sk_onboarding_42");
+    expect(next).toBeEnabled();
+    await user.click(next);
+    expect(invoke).toHaveBeenCalledWith("provider_key_set", {
+      provider: "tencent",
+      kind: "asr",
+      value:
+        '{"set":"default","app_id":"1250000000","secret_id":"onboarding-secret-id","secret_key":"sk_onboarding_42"}',
+    });
+    await waitFor(() => {
+      expect(backend.peek().engines).toMatchObject({ asr_provider: "tencent", asr_ready: true });
+    });
+    expect(document.body.textContent).not.toContain("sk_onboarding_42");
+  });
+
+  it("a credential saved before keeps its blank fields: step 3 continues without sending it again", async () => {
+    const user = userEvent.setup();
+    const { backend } = renderApp({ path: "/onboarding?step=3" });
+    await backend.invoke("provider_key_set", {
+      provider: "baidu",
+      kind: "asr",
+      value: '{"set":"default","app_id":"123456","api_key":"bd-key"}',
+    });
+    const invoke = vi.spyOn(backend, "invoke");
+    await screen.findByRole("heading", { name: "选择语音模型", level: 2 });
+    await user.click(screen.getByRole("radio", { name: /其他服务商/ }));
+    const form = screen.getByTestId("onboarding-provider");
+    await user.selectOptions(within(form).getByLabelText("服务商"), "baidu");
+    expect(within(form).getByLabelText("App ID")).toHaveAttribute(
+      "placeholder",
+      "已保存，留空则不变",
+    );
+    const next = screen.getByRole("button", { name: "保存并继续" });
+    expect(next).toBeEnabled();
+    await user.click(next);
+    await waitFor(() => {
+      expect(backend.peek().engines).toMatchObject({ asr_provider: "baidu", asr_ready: true });
+    });
+    expect(invoke).not.toHaveBeenCalledWith("provider_key_set", expect.anything());
+  });
+
+  it("a credential the core refuses is reported; back on step 3 the fields still hold it for another try", async () => {
+    const user = userEvent.setup();
+    const { backend } = renderApp({ path: "/onboarding?step=3" });
+    // The keychain refuses the write: the core says so and stores nothing.
+    backend.simulateKeyStoreFailure("钥匙串不可用");
+    await screen.findByRole("heading", { name: "选择语音模型", level: 2 });
+    await user.click(screen.getByRole("radio", { name: /其他服务商/ }));
+    const form = screen.getByTestId("onboarding-provider");
+    await user.selectOptions(within(form).getByLabelText("服务商"), "iflytek_rtasr");
+    await user.type(within(form).getByLabelText("App ID"), "595f23df");
+    await user.type(within(form).getByLabelText("API Key"), "rtasr-key");
+    await user.click(screen.getByRole("button", { name: "保存并继续" }));
+    expect(await screen.findByText(/钥匙串不可用/)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(backend.peek().engines).toMatchObject({
+        asr_provider: "iflytek_rtasr",
+        asr_ready: false,
+        asr_issue: "key_missing",
+      });
+    });
+    await user.click(screen.getByRole("button", { name: "上一步" }));
+    await screen.findByRole("heading", { name: "选择语音模型", level: 2 });
+    const again = screen.getByTestId("onboarding-provider");
+    expect(within(again).getByLabelText("App ID")).toHaveValue("595f23df");
+    backend.simulateKeyStoreFailure(null);
+    await user.click(screen.getByRole("button", { name: "保存并继续" }));
+    await waitFor(() => {
+      expect(backend.peek().engines).toMatchObject({
+        asr_provider: "iflytek_rtasr",
+        asr_ready: true,
+      });
+    });
   });
 
   it("a custom endpoint needs an http(s) address; its key is optional", async () => {
@@ -572,7 +678,21 @@ describe("Onboarding wizard", () => {
       refine_enabled: false,
     });
     expect(initialChoice(bare)).toBe("local");
-    expect(vendorsFor(bare)).toEqual(["openai", "groq", "siliconflow", "aliyun", "custom"]);
+    expect(vendorsFor(bare)).toEqual([
+      "openai",
+      "groq",
+      "siliconflow",
+      "aliyun",
+      "volcengine_speech",
+      "tencent",
+      "iflytek",
+      "iflytek_rtasr",
+      "baidu",
+      "stepfun",
+      "glm",
+      "mimo",
+      "custom",
+    ]);
   });
 
   it("regression: the trial step runs a real dictation and shows the inserted text; 完成设置 is always available", async () => {

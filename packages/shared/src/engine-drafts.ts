@@ -3,7 +3,8 @@
 // how it folds into `EngineSettings` (`settings_set_engines` is all or nothing), the model choices,
 // the checks before a save and the probe's answer as a line. Moved here from
 // `apps/desktop/src/pages/settings/engines/helpers.ts`, which re-exports it.
-import { zhT, type TFunction } from "./i18n";
+import { zhT, type Messages, type TFunction } from "./i18n";
+import { asrStreams, glossaryRoute } from "./providers";
 import type {
   EngineSettings,
   EngineStatus,
@@ -32,6 +33,127 @@ export interface ProviderDraft {
   api?: LlmApi;
   /** `undefined` sends no effort. */
   reasoning?: ReasoningEffort;
+  /** A vendor whose credential has several fields edits it here instead of `key`. */
+  credential?: CredentialDraft;
+}
+
+/** A credential of several fields as a form edits it (docs/dictation.md §3.15): the set chosen and
+ *  what was typed in its fields. Nothing is prefilled: a stored value never reaches the interface. */
+export interface CredentialDraft {
+  set: string;
+  fields: Readonly<Record<string, string>>;
+}
+
+/** The credential draft a form opens with for `provider`: the set of the stored credential, else
+ *  the default set, every field empty; `undefined` for a vendor with a plain key. */
+export function credentialDraft(
+  provider: ProviderStatus,
+  service: ServiceStatus | undefined,
+): CredentialDraft | undefined {
+  const sets = provider.credential ?? [];
+  const first = sets[0];
+  if (first === undefined) return undefined;
+  const stored = storedSet(service);
+  return { set: sets.find((s) => s.id === stored)?.id ?? first.id, fields: {} };
+}
+
+/** The set of the credential the user saved for `service`, if one is saved. */
+function storedSet(service: ServiceStatus | undefined): string | undefined {
+  const key = service?.key;
+  return key?.set === true && key.source === "user" ? key.credential_set : undefined;
+}
+
+/** Why a credential draft cannot be saved, by the core's rule (`merge_credentials`): with the
+ *  stored set chosen a blank field keeps its stored value; with another set, or none stored, every
+ *  required field of the chosen set must be filled in. */
+export function checkCredentialDraft(
+  draft: CredentialDraft,
+  provider: ProviderStatus,
+  service: ServiceStatus | undefined,
+  t: TFunction = zhT.t,
+): string | undefined {
+  const set = provider.credential?.find((s) => s.id === draft.set);
+  if (set === undefined) return t("engines.check.missingKey");
+  if (storedSet(service) === draft.set) return undefined;
+  const missing = set.fields.filter((f) => f.required && typed(draft, f.id) === undefined);
+  if (missing.length === 0) return undefined;
+  return t("engines.credential.missing", {
+    fields: missing
+      .map((f) => credentialFieldLabel(f.id, t))
+      .join(t("engines.credential.listSeparator")),
+  });
+}
+
+/** The `provider_key_set` value of a credential draft: its set and the fields filled in, trimmed;
+ *  `undefined` when none is (the stored credential stays as it is). */
+export function credentialValue(draft: CredentialDraft): string | undefined {
+  const fields = Object.keys(draft.fields).flatMap((id) => {
+    const value = typed(draft, id);
+    return value === undefined ? [] : [[id, value] as const];
+  });
+  if (fields.length === 0) return undefined;
+  return JSON.stringify({ set: draft.set, ...Object.fromEntries(fields) });
+}
+
+/** The catalogue's credential fields, sets and vendors with a note on where they are found (the
+ *  keys of `engines.credential`). */
+const CREDENTIAL_FIELD_IDS = [
+  "app_id",
+  "api_key",
+  "api_secret",
+  "access_token",
+  "secret_id",
+  "secret_key",
+] as const;
+const CREDENTIAL_SET_IDS = ["api_key", "app_token"] as const;
+const CREDENTIAL_HELP_IDS = [
+  "volcengine_speech",
+  "tencent",
+  "iflytek",
+  "iflytek_rtasr",
+  "baidu",
+] as const;
+
+function oneOf<T extends string>(ids: readonly T[], id: string): id is T {
+  return (ids as readonly string[]).includes(id);
+}
+
+/** A credential field's label (`engines.credential.<id>`); the id itself for one without. */
+export function credentialFieldLabel(id: string, t: TFunction = zhT.t): string {
+  return oneOf(CREDENTIAL_FIELD_IDS, id) ? t(`engines.credential.${id}`) : id;
+}
+
+/** A credential set's name (`engines.credential.set.<id>`); the id itself for one without. */
+export function credentialSetLabel(id: string, t: TFunction = zhT.t): string {
+  return oneOf(CREDENTIAL_SET_IDS, id) ? t(`engines.credential.set.${id}`) : id;
+}
+
+/** Where a vendor's credential fields are found, for one with several. */
+export function credentialHelp(provider: ProviderId, t: TFunction = zhT.t): string | undefined {
+  return oneOf(CREDENTIAL_HELP_IDS, provider)
+    ? t(`engines.credential.help.${provider}`)
+    : undefined;
+}
+
+/** A draft's field, trimmed, when it holds something. */
+function typed(draft: CredentialDraft, id: string): string | undefined {
+  const value = draft.fields[id]?.trim() ?? "";
+  return value.length > 0 ? value : undefined;
+}
+
+/** What a form's save and 测试连接 send as the provider's credential: the fields of a credential
+ *  of several fields, else the key typed; `undefined` when nothing was typed. */
+export function draftSecret(draft: ProviderDraft): string | undefined {
+  if (draft.credential !== undefined) return credentialValue(draft.credential);
+  const key = draft.key.trim();
+  return key.length > 0 ? key : undefined;
+}
+
+/** `draft` after a save: what was typed is cleared, the set chosen stays. */
+export function clearedSecret(draft: ProviderDraft): ProviderDraft {
+  return draft.credential === undefined
+    ? { ...draft, key: "" }
+    : { ...draft, key: "", credential: { set: draft.credential.set, fields: {} } };
 }
 
 /** Whether a card chooses its interface: the custom provider's clean-up (§3.7). */
@@ -132,15 +254,22 @@ export function modelOptions(
   probed: readonly string[] = [],
   t: TFunction = zhT.t,
   other?: ModelOption,
+  realtime?: (model: string) => boolean,
 ): ModelOption[] {
-  const suggested = uniqueIds([service.model, ...service.presets]).map((m) => modelOption(m));
+  // docs/dictation.md §3.15: a recognition select marks the models that recognise while the take
+  // is spoken.
+  const label = (m: string) =>
+    realtime?.(m) === true ? t("engines.field.modelRealtime", { model: m }) : m;
+  const suggested = uniqueIds([service.model, ...service.presets]).map((m) =>
+    modelOption(m, label(m)),
+  );
   const offered = uniqueIds(probed.length > 0 ? probed : (service.listed ?? []));
   offered.sort();
   const group = t("engines.field.modelOffered", { n: offered.length });
   return [
     ...suggested,
     ...(other === undefined ? [] : [other]),
-    ...offered.map((m) => modelOption(m, group)),
+    ...offered.map((m) => modelOption(m, label(m), group)),
   ];
 }
 
@@ -149,10 +278,99 @@ function uniqueIds(ids: readonly string[]): string[] {
   return ids.filter((m, i) => m.length > 0 && ids.indexOf(m) === i);
 }
 
-function modelOption(model: string, group?: string): ModelOption {
-  return group === undefined
-    ? { value: model, label: model }
-    : { value: model, label: model, group };
+function modelOption(model: string, label: string, group?: string): ModelOption {
+  return group === undefined ? { value: model, label } : { value: model, label, group };
+}
+
+/** What a recognition model does with a take and with the dictionary (docs/dictation.md §3.15),
+ *  as the provider cards, the model selects and the drawers say it: it recognises while the take
+ *  is spoken (`realtime`, `AsrProtocol::streams` through `asrStreams`), the built-in service
+ *  previews the take where the shell shows its preview (`preview`, §11.8), or the recording goes
+ *  whole after release (`whole`); the dictionary's terms go as hot words, as a prompt, or nowhere
+ *  (`GlossaryRoute::for_service` through `glossaryRoute`). */
+export interface AsrAbilities {
+  live: "realtime" | "preview" | "whole";
+  glossary: "hotwords" | "prompt" | "not_supported";
+}
+
+/** `model`'s abilities at `url` for `provider`. `previews`: the shell shows a live preview while
+ *  recording (the desktop, `CoreConfig.shows_live_preview`). The on-device models take no terms;
+ *  their own cards describe them. */
+export function asrAbilities(
+  provider: ProviderId,
+  url: string,
+  model: string,
+  previews = false,
+): AsrAbilities {
+  if (provider === "local") return { live: "whole", glossary: "not_supported" };
+  const route = glossaryRoute(provider, url, model);
+  const glossary = route === "hotwords" || route === "prompt" ? route : "not_supported";
+  if (provider === "builtin") return { live: previews ? "preview" : "whole", glossary };
+  return { live: asrStreams(provider, url, model) ? "realtime" : "whole", glossary };
+}
+
+/** Whether a recognition select marks `model` 边说边识别 for `provider` at `url`. */
+export function realtimeModel(provider: ProviderId, url: string): (model: string) => boolean {
+  return (model) => asrAbilities(provider, url, model).live === "realtime";
+}
+
+/** The abilities a recognition card names (docs/dictation.md §3.15): 边说边识别 when one of its
+ *  models recognises while the take is spoken, 实时预览 on the built-in service where the shell
+ *  shows its preview, 热词 when one of them receives the dictionary's terms. None on the on-device
+ *  provider, whose model cards describe each model. */
+export function asrCardAbilities(
+  provider: ProviderStatus,
+  previews = false,
+  t: TFunction = zhT.t,
+): string[] {
+  const service = provider.asr;
+  if (service === undefined || provider.id === "local") return [];
+  const url = service.base_url ?? "";
+  const models = uniqueIds([service.model, ...service.presets, ...(service.listed ?? [])]);
+  const all = (models.length > 0 ? models : [""]).map((m) =>
+    asrAbilities(provider.id, url, m, previews),
+  );
+  const out: string[] = [];
+  if (all.some((a) => a.live === "realtime")) out.push(t("engines.ability.realtime"));
+  else if (all.some((a) => a.live === "preview")) out.push(t("engines.ability.preview"));
+  if (all.some((a) => a.glossary !== "not_supported")) out.push(t("engines.ability.hotwords"));
+  return out;
+}
+
+/** What the shell's live preview can do for a model that takes whole recordings: nothing (`none`,
+ *  a phone), once the Live preview model is downloaded (`missing`), or now (`installed`). */
+export type LocalPreview = "none" | "missing" | "installed";
+
+/** The lines under a recognition drawer's model (docs/dictation.md §3.15): how `model` hears a
+ *  take — a realtime model recognises the whole recording while 实时预览 is off — and where the
+ *  dictionary's terms go. */
+export function asrAbilityHelp(
+  provider: ProviderId,
+  url: string,
+  model: string,
+  shell: { previews: boolean; livePreview: boolean; localPreview: LocalPreview },
+  t: TFunction = zhT.t,
+): string[] {
+  const { live, glossary } = asrAbilities(provider, url, model, shell.previews);
+  const hears =
+    live === "realtime"
+      ? shell.livePreview
+        ? t("engines.ability.realtimeHelp")
+        : t("engines.ability.realtimeOffHelp")
+      : live === "preview" && shell.livePreview
+        ? t("engines.ability.previewHelp")
+        : live === "whole" && shell.livePreview && shell.localPreview === "installed"
+          ? t("engines.ability.wholeLocalHelp")
+          : live === "whole" && shell.localPreview !== "none"
+            ? t("engines.ability.wholePreviewHelp")
+            : t("engines.ability.wholeHelp");
+  const terms =
+    glossary === "hotwords"
+      ? t("engines.ability.hotwordsHelp")
+      : glossary === "prompt"
+        ? t("engines.ability.promptHelp")
+        : t("engines.ability.noGlossaryHelp");
+  return [hears, terms];
 }
 
 /** The line under a card's model select (docs/dictation.md §3.3): how many models the provider
@@ -162,6 +380,7 @@ export function modelListHelp(
   service: ServiceStatus,
   t: TFunction = zhT.t,
 ): string {
+  if (provider.lists_models === false) return t("engines.field.modelHelpPresets");
   const n = service.listed?.length ?? 0;
   if (n > 0) return t("engines.field.modelListed", { n });
   return provider.key === "required"
@@ -205,27 +424,52 @@ export function checkProviderDraft(
   if (url.length > 0 && !HTTP_URL_PATTERN.test(url)) return t("engines.check.badUrl");
   if (url.length === 0 && service?.default_base_url === undefined)
     return t("engines.check.missingUrl");
-  if (provider.key === "required" && !service?.key.set && draft.key.trim().length === 0)
+  const credential = draft.credential ?? credentialDraft(provider, service);
+  if (credential !== undefined) {
+    const issue = checkCredentialDraft(credential, provider, service, t);
+    if (issue !== undefined) return issue;
+  } else if (provider.key === "required" && !service?.key.set && draft.key.trim().length === 0)
     return t("engines.check.missingKey");
   const model = draft.model.trim().length > 0 ? draft.model : (service?.model ?? "");
   if (model.trim().length === 0) return t("engines.check.missingModel");
   return undefined;
 }
 
+/** What stops 测试连接 before the core is asked (docs/dictation.md §3.15): a credential of several
+ *  fields missing a field of the set shown, by `checkCredentialDraft`'s rule. Left blank, the
+ *  stored set is tested. A single key is not checked here: blank, the core tests the saved key or
+ *  answers that none is saved. */
+export function checkProbeDraft(
+  draft: ProviderDraft,
+  provider: ProviderStatus,
+  kind: ServiceKind,
+  t: TFunction = zhT.t,
+): string | undefined {
+  const service = provider[kind];
+  const credential = draft.credential ?? credentialDraft(provider, service);
+  return credential === undefined
+    ? undefined
+    : checkCredentialDraft(credential, provider, service, t);
+}
+
 const HTTP_URL_PATTERN = /^https?:\/\/[^/\s]+/;
 
-/** The probe answer as one line and a lamp tone. */
+/** The probe answer as one line and a lamp tone. For a vendor that lists no models (`checked`)
+ *  测试连接 checked the credential, and says so instead of counting the presets it returns. */
 export function probeText(
   report: ProbeReport,
   t: TFunction = zhT.t,
+  checked = false,
 ): { text: string; ok: boolean } {
   if (report.result === "ok")
     return {
       ok: true,
-      text: t("engines.probeResult.ok", {
-        n: report.models?.length ?? 0,
-        ms: report.latency_ms ?? 0,
-      }),
+      text: checked
+        ? t("engines.probeResult.okChecked", { ms: report.latency_ms ?? 0 })
+        : t("engines.probeResult.ok", {
+            n: report.models?.length ?? 0,
+            ms: report.latency_ms ?? 0,
+          }),
     };
   const reason = report.reason ?? "unreachable";
   const result = t(`engines.probeResult.${reason}`, { status: report.status ?? 0 });
@@ -305,4 +549,21 @@ export function languageOptions(t: TFunction = zhT.t): { value: string; label: s
     value,
     label: value === "" ? t("language.auto") : t(`language.${value}`),
   }));
+}
+
+/** The steps of `provider`'s 配置方法 in the language of `messages` (docs/dictation.md §3.16), in
+ *  order: what to activate at the vendor, where its credential is and what goes into the form.
+ *  None for the built-in service and this device, which need no setting up. */
+export function setupSteps(provider: ProviderId, messages: Messages): string[] {
+  const steps: Partial<Record<ProviderId, Readonly<Record<string, string>>>> =
+    messages.engines.setup.steps;
+  return Object.values(steps[provider] ?? {});
+}
+
+/** What the button that opens `provider`'s setup page (`provider_console_open` with `page:
+ *  "setup"`) says that page is for: activating the service, creating the app, adding credit or
+ *  downloading the program (§3.16). */
+export function setupPageLabel(provider: ProviderId, messages: Messages): string {
+  const labels: Partial<Record<ProviderId, string>> = messages.engines.setup.page;
+  return labels[provider] ?? messages.engines.setup.console;
 }

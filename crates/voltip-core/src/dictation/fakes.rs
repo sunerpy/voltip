@@ -1481,6 +1481,8 @@ pub struct FakeStreaming {
     glossary_sent: Option<bool>,
     /// Its sessions' flush fails ([`FakeStreaming::failing_finish`]).
     finish_fails: bool,
+    /// The note its sessions' flush carries ([`FakeStreaming::with_finish_note`]).
+    finish_note: Option<String>,
     /// The language hint of every [`StreamingTranscriber::open`], in order.
     languages: Mutex<Vec<Option<String>>>,
 }
@@ -1508,6 +1510,7 @@ impl FakeStreaming {
             model: None,
             glossary_sent: None,
             finish_fails: false,
+            finish_note: None,
             languages: Mutex::new(Vec::new()),
         }
     }
@@ -1525,6 +1528,12 @@ impl FakeStreaming {
     /// Its sessions' flush fails (after their sentences were reported).
     pub fn failing_finish(self) -> Self {
         Self { finish_fails: true, ..self }
+    }
+
+    /// Its sessions' flush carries `note`, as a session that ended without text says why
+    /// (`StreamFinal.note`).
+    pub fn with_finish_note(self, note: &str) -> Self {
+        Self { finish_note: Some(note.to_owned()), ..self }
     }
 
     /// Sessions wait before word `index` (from 0) until [`FakeStreaming::release_hold`]: the decode
@@ -1608,6 +1617,7 @@ impl StreamingTranscriber for FakeStreaming {
                 model: self.model.clone(),
                 glossary_sent: self.glossary_sent,
                 finish_fails: self.finish_fails,
+                finish_note: self.finish_note.clone(),
             })),
         }
     }
@@ -1634,6 +1644,7 @@ struct FakeSession {
     model: Option<String>,
     glossary_sent: Option<bool>,
     finish_fails: bool,
+    finish_note: Option<String>,
 }
 
 impl Drop for FakeSession {
@@ -1698,6 +1709,7 @@ impl StreamingSession for FakeSession {
             provider: None,
             fallback: None,
             glossary_sent: self.glossary_sent,
+            note: self.finish_note.clone(),
         })
     }
 }

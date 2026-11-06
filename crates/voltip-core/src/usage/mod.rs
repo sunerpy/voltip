@@ -4,7 +4,8 @@
 //! The recognisers and clean-up clients the engine builds are wrapped in [`MeteredTranscriber`]
 //! and [`MeteredRefiner`], which tell the runtime what each answered request used
 //! ([`UsageEvent`]); the runtime keeps them by day in [`UsageLedger`] for the usage page.
-//! Previews are reported to the service (it counts the audio it decodes) but not kept here.
+//! Previews are reported to the service (it counts the audio it decodes) but not kept here; a
+//! realtime model's stream is the take itself and is kept when its session ends well.
 
 mod ledger;
 mod report;
@@ -15,7 +16,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::dictation::{DictationError, RefineHints, Refined, Refiner, StreamingTranscriber, Transcriber, Transcript};
+use crate::dictation::{
+    DictationError, LIVE_SAMPLE_RATE_HZ, RefineHints, Refined, Refiner, StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber, SwitchReason,
+    Transcriber, Transcript,
+};
 use crate::providers::{ProviderId, ServiceKind};
 
 pub use ledger::{CHART_DAYS, LEDGER_DAYS, LEDGER_FILE_NAME, LedgerView, OriginUse, ProviderUse, PurposeUse, UsageDayView, UsageLedger, UsageNotice};
@@ -254,7 +258,8 @@ impl Metering {
     }
 }
 
-/// A recogniser whose answered takes are told to a [`Metering`] as `provider`'s (previews are not).
+/// A recogniser whose answered takes are told to a [`Metering`] as `provider`'s (previews are not),
+/// a realtime model's streamed takes included.
 pub struct MeteredTranscriber {
     inner: Arc<dyn Transcriber>,
     provider: ProviderId,
@@ -287,8 +292,71 @@ impl Transcriber for MeteredTranscriber {
         self.inner.warm(language);
     }
 
+    /// A realtime model's stream: the streaming modes take its text and send no whole take, so its
+    /// sessions are told as takes when their flush is answered.
     fn streaming(&self, glossary: &[String]) -> Option<Arc<dyn StreamingTranscriber>> {
-        self.inner.streaming(glossary)
+        let inner = self.inner.streaming(glossary)?;
+        Some(Arc::new(MeteredStreaming { inner, provider: self.provider, metering: self.metering.clone() }))
+    }
+}
+
+/// A realtime model's stream whose sessions are told to a [`Metering`] as `provider`'s.
+struct MeteredStreaming {
+    inner: Arc<dyn StreamingTranscriber>,
+    provider: ProviderId,
+    metering: Metering,
+}
+
+impl StreamingTranscriber for MeteredStreaming {
+    fn open(&self, language: Option<&str>) -> Result<Box<dyn StreamingSession>, DictationError> {
+        let inner = self.inner.open(language)?;
+        Ok(Box::new(MeteredSession { inner, provider: self.provider, metering: self.metering.clone(), samples: 0 }))
+    }
+
+    fn warm(&self) {
+        self.inner.warm();
+    }
+}
+
+/// One session of a [`MeteredStreaming`]: a take of the audio it was fed once its flush is
+/// answered. A session that fails or is dropped (a cancelled take) uses nothing.
+struct MeteredSession {
+    inner: Box<dyn StreamingSession>,
+    provider: ProviderId,
+    metering: Metering,
+    /// 16 kHz samples fed so far.
+    samples: usize,
+}
+
+impl StreamingSession for MeteredSession {
+    fn feed(&mut self, pcm16k: &[f32]) {
+        self.samples += pcm16k.len();
+        self.inner.feed(pcm16k);
+    }
+
+    fn poll(&mut self) -> StreamEvent {
+        self.inner.poll()
+    }
+
+    fn finish(self: Box<Self>) -> Result<StreamFinal, DictationError> {
+        let Self { inner, provider, metering, samples } = *self;
+        let fin = inner.finish()?;
+        let per_ms = usize::try_from(LIVE_SAMPLE_RATE_HZ / 1000).unwrap_or(16);
+        let ms = u64::try_from(samples / per_ms).unwrap_or(u64::MAX);
+        metering.used(fin.provider.unwrap_or(provider), fin.model.clone(), ServiceKind::Asr, UsagePurpose::Take, ms, None);
+        Ok(fin)
+    }
+
+    fn model(&self) -> Option<String> {
+        self.inner.model()
+    }
+
+    fn served(&self) -> (Option<ProviderId>, Option<SwitchReason>) {
+        self.inner.served()
+    }
+
+    fn glossary_sent(&self) -> Option<bool> {
+        self.inner.glossary_sent()
     }
 }
 
@@ -392,7 +460,7 @@ mod tests {
     use parking_lot::Mutex;
 
     use super::*;
-    use crate::dictation::fakes::{FakeRefiner, FakeTranscriber};
+    use crate::dictation::fakes::{FakeRefiner, FakeStreaming, FakeTranscriber};
 
     /// A metering whose notes the test reads.
     fn metering() -> (Metering, Arc<Mutex<Vec<UsageNote>>>) {
@@ -426,6 +494,47 @@ mod tests {
         let UsageNote::Used(second) = &notes[1] else { panic!() };
         assert_eq!(second.origin, UsageOrigin::Phone { name: "Pixel 8".into() });
         assert_eq!(second.amount, 2000);
+    }
+
+    /// regression: a realtime model's take comes from its stream and sends no whole take, so the
+    /// usage record never had it (docs/dictation.md §27.2). Its session is now told as a take of
+    /// the audio it was fed once the flush is answered; a failed flush or a dropped session (a
+    /// cancelled take) uses nothing, and the session still answers as the inner one.
+    #[test]
+    fn regression_a_streamed_take_is_told_with_the_audio_it_was_fed() {
+        let (metering, notes) = metering();
+        let stream = Arc::new(FakeStreaming::script().with_model("volc.seedasr.sauc.duration").with_glossary_sent(true));
+        let t = MeteredTranscriber::new(Arc::new(FakeTranscriber::ok("好").with_stream(stream)), ProviderId::VolcengineSpeech, metering.clone());
+        let streaming = t.streaming(&["术语".into()]).expect("the realtime model streams");
+        let mut session = streaming.open(Some("zh")).unwrap();
+        for _ in 0..5 {
+            session.feed(&[0.1; 1600]);
+        }
+        assert_eq!(session.poll(), StreamEvent::Partial { current: "你好".into() });
+        assert_eq!((session.model().as_deref(), session.glossary_sent()), (Some("volc.seedasr.sauc.duration"), Some(true)));
+        assert!(notes.lock().is_empty(), "nothing is told before the flush");
+        let fin = session.finish().unwrap();
+        assert_eq!(fin.committed.len(), 1, "the session's own answer: {fin:?}");
+        let notes = notes.lock().clone();
+        let [UsageNote::Used(used)] = &notes[..] else { panic!("{notes:?}") };
+        assert_eq!(
+            (used.provider, used.model.as_deref(), used.service, used.purpose, used.amount, &used.origin),
+            (ProviderId::VolcengineSpeech, Some("volc.seedasr.sauc.duration"), ServiceKind::Asr, UsagePurpose::Take, 500, &UsageOrigin::ThisDevice)
+        );
+
+        let (metering, notes) = self::metering();
+        let failing = Arc::new(FakeStreaming::script().failing_finish());
+        let t = MeteredTranscriber::new(Arc::new(FakeTranscriber::ok("好").with_stream(failing)), ProviderId::VolcengineSpeech, metering);
+        let mut session = t.streaming(&[]).unwrap().open(None).unwrap();
+        session.feed(&[0.1; 1600]);
+        assert!(session.finish().is_err());
+        let mut dropped = t.streaming(&[]).unwrap().open(None).unwrap();
+        dropped.feed(&[0.1; 1600]);
+        drop(dropped);
+        assert!(notes.lock().is_empty(), "a failed or cancelled session uses nothing");
+        // A recogniser that does not stream has no stream to meter.
+        let (metering, _) = self::metering();
+        assert!(MeteredTranscriber::new(Arc::new(FakeTranscriber::ok("好")), ProviderId::Openai, metering).streaming(&[]).is_none());
     }
 
     #[tokio::test]

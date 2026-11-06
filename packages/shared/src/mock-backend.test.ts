@@ -1453,6 +1453,12 @@ describe("MockBackend history, engines and secrets", () => {
       "google",
       "siliconflow",
       "aliyun",
+      "volcengine_speech",
+      "tencent",
+      "iflytek",
+      "iflytek_rtasr",
+      "baidu",
+      "stepfun",
       "deepseek",
       "kimi",
       "glm",
@@ -1545,6 +1551,14 @@ describe("MockBackend history, engines and secrets", () => {
     // A key-less provider refuses one.
     await backend.invoke("provider_key_set", { provider: "local", kind: "asr", value: "x" });
     expect(backend.log.at(-1)).toMatchObject({ type: "error" });
+    // A secret store that refuses the write: the core says so and keeps what it had.
+    backend.simulateKeyStoreFailure("钥匙串不可用");
+    await backend.invoke("provider_key_set", { provider: "groq", kind: "asr", value: "gsk_x" });
+    expect(backend.log.at(-1)).toEqual({ type: "error", message: "钥匙串不可用" });
+    expect(groq()?.asr?.key).toEqual({ set: false, source: "none" });
+    backend.simulateKeyStoreFailure(null);
+    await backend.invoke("provider_key_set", { provider: "groq", kind: "asr", value: "gsk_x" });
+    expect(groq()?.asr?.key).toEqual({ set: true, source: "user" });
   });
 
   it("provider_probe refuses what the core refuses up front and lists models otherwise", async () => {
@@ -1585,6 +1599,18 @@ describe("MockBackend history, engines and secrets", () => {
       await expect(backend.providerConsoleOpen("groq", "quota")).rejects.toThrow(
         "groq: no quota page",
       );
+      // §3.16: a setup page for the vendors that have a step besides the key.
+      await backend.providerConsoleOpen("tencent", "setup");
+      expect(backend.setupPagesOpened).toEqual(["tencent"]);
+      await expect(backend.providerConsoleOpen("groq", "setup")).rejects.toThrow(
+        "groq: no setup page",
+      );
+      await backend.guideOpen("providers", "en", "tencent");
+      expect(backend.guidesOpened.at(-1)).toEqual({
+        page: "providers",
+        locale: "en",
+        provider: "tencent",
+      });
       expect(
         backend
           .peek()

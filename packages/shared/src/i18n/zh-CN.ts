@@ -1602,6 +1602,12 @@ export const zhCN = {
       google: "Google AI Studio",
       siliconflow: "硅基流动",
       aliyun: "阿里云百炼",
+      volcengine_speech: "火山引擎豆包语音",
+      tencent: "腾讯云语音识别",
+      iflytek: "讯飞语音听写",
+      iflytek_rtasr: "讯飞实时语音转写",
+      baidu: "百度智能云语音",
+      stepfun: "阶跃星辰",
       deepseek: "DeepSeek",
       kimi: "Kimi",
       glm: "智谱 GLM",
@@ -1621,15 +1627,58 @@ export const zhCN = {
         "Google AI Studio 的 Gemini 模型，只用于润色；免费额度内的内容可能被 Google 用于改进产品。",
       siliconflow: "硅基流动托管的 SenseVoice 与开源大模型。",
       aliyun: "阿里云百炼的语音识别与千问大模型；实时识别模型在说话时就完成识别。",
+      volcengine_speech:
+        "火山引擎豆包语音的语音识别大模型，只用于语音识别，说话时就完成识别。凭据可以是新版控制台的 API Key，也可以是旧版控制台的 App ID 与 Access Token；火山方舟的密钥在这里不能用。",
+      tencent:
+        "腾讯云的语音识别，只用于语音识别，说话时就完成识别。需要填写 AppId、SecretId 和 SecretKey，并先在控制台开通语音识别。",
+      iflytek:
+        "讯飞开放平台的语音听写，只用于语音识别，说话时就完成识别；单次最长 60 秒，超过后自动接着识别。热词只能在讯飞控制台为应用上传。",
+      iflytek_rtasr:
+        "讯飞开放平台的实时语音转写，只用于语音识别，说话时就完成识别，不限时长，适合长录音。它的 APIKey 与语音听写的不同。",
+      baidu:
+        "百度智能云的实时语音识别，只用于语音识别，说话时就完成识别。需要填写应用的 AppID 和 API Key。",
+      stepfun:
+        "阶跃星辰的 StepAudio 语音识别：stepaudio-2.5-asr 识别整段录音，stepaudio-2.5-asr-stream 在说话时就完成识别。可切换中国站与国际站，两个站点的账号和密钥不通用。",
       deepseek: "DeepSeek 的对话模型，只用于润色。",
       kimi: "月之暗面的 Kimi 模型，只用于润色；可切换中国站与国际站，两个站点的账号和密钥不通用。",
-      glm: "智谱的 GLM 模型，只用于润色；中国站为智谱开放平台，国际站为 Z.ai，两个站点的账号和密钥不通用。",
+      glm: "智谱的 GLM 模型与语音识别模型；中国站为智谱开放平台，国际站为 Z.ai，两个站点的账号和密钥不通用。",
       volcengine: "火山方舟的豆包等模型，只用于润色；模型需先在方舟控制台的「开通管理」中开通。",
       hunyuan: "腾讯云 TokenHub 上的混元等模型，只用于润色；模型需先在 TokenHub 控制台开通。",
-      mimo: "小米的 MiMo 模型，只用于润色。",
+      mimo: "小米的 MiMo 模型与语音识别模型。",
       openrouter: "用一个密钥使用多家厂商的模型，只用于润色。",
       ollama: "本机 Ollama 里的模型，文本不离开这台电脑。",
       custom: "任意 OpenAI 兼容接口，例如 vLLM、LocalAI 或自建网关。",
+    },
+    /** docs/dictation.md §3.15: a credential of several fields. */
+    credential: {
+      app_id: "App ID",
+      api_key: "API Key",
+      api_secret: "API Secret",
+      access_token: "Access Token",
+      secret_id: "SecretId",
+      secret_key: "SecretKey",
+      set: {
+        api_key: "新版控制台：API Key",
+        app_token: "旧版控制台：App ID 与 Access Token",
+      },
+      setLabel: "凭据类型",
+      saved: "已保存，留空则不变",
+      show: "显示",
+      hide: "隐藏",
+      missing: "请填写 {fields}",
+      listSeparator: "、",
+      /** Where each vendor's fields are found (docs/dictation.md §3.15). */
+      help: {
+        volcengine_speech:
+          "新版控制台：填写在豆包语音控制台创建的 API Key。旧版控制台：填写应用的 App ID 与 Access Token。",
+        tencent:
+          "AppId 在腾讯云账号中心查看；SecretId 与 SecretKey 在访问管理的 API 密钥管理页面新建。",
+        iflytek:
+          "在讯飞开放平台控制台创建应用并添加语音听写（流式版）服务后，服务页面会显示 APPID、APISecret 和 APIKey。",
+        iflytek_rtasr:
+          "在讯飞开放平台控制台为应用添加实时语音转写服务后，服务页面会显示 APPID 和 APIKey。",
+        baidu: "在百度智能云控制台的语音技术应用列表里，每个应用的鉴权信息包含 AppID 和 API Key。",
+      },
     },
     ready: "就绪",
     issue: {
@@ -1640,14 +1689,37 @@ export const zhCN = {
       model_not_installed: "模型未下载",
       no_provider: "未选择服务商",
     },
+    /** docs/dictation.md §3.15: what a recognition model does with a take and with the dictionary,
+     *  on the provider cards and under the model in their drawers. */
+    ability: {
+      realtime: "边说边识别",
+      preview: "实时预览",
+      hotwords: "热词",
+      realtimeHelp: "边说边识别：说话时就开始识别，松开后只等最后一句。",
+      realtimeOffHelp: "这个模型能边说边识别；「实时预览」已关闭，现在松开后识别整段录音。",
+      previewHelp: "说话时由内置服务显示预览，约每 2 秒更新一次；松开后识别整段录音。",
+      wholeHelp: "松开后识别整段录音。",
+      wholePreviewHelp:
+        "松开后识别整段录音；想在说话时看到文字，可在「识别设置」使用「实时预览」。",
+      wholeLocalHelp: "松开后识别整段录音；说话时由本机的「实时预览」模型显示预览。",
+      hotwordsHelp: "词典的词条作为热词发给识别服务。",
+      promptHelp: "词典的词条作为提示词发给识别服务。",
+      noGlossaryHelp:
+        "这个服务不接收词典的词条：词典在识别之后纠正文字，开启 AI 润色时也交给润色。",
+    },
     field: {
       model: "模型",
       modelOther: "其他模型…",
       modelCustom: "模型 ID",
       modelHelp: "从列表里选。保存密钥后，列表会包含服务商提供的全部可用模型。",
       modelHelpKeyless: "从列表里选。能连接到这个服务时，列表会包含它提供的全部可用模型。",
+      /** docs/dictation.md §3.15: a vendor that publishes no model list. */
+      modelHelpPresets:
+        "这个服务商不提供模型清单，列表里是建议的模型；也可以选「其他模型…」填写模型 ID。",
       /** docs/dictation.md §3.3: the model select's groups; the count is 测试连接's. */
       modelOffered: "服务商提供（{n}）",
+      /** docs/dictation.md §3.15: a recognition model that recognises while the take is spoken. */
+      modelRealtime: "{model} · 边说边识别",
       modelListed: {
         one: "列表包含服务商提供的 {n} 个可用模型，每次打开列表时更新。",
         other: "列表包含服务商提供的 {n} 个可用模型，每次打开列表时更新。",
@@ -1683,6 +1755,122 @@ export const zhCN = {
     viewQuota: "查看额度",
     quotaHelp:
       "剩余额度和用量请在百炼控制台查看，百炼不提供查询接口。为模型打开「免费额度用完即停」后，额度用完时服务会拒绝请求而不是计费，Voltip 随即改用「额度用完后改用其他模型」中的下一个模型。",
+    /** docs/dictation.md §3.16: the drawer's 配置方法, the vendor's pages and the guide's section.
+     *  `page` names what each setup page is for, `steps` are each provider's, in order (the same
+     *  number in both languages); the built-in service and this device have none. */
+    setup: {
+      title: "配置方法",
+      console: "打开控制台",
+      guide: "完整说明",
+      page: {
+        openai: "添加余额",
+        siliconflow: "实名认证",
+        aliyun: "开通百炼",
+        volcengine_speech: "开通服务",
+        tencent: "开通语音识别",
+        iflytek: "创建应用",
+        iflytek_rtasr: "领取免费额度",
+        deepseek: "充值",
+        volcengine: "开通模型",
+        hunyuan: "启用模型",
+        mimo: "充值",
+        openrouter: "充值",
+        ollama: "下载 Ollama",
+      },
+      steps: {
+        openai: {
+          s1: "登录 OpenAI Platform，在「Billing」中添加余额：API 按用量计费。",
+          s2: "在「API keys」页面创建密钥，填到下方。",
+        },
+        groq: {
+          s1: "登录 GroqCloud 控制台，免费套餐即可使用。",
+          s2: "在「API Keys」页面创建密钥，填到下方。",
+        },
+        google: {
+          s1: "用 Google 账号登录 Google AI Studio，并接受服务条款。",
+          s2: "在「API Keys」页面复制或创建密钥，填到下方。",
+        },
+        siliconflow: {
+          s1: "登录硅基流动，在「实名认证」中完成认证：认证后才能使用全部免费模型和充值。",
+          s2: "在「API 密钥」页面选择「新建 API 密钥」，填到下方。",
+        },
+        aliyun: {
+          s1: "完成阿里云实名认证后，打开华北2（北京）地域的百炼控制台，同意服务协议即开通百炼并获得免费额度。",
+          s2: "语音识别模型还需要在百炼的业务空间中开通权限后才能调用。",
+          s3: "在「API Key」页面创建 API Key，填到下方；各地域的 API Key 不通用。",
+        },
+        volcengine_speech: {
+          s1: "注册火山引擎账号并完成实名认证，在豆包语音控制台的「开通管理」中开通流式语音识别模型。",
+          s2: "在「API Key 管理」中创建 API Key，填到下方；使用旧版控制台时，在「凭据类型」中改选 App ID 与 Access Token。",
+          s3: "模型选择与已开通的服务一致的资源 ID。",
+        },
+        tencent: {
+          s1: "在语音识别控制台完成实名认证，勾选用户协议后选择「立即开通」，开通后每月有免费额度。",
+          s2: "在「API 密钥管理」中新建密钥，复制 SecretId 和 SecretKey。",
+          s3: "在「账号中心」复制 APPID，三项一并填到下方。",
+        },
+        iflytek: {
+          s1: "登录讯飞开放平台，在「我的应用」中创建应用。",
+          s2: "在语音听写的服务页复制 APPID、APIKey 和 APISecret，填到下方。",
+        },
+        iflytek_rtasr: {
+          s1: "在实时语音转写的产品页领取「实时语音转写标准版」的免费试用包；大模型版的套餐在这里不能使用。",
+          s2: "在「我的应用」中打开应用，进入实时语音转写的服务页。",
+          s3: "复制 APPID 和这项服务的 APIKey，填到下方；它与语音听写的 APIKey 不同。",
+        },
+        baidu: {
+          s1: "注册百度智能云账号并完成实名认证，打开语音技术控制台，免费测试资源随后自动发放。",
+          s2: "在左侧「应用列表」中选择「创建应用」。",
+          s3: "复制应用的 AppID 和 API Key，填到下方。",
+        },
+        stepfun: {
+          s1: "在阶跃星辰开放平台注册，中国站和国际站的账号不通用；中国站需要先完成实名认证。",
+          s2: "在「接口密钥」页面创建 API Key，填到下方，并在「站点」中选择注册的站点。",
+        },
+        deepseek: {
+          s1: "登录 DeepSeek 开放平台，在「充值」页面充值：余额不足时请求会被拒绝。",
+          s2: "在「API keys」页面创建 API key，填到下方。",
+        },
+        kimi: {
+          s1: "在 Kimi 开放平台注册，中国站和国际站的账号与余额不通用。",
+          s2: "推荐的 K3.1 Pro 模型需要先充值：中国站最低 10 元，国际站最低 1 美元。",
+          s3: "在「API Keys」页面创建 API Key，填到下方，并在「站点」中选择注册的站点。",
+        },
+        glm: {
+          s1: "在智谱开放平台（中国站）或 Z.ai（国际站）注册，两个站点的账号和密钥不通用。",
+          s2: "在「API Keys」中创建标准 API Key；Coding Plan 套餐的密钥与它不通用。",
+          s3: "把密钥填到下方，并在「站点」中选择注册的站点。",
+        },
+        volcengine: {
+          s1: "在火山方舟控制台的「开通管理」中开通要使用的模型。",
+          s2: "在「API Key 管理」中创建 API Key，填到下方；豆包语音的凭据在这里不能使用。",
+        },
+        hunyuan: {
+          s1: "完成腾讯云实名认证后登录 TokenHub 控制台，按提示开通服务。",
+          s2: "在「启用管理」中启用要使用的模型，可以领取免费资源；免费额度用完后需要开启按量付费。",
+          s3: "在「API Key 管理」中选择地域「广州」并创建 API Key，填到下方。",
+        },
+        mimo: {
+          s1: "用小米账号登录 Xiaomi MiMo 开放平台；中国大陆的账号需要先完成实名认证才能充值。",
+          s2: "在「账户余额」中充值：余额不足时请求会被拒绝。",
+          s3: "在「API Keys」中创建 API Key，填到下方。",
+        },
+        openrouter: {
+          s1: "注册 OpenRouter 账号，在「Credits」页面充值；免费模型每天可请求 50 次。",
+          s2: "在「Keys」页面创建密钥（可以设置额度上限），填到下方。",
+        },
+        ollama: {
+          s1: "下载并安装 Ollama，保持它在这台电脑上运行。",
+          s2: "在终端运行「ollama pull 模型名称」，下载要使用的模型。",
+          s3: "接口地址留空即使用这台电脑上的 Ollama，然后在下方选择模型。",
+        },
+        custom: {
+          s1: "填写 OpenAI 兼容接口的地址，例如 http://127.0.0.1:8000/v1。",
+          s2: "接口需要密钥时填写密钥，然后填写或选择模型。",
+          s3: "选择「测试连接」，确认地址和密钥可用。",
+        },
+      },
+    },
     save: "保存",
     saved: "已保存 · {provider}",
     savedKey: " · 密钥已写入系统钥匙串",
@@ -1703,6 +1891,9 @@ export const zhCN = {
       timeout: "连接超时",
       http_status: "服务返回错误（HTTP {status}）",
       bad_response: "返回内容不是模型列表",
+      refused: "服务拒绝了请求",
+      /** A vendor that lists no models accepted the credential (docs/dictation.md §3.15). */
+      okChecked: "凭据有效 · {ms} ms",
       /** A failed probe with what the service said (docs/dictation.md §3.12). */
       withDetail: "{result}：{detail}",
     },

@@ -311,6 +311,9 @@ fn pages_open_from_urls_the_shell_builds() {
     running.invoke("provider_console_open", json!({ "provider": "groq" })).unwrap();
     // docs/dictation.md §3.5: Model Studio's page of free quota and usage.
     running.invoke("provider_console_open", json!({ "provider": "aliyun", "page": "quota" })).unwrap();
+    // §3.16: where Tencent Cloud's speech recognition is activated, and its section of the guide.
+    running.invoke("provider_console_open", json!({ "provider": "tencent", "page": "setup" })).unwrap();
+    running.invoke("guide_open", json!({ "page": "providers", "locale": "en", "provider": "volcengine_speech" })).unwrap();
     let opened: Vec<String> = running
         .host
         .calls()
@@ -320,11 +323,14 @@ fn pages_open_from_urls_the_shell_builds() {
             _ => None,
         })
         .collect();
-    assert_eq!(opened.len(), 4, "{opened:?}");
+    assert_eq!(opened.len(), 6, "{opened:?}");
     assert_eq!(opened[0], "https://github.com/sunerpy/voltip/releases");
     assert!(opened[1].starts_with("https://"), "{}", opened[1]);
     assert!(opened[2].starts_with("https://") && opened[2].contains("groq"), "{}", opened[2]);
     assert_eq!(opened[3], voltip_core::ProviderId::Aliyun.spec().quota_url.unwrap());
+    assert_eq!(opened[4], voltip_core::ProviderId::Tencent.spec().setup_url.unwrap());
+    assert_eq!(opened[5], "https://voltip.firlab.app/recognition/providers#volcengine-speech");
+    assert!(running.invoke("provider_console_open", json!({ "provider": "groq", "page": "setup" })).unwrap_err().contains("no setup page"));
     assert!(running.invoke("provider_console_open", json!({ "provider": "custom" })).unwrap_err().contains("no key page"));
     assert!(running.invoke("provider_console_open", json!({ "provider": "groq", "page": "quota" })).unwrap_err().contains("no quota page"));
     // A model list opening: the generic path takes it to the core.

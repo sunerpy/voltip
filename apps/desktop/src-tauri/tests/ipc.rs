@@ -741,7 +741,7 @@ fn dictation_start_stop_runs_the_pipeline_and_records_history() {
 #[test]
 fn provider_key_set_flips_presence_without_exposing_the_value() {
     fn groq_key(s: &UiState) -> Option<voltip_core::SecretState> {
-        s.engines.providers.iter().find(|p| p.id == voltip_core::ProviderId::Groq).and_then(|p| p.asr.as_ref()).map(|a| a.key)
+        s.engines.providers.iter().find(|p| p.id == voltip_core::ProviderId::Groq).and_then(|p| p.asr.as_ref()).map(|a| a.key.clone())
     }
     with_running_app(|_, webview, rx| {
         let st = wait_state(webview, |s| s.identity.is_some() && !s.engines.providers.is_empty());

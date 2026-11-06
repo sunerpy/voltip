@@ -493,12 +493,28 @@ pub enum SecretSource {
 }
 
 /// What the UI may know about a key.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 pub struct SecretState {
     /// A value is available.
     pub set: bool,
     /// Where it comes from.
     pub source: SecretSource,
+    /// For a credential of several fields, the set the stored one is of (docs/dictation.md §3.15):
+    /// the form opens on it. Never a field's value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential_set: Option<String>,
+}
+
+impl SecretState {
+    /// The state of the user's credential `stored` for `provider`.
+    fn user(provider: ProviderId, stored: Option<&str>) -> Self {
+        match stored {
+            Some(value) => {
+                Self { set: true, source: SecretSource::User, credential_set: crate::providers::stored_credential_set(provider, value).map(str::to_owned) }
+            }
+            None => Self::default(),
+        }
+    }
 }
 
 /// The user's provider keys, by secret-store entry ([`crate::providers::key_entry`]), held in
@@ -804,7 +820,7 @@ impl FallbackTarget {
     /// Where the glossary goes in its recognition requests (docs/dictation.md §30.6).
     fn glossary_route(&self) -> GlossaryRoute {
         match &self.service {
-            FallbackService::Remote(remote) => GlossaryRoute::remote(&remote.url, &remote.model),
+            FallbackService::Remote(remote) => GlossaryRoute::for_service(self.provider, &remote.url, &remote.model),
             FallbackService::Local(_) => GlossaryRoute::NotSupported,
         }
     }
@@ -833,7 +849,7 @@ impl FallbackTarget {
     /// It recognises while the take is spoken: a realtime service ([`AsrProtocol::streams`]); never
     /// a model of this device.
     pub fn streams(&self) -> bool {
-        self.remote().is_some_and(|r| AsrProtocol::of(&r.url, &r.model).streams())
+        self.remote().is_some_and(|r| AsrProtocol::resolve(self.provider, &r.url, &r.model).streams())
     }
 }
 
@@ -976,7 +992,7 @@ impl ResolvedEngines {
             models.iter().find(|m| m.is_streaming()).map(|m| LocalModelRef { id: m.id.clone(), name: m.name.clone(), installed: m.state.is_installed() });
         let providers = provider_statuses(settings, secrets, built_in, &local, asr_provider, llm_provider);
         let cloud_preview = asr_provider == ProviderId::Builtin && asr_remote.is_some() && built_in.asr_live_preview;
-        let asr_streams = asr_remote.as_ref().is_some_and(|r| AsrProtocol::of(&r.url, &r.model).streams());
+        let asr_streams = asr_remote.as_ref().is_some_and(|r| AsrProtocol::resolve(asr_provider, &r.url, &r.model).streams());
         let asr_primary = match (&local_model, &asr_remote) {
             (Some(local), _) => local.installed.then(|| Primary { key: local_key(&local.id), local: true }),
             (None, Some(remote)) => Some(Primary { key: quota_key(ServiceKind::Asr, asr_provider, remote), local: false }),
@@ -1129,7 +1145,7 @@ impl ResolvedEngines {
         if self.asr_provider == ProviderId::Local {
             return Some(GlossaryRoute::NotSupported);
         }
-        self.asr_remote.as_ref().map(|remote| GlossaryRoute::remote(&remote.url, &remote.model))
+        self.asr_remote.as_ref().map(|remote| GlossaryRoute::for_service(self.asr_provider, &remote.url, &remote.model))
     }
 
     /// The UI projection: provider ids, models, user-entered hosts and key presence only, and from
@@ -1259,7 +1275,11 @@ fn provider_statuses(
         match provider {
             ProviderId::Builtin => {
                 let remote = built_in.service(kind, settings.provider(provider).model(kind))?;
-                let key = SecretState { set: remote.key.is_some(), source: if remote.key.is_some() { SecretSource::Builtin } else { SecretSource::None } };
+                let key = SecretState {
+                    set: remote.key.is_some(),
+                    source: if remote.key.is_some() { SecretSource::Builtin } else { SecretSource::None },
+                    credential_set: None,
+                };
                 Some(ServiceStatus {
                     model: remote.model,
                     presets: built_in.models(kind).into_iter().map(str::to_owned).collect(),
@@ -1286,7 +1306,6 @@ fn provider_statuses(
             _ => {
                 let target = service_target(provider, kind, settings, secrets, built_in);
                 let choice = settings.provider(provider);
-                let user_key = secrets.get(provider, kind).is_some();
                 let (model, issue) = match &target {
                     Ok(remote) => (remote.model.clone(), None),
                     Err((issue, model)) => (model.clone(), Some(*issue)),
@@ -1297,7 +1316,7 @@ fn provider_statuses(
                     presets: preset.models.iter().map(|m| (*m).to_owned()).collect(),
                     base_url: choice.url(kind).map(str::to_owned).or_else(|| default_base_url.clone()),
                     default_base_url,
-                    key: SecretState { set: user_key, source: if user_key { SecretSource::User } else { SecretSource::None } },
+                    key: SecretState::user(provider, secrets.get(provider, kind)),
                     issue,
                     active,
                     listed: Vec::new(),
@@ -1314,9 +1333,20 @@ fn provider_statuses(
             (asr.is_some() || llm.is_some()).then(|| ProviderStatus {
                 id: spec.id,
                 key: spec.key,
+                credential: spec
+                    .credential
+                    .sets()
+                    .iter()
+                    .map(|set| CredentialSetStatus {
+                        id: set.id.to_owned(),
+                        fields: set.fields.iter().map(|f| CredentialFieldStatus { id: f.id.to_owned(), secret: f.secret, required: f.required }).collect(),
+                    })
+                    .collect(),
+                lists_models: spec.lists_models,
                 on_device: spec.on_device,
                 console: spec.console_url.is_some(),
                 quota: spec.quota_url.is_some(),
+                setup: spec.setup_url.is_some(),
                 asr,
                 llm,
             })
@@ -1331,6 +1361,14 @@ pub struct ProviderStatus {
     pub id: ProviderId,
     /// Credential policy.
     pub key: KeyPolicy,
+    /// For a credential of several fields, its sets, the default first (docs/dictation.md §3.15);
+    /// empty for a plain key.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub credential: Vec<CredentialSetStatus>,
+    /// The vendor lists its models (`GET /models`); without it 测试连接 checks the credential and
+    /// the selects offer the suggested models.
+    #[serde(default = "yes", skip_serializing_if = "is_yes")]
+    pub lists_models: bool,
     /// Runs on this machine.
     pub on_device: bool,
     /// The shell can open the vendor's key page (`provider_console_open`; the phone too since
@@ -1340,12 +1378,46 @@ pub struct ProviderStatus {
     /// `page: quota`, docs/dictation.md §3.5).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub quota: bool,
+    /// The shell can open the vendor's page where the service is activated or the credential's app
+    /// is created (`provider_console_open` with `page: setup`, docs/dictation.md §3.16).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub setup: bool,
     /// Recognition, when the provider offers it in this build.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asr: Option<ServiceStatus>,
     /// Clean-up, when the provider offers it in this build.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub llm: Option<ServiceStatus>,
+}
+
+/// One way a vendor's credential is made up, as the card's form asks for it
+/// ([`crate::providers::CredentialSet`]).
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct CredentialSetStatus {
+    /// Id (the stored credential's `set`).
+    pub id: String,
+    /// Its fields, in the form's order.
+    pub fields: Vec<CredentialFieldStatus>,
+}
+
+/// One field of a credential set ([`crate::providers::CredentialField`]).
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct CredentialFieldStatus {
+    /// Id (the JSON key, `engines.credential.<id>` labels it).
+    pub id: String,
+    /// Hidden while typed.
+    pub secret: bool,
+    /// The service refuses requests without it.
+    pub required: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde's `skip_serializing_if` passes a reference
+fn is_yes(value: &bool) -> bool {
+    *value
 }
 
 /// One service of a provider.
@@ -1588,8 +1660,13 @@ mod tests {
             (ProviderId::Aliyun, Some("qwen-audio-3.1-asr-flash-streaming"), Some(GlossaryRoute::Hotwords)),
             (ProviderId::Aliyun, Some("qwen-audio-3.1-asr-flash-message"), Some(GlossaryRoute::Hotwords)),
             (ProviderId::Aliyun, Some("qwen3-asr-flash"), Some(GlossaryRoute::NotSupported)),
-            (ProviderId::Aliyun, Some("fun-asr-flash-2026-06-15"), Some(GlossaryRoute::NotSupported)),
+            // docs/dictation.md §3.15: Fun-ASR takes the glossary as its context, the vendors their way.
+            (ProviderId::Aliyun, Some("fun-asr-flash-2026-06-15"), Some(GlossaryRoute::Prompt)),
+            (ProviderId::Aliyun, Some("fun-asr-flash-8k-realtime"), Some(GlossaryRoute::NotSupported)),
             (ProviderId::Aliyun, Some("paraformer-realtime-v2"), Some(GlossaryRoute::NotSupported)),
+            (ProviderId::Tencent, None, Some(GlossaryRoute::Hotwords)),
+            (ProviderId::Iflytek, None, Some(GlossaryRoute::NotSupported)),
+            (ProviderId::Stepfun, Some("stepaudio-2.5-asr-stream"), Some(GlossaryRoute::Prompt)),
         ];
         for (provider, model, expected) in cases {
             assert_eq!(route(provider, model, true, &BuiltIn::EMPTY), expected, "{provider:?} {model:?}");
@@ -1656,7 +1733,10 @@ mod tests {
         assert!(!json.contains("language") && !json.contains("local_model") && !json.contains("llm_provider"), "{json}");
         assert_eq!(serde_json::from_str::<EngineStatus>(&json).unwrap(), empty);
         assert_eq!(serde_json::from_str::<EngineStatus>("{}").unwrap(), empty, "every field has a default");
-        assert_eq!(serde_json::to_string(&SecretState { set: true, source: SecretSource::Builtin }).unwrap(), r#"{"set":true,"source":"builtin"}"#);
+        assert_eq!(
+            serde_json::to_string(&SecretState { set: true, source: SecretSource::Builtin, credential_set: None }).unwrap(),
+            r#"{"set":true,"source":"builtin"}"#
+        );
         assert_eq!(serde_json::to_string(&EngineIssue::KeyMissing).unwrap(), r#""key_missing""#);
     }
 
@@ -1696,7 +1776,7 @@ mod tests {
         let builtin = st.providers.iter().find(|p| p.id == ProviderId::Builtin).unwrap();
         let asr = builtin.asr.as_ref().unwrap();
         assert!(asr.active && asr.base_url.is_none() && asr.issue.is_none());
-        assert_eq!(asr.key, SecretState { set: true, source: SecretSource::Builtin });
+        assert_eq!(asr.key, SecretState { set: true, source: SecretSource::Builtin, credential_set: None });
         assert_eq!(asr.presets, ["Qwen/Qwen3-ASR-1.7B"]);
     }
 
@@ -1829,7 +1909,7 @@ mod tests {
         let asr = vendor.asr.as_ref().unwrap();
         assert_eq!(asr.presets, ["gpt-transcribe", "gpt-4o-mini-transcribe", "whisper-1"]);
         assert_eq!(asr.base_url.as_deref(), Some("https://api.openai.com/v1"));
-        assert_eq!(asr.key, SecretState { set: true, source: SecretSource::User });
+        assert_eq!(asr.key, SecretState { set: true, source: SecretSource::User, credential_set: None });
         assert!(asr.active && vendor.llm.as_ref().is_some_and(|l| !l.active && l.key.set), "one key, both services");
         assert!(vendor.console);
         // A chosen model and a proxy base URL override the presets; blank ones fall back.

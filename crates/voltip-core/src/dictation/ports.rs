@@ -639,6 +639,10 @@ pub struct StreamFinal {
     /// Whether the session's requests carried the glossary (docs/dictation.md §30.6); `None` when
     /// the session cannot say.
     pub glossary_sent: Option<bool>,
+    /// What a session that ended without any text knows about why, for the reason the take's
+    /// history gives (docs/dictation.md §3.15): what the service answered, the audio it was sent.
+    /// `None` when it gave text or cannot say.
+    pub note: Option<String>,
 }
 
 impl StreamFinal {
@@ -833,6 +837,20 @@ pub trait ForegroundProbe: Send + Sync {
 pub trait ServiceProbe: Send + Sync {
     /// The model ids `base_url` lists, with `key` as the bearer token.
     async fn list_models(&self, base_url: &str, key: Option<&str>) -> Result<Vec<String>, crate::providers::ProbeError>;
+
+    /// For a vendor that lists no models (`ProviderSpec::lists_models`, docs/dictation.md §3.15):
+    /// whether `provider`'s recognition at `base_url` takes `key` (its stored form) for `model`,
+    /// by the smallest valid request the vendor answers. A shell that cannot ask says so.
+    async fn check_credentials(
+        &self,
+        provider: crate::providers::ProviderId,
+        base_url: &str,
+        key: Option<&str>,
+        model: &str,
+    ) -> Result<(), crate::providers::ProbeError> {
+        let _ = (provider, base_url, key, model);
+        Err(crate::providers::ProbeError::new(crate::providers::ProbeFailure::Unsupported))
+    }
 }
 
 /// How the text reached the user.
@@ -1144,7 +1162,7 @@ mod tests {
         assert_eq!(serde_json::to_string(&segment).unwrap(), r#"{"text":"你好。","start_ms":120,"end_ms":1480}"#);
         assert_eq!(
             StreamFinal::default(),
-            StreamFinal { committed: Vec::new(), tail: String::new(), model: None, provider: None, fallback: None, glossary_sent: None }
+            StreamFinal { committed: Vec::new(), tail: String::new(), model: None, provider: None, fallback: None, glossary_sent: None, note: None }
         );
         assert_eq!(PARTIAL_THROTTLE, Duration::from_millis(80));
         assert_eq!(LIVE_CHUNK_SAMPLES as u32 * 10, LIVE_SAMPLE_RATE_HZ, "one chunk is 100 ms");

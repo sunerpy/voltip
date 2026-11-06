@@ -214,7 +214,8 @@ pub async fn run(shell: &Shell, command: &str, args: Value) -> Result<Value, Str
         "guide_open" => {
             let page: GuidePage = arg(command, &args, "page")?;
             let locale: String = arg(command, &args, "locale")?;
-            open(shell, page.url(&locale)).await
+            let provider: Option<ProviderId> = arg(command, &args, "provider")?;
+            open(shell, page.url_for(&locale, provider)).await
         }
         "feedback_diagnostics" => {
             let locale: String = arg(command, &args, "locale")?;

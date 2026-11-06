@@ -1,5 +1,5 @@
 ---
-description: The built-in service, the cloud providers Voltip supports for recognition and AI polish (Alibaba Cloud Model Studio's realtime models among them), and how their keys are stored.
+description: The built-in service and its usage, the cloud providers Voltip supports for recognition and AI polish, the steps every provider shares, fallback models, how keys are stored and the network proxy.
 ---
 
 # Cloud services
@@ -27,7 +27,7 @@ The built-in service counts each device's use by day. Every device can use 60 mi
 - Recordings a phone sends to a computer count toward that computer; recordings a phone recognises itself count toward the phone.
 - For a while after this feature arrives, the built-in service only counts, without a limit, and the app shows **No limit yet**.
 
-On a computer, the **Usage** card in the sidebar shows both services and the time of the reset; click it to open the **Usage** page: the last 7 days, where today's use came from, and other providers' use this month as this computer recorded it. The home page, under each model, and the built-in service's cards on the Speech models and AI models pages show today's use too. On a phone, the **Talk** page shows today's use while the phone recognises, and **Settings › Usage** has the details.
+On a computer, the **Usage** card in the sidebar shows both services and the time of the reset; click it to open the **Usage** page: the last 7 days, where today's use came from, and other providers' use this month as this computer recorded it (a dictation recognised while you speak counts the audio sent). The home page, under each model, and the built-in service's cards on the Speech models and AI models pages show today's use too. On a phone, the **Talk** page shows today's use while the phone recognises, and **Settings › Usage** has the details.
 
 From 80 % of a limit, the home page (on a phone, the **Talk** page) says how much is left. Once a limit is used up:
 
@@ -41,33 +41,45 @@ Other providers and on-device models are not limited by it. Each device has a de
 
 | Provider | Recognition | AI polish | Key |
 | --- | --- | --- | --- |
-| Built-in service | Yes | Yes | Not needed |
-| This computer | Yes, with a [local model](/recognition/local) | — | Not needed |
-| OpenAI | Yes | Yes | Required |
-| Groq | Yes | Yes | Required |
-| Google AI Studio | — | Yes, Gemini models | Required |
-| SiliconFlow | Yes | Yes | Required |
-| Alibaba Cloud Model Studio | Yes, realtime models included | Yes | Required |
-| DeepSeek | — | Yes | Required |
-| Kimi | — | Yes, on its China or international site | Required |
-| Zhipu GLM | — | Yes, on its China or international site (Z.ai) | Required |
-| Volcengine Ark | — | Yes, Doubao and other models | Required |
-| Tencent Hunyuan | — | Yes, through Tencent Cloud TokenHub | Required |
-| Xiaomi MiMo | — | Yes | Required |
-| OpenRouter | — | Yes, many vendors' models | Required |
-| Ollama, on this computer | — | Yes | Not needed |
-| Custom, any OpenAI-compatible endpoint | Yes | Yes | Optional; the endpoint address is required |
+| [Built-in service](#the-built-in-service) | Yes | Yes | Not needed |
+| [This computer](/recognition/local) | Yes, with a [local model](/recognition/local) | — | Not needed |
+| [OpenAI](/recognition/providers#openai) | Yes | Yes | Required |
+| [Groq](/recognition/providers#groq) | Yes | Yes | Required |
+| [Google AI Studio](/recognition/providers#google) | — | Yes, Gemini models | Required |
+| [SiliconFlow](/recognition/providers#siliconflow) | Yes | Yes | Required |
+| [Alibaba Cloud Model Studio](/recognition/providers#aliyun) | Yes, realtime models included | Yes | Required |
+| [Volcengine Doubao Speech](/recognition/providers#volcengine-speech) | Yes, while you speak | — | Required: an API key, or an App ID and Access Token |
+| [Tencent Cloud Speech Recognition](/recognition/providers#tencent) | Yes, while you speak | — | Required: AppId, SecretId and SecretKey |
+| [iFlytek Dictation](/recognition/providers#iflytek) | Yes, while you speak | — | Required: APPID, APIKey and APISecret |
+| [iFlytek Realtime Transcription](/recognition/providers#iflytek-rtasr) | Yes, while you speak | — | Required: APPID and APIKey |
+| [Baidu AI Cloud Speech](/recognition/providers#baidu) | Yes, while you speak | — | Required: AppID and API Key |
+| [StepFun](/recognition/providers#stepfun) | Yes, realtime model included, on its China or international site | — | Required |
+| [DeepSeek](/recognition/providers#deepseek) | — | Yes | Required |
+| [Kimi](/recognition/providers#kimi) | — | Yes, on its China or international site | Required |
+| [Zhipu GLM](/recognition/providers#glm) | Yes, `glm-asr-2512` | Yes, on its China or international site (Z.ai) | Required |
+| [Volcengine Ark](/recognition/providers#volcengine) | — | Yes, Doubao and other models | Required |
+| [Tencent Hunyuan](/recognition/providers#hunyuan) | — | Yes, through Tencent Cloud TokenHub | Required |
+| [Xiaomi MiMo](/recognition/providers#mimo) | Yes, `mimo-v2.5-asr` | Yes | Required |
+| [OpenRouter](/recognition/providers#openrouter) | — | Yes, many vendors' models | Required |
+| [Ollama](/recognition/providers#ollama), on this computer | — | Yes | Not needed |
+| [Custom](/recognition/providers#custom), any OpenAI-compatible endpoint | Yes | Yes | Optional; the endpoint address is required |
 
-A provider that offers both services uses one key for both. The provider cards show each provider's logo.
+A provider that offers both services uses one key for both. The provider cards show each provider's logo. On the Speech models page a card also names what the provider can do: **Realtime** means it has a model that recognises while you speak, and **Hot words** means the terms of your [dictionary](/recognition/dictionary) go with its requests; on the computer the built-in service also shows **Live preview**.
+
+What each provider needs to be activated and where its credentials are is in [Provider setup](/recognition/providers).
+
+While you speak, the overlay shows the words, and release only waits for the last sentence. This needs **Live preview** (on by default); with it off, the recording is recognised when you release the shortcut. If the connection drops, the service fails, or it returns no text at all, Voltip recognises the whole recording instead, the dictation still goes through, and the entry's details in the history say why; see [The overlay shows no text while I speak](/reference/faq#no-live-text). Whether the correct spellings in your [dictionary](/recognition/dictionary) go to each recognition service is in the dictionary page's table.
 
 Recognition can also run on a GPU server of your own, used as the custom endpoint; see [Self-hosted recognition](/recognition/self-host).
 
 ## Setting up a provider
 
-1. On the Speech models or AI models page, select the provider's card. Its settings open in a panel on the right, or from the bottom on the phone.
-2. Choose a model, and for a custom endpoint enter its address. Each provider suggests two or three models, the first being the default, so a provider works as soon as its key is entered. Once a key is saved, the model list shows every model the provider offers after **Other model…** (the **From the provider** group, with their number), updated each time the list opens, so there is no need to type a model ID.
-3. Enter your key. **Test connection** checks the address and the key and shows how many models the provider offers, the same number as in the model list. When it fails, the result ends with what the service answered, for example **The key was refused: Incorrect API key provided**. The Speech models page lists speech recognition models only, and the AI models page leaves out speech, image and embedding models.
+1. On the Speech models or AI models page, select the provider's card. Its settings open in a panel on the right, or from the bottom on the phone. **How to set up** in the settings says what the provider needs to be activated and where its credentials are, with links to activate the service and to get a key; **Full guide** opens its section of [Provider setup](/recognition/providers).
+2. Choose a model, and for a custom endpoint enter its address. Each provider suggests up to three models, the first being the default, so a provider works as soon as its key is entered. Once a key is saved, the model list shows every model the provider offers after **Other model…** (the **From the provider** group, with their number), updated each time the list opens, so there is no need to type a model ID. A speech recognition model that recognises while you speak is marked **realtime** in the list. Under the model, the panel says how the selected model recognises, while you speak or the whole recording after you let go, and whether the dictionary's terms go to it as hot words, as a prompt, or not at all.
+3. Enter your key. A provider whose credential has several parts (Tencent Cloud's AppId, SecretId and SecretKey, for example) takes them one field each; a saved field left blank stays as it is. **Test connection** checks the address and the key and shows how many models the provider offers, the same number as in the model list. For a provider that publishes no model list (Volcengine Doubao Speech, Tencent Cloud, iFlytek and Baidu), the model list holds the suggested models and **Other model…** takes any other model ID; **Test connection** checks the credential only and says **Credentials accepted**. When it fails, the result ends with what the service answered, for example **The key was refused: Incorrect API key provided**. The Speech models page lists speech recognition models only, and the AI models page leaves out speech, image and embedding models.
 4. Choose **Set as current** to save what you entered and switch to the provider. **Set as current** on a card switches to the provider without opening its settings.
+
+Many of the models used for AI polish think before they answer. So that polish finishes quickly, Voltip turns thinking off in its requests; models that cannot stop thinking, such as Kimi K3 and GLM-5.3, are asked for a low reasoning effort.
 
 When a provider refuses a request (a wrong key, a used-up quota, an unknown model, a busy service and so on), the overlay, the home page and the history show what the service answered, for example **Speech recognition failed: the key was refused: Incorrect API key provided**. Keys, tokens and account ids in it are masked; a long answer shows its beginning, and the history's details show all of it.
 
@@ -79,52 +91,9 @@ Once a provider is set up, you can check it on a real recording: **Test with the
 - A test sends the same requests to the recognition service (and to AI polish, when it is on) as a dictation. With **Type as you speak** a dictation is not polished, and neither is a test: the result says **No polish in “Type as you speak” mode**. With the built-in service it counts towards the daily usage, as **Recognized again**.
 - One test runs at a time.
 
-## Google AI Studio
-
-Google AI Studio offers Gemini models for AI polish. Create a key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) (**Get a key** in the provider's settings opens it) and enter it in the Google AI Studio settings on the **AI models** page. The model list suggests Gemini models with a free tier, `gemini-3.5-flash-lite` first: polish handles short texts, and Flash-Lite answers faster. Once the key is saved, the list also shows every text model the key can use, so you choose from the list instead of typing a name.
-
-A Google model is sometimes unavailable for a while because of high demand (HTTP 503); the overlay then says **Not polished · service busy**. Try again later, or pick another model.
-
-On the free tier, Google may use what you send to improve its products; a key from a Google Cloud project with billing turned on is not used that way. See [Privacy](/privacy).
-
 ## China and international sites
 
-Kimi and Zhipu GLM each have a China site and an international site (Zhipu's international site is Z.ai), with separate accounts and keys. Under **Site** in the provider's settings, choose the site you signed up on; the endpoint address changes with it, and **Get a key** opens the key page of that site. The China site is the default.
-
-## Providers in China and OpenRouter
-
-These providers are for AI polish only.
-
-- **Kimi**: suggests the K3 models, `kimi-k3.1-pro-highspeed` first. Kimi's K2 models are closed to new accounts from 31 October 2026.
-- **Zhipu GLM**: suggests `glm-5.3-flash`; `glm-4.7-flash` is free on both sites.
-- **Volcengine Ark**: suggests Doubao Seed models. Enable a model under Model Activation in the Ark console first; otherwise its requests are refused.
-- **Tencent Hunyuan**: used through Tencent Cloud's model platform TokenHub, suggesting `hy3` and `hy4-preview`; TokenHub also offers other vendors' models. Enable a model in the TokenHub console first. For the Singapore site, enter its address `https://tokenhub-intl.tencentmaas.com/v1` as the endpoint address and use a key made there.
-- **Xiaomi MiMo**: suggests `mimo-v2.6-flash` and `mimo-v2.6-pro`. With a Token Plan, enter the plan's own address as the endpoint address.
-- **OpenRouter**: many vendors' models with one key, suggesting fast, inexpensive models such as `google/gemini-3.5-flash-lite`.
-
-Many of these models think before they answer. So that polish finishes quickly, Voltip turns thinking off in its requests; models that cannot stop thinking, such as Kimi K3 and GLM-5.3, are asked for a low reasoning effort.
-
-## The Responses interface
-
-For AI polish, the custom provider's **Interface** can be Chat Completions (the default) or Responses. OpenAI's reasoning models and some gateways (kiro-provider, for example) speak the Responses interface.
-
-- With Responses, **Reasoning effort** can be set (minimal, low, medium, high, xhigh); **Not set** leaves the service's default.
-- The request carries no temperature and no output length limit: reasoning models and these gateways usually refuse both. It asks the service not to store the text.
-- For example, a kiro-provider on this computer: endpoint `http://127.0.0.1:8787/v1`, model `claude-opus-5-5`, interface Responses, reasoning effort high. A higher effort polishes more slowly; when one polish takes longer than 30 seconds, Voltip inserts the recognised text without polish.
-
-## Alibaba Cloud Model Studio
-
-Model Studio's speech models use Model Studio's own interfaces, and Voltip picks the right one from the model's name:
-
-- **Realtime models** (the default qwen-audio-3.1-asr-flash-streaming, and qwen-audio-3.1-asr-flash-message, fun-asr-realtime, paraformer-realtime-v2 and others): the recording goes to Model Studio while you speak and is recognised as it arrives. The overlay shows the words, release only waits for the last sentence, and the whole recording is not recognised a second time. This needs **Live preview** (on by default); with it off, the recording is sent when you release the shortcut, and the wait can come close to the length of the recording. With the output mode **All at once**, takes run as **While you speak**, and the text is still inserted once on release.
-- **Whole-recording models** (qwen-audio-3.1-asr-flash, qwen3-asr-flash, fun-asr-flash): the whole recording is recognised after you release the shortcut, up to about 4 minutes per recording.
-- Models with filetrans in their names, fun-asr, paraformer-v2 and sensevoice-v1 only transcribe recorded files in the background and cannot be used for dictation; qwen3-asr-flash-realtime is not supported yet. The model list leaves them out; with one of them typed in and selected, dictation says to pick another model.
-
-With the endpoint left empty, Voltip uses the public address `https://dashscope.aliyuncs.com/compatible-mode/v1`. For your workspace's own address, enter it under **Endpoint**, for example `https://<workspace ID>.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`; the Singapore region uses `dashscope-intl.aliyuncs.com`. A Model Studio address entered for a **Custom endpoint** follows the same rules.
-
-The correct spellings in your [dictionary](/recognition/dictionary) go to the qwen-audio models as hot words; Model Studio's other speech models take no glossary. For AI polish with Model Studio's Qwen or DeepSeek models, Voltip turns off their thinking mode, which is on by default and makes polish slow.
-
-Model Studio gives newly activated models a free quota, one for each model. **View quota** in the Model Studio settings opens the console's free quota page, where you see each model's remaining quota and usage: Model Studio has no API for reading the quota with an API key, so Voltip does not show it. To use the free quota only, turn on **Free Quota Only** (免费额度用完即停 in the Chinese console) on that page. Once the quota is used up, dictation says that the model's quota is used up, or Voltip moves on to another model: see the next section.
+Kimi, Zhipu GLM and StepFun each have a China site and an international site (Zhipu's international site is Z.ai), with separate accounts and keys. Under **Site** in the provider's settings, choose the site you signed up on; the endpoint address changes with it, and **Get a key** opens the key page of that site. The China site is the default.
 
 ## When a model's quota runs out
 
@@ -191,7 +160,7 @@ Voltip does not support PAC files, automatic proxy detection (WPAD) or `https://
 
 ## What is sent
 
-- **Recognition**: the recording, the model name and your key. If your [dictionary](/recognition/dictionary) has entries, their correct spellings go along as a hint. With a realtime model, the recording is sent while you speak.
+- **Recognition**: the recording, the model name and your key. If your [dictionary](/recognition/dictionary) has entries, their correct spellings go to the recognition services that take a glossary. With a model that recognises while you speak, the recording is sent while you speak.
 - **AI polish**: the recognised text, never audio, together with the app's name unless you turn that off. See [Privacy](/privacy) for the details.
 - **Fallback models**: with **When a model's quota runs out** turned on, the recording or the text goes to the provider of the next model in the list once the selected model's quota is used up (and, with **Also switch when a service fails** on the computer, once the service fails). A local model in the list works on this computer and sends nothing.
 - **Model lists**: when a provider's settings or a model list opens, Voltip asks that provider for its models with the saved key; no recording or text goes with it.

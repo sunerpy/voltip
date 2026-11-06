@@ -44,8 +44,8 @@ export type SwitchedWindow = z.infer<typeof switchedWindowSchema>;
 
 /** Who serves recognition or clean-up (`voltip_core::providers::ProviderId`, docs/dictation.md
  *  §3): the build's own service, the on-device models, OpenAI-compatible vendors, Alibaba Cloud
- *  Model Studio (its own recognition protocols, §3.4), Ollama on this machine and a custom
- *  endpoint. Display order. */
+ *  Model Studio (its own recognition protocols, §3.4), the recognition services with protocols of
+ *  their own (§3.15), Ollama on this machine and a custom endpoint. Display order. */
 export const PROVIDER_IDS = [
   "builtin",
   "local",
@@ -54,6 +54,12 @@ export const PROVIDER_IDS = [
   "google",
   "siliconflow",
   "aliyun",
+  "volcengine_speech",
+  "tencent",
+  "iflytek",
+  "iflytek_rtasr",
+  "baidu",
+  "stepfun",
   "deepseek",
   "kimi",
   "glm",
@@ -371,7 +377,7 @@ export const projectLinkSchema = z.enum(PROJECT_LINKS);
 export type ProjectLink = z.infer<typeof projectLinkSchema>;
 /** Pages of the user guide the shell opens (`voltip_core::ui::GuidePage`), in the language the
  *  webview names. */
-export const GUIDE_PAGES = ["service", "privacy", "mcp", "usage", "bubble"] as const;
+export const GUIDE_PAGES = ["service", "privacy", "mcp", "usage", "bubble", "providers"] as const;
 export const guidePageSchema = z.enum(GUIDE_PAGES);
 export type GuidePage = z.infer<typeof guidePageSchema>;
 
@@ -2250,6 +2256,9 @@ export type HistoryQueryArgs = {
 export const secretStateSchema = z.object({
   set: z.boolean(),
   source: z.enum(["builtin", "user", "none"]),
+  /** For a credential of several fields, the set the stored one is of (docs/dictation.md §3.15):
+   *  the form opens on it. Never a field's value. */
+  credential_set: z.string().optional(),
 });
 export type SecretState = z.infer<typeof secretStateSchema>;
 
@@ -2289,10 +2298,35 @@ export const serviceStatusSchema = z.object({
 });
 export type ServiceStatus = z.infer<typeof serviceStatusSchema>;
 
+/** One field of a credential set (`voltip_core::engines::CredentialFieldStatus`). */
+export const credentialFieldSchema = z.object({
+  /** The JSON key; `engines.credential.<id>` labels it. */
+  id: z.string(),
+  /** Hidden while typed. */
+  secret: z.boolean(),
+  /** The service refuses requests without it. */
+  required: z.boolean(),
+});
+export type CredentialField = z.infer<typeof credentialFieldSchema>;
+
+/** One way a vendor's credential is made up (`voltip_core::engines::CredentialSetStatus`). */
+export const credentialSetSchema = z.object({
+  /** The stored credential's `set`. */
+  id: z.string(),
+  fields: z.array(credentialFieldSchema),
+});
+export type CredentialSet = z.infer<typeof credentialSetSchema>;
+
 /** One provider card (`voltip_core::engines::ProviderStatus`). */
 export const providerStatusSchema = z.object({
   id: providerIdSchema,
   key: keyPolicySchema,
+  /** For a credential of several fields, its sets, the default first (docs/dictation.md §3.15);
+   *  absent for a plain key. */
+  credential: z.array(credentialSetSchema).optional(),
+  /** The vendor lists its models; `false`: 测试连接 checks the credential and the selects offer
+   *  the suggested models (§3.15). Absent = true. */
+  lists_models: z.boolean().optional(),
   on_device: z.boolean(),
   /** The shell can open the vendor's key page (`provider_console_open`; the phone too since
    *  2026-10-01). */
@@ -2300,13 +2334,17 @@ export const providerStatusSchema = z.object({
   /** The shell can open the vendor's page of free quota and usage (`provider_console_open` with
    *  `page: "quota"`, docs/dictation.md §3.5); absent = no such page. */
   quota: z.boolean().optional(),
+  /** The shell can open the vendor's page where the service is activated or the credential's app
+   *  is created (`provider_console_open` with `page: "setup"`, docs/dictation.md §3.16); absent =
+   *  no such page. */
+  setup: z.boolean().optional(),
   asr: serviceStatusSchema.optional(),
   llm: serviceStatusSchema.optional(),
 });
 export type ProviderStatus = z.infer<typeof providerStatusSchema>;
 
 /** Which vendor page `provider_console_open` opens (`voltip_core::ConsolePage`). */
-export type ConsolePage = "key" | "quota";
+export type ConsolePage = "key" | "quota" | "setup";
 
 /** Why a fallback model that could run is left out of the chain (`FallbackSkip`): `not_for_local`
  *  is a service while recognition runs on this device (§3.14), which never uploads for a failure. */
@@ -2441,6 +2479,7 @@ export const PROBE_FAILURES = [
   "timeout",
   "http_status",
   "bad_response",
+  "refused",
 ] as const;
 export const probeFailureSchema = z.enum(PROBE_FAILURES);
 export type ProbeFailure = z.infer<typeof probeFailureSchema>;
@@ -3626,16 +3665,22 @@ export interface CommandArgs {
     kind: ServiceKind;
     baseUrl?: string | null;
     key?: string | null;
+    /** The form's model (`null` = the saved one): a vendor that lists no models is checked with
+     *  it (docs/dictation.md §3.15). */
+    model?: string | null;
   };
   /** List a provider's models with the saved endpoint and key as a model list opens
    *  (docs/dictation.md §3.3); the list arrives in an `engines` event (`ServiceStatus.listed`). */
   provider_models_refresh: { provider: ProviderId; kind: ServiceKind };
-  /** Open the vendor's API-key page (`page` absent or `key`) or its page of free quota and usage
-   *  (`quota`) in the browser (catalogue URLs only). */
+  /** Open the vendor's API-key page (`page` absent or `key`), its page of free quota and usage
+   *  (`quota`) or the page where its service is activated (`setup`) in the browser (catalogue URLs
+   *  only). */
   provider_console_open: { provider: ProviderId; page?: ConsolePage; site?: SiteId };
   /** Open a project page in the browser; the shell builds the URL from its repository. */
   project_link_open: { link: ProjectLink };
-  guide_open: { page: GuidePage; locale: string };
+  /** Open a page of the user guide in `locale`'s language; `provider` names the section of the
+   *  providers page (docs/dictation.md §3.16). */
+  guide_open: { page: GuidePage; locale: string; provider?: ProviderId };
   /** Query (docs/feedback.md): what a report would carry, and whether the build can send one. */
   feedback_diagnostics: { locale: string };
   /** Query: post the 反馈 dialog's report; rejects with a `FeedbackError` wire name. */

@@ -215,6 +215,14 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
       "Groq",
       "硅基流动",
       "阿里云百炼",
+      "火山引擎豆包语音",
+      "腾讯云语音识别",
+      "讯飞语音听写",
+      "讯飞实时语音转写",
+      "百度智能云语音",
+      "阶跃星辰",
+      "智谱 GLM",
+      "小米 MiMo",
       "自定义接口",
     ]);
     const builtin = providerCard("asr", "builtin");
@@ -1506,6 +1514,14 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
       "groq",
       "siliconflow",
       "aliyun",
+      "volcengine_speech",
+      "tencent",
+      "iflytek",
+      "iflytek_rtasr",
+      "baidu",
+      "stepfun",
+      "glm",
+      "mimo",
       "custom",
     ]);
     expect(providersFor(status, "llm").map((p) => p.id)).toContain("ollama");

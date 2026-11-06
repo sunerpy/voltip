@@ -69,7 +69,8 @@ impl Runtime {
     /// library name their models), without a saved key or address, on a shell without HTTP, or
     /// while the same refresh runs; the selects keep what they offer.
     pub(super) fn refresh_provider_models(&mut self, provider: ProviderId, kind: ServiceKind) -> Result<(), CoreError> {
-        if matches!(provider, ProviderId::Builtin | ProviderId::Local) {
+        // A vendor without `GET /models` offers its suggested models only (docs/dictation.md §3.15).
+        if matches!(provider, ProviderId::Builtin | ProviderId::Local) || !provider.spec().lists_models {
             return Ok(());
         }
         let Ok((url, key)) = self.probe_target(provider, kind, None, None) else { return Ok(()) };

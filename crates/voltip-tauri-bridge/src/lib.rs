@@ -307,9 +307,14 @@ pub enum UiCommand {
         /// Base URL being edited.
         #[serde(default)]
         base_url: Option<String>,
-        /// Key being edited; used for this request only.
+        /// Key being edited; used for this request only (several fields: their JSON, merged over the
+        /// saved ones).
         #[serde(default)]
         key: Option<String>,
+        /// Model being edited: what a vendor that lists no models is checked with
+        /// (docs/dictation.md §3.15).
+        #[serde(default)]
+        model: Option<String>,
     },
     /// List a provider's models with the saved endpoint and key, as a model list opens
     /// (docs/dictation.md §3.3); the list arrives in an `engines` event (`listed`).
@@ -699,7 +704,7 @@ impl UiCommand {
             Self::SettingsSetEngines { engines } => CoreCommand::SetEngines(engines),
             Self::ProviderKeySet { provider, kind, value } => CoreCommand::SetProviderKey { provider, kind, value },
             Self::EnginesQuotaReset { kind } => CoreCommand::ResetQuota(kind),
-            Self::ProviderProbe { provider, kind, base_url, key } => CoreCommand::ProbeProvider { provider, kind, base_url, key },
+            Self::ProviderProbe { provider, kind, base_url, key, model } => CoreCommand::ProbeProvider { provider, kind, base_url, key, model },
             Self::ProviderModelsRefresh { provider, kind } => CoreCommand::RefreshProviderModels { provider, kind },
             Self::HistoryDelete { id } => CoreCommand::HistoryDelete(parse_id(&id)?),
             Self::HistoryClear => CoreCommand::HistoryClear,
@@ -1543,7 +1548,7 @@ mod tests {
             serde_json::from_str(r#"{"command":"provider_probe","provider":"custom","kind":"asr","baseUrl":"http://10.0.0.2:8000/v1"}"#).unwrap();
         assert!(matches!(
             c.into_core().unwrap(),
-            CoreCommand::ProbeProvider { provider: ProviderId::Custom, kind: ServiceKind::Asr, base_url: Some(u), key: None } if u == "http://10.0.0.2:8000/v1"
+            CoreCommand::ProbeProvider { provider: ProviderId::Custom, kind: ServiceKind::Asr, base_url: Some(u), key: None, model: None } if u == "http://10.0.0.2:8000/v1"
         ));
         let c: UiCommand = serde_json::from_str(r#"{"command":"provider_models_refresh","provider":"aliyun","kind":"asr"}"#).unwrap();
         assert!(matches!(c.into_core().unwrap(), CoreCommand::RefreshProviderModels { provider: ProviderId::Aliyun, kind: ServiceKind::Asr }));

@@ -2,7 +2,9 @@
 //! `voltip-asr` behind [`Transcriber`] (Alibaba Cloud Model Studio's models through
 //! [`dashscope`], its realtime ones streaming as well), clean-up and the voice edit's rewrite
 //! through `voltip-refine` behind [`Refiner`], the choice of client for a [`ResolvedEngines`], and
-//! the provider probe behind [`ServiceProbe`]. The desktop adds its local models next to these
+//! the provider probe behind [`ServiceProbe`]. The services with protocols of their own (豆包语音,
+//! Tencent Cloud, iFlytek, Baidu, StepFun, GLM-ASR, MiMo-ASR, docs/dictation.md §3.15) come through
+//! [`vendor`]. The desktop adds its local models next to these
 //! (`apps/desktop/src-tauri/src/dictation.rs`); the phone, which has none, uses them alone when it
 //! recognises a take itself (§20.7). [`feedback`] is the in-app feedback client both shells use.
 
@@ -11,7 +13,9 @@
 
 pub mod access;
 pub mod dashscope;
+mod fed;
 pub mod feedback;
+pub mod vendor;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -274,7 +278,8 @@ pub fn remote_transcriber(engines: &ResolvedEngines, network: &Arc<Network>) -> 
         Some(remote) => {
             // Only the built-in service is told who asks (docs/dictation.md §27).
             let metering = engines.metering.as_ref().filter(|_| engines.asr_provider == ProviderId::Builtin).map(asr_metering);
-            transcriber_with(AsrProtocol::of(&remote.url, &remote.model), remote, asr_upload(engines.asr_provider), metering, network)
+            let protocol = AsrProtocol::resolve(engines.asr_provider, &remote.url, &remote.model);
+            transcriber_with(protocol, remote, asr_upload(engines.asr_provider), metering, network)
         }
     }
 }
@@ -315,6 +320,10 @@ fn transcriber_with(
         AsrProtocol::DashscopeMultimodal => DashscopeTranscriber::new(config, DashscopeMode::Multimodal).map(|t| Arc::new(t) as Arc<dyn Transcriber>),
         AsrProtocol::DashscopeDuplex => DashscopeTranscriber::new(config, DashscopeMode::Duplex).map(|t| Arc::new(t) as Arc<dyn Transcriber>),
         AsrProtocol::DashscopeUnsupported => return Arc::new(Unconfigured(unsupported_model(&remote.model))),
+        other => match vendor::vendor_of(other) {
+            Some(vendor) => vendor::VendorTranscriber::new(vendor, config).map(|t| Arc::new(t) as Arc<dyn Transcriber>),
+            None => return Arc::new(Unconfigured(format!("识别服务配置无效：{other:?}"))),
+        },
     };
     built.unwrap_or_else(|e| {
         tracing::warn!(error = %e, ?protocol, "ASR client not built");
@@ -472,6 +481,42 @@ impl ServiceProbe for HttpServiceProbe {
                 other => ProbeError::new(ProbeFailure::BadResponse).with_detail(other.to_string()),
             }
         })
+    }
+
+    /// The vendor's own smallest valid request (docs/dictation.md §3.15), with the credential in
+    /// its stored form.
+    async fn check_credentials(&self, provider: ProviderId, base_url: &str, key: Option<&str>, model: &str) -> Result<(), ProbeError> {
+        let protocol = AsrProtocol::resolve(provider, base_url, model);
+        let Some(vendor) = vendor::vendor_of(protocol) else { return Err(ProbeError::new(ProbeFailure::Unsupported)) };
+        let config = AsrConfig::new(base_url, model).with_token(key.map(str::to_owned)).with_timeout(PROBE_TIMEOUT).with_network(&self.network);
+        let client = voltip_asr::vendor::client(vendor, config).map_err(probe_error)?;
+        tokio::time::timeout(PROBE_TIMEOUT, client.probe()).await.map_err(|_| ProbeError::new(ProbeFailure::Timeout))?.map_err(probe_error)
+    }
+}
+
+/// A vendor check's failure as 测试连接 reports it, with what the service said (§3.12).
+fn probe_error(error: voltip_asr::AsrError) -> ProbeError {
+    use voltip_asr::AsrError as A;
+    let status = |status: u16, said: String| ProbeError { reason: ProbeFailure::HttpStatus, status: Some(status), detail: None }.with_detail(said);
+    match error {
+        A::InvalidConfig(message) if message.starts_with("base_url") => ProbeError::new(ProbeFailure::InvalidUrl),
+        A::InvalidConfig(message) if message.starts_with("the credential") => ProbeError::new(ProbeFailure::KeyMissing),
+        A::Unauthorized { message } => ProbeError::new(ProbeFailure::Unauthorized).with_detail(message),
+        A::RateLimited { message, .. } => status(429, message),
+        A::Server { status: code, body } => status(code, body),
+        A::Network(message) => ProbeError::new(ProbeFailure::Unreachable).with_detail(message),
+        A::Timeout => ProbeError::new(ProbeFailure::Timeout),
+        A::Service { code, message } | A::QuotaExhausted { code, message, .. } => {
+            let said = if message.is_empty() {
+                code
+            } else if code.is_empty() {
+                message
+            } else {
+                format!("{code}: {message}")
+            };
+            ProbeError::new(ProbeFailure::Refused).with_detail(said)
+        }
+        other => ProbeError::new(ProbeFailure::BadResponse).with_detail(other.to_string()),
     }
 }
 
@@ -694,7 +739,8 @@ mod tests {
 
     /// docs/dictation.md §30.6: every recognition client says whether its request carried the
     /// glossary — an OpenAI-compatible endpoint's `prompt` when there is a term, Model Studio's hot
-    /// words where its model takes them — and the core's route for the same service agrees.
+    /// words or Fun-ASR's context where its model takes them (§3.15) — and the core's route for the
+    /// same service agrees.
     #[tokio::test]
     async fn every_recognition_client_says_whether_the_glossary_went_out() {
         use wiremock::matchers::{method, path};
@@ -720,30 +766,78 @@ mod tests {
         assert!(body.contains("name=\"prompt\"") && body.contains("Voltip"), "{body}");
         let t = transcriber_for(AsrProtocol::OpenaiTranscriptions, &openai, &net()).transcribe(&wav, None, &[]).await.unwrap();
         assert!(!t.glossary_sent, "nothing to send");
-        // Model Studio's native protocol, at the mock's address: its hot words.
-        for (model, sent) in [("qwen-audio-3.1-asr-flash", true), ("fun-asr-flash-2026-06-15", false)] {
+        // Model Studio's native protocol, at the mock's address: qwen-audio's hot words, Fun-ASR's
+        // context, and nothing without a term.
+        let none: Vec<String> = Vec::new();
+        for (model, glossary, sent) in
+            [("qwen-audio-3.1-asr-flash", &terms, true), ("fun-asr-flash-2026-06-15", &terms, true), ("fun-asr-flash-2026-06-15", &none, false)]
+        {
             let studio = remote(format!("{}/compatible-mode/v1", server.uri()), model);
-            let t = transcriber_for(AsrProtocol::DashscopeMultimodal, &studio, &net()).transcribe(&wav, None, &terms).await.unwrap();
-            assert_eq!(t.glossary_sent, sent, "{model}");
+            let t = transcriber_for(AsrProtocol::DashscopeMultimodal, &studio, &net()).transcribe(&wav, None, glossary).await.unwrap();
+            assert_eq!(t.glossary_sent, sent, "{model} with {} terms", glossary.len());
         }
         // The status's route says the same for every model of the catalogue and a few more.
         let studio = "https://dashscope.aliyuncs.com/compatible-mode/v1";
         let mut models: Vec<&str> =
             voltip_core::PROVIDERS.iter().filter(|p| p.id == ProviderId::Aliyun).flat_map(|p| p.asr.map(|a| a.models.to_vec()).unwrap_or_default()).collect();
-        models.extend(["qwen-audio-3.1-asr-flash", "qwen-audio-3.1-asr-flash-message", "fun-asr-realtime", "paraformer-realtime-v2", "qwen3-asr-flash"]);
+        models.extend([
+            "qwen-audio-3.1-asr-flash",
+            "qwen-audio-3.1-asr-flash-message",
+            "fun-asr-realtime",
+            "paraformer-realtime-v2",
+            "qwen3-asr-flash",
+            "fun-asr-flash-2026-06-15",
+            "fun-asr-realtime-2026-02-28",
+            "fun-asr-flash-8k-realtime",
+        ]);
         for model in models {
             let protocol = AsrProtocol::of(studio, model);
             let mode = match protocol {
                 AsrProtocol::DashscopeChat => DashscopeMode::Chat,
                 AsrProtocol::DashscopeMultimodal => DashscopeMode::Multimodal,
                 AsrProtocol::DashscopeDuplex => DashscopeMode::Duplex,
-                AsrProtocol::DashscopeUnsupported | AsrProtocol::OpenaiTranscriptions => continue,
+                _ => continue,
             };
             let client = voltip_asr::DashscopeClient::new(AsrConfig::new(studio, model), mode).unwrap();
-            let route = voltip_core::GlossaryRoute::remote(studio, model);
-            assert_eq!(client.sends_glossary(&terms), route == voltip_core::GlossaryRoute::Hotwords, "{model}: {route:?}");
+            let route = voltip_core::GlossaryRoute::for_service(ProviderId::Aliyun, studio, model);
+            assert_eq!(client.sends_glossary(&terms), route != voltip_core::GlossaryRoute::NotSupported, "{model}: {route:?}");
         }
-        assert_eq!(voltip_core::GlossaryRoute::remote(&server.uri(), "whisper-1"), voltip_core::GlossaryRoute::Prompt);
+        assert_eq!(voltip_core::GlossaryRoute::for_service(ProviderId::Custom, &server.uri(), "whisper-1"), voltip_core::GlossaryRoute::Prompt);
+    }
+
+    /// docs/dictation.md §3.15: for every model of every vendor with a protocol of its own, on each
+    /// of its sites, the client the take uses says what the engines pane says: whether the glossary
+    /// goes out and whether the model recognises while the take is spoken.
+    #[test]
+    fn every_vendor_model_takes_the_glossary_and_streams_as_the_catalogue_says() {
+        let terms = vec!["Voltip".to_owned()];
+        let mut checked = 0;
+        for spec in voltip_core::PROVIDERS {
+            let Some(asr) = spec.asr else { continue };
+            // A credential with every field of the provider's first set, as the core stores it.
+            let credential = match spec.credential {
+                voltip_core::Credential::Key => "k-test".to_owned(),
+                voltip_core::Credential::Sets(sets) => {
+                    let fields: serde_json::Map<String, serde_json::Value> = sets[0].fields.iter().map(|f| (f.id.to_owned(), "1".into())).collect();
+                    voltip_core::merge_credentials(spec.id, None, &serde_json::Value::Object(fields).to_string()).unwrap()
+                }
+            };
+            let mut bases: Vec<&str> = std::iter::once(asr.base_url).chain(asr.sites.iter().map(|s| s.base_url)).collect();
+            bases.dedup();
+            for base in bases {
+                for model in asr.models {
+                    let protocol = AsrProtocol::resolve(spec.id, base, model);
+                    let Some(vendor) = crate::vendor::vendor_of(protocol) else { continue };
+                    let client = voltip_asr::vendor::client(vendor, AsrConfig::new(base, *model).with_token(Some(credential.clone())))
+                        .unwrap_or_else(|e| panic!("{:?} {model}: {e}", spec.id));
+                    let route = voltip_core::GlossaryRoute::for_service(spec.id, base, model);
+                    assert_eq!(client.sends_glossary(&terms), route != voltip_core::GlossaryRoute::NotSupported, "{:?} {model}: {route:?}", spec.id);
+                    assert_eq!(client.streams(), protocol.streams(), "{:?} {model}", spec.id);
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked >= 15, "{checked} vendor models");
     }
 
     /// docs/dictation.md §3.14: every failure of the recognition and clean-up clients reaches the

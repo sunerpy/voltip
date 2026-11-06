@@ -1593,6 +1593,12 @@ export const en: Messages = {
       google: "Google AI Studio",
       siliconflow: "SiliconFlow",
       aliyun: "Alibaba Cloud Model Studio",
+      volcengine_speech: "Volcengine Doubao Speech",
+      tencent: "Tencent Cloud Speech Recognition",
+      iflytek: "iFlytek Dictation",
+      iflytek_rtasr: "iFlytek Realtime Transcription",
+      baidu: "Baidu AI Cloud Speech",
+      stepfun: "StepFun",
       deepseek: "DeepSeek",
       kimi: "Kimi",
       glm: "Zhipu GLM",
@@ -1613,17 +1619,60 @@ export const en: Messages = {
       siliconflow: "SenseVoice and open models hosted by SiliconFlow.",
       aliyun:
         "Model Studio's speech recognition and Qwen models; its realtime models transcribe while you speak.",
+      volcengine_speech:
+        "Speech recognition models from Volcengine's Doubao Speech, for recognition only; it transcribes while you speak. Use the new console's API key, or the old console's App ID and Access Token; Volcengine Ark keys do not work here.",
+      tencent:
+        "Tencent Cloud speech recognition, for recognition only; it transcribes while you speak. Enter the AppId, SecretId and SecretKey, and enable speech recognition in the console first.",
+      iflytek:
+        "iFlytek's dictation, for recognition only; it transcribes while you speak, up to 60 seconds at a time and then carries on. Hot words can only be uploaded for the app in the iFlytek console.",
+      iflytek_rtasr:
+        "iFlytek's realtime transcription, for recognition only; it transcribes while you speak with no length limit, which suits long recordings. Its APIKey differs from dictation's.",
+      baidu:
+        "Baidu AI Cloud realtime speech recognition, for recognition only; it transcribes while you speak. Enter the app's AppID and API Key.",
+      stepfun:
+        "StepFun's StepAudio recognition: stepaudio-2.5-asr transcribes whole recordings, stepaudio-2.5-asr-stream transcribes while you speak. Switch between the China and international sites, whose accounts and keys are separate.",
       deepseek: "DeepSeek's chat models, for polish only.",
       kimi: "Moonshot AI's Kimi models, for polish only; switch between the China and international sites, whose accounts and keys are separate.",
-      glm: "Zhipu's GLM models, for polish only; the China site is Zhipu's BigModel platform, the international one Z.ai, and their accounts and keys are separate.",
+      glm: "Zhipu's GLM models and its speech recognition model; the China site is Zhipu's BigModel platform, the international one Z.ai, and their accounts and keys are separate.",
       volcengine:
         "Doubao and other models on Volcengine Ark, for polish only; enable a model under Model Activation in the Ark console first.",
       hunyuan:
         "Hunyuan and other models on Tencent Cloud TokenHub, for polish only; enable a model in the TokenHub console first.",
-      mimo: "Xiaomi's MiMo models, for polish only.",
+      mimo: "Xiaomi's MiMo models and its speech recognition model.",
       openrouter: "Many vendors' models with one key, for polish only.",
       ollama: "Models in Ollama on this computer; text never leaves it.",
       custom: "Any OpenAI-compatible endpoint: vLLM, LocalAI or your own gateway.",
+    },
+    /** docs/dictation.md §3.15: a credential of several fields. */
+    credential: {
+      app_id: "App ID",
+      api_key: "API Key",
+      api_secret: "API Secret",
+      access_token: "Access Token",
+      secret_id: "SecretId",
+      secret_key: "SecretKey",
+      set: {
+        api_key: "New console: API key",
+        app_token: "Old console: App ID and Access Token",
+      },
+      setLabel: "Credential type",
+      saved: "Saved; leave blank to keep it",
+      show: "Show",
+      hide: "Hide",
+      missing: "Enter {fields}",
+      listSeparator: ", ",
+      help: {
+        volcengine_speech:
+          "New console: the API key created in the Doubao Speech console. Old console: the app's App ID and Access Token.",
+        tencent:
+          "Find the AppId in the Tencent Cloud account center; create the SecretId and SecretKey on the API key management page of Cloud Access Management.",
+        iflytek:
+          "Create an app in the iFlytek Open Platform console and add the dictation (streaming) service; its service page shows the APPID, APISecret and APIKey.",
+        iflytek_rtasr:
+          "Add the realtime transcription service to an app in the iFlytek Open Platform console; its service page shows the APPID and APIKey.",
+        baidu:
+          "In the Baidu AI Cloud console, the speech technology app list shows each app's credentials: its AppID and API Key.",
+      },
     },
     ready: "Ready",
     issue: {
@@ -1634,6 +1683,26 @@ export const en: Messages = {
       model_not_installed: "Model not downloaded",
       no_provider: "No provider selected",
     },
+    ability: {
+      realtime: "Realtime",
+      preview: "Live preview",
+      hotwords: "Hot words",
+      realtimeHelp:
+        "Realtime: it recognises while you speak, so only the last sentence is left after you let go.",
+      realtimeOffHelp:
+        "This model can recognise while you speak, but Live preview is off, so it recognises the whole recording after you let go.",
+      previewHelp:
+        "The built-in service shows a preview while you speak, updated about every 2 seconds, and recognises the whole recording after you let go.",
+      wholeHelp: "Recognises the whole recording after you let go.",
+      wholePreviewHelp:
+        "Recognises the whole recording after you let go; to see words while you speak, use Live preview under Recognition.",
+      wholeLocalHelp:
+        "Recognises the whole recording after you let go; the Live preview model on this computer shows a preview while you speak.",
+      hotwordsHelp: "The dictionary's terms go to the service as hot words.",
+      promptHelp: "The dictionary's terms go to the service as a prompt.",
+      noGlossaryHelp:
+        "This service takes no terms: the dictionary corrects the text after recognition, and AI polish gets the terms when it is on.",
+    },
     field: {
       model: "Model",
       modelOther: "Other model…",
@@ -1642,7 +1711,10 @@ export const en: Messages = {
         "Pick from the list. Once a key is saved, the list includes every model the provider offers for this service.",
       modelHelpKeyless:
         "Pick from the list. While the service can be reached, the list includes every model it offers for this service.",
+      modelHelpPresets:
+        "This provider publishes no model list, so these are the suggested models; choose “Other model…” to enter another model ID.",
       modelOffered: "From the provider ({n})",
+      modelRealtime: "{model} · realtime",
       modelListed: {
         one: "The list includes the model the provider offers for this service, updated each time the list opens.",
         other:
@@ -1682,6 +1754,119 @@ export const en: Messages = {
     viewQuota: "View quota",
     quotaHelp:
       "Model Studio has no API for the quota left: check the quota and the usage in its console. With Free Quota Only turned on for a model, the service refuses requests instead of charging once the free quota is used up, and Voltip moves on to the next model under “When a model's quota runs out”.",
+    setup: {
+      title: "How to set up",
+      console: "Open the console",
+      guide: "Full guide",
+      page: {
+        openai: "Add credit",
+        siliconflow: "Verify your identity",
+        aliyun: "Activate Model Studio",
+        volcengine_speech: "Activate the service",
+        tencent: "Activate speech recognition",
+        iflytek: "Create an app",
+        iflytek_rtasr: "Claim the free package",
+        deepseek: "Top up",
+        volcengine: "Activate models",
+        hunyuan: "Enable models",
+        mimo: "Top up",
+        openrouter: "Buy credits",
+        ollama: "Download Ollama",
+      },
+      steps: {
+        openai: {
+          s1: "Sign in to the OpenAI Platform and add credit under Billing: the API is billed by use.",
+          s2: "Create a key on the API keys page and enter it below.",
+        },
+        groq: {
+          s1: "Sign in to the GroqCloud console; the free plan is enough to start.",
+          s2: "Create a key on the API Keys page and enter it below.",
+        },
+        google: {
+          s1: "Sign in to Google AI Studio with a Google account and accept the terms of service.",
+          s2: "Copy or create a key on the API Keys page and enter it below.",
+        },
+        siliconflow: {
+          s1: "Sign in to SiliconFlow and verify your identity: all the free models and top-ups need it.",
+          s2: "Choose New API key on the API keys page and enter the key below.",
+        },
+        aliyun: {
+          s1: "With a verified Alibaba Cloud account, open the Model Studio console in the Beijing region and accept the service agreement: Model Studio is activated with a free quota.",
+          s2: "Speech recognition models also need access enabled in the Model Studio workspace before they answer.",
+          s3: "Create an API key on the API Key page and enter it below; a key works in its own region only.",
+        },
+        volcengine_speech: {
+          s1: "With a verified Volcengine account, activate the streaming speech recognition model under Activation management in the Doubao Speech console.",
+          s2: "Create an API key under API Key management and enter it below; for the old console, choose App ID and Access Token under Credential type.",
+          s3: "Choose the resource ID of the service you activated as the model.",
+        },
+        tencent: {
+          s1: "In the speech recognition console, verify your identity, accept the user agreement and choose Activate; the service then has a monthly free quota.",
+          s2: "Create a key under API key management and copy its SecretId and SecretKey.",
+          s3: "Copy the APPID from Account center and enter all three below.",
+        },
+        iflytek: {
+          s1: "Sign in to the iFlytek Open Platform and create an app under My apps.",
+          s2: "Copy the APPID, APIKey and APISecret from the dictation service page and enter them below.",
+        },
+        iflytek_rtasr: {
+          s1: "On the realtime transcription product page, claim the free package of the standard edition; packages of the large-model edition do not work here.",
+          s2: "Open your app under My apps and go to its realtime transcription service page.",
+          s3: "Copy the APPID and this service's APIKey, which differs from dictation's, and enter them below.",
+        },
+        baidu: {
+          s1: "With a verified Baidu AI Cloud account, open the speech console; the free test resources then arrive by themselves.",
+          s2: "Choose Create app under App list on the left.",
+          s3: "Copy the app's AppID and API Key and enter them below.",
+        },
+        stepfun: {
+          s1: "Sign up on the StepFun platform; the China and international sites keep separate accounts, and the China site needs identity verification first.",
+          s2: "Create an API key on the Interface Keys page, enter it below and choose your site under Site.",
+        },
+        deepseek: {
+          s1: "Sign in to the DeepSeek platform and top up on the Top up page: requests are refused when the balance runs out.",
+          s2: "Create an API key on the API keys page and enter it below.",
+        },
+        kimi: {
+          s1: "Sign up on the Kimi API platform; the China and international sites keep separate accounts and balances.",
+          s2: "The suggested K3.1 Pro models need a top-up first: at least ¥10 on the China site, $1 on the international site.",
+          s3: "Create an API key on the API Keys page, enter it below and choose your site under Site.",
+        },
+        glm: {
+          s1: "Sign up on the Zhipu open platform (China site) or Z.ai (international site); the two keep separate accounts and keys.",
+          s2: "Create a standard API key under API Keys; Coding Plan keys are separate from it.",
+          s3: "Enter the key below and choose your site under Site.",
+        },
+        volcengine: {
+          s1: "Activate the models you want under Activation management in the Volcengine Ark console.",
+          s2: "Create an API key under API Key management and enter it below; Doubao Speech credentials do not work here.",
+        },
+        hunyuan: {
+          s1: "With a verified Tencent Cloud account, sign in to the TokenHub console and activate the service as prompted.",
+          s2: "Enable the models you want under Enable management, where free resources can be claimed; turn on pay-as-you-go once the free quota runs out.",
+          s3: "Choose the Guangzhou region under API Key management, create an API key and enter it below.",
+        },
+        mimo: {
+          s1: "Sign in to the Xiaomi MiMo platform with a Xiaomi account; accounts in mainland China need identity verification before a top-up.",
+          s2: "Top up under Account balance: requests are refused when the balance runs out.",
+          s3: "Create an API key under API Keys and enter it below.",
+        },
+        openrouter: {
+          s1: "Create an OpenRouter account and buy credits on the Credits page; free models take 50 requests a day.",
+          s2: "Create a key on the Keys page, with a credit limit if you like, and enter it below.",
+        },
+        ollama: {
+          s1: "Download and install Ollama, and keep it running on this computer.",
+          s2: "In a terminal, run “ollama pull” with a model name to download the model.",
+          s3: "Leave the endpoint empty to use Ollama on this computer, then choose the model below.",
+        },
+        custom: {
+          s1: "Enter the address of an OpenAI-compatible endpoint, such as http://127.0.0.1:8000/v1.",
+          s2: "Enter a key if the endpoint needs one, then enter or choose a model.",
+          s3: "Choose Test connection to check the address and the key.",
+        },
+      },
+    },
     save: "Save",
     saved: "Saved · {provider}",
     savedKey: " · key written to the system keychain",
@@ -1702,6 +1887,9 @@ export const en: Messages = {
       timeout: "The connection timed out",
       http_status: "The service returned HTTP {status}",
       bad_response: "The response is not a model list",
+      refused: "The service refused the request",
+      /** A vendor that lists no models accepted the credential (docs/dictation.md §3.15). */
+      okChecked: "Credentials accepted · {ms} ms",
       /** A failed probe with what the service said (docs/dictation.md §3.12). */
       withDetail: "{result}: {detail}",
     },

@@ -1023,6 +1023,8 @@ struct OrphanKeep {
 const SCENE_MODE_NOT_READY: &str = "场景要求边说边识别，但实时预览未就绪（已关闭或实时识别模型未下载），本次按整段输出处理";
 /// The same, on a shell without a streaming recogniser.
 const SCENE_MODE_NO_STREAMING: &str = "场景要求边说边识别，但此设备不支持实时识别，本次按整段输出处理";
+/// `Done.live_error` of a stream that ended without any text (docs/dictation.md §12).
+const EMPTY_STREAM: &str = "实时识别未得到文本";
 
 impl std::fmt::Debug for DictationEngine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -2476,7 +2478,7 @@ impl DictationEngine {
         let Some(fin) = self.take.flushed.take() else { return Vec::new() };
         let raw_text = LiveText { committed: fin.committed.clone(), current: fin.tail.clone(), ..LiveText::default() }.preview();
         if raw_text.is_empty() {
-            return self.degrade("实时识别未得到文本".to_owned());
+            return self.degrade(empty_stream_reason(fin.note.as_deref()));
         }
         let mut segments = fin.committed;
         let tail = fin.tail.trim();
@@ -2534,7 +2536,7 @@ impl DictationEngine {
             }
             if self.take.inject.segments.is_empty() {
                 // The stream produced no text at all: the whole take is the safety net.
-                return self.degrade("实时识别未得到文本".to_owned());
+                return self.degrade(empty_stream_reason(fin.note.as_deref()));
             }
             return self.close_live_inject();
         }
@@ -3889,8 +3891,18 @@ fn run_live(job: LiveJob) {
         provider: fin.provider,
         fallback: fin.fallback,
         glossary_sent: fin.glossary_sent,
+        note: fin.note,
     });
     let _ = tx.blocking_send(Internal::StreamFinished { session, result, before });
+}
+
+/// Why a take fell back to the whole recording after its stream ended without text
+/// (docs/dictation.md §12), with what the session knows about it.
+fn empty_stream_reason(note: Option<&str>) -> String {
+    match note.map(str::trim).filter(|note| !note.is_empty()) {
+        Some(note) => format!("{EMPTY_STREAM}（{note}）"),
+        None => EMPTY_STREAM.to_owned(),
+    }
 }
 
 /// Rate limit for partial results: one every [`PARTIAL_THROTTLE`] at most, only when the text
@@ -5697,6 +5709,7 @@ mod tests {
             provider: None,
             fallback: None,
             glossary_sent: None,
+            note: None,
         };
         let fx = r.engine.on_internal(Internal::StreamFinished { session: 1, result: Ok(fin.clone()), before: Receipt::default() });
         assert!(matches!(phase(&fx), DictationPhase::Processing { preview: Some(p), .. } if p == "迟到的"), "a good flush fills an empty preview: {fx:?}");
@@ -6199,6 +6212,30 @@ mod tests {
         r.start_open().await;
         assert_eq!(phase(&r.engine.cancel().unwrap()), &DictationPhase::CANCELLED);
         r.wait_stops(1).await;
+    }
+
+    /// regression: a stream that ended without any text fell back to the whole take with "实时识别
+    /// 未得到文本" alone; the reason now carries what the session said about it (docs/dictation.md
+    /// §12), in both streaming modes, and the take still gets the whole recording's text.
+    #[tokio::test(start_paused = true)]
+    async fn regression_an_empty_stream_says_why_in_its_reason() {
+        let note = "豆包语音返回了 3 次结果，均不含文字；已发送 1.0 秒音频，最大音量 -20 dB";
+        let want = format!("实时识别未得到文本（{note}）");
+        for mode in [OutputMode::StreamingFinal, OutputMode::LiveInject] {
+            let streaming = Arc::new(FakeStreaming::words(Vec::new(), 4).with_finish_note(note));
+            let mut r = rig_mode(FakeAudio::speech(), FakeTranscriber::ok(FAKE_TRANSCRIPT), None, FakeInjector::paste(), streaming.clone(), mode);
+            r.start_open().await;
+            r.engine.stop().unwrap();
+            let fx = r.run_to_terminal().await;
+            assert!(
+                matches!(phase(&fx), DictationPhase::Done { text, mode: OutputMode::WholeTake, live_error: Some(e), .. } if text == FAKE_TRANSCRIPT && *e == want),
+                "{mode:?}: {fx:?}"
+            );
+            assert_eq!(record(&fx).unwrap().live_error.as_deref(), Some(want.as_str()), "{mode:?}");
+            assert_eq!((streaming.finishes(), r.transcriber.calls()), (1, 1), "{mode:?}: flushed once, then the whole take");
+        }
+        assert_eq!(empty_stream_reason(None), "实时识别未得到文本");
+        assert_eq!(empty_stream_reason(Some("  ")), "实时识别未得到文本");
     }
 
     /// Degradation before the first sentence (docs/dictation.md §12): the run becomes a plain whole

@@ -3,6 +3,9 @@ import {
   type ProviderId,
   type ServiceKind,
   defaultEngineSettings,
+  setupPageLabel,
+  setupSteps,
+  zhCN,
   zhT,
 } from "@voltip/shared";
 import { MOCK_PROBE_MS, MockBackend } from "@voltip/shared/mock";
@@ -22,24 +25,34 @@ function Detail({
   id,
   kind,
   localBody,
+  previews,
   onClose,
 }: {
   id: ProviderId;
   kind: ServiceKind;
   localBody?: ReactNode;
+  previews?: boolean;
   onClose: () => void;
 }) {
   const state = useUiState();
   const provider = state.engines.providers.find((p) => p.id === id);
   if (provider === undefined) return null;
-  return <ProviderDetail provider={provider} kind={kind} localBody={localBody} onClose={onClose} />;
+  return (
+    <ProviderDetail
+      provider={provider}
+      kind={kind}
+      localBody={localBody}
+      previews={previews ?? false}
+      onClose={onClose}
+    />
+  );
 }
 
-/** The cards of every provider of `kind`. */
-function Cards({ kind }: { kind: ServiceKind }) {
+/** The cards of every provider of `kind`; `previews` as on the desktop. */
+function Cards({ kind, previews = false }: { kind: ServiceKind; previews?: boolean }) {
   const state = useUiState();
   const providers = state.engines.providers.filter((p) => p[kind] !== undefined);
-  return <ProviderCards kind={kind} providers={providers} label="服务商" />;
+  return <ProviderCards kind={kind} providers={providers} label="服务商" previews={previews} />;
 }
 
 function shell(backend: Backend, ui: ReactNode) {
@@ -58,7 +71,7 @@ function shell(backend: Backend, ui: ReactNode) {
 
 function renderCard(
   backend: Backend,
-  props: { id: ProviderId; kind: ServiceKind; localBody?: ReactNode },
+  props: { id: ProviderId; kind: ServiceKind; localBody?: ReactNode; previews?: boolean },
 ) {
   const onClose = vi.fn();
   const notify = shell(backend, <Detail {...props} onClose={onClose} />);
@@ -109,6 +122,233 @@ describe("ProviderCards (desktop model pages and phone settings)", () => {
     expect(notify).toHaveBeenLastCalledWith(
       t("engines.resetDone", { provider: t("engines.provider.groq") }),
     );
+    backend.destroy();
+  });
+
+  it("docs/dictation.md §3.15: a credential of several fields is saved as one value, a blank field keeping its stored value", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend();
+    const invoke = vi.spyOn(backend, "invoke");
+    renderCard(backend, { id: "tencent", kind: "asr" });
+    const form = await screen.findByTestId("provider-form");
+    expect(within(form).queryByLabelText(t("engines.field.key"))).toBeNull();
+    expect(within(form).getByTestId("credential-help")).toHaveTextContent(
+      t("engines.credential.help.tencent"),
+    );
+    const appId = within(form).getByLabelText(t("engines.credential.app_id"));
+    const secretId = within(form).getByLabelText(t("engines.credential.secret_id"));
+    const secretKey = within(form).getByLabelText(t("engines.credential.secret_key"));
+    expect(appId).toHaveAttribute("type", "text");
+    expect(secretKey).toHaveAttribute("type", "password");
+    await user.click(within(form).getByRole("button", { name: t("engines.credential.show") }));
+    expect(secretKey).toHaveAttribute("type", "text");
+    // Nothing stored yet: every field is needed, and nothing is saved without them.
+    await user.type(appId, "1250000000");
+    const save = within(form).getByRole("button", { name: t("engines.save") });
+    await user.click(save);
+    expect(screen.getByTestId("provider-problem")).toHaveTextContent("请填写 SecretId、SecretKey");
+    expect(invoke).not.toHaveBeenCalledWith("provider_key_set", expect.anything());
+    await user.type(secretId, "test-sid");
+    await user.type(secretKey, "sktest");
+    await user.click(save);
+    expect(invoke).toHaveBeenCalledWith("provider_key_set", {
+      provider: "tencent",
+      kind: "asr",
+      value: '{"set":"default","app_id":"1250000000","secret_id":"test-sid","secret_key":"sktest"}',
+    });
+    // Stored: the fields are empty again, a blank one keeps its value, and one field goes alone.
+    await waitFor(() => {
+      expect(appId).toHaveAttribute("placeholder", t("engines.credential.saved"));
+    });
+    expect(appId).toHaveValue("");
+    await user.type(secretKey, "new-secret-key");
+    await user.click(save);
+    expect(invoke).toHaveBeenCalledWith("provider_key_set", {
+      provider: "tencent",
+      kind: "asr",
+      value: '{"set":"default","secret_key":"new-secret-key"}',
+    });
+    backend.destroy();
+  });
+
+  it("switches 豆包语音 between its new and old console credentials, a new set needing all its fields", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend();
+    await backend.invoke("provider_key_set", {
+      provider: "volcengine_speech",
+      kind: "asr",
+      value: '{"set":"app_token","app_id":"app","access_token":"tok"}',
+    });
+    const invoke = vi.spyOn(backend, "invoke");
+    renderCard(backend, { id: "volcengine_speech", kind: "asr" });
+    const form = await screen.findByTestId("provider-form");
+    const sets = within(form).getByRole("radiogroup", { name: t("engines.credential.setLabel") });
+    // The stored set first, its fields blank and keeping their values.
+    expect(
+      within(sets).getByRole("radio", { name: t("engines.credential.set.app_token") }),
+    ).toHaveAttribute("aria-checked", "true");
+    expect(within(form).getByLabelText(t("engines.credential.access_token"))).toHaveAttribute(
+      "placeholder",
+      t("engines.credential.saved"),
+    );
+    await user.click(
+      within(sets).getByRole("radio", { name: t("engines.credential.set.api_key") }),
+    );
+    expect(within(form).queryByLabelText(t("engines.credential.app_id"))).toBeNull();
+    const key = within(form).getByLabelText(t("engines.credential.api_key"));
+    expect(key).toHaveAttribute("placeholder", "");
+    const save = within(form).getByRole("button", { name: t("engines.save") });
+    await user.click(save);
+    expect(screen.getByTestId("provider-problem")).toHaveTextContent("请填写 API Key");
+    await user.type(key, "volc-key");
+    await user.click(save);
+    expect(invoke).toHaveBeenCalledWith("provider_key_set", {
+      provider: "volcengine_speech",
+      kind: "asr",
+      value: '{"set":"api_key","api_key":"volc-key"}',
+    });
+    backend.destroy();
+  });
+
+  it("tests a vendor without a model list with the form's credential and model, and says the credential was accepted", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend();
+    const invoke = vi.spyOn(backend, "invoke");
+    renderCard(backend, { id: "baidu", kind: "asr" });
+    const form = await screen.findByTestId("provider-form");
+    expect(within(form).getByTestId("provider-model-help")).toHaveTextContent(
+      t("engines.field.modelHelpPresets"),
+    );
+    await user.selectOptions(
+      within(form).getByRole("combobox", { name: t("engines.field.model") }),
+      "1537",
+    );
+    await user.type(within(form).getByLabelText(t("engines.credential.app_id")), "123456");
+    await user.type(within(form).getByLabelText(t("engines.credential.api_key")), "bd-key");
+    await user.click(within(form).getByRole("button", { name: t("engines.probe") }));
+    expect(invoke).toHaveBeenCalledWith("provider_probe", {
+      provider: "baidu",
+      kind: "asr",
+      baseUrl: null,
+      key: '{"set":"default","app_id":"123456","api_key":"bd-key"}',
+      model: "1537",
+    });
+    expect(
+      await screen.findByTestId("probe-result", {}, { timeout: MOCK_PROBE_MS * 20 }),
+    ).toHaveTextContent(t("engines.probeResult.okChecked", { ms: MOCK_PROBE_MS }));
+    backend.destroy();
+  });
+
+  it("regression: 测试连接 with a credential field left empty names the fields and sends nothing", async () => {
+    // 2026-11-04, the packaged app: with the old console's fields empty, 测试连接 answered
+    // 请先填写 API 密钥, a field this form does not have.
+    const user = userEvent.setup();
+    const backend = new MockBackend();
+    const invoke = vi.spyOn(backend, "invoke");
+    renderCard(backend, { id: "volcengine_speech", kind: "asr" });
+    const form = await screen.findByTestId("provider-form");
+    const sets = within(form).getByRole("radiogroup", { name: t("engines.credential.setLabel") });
+    await user.click(
+      within(sets).getByRole("radio", { name: t("engines.credential.set.app_token") }),
+    );
+    const probe = within(form).getByRole("button", { name: t("engines.probe") });
+    await user.click(probe);
+    expect(screen.getByTestId("probe-result")).toHaveTextContent("请填写 App ID、Access Token");
+    expect(invoke).not.toHaveBeenCalledWith("provider_probe", expect.anything());
+    await user.type(within(form).getByLabelText(t("engines.credential.app_id")), "app");
+    await user.type(within(form).getByLabelText(t("engines.credential.access_token")), "tok");
+    await user.click(probe);
+    expect(invoke).toHaveBeenCalledWith("provider_probe", {
+      provider: "volcengine_speech",
+      kind: "asr",
+      baseUrl: null,
+      key: '{"set":"app_token","app_id":"app","access_token":"tok"}',
+      model: null,
+    });
+    expect(
+      await screen.findByText(
+        t("engines.probeResult.okChecked", { ms: MOCK_PROBE_MS }),
+        {},
+        { timeout: MOCK_PROBE_MS * 20 },
+      ),
+    ).toBeInTheDocument();
+    backend.destroy();
+  });
+
+  /** The ability labels on the recognition card of `id`, in order. */
+  const abilitiesOf = async (id: ProviderId) => {
+    const row = within(await screen.findByTestId(`provider-asr-${id}`)).queryByTestId(
+      "provider-abilities",
+    );
+    return row === null ? [] : Array.from(row.children, (label) => label.textContent);
+  };
+
+  it("names on each recognition card whether it recognises while you speak and takes hot words", async () => {
+    const backend = new MockBackend();
+    shell(backend, <Cards kind="asr" />);
+    const realtime = t("engines.ability.realtime");
+    const hotwords = t("engines.ability.hotwords");
+    expect(await abilitiesOf("volcengine_speech")).toEqual([realtime, hotwords]);
+    expect(await abilitiesOf("baidu")).toEqual([realtime]);
+    expect(await abilitiesOf("glm")).toEqual([hotwords]);
+    expect(await abilitiesOf("mimo")).toEqual([]);
+    expect(await abilitiesOf("local")).toEqual([]);
+    // Cards of a shell without live previews (the phone's): the built-in service has none.
+    expect(await abilitiesOf("builtin")).toEqual([hotwords]);
+    backend.destroy();
+  });
+
+  it("names the built-in service's live preview on the desktop's cards", async () => {
+    const backend = new MockBackend();
+    shell(backend, <Cards kind="asr" previews />);
+    expect(await abilitiesOf("builtin")).toEqual([
+      t("engines.ability.preview"),
+      t("engines.ability.hotwords"),
+    ]);
+    backend.destroy();
+  });
+
+  it("marks the realtime models and says under the model how it hears a take, as the model changes", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend();
+    renderCard(backend, { id: "stepfun", kind: "asr" });
+    const form = await screen.findByTestId("provider-form");
+    const model = within(form).getByRole("combobox", { name: t("engines.field.model") });
+    expect(
+      within(model)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual([
+      "stepaudio-2.5-asr",
+      t("engines.field.modelRealtime", { model: "stepaudio-2.5-asr-stream" }),
+      t("engines.field.modelOther"),
+    ]);
+    const help = within(form).getByTestId("provider-abilities-help");
+    expect(help).toHaveTextContent(t("engines.ability.wholeHelp"));
+    expect(help).toHaveTextContent(t("engines.ability.hotwordsHelp"));
+    await user.selectOptions(model, "stepaudio-2.5-asr-stream");
+    expect(help).toHaveTextContent(t("engines.ability.realtimeHelp"));
+    expect(help).toHaveTextContent(t("engines.ability.promptHelp"));
+    backend.destroy();
+  });
+
+  it("says on the desktop what the built-in service and the Live preview model show while you speak", async () => {
+    const backend = new MockBackend();
+    shell(
+      backend,
+      <>
+        <Detail id="builtin" kind="asr" previews onClose={() => undefined} />
+        <Detail id="mimo" kind="asr" previews onClose={() => undefined} />
+      </>,
+    );
+    const builtin = await screen.findByTestId("provider-asr-builtin-detail");
+    expect(within(builtin).getByTestId("provider-abilities-help")).toHaveTextContent(
+      t("engines.ability.previewHelp"),
+    );
+    const mimo = await screen.findByTestId("provider-asr-mimo-detail");
+    const help = within(mimo).getByTestId("provider-abilities-help");
+    expect(help).toHaveTextContent(t("engines.ability.wholePreviewHelp"));
+    expect(help).toHaveTextContent(t("engines.ability.noGlossaryHelp"));
     backend.destroy();
   });
 
@@ -179,9 +419,10 @@ describe("ProviderCards (desktop model pages and phone settings)", () => {
         .getAllByRole("option")
         .map((o) => o.textContent),
     ).toEqual([
-      "qwen-audio-3.1-asr-flash-streaming",
+      // docs/dictation.md §3.15: the realtime models are marked.
+      t("engines.field.modelRealtime", { model: "qwen-audio-3.1-asr-flash-streaming" }),
       "qwen-audio-3.1-asr-flash",
-      "fun-asr-realtime",
+      t("engines.field.modelRealtime", { model: "fun-asr-realtime" }),
       t("engines.field.modelOther"),
     ]);
     expect(form).toHaveTextContent(t("engines.field.baseUrlHelpAliyun"));
@@ -311,6 +552,14 @@ describe("ProviderCards (desktop model pages and phone settings)", () => {
       "Groq",
       "硅基流动",
       "阿里云百炼",
+      "火山引擎豆包语音",
+      "腾讯云语音识别",
+      "讯飞语音听写",
+      "讯飞实时语音转写",
+      "百度智能云语音",
+      "阶跃星辰",
+      "智谱 GLM",
+      "小米 MiMo",
       "自定义接口",
     ]);
     const builtin = screen.getByTestId("provider-asr-builtin");
@@ -552,6 +801,14 @@ describe("ProviderCards (desktop model pages and phone settings)", () => {
       ["Groq", "groq"],
       ["硅基流动", "siliconflow"],
       ["阿里云百炼", "aliyun"],
+      ["火山引擎豆包语音", "volcengine_speech"],
+      ["腾讯云语音识别", "tencent"],
+      ["讯飞语音听写", "iflytek"],
+      ["讯飞实时语音转写", "iflytek_rtasr"],
+      ["百度智能云语音", "baidu"],
+      ["阶跃星辰", "stepfun"],
+      ["智谱 GLM", "glm"],
+      ["小米 MiMo", "mimo"],
       ["自定义接口", "link"],
     ]);
     // The marks are decorative: the provider's name says who it is.
@@ -643,11 +900,55 @@ describe("ProviderCards (desktop model pages and phone settings)", () => {
     renderCard(backend, { id: "builtin", kind: "asr" });
     expect(await screen.findByText(t("engines.builtinBody"))).toBeInTheDocument();
     expect(screen.queryByTestId("provider-form")).toBeNull();
+    // Nothing to set up for either (docs/dictation.md §3.16).
+    expect(screen.queryByTestId("provider-setup-steps")).toBeNull();
+    expect(screen.queryByTestId("provider-guide")).toBeNull();
     backend.destroy();
     const desktop = new MockBackend();
     renderCard(desktop, { id: "local", kind: "asr", localBody: <p>本地模型库</p> });
     expect(await screen.findByText("本地模型库")).toBeInTheDocument();
+    expect(screen.queryByTestId("provider-guide")).toBeNull();
     desktop.destroy();
+  });
+
+  it("docs/dictation.md §3.16: 配置方法 lists the provider's steps and opens its pages and its guide section", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend();
+    renderCard(backend, { id: "ollama", kind: "llm" });
+    const form = await screen.findByTestId("provider-form");
+    expect(within(form).getByRole("heading", { name: t("engines.setup.title") })).toBeVisible();
+    const steps = within(within(form).getByTestId("provider-setup-steps")).getAllByRole("listitem");
+    expect(steps.map((step) => step.textContent)).toEqual(setupSteps("ollama", zhCN));
+    // Ollama has no key: its setup page is the download, and there is no key page.
+    await user.click(within(form).getByTestId("provider-setup"));
+    expect(backend.setupPagesOpened).toEqual(["ollama"]);
+    expect(within(form).getByTestId("provider-setup")).toHaveTextContent(
+      setupPageLabel("ollama", zhCN),
+    );
+    expect(within(form).queryByRole("button", { name: t("engines.getKey") })).toBeNull();
+    await user.click(within(form).getByRole("button", { name: t("engines.setup.guide") }));
+    expect(backend.guidesOpened).toEqual([
+      { page: "providers", locale: "zh-CN", provider: "ollama" },
+    ]);
+    backend.destroy();
+  });
+
+  it("puts 获取密钥 under 配置方法, out of the key row, and shows no setup page a vendor lacks", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend();
+    renderCard(backend, { id: "groq", kind: "asr" });
+    const form = await screen.findByTestId("provider-form");
+    expect(within(form).queryByTestId("provider-setup")).toBeNull();
+    const getKey = within(form).getAllByRole("button", { name: t("engines.getKey") });
+    expect(getKey).toHaveLength(1);
+    expect(getKey[0]).toHaveAttribute("data-testid", "provider-console");
+    await user.click(getKey[0] as HTMLElement);
+    expect(backend.consolesOpened).toEqual(["groq"]);
+    await user.click(within(form).getByTestId("provider-guide"));
+    expect(backend.guidesOpened).toEqual([
+      { page: "providers", locale: "zh-CN", provider: "groq" },
+    ]);
+    backend.destroy();
   });
 });
 

@@ -555,8 +555,9 @@ fn provider_probe(
     kind: ServiceKind,
     base_url: Option<String>,
     key: Option<String>,
+    model: Option<String>,
 ) -> Result<(), String> {
-    Ok(bridge.dispatch(UiCommand::ProviderProbe { provider, kind, base_url, key })?)
+    Ok(bridge.dispatch(UiCommand::ProviderProbe { provider, kind, base_url, key, model })?)
 }
 
 /// List a provider's models with the saved endpoint and key as a model list opens; the list
@@ -566,8 +567,8 @@ fn provider_models_refresh(bridge: tauri::State<'_, Bridge>, provider: ProviderI
     Ok(bridge.dispatch(UiCommand::ProviderModelsRefresh { provider, kind })?)
 }
 
-/// Open the vendor's API-key page (the given site's, docs/dictation.md §3.2), or its page of free
-/// quota and usage, in the browser. Only catalogue URLs can be opened: the webview names a
+/// Open the vendor's API-key page (the given site's, docs/dictation.md §3.2), its page of free
+/// quota and usage, or the page where its service is activated (§3.16), in the browser. Only catalogue URLs can be opened: the webview names a
 /// provider, a page and a site, never a URL.
 #[tauri::command]
 fn provider_console_open(provider: ProviderId, page: Option<ConsolePage>, site: Option<SiteId>) -> Result<(), String> {
@@ -585,11 +586,12 @@ fn project_link_open(link: ProjectLink) -> Result<(), String> {
     tauri_plugin_opener::open_url(link.url(REPOSITORY), None::<&str>).map_err(|e| e.to_string())
 }
 
-/// Open a page of the user guide in the browser, in the language the webview resolved; the
-/// webview names the page and the shell builds the URL.
+/// Open a page of the user guide in the browser, in the language the webview resolved, at the
+/// section of `provider` on the providers page; the webview names the page and the shell builds
+/// the URL.
 #[tauri::command]
-fn guide_open(page: GuidePage, locale: String) -> Result<(), String> {
-    tauri_plugin_opener::open_url(page.url(&locale), None::<&str>).map_err(|e| e.to_string())
+fn guide_open(page: GuidePage, locale: String, provider: Option<ProviderId>) -> Result<(), String> {
+    tauri_plugin_opener::open_url(page.url_for(&locale, provider), None::<&str>).map_err(|e| e.to_string())
 }
 
 /// What a 反馈 report would carry, and whether this build can send one (docs/feedback.md).

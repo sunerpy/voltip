@@ -1,4 +1,6 @@
 import {
+  type LocalPreview,
+  type ProviderDraft,
   type ProviderId,
   type ProviderStatus,
   type ServiceKind,
@@ -7,8 +9,15 @@ import {
   REASONING_EFFORTS,
   type ReasoningEffort,
   applyProviderDraft,
+  asrAbilityHelp,
+  asrCardAbilities,
+  checkProbeDraft,
   checkProviderDraft,
   choosesInterface,
+  clearedSecret,
+  credentialDraft,
+  draftSecret,
+  isStreamingModel,
   modelDisplayName,
   modelListHelp,
   modelOptions,
@@ -16,7 +25,10 @@ import {
   providerBadges,
   providerDraft,
   providerTagline,
+  realtimeModel,
   secretStateLabel,
+  setupPageLabel,
+  setupSteps,
   siteOf,
   siteUrl,
   withProvider,
@@ -37,6 +49,7 @@ import { cx } from "../../cx";
 import { useI18n } from "../../i18n/I18nProvider";
 import { useFeatureShell } from "../shell";
 import { BuiltinUsage, UsageInline, useServiceUsage } from "../usage/Usage";
+import { CredentialFields } from "./CredentialFields";
 import { ProviderMark, hasProviderMark } from "./ProviderMark";
 import { useModelRefresh } from "./useModelRefresh";
 import { useProviderProbe } from "./useProviderProbe";
@@ -57,6 +70,12 @@ const ICONS: Readonly<Record<ProviderId, IconName>> = {
   google: "cloud",
   siliconflow: "cloud",
   aliyun: "cloud",
+  volcengine_speech: "cloud",
+  tencent: "cloud",
+  iflytek: "cloud",
+  iflytek_rtasr: "cloud",
+  baidu: "cloud",
+  stepfun: "cloud",
   deepseek: "cloud",
   kimi: "cloud",
   glm: "cloud",
@@ -82,6 +101,9 @@ export interface ProviderCardsProps {
   localBody?: ReactNode;
   /** The provider whose drawer is open at first (a usage notice's 下载本机模型). */
   initialOpen?: ProviderId;
+  /** The shell shows a live preview while recording (the desktop, `CoreConfig.shows_live_preview`):
+   *  the built-in service's own, or the downloaded Live preview model's (docs/dictation.md §3.15). */
+  previews?: boolean;
 }
 
 /** The providers of one service (docs/dictation.md §3) as a grid of cards (user decision
@@ -97,6 +119,7 @@ export function ProviderCards({
   label,
   localBody,
   initialOpen,
+  previews = false,
 }: ProviderCardsProps) {
   const [openId, setOpenId] = useState<ProviderId | undefined>(initialOpen);
   const open = providers.find((p) => p.id === openId);
@@ -108,6 +131,7 @@ export function ProviderCards({
             <ProviderTile
               provider={p}
               kind={kind}
+              previews={previews}
               open={p.id === openId}
               onOpen={() => {
                 setOpenId(p.id);
@@ -122,6 +146,7 @@ export function ProviderCards({
           provider={open}
           kind={kind}
           localBody={localBody}
+          previews={previews}
           onClose={() => {
             setOpenId(undefined);
           }}
@@ -180,11 +205,13 @@ function useSwitch(provider: ProviderStatus, kind: ServiceKind) {
 function ProviderTile({
   provider,
   kind,
+  previews,
   open,
   onOpen,
 }: {
   provider: ProviderStatus;
   kind: ServiceKind;
+  previews: boolean;
   open: boolean;
   onOpen: () => void;
 }) {
@@ -194,6 +221,8 @@ function ProviderTile({
   const service = provider[kind];
   if (service === undefined) return null;
   const name = t(`engines.provider.${provider.id}`);
+  // docs/dictation.md §3.15: what its recognition models can do, before the card is opened.
+  const abilities = kind === "asr" ? asrCardAbilities(provider, previews, t) : [];
   const model =
     provider.id === "local"
       ? modelDisplayName(
@@ -229,6 +258,15 @@ function ProviderTile({
           <span className="truncate text-[12px] leading-4 text-fg-muted">
             {providerTagline(provider, kind, t)}
           </span>
+          {abilities.length > 0 && (
+            <span className="mt-1 flex flex-wrap gap-1" data-testid="provider-abilities">
+              {abilities.map((a) => (
+                <Badge key={a} tone="neutral">
+                  {a}
+                </Badge>
+              ))}
+            </span>
+          )}
         </div>
         <span className="flex shrink-0 flex-wrap items-center justify-end gap-1">
           <StateBadges service={service} />
@@ -288,10 +326,18 @@ export interface ProviderDetailProps {
   kind: ServiceKind;
   onClose: () => void;
   localBody?: ReactNode;
+  /** `ProviderCardsProps.previews`. */
+  previews?: boolean;
 }
 
 /** One provider's settings for one service, in the drawer a card opens. */
-export function ProviderDetail({ provider, kind, onClose, localBody }: ProviderDetailProps) {
+export function ProviderDetail({
+  provider,
+  kind,
+  onClose,
+  localBody,
+  previews = false,
+}: ProviderDetailProps) {
   const { t } = useI18n();
   const service = provider[kind];
   if (service === undefined) return null;
@@ -311,14 +357,26 @@ export function ProviderDetail({ provider, kind, onClose, localBody }: ProviderD
       width={provider.id === "local" ? LOCAL_DRAWER_WIDTH : DRAWER_WIDTH}
       data-testid={`provider-${kind}-${provider.id}-detail`}>
       {provider.id === "builtin" ? (
-        <BuiltinDetail provider={provider} kind={kind} service={service} onClose={onClose} />
+        <BuiltinDetail
+          provider={provider}
+          kind={kind}
+          service={service}
+          previews={previews}
+          onClose={onClose}
+        />
       ) : provider.id === "local" ? (
         <>
           <DrawerBody>{localBody}</DrawerBody>
           <UseFooter provider={provider} kind={kind} service={service} onClose={onClose} />
         </>
       ) : (
-        <ProviderForm provider={provider} kind={kind} service={service} onClose={onClose} />
+        <ProviderForm
+          provider={provider}
+          kind={kind}
+          service={service}
+          previews={previews}
+          onClose={onClose}
+        />
       )}
     </Drawer>
   );
@@ -371,15 +429,109 @@ function Help({ children, ...rest }: { children: ReactNode; "data-testid"?: stri
   );
 }
 
+/** 配置方法 (docs/dictation.md §3.16): what to do at the vendor before the form works, with its
+ *  pages: where the service is activated, where the key is made, and this provider's section of
+ *  the guide. The shell opens the catalogue's addresses; the webview only names them. */
+function SetupGuide({ provider, site }: { provider: ProviderStatus; site: SiteId | undefined }) {
+  const { backend } = useBackend();
+  const { t, locale, messages } = useI18n();
+  const steps = setupSteps(provider.id, messages);
+  return (
+    <Group title={t("engines.setup.title")}>
+      {steps.length > 0 && (
+        <ol
+          className="flex list-decimal flex-col gap-1 pl-5 text-[12px] leading-5 text-fg-muted"
+          data-testid="provider-setup-steps">
+          {steps.map((step) => (
+            <li key={step}>{step}</li>
+          ))}
+        </ol>
+      )}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        {provider.setup === true && (
+          <Button
+            size="sm"
+            variant="text"
+            icon="external"
+            data-testid="provider-setup"
+            onClick={() => {
+              void backend.providerConsoleOpen(provider.id, "setup");
+            }}>
+            {setupPageLabel(provider.id, messages)}
+          </Button>
+        )}
+        {provider.console && (
+          <Button
+            size="sm"
+            variant="text"
+            icon="external"
+            data-testid="provider-console"
+            onClick={() => {
+              void backend.providerConsoleOpen(provider.id, undefined, site);
+            }}>
+            {t("engines.getKey")}
+          </Button>
+        )}
+        <Button
+          size="sm"
+          variant="text"
+          icon="external"
+          data-testid="provider-guide"
+          onClick={() => {
+            backend.guideOpen("providers", locale, provider.id).catch(() => undefined);
+          }}>
+          {t("engines.setup.guide")}
+        </Button>
+      </div>
+    </Group>
+  );
+}
+
+/** Under a recognition model (docs/dictation.md §3.15): how `model` hears a take and where the
+ *  dictionary's terms go, for the shell this is. */
+function AbilityHelp({
+  provider,
+  url,
+  model,
+  previews,
+}: {
+  provider: ProviderId;
+  url: string;
+  model: string;
+  previews: boolean;
+}) {
+  const { t } = useI18n();
+  const state = useUiState();
+  const preview = previews ? state.models.find(isStreamingModel) : undefined;
+  const localPreview: LocalPreview =
+    preview === undefined ? "none" : preview.state.kind === "installed" ? "installed" : "missing";
+  const lines = asrAbilityHelp(
+    provider,
+    url,
+    model,
+    { previews, livePreview: state.settings.engines.live_preview, localPreview },
+    t,
+  );
+  return (
+    <div className="flex flex-col gap-0.5" data-testid="provider-abilities-help">
+      {lines.map((line) => (
+        <Help key={line}>{line}</Help>
+      ))}
+    </div>
+  );
+}
+
 function BuiltinDetail({
   provider,
   kind,
   service,
+  previews,
   onClose,
 }: {
   provider: ProviderStatus;
   kind: ServiceKind;
   service: ServiceStatus;
+  previews: boolean;
   onClose: () => void;
 }) {
   const { backend } = useBackend();
@@ -419,6 +571,9 @@ function BuiltinDetail({
               {t("engines.model", { model: service.model })}
             </div>
           )}
+          {kind === "asr" && (
+            <AbilityHelp provider={provider.id} url="" model={service.model} previews={previews} />
+          )}
           <ProbePanel
             probe={probe}
             onRun={() => {
@@ -436,12 +591,24 @@ function BuiltinDetail({
 function ProbePanel({
   probe,
   onRun,
+  checked = false,
+  issue,
 }: {
   probe: ReturnType<typeof useProviderProbe>;
   onRun: () => void;
+  /** The vendor lists no models: an answer checked the credential. */
+  checked?: boolean;
+  /** Why the last 测试连接 was not sent (a credential field left empty), shown instead of an
+   *  earlier answer. */
+  issue?: string | undefined;
 }) {
   const { t } = useI18n();
-  const result = probe.report ? probeText(probe.report, t) : undefined;
+  const result =
+    issue !== undefined
+      ? { ok: false, text: issue }
+      : probe.report
+        ? probeText(probe.report, t, checked)
+        : undefined;
   return (
     <div className="flex flex-wrap items-center gap-3 rounded-10 bg-inset px-3 py-2.5">
       <Button size="sm" variant="outline" icon="refresh" loading={probe.pending} onClick={onRun}>
@@ -466,11 +633,13 @@ function ProviderForm({
   provider,
   kind,
   service,
+  previews,
   onClose,
 }: {
   provider: ProviderStatus;
   kind: ServiceKind;
   service: ServiceStatus;
+  previews: boolean;
   onClose: () => void;
 }) {
   const { backend } = useBackend();
@@ -478,17 +647,28 @@ function ProviderForm({
   const { t, locale } = useI18n();
   const state = useUiState();
   const name = t(`engines.provider.${provider.id}`);
-  const [draft, setDraft] = useState(() =>
-    providerDraft(state.settings.engines, provider.id, kind),
-  );
+  // A credential of several fields is edited field by field (docs/dictation.md §3.15).
+  const opened = () => {
+    const credential = credentialDraft(provider, service);
+    const draft = providerDraft(state.settings.engines, provider.id, kind);
+    return credential === undefined ? draft : { ...draft, credential };
+  };
+  const [draft, setDraft] = useState(opened);
   const [showKey, setShowKey] = useState(false);
   const [problem, setProblem] = useState<string | undefined>(undefined);
+  const [probeIssue, setProbeIssue] = useState<string | undefined>(undefined);
   const probe = useProviderProbe(provider.id, kind);
   const probed = probe.report?.result === "ok" ? (probe.report.models ?? []) : [];
-  const options = modelOptions(service, probed, t, {
-    value: OTHER_MODEL,
-    label: t("engines.field.modelOther"),
-  });
+  // The address the form's requests would go to: what it holds, else the official one.
+  const url =
+    draft.baseUrl.trim().length > 0 ? draft.baseUrl.trim() : (service.default_base_url ?? "");
+  const options = modelOptions(
+    service,
+    probed,
+    t,
+    { value: OTHER_MODEL, label: t("engines.field.modelOther") },
+    kind === "asr" ? realtimeModel(provider.id, url) : undefined,
+  );
   const choices = options.filter((o) => o.value !== OTHER_MODEL).map((o) => o.value);
   const effectiveModel = draft.model.length > 0 ? draft.model : service.model;
   const [typing, setTyping] = useState(() => choices.length === 0);
@@ -519,13 +699,13 @@ function ProviderForm({
         engines: use ? withProvider(engines, kind, provider.id) : engines,
       }),
     ];
-    const key = draft.key.trim();
-    if (key.length > 0)
-      sent.push(backend.invoke("provider_key_set", { provider: provider.id, kind, value: key }));
+    const typed = draftSecret(draft);
+    if (typed !== undefined)
+      sent.push(backend.invoke("provider_key_set", { provider: provider.id, kind, value: typed }));
     // The list for the endpoint and key just saved, once the core has them.
     Promise.all(sent).then(refreshModels, () => undefined);
-    setDraft({ ...draft, key: "" });
-    return key.length > 0 ? t("engines.savedKey") : "";
+    setDraft(clearedSecret(draft));
+    return typed !== undefined ? t("engines.savedKey") : "";
   };
   const save = () => {
     const keyNote = write(false);
@@ -548,11 +728,11 @@ function ProviderForm({
         baseUrl: "",
       }),
     });
-    setDraft(
-      choosesInterface(provider.id, kind)
-        ? { model: "", baseUrl: "", key: "", api: "chat_completions" }
-        : { model: "", baseUrl: "", key: "" },
-    );
+    const credential = credentialDraft(provider, service);
+    const cleared: ProviderDraft = choosesInterface(provider.id, kind)
+      ? { model: "", baseUrl: "", key: "", api: "chat_completions" }
+      : { model: "", baseUrl: "", key: "" };
+    setDraft(credential === undefined ? cleared : { ...cleared, credential });
     setTyping(false);
     setProblem(undefined);
     notify(t("engines.resetDone", { provider: name }));
@@ -596,6 +776,14 @@ function ProviderForm({
             />
           )}
           <Help data-testid="provider-model-help">{modelListHelp(provider, service, t)}</Help>
+          {kind === "asr" && (
+            <AbilityHelp
+              provider={provider.id}
+              url={url}
+              model={effectiveModel}
+              previews={previews}
+            />
+          )}
           {choosesInterface(provider.id, kind) && (
             // docs/dictation.md §3.7: the custom clean-up's interface, and the Responses effort.
             <>
@@ -637,6 +825,7 @@ function ProviderForm({
             </>
           )}
         </Group>
+        <SetupGuide provider={provider} site={site} />
         <Group title={t("engines.detail.connection")}>
           {sites.length > 1 && (
             <div className="flex flex-col gap-1" data-testid="provider-site" data-site={site}>
@@ -673,55 +862,55 @@ function ProviderForm({
           />
           {takesKey && (
             <>
-              <Input
-                label={
-                  provider.key === "required"
-                    ? t("engines.field.key")
-                    : t("engines.field.keyOptional")
-                }
-                mono
-                type={showKey ? "text" : "password"}
-                autoComplete="off"
-                value={draft.key}
-                placeholder={
-                  service.key.set
-                    ? t("engines.field.keyPlaceholderSet")
-                    : t("engines.field.keyPlaceholderUnset")
-                }
-                onChange={(e) => {
-                  setDraft({ ...draft, key: e.target.value });
-                }}
-                help={
-                  shared
-                    ? t("engines.field.keyShared", { provider: name })
-                    : t("engines.field.keyHelp")
-                }
-                trailing={
-                  <IconButton
-                    icon="eye"
-                    label={showKey ? t("engines.field.hideKey") : t("engines.field.showKey")}
-                    onClick={() => {
-                      setShowKey(!showKey);
-                    }}
-                  />
-                }
-              />
+              {draft.credential !== undefined ? (
+                <CredentialFields
+                  provider={provider}
+                  service={service}
+                  draft={draft.credential}
+                  onChange={(credential) => {
+                    setDraft({ ...draft, credential });
+                  }}
+                />
+              ) : (
+                <Input
+                  label={
+                    provider.key === "required"
+                      ? t("engines.field.key")
+                      : t("engines.field.keyOptional")
+                  }
+                  mono
+                  type={showKey ? "text" : "password"}
+                  autoComplete="off"
+                  value={draft.key}
+                  placeholder={
+                    service.key.set
+                      ? t("engines.field.keyPlaceholderSet")
+                      : t("engines.field.keyPlaceholderUnset")
+                  }
+                  onChange={(e) => {
+                    setDraft({ ...draft, key: e.target.value });
+                  }}
+                  help={
+                    shared
+                      ? t("engines.field.keyShared", { provider: name })
+                      : t("engines.field.keyHelp")
+                  }
+                  trailing={
+                    <IconButton
+                      icon="eye"
+                      label={showKey ? t("engines.field.hideKey") : t("engines.field.showKey")}
+                      onClick={() => {
+                        setShowKey(!showKey);
+                      }}
+                    />
+                  }
+                />
+              )}
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px]">
                 <span className="text-fg-subtle">{t("engines.field.keyState")}</span>
                 <LampText tone={secret.tone} size="sm">
                   <span data-testid="provider-key-state">{secret.text}</span>
                 </LampText>
-                {provider.console && (
-                  <Button
-                    size="sm"
-                    variant="text"
-                    icon="external"
-                    onClick={() => {
-                      void backend.providerConsoleOpen(provider.id, undefined, site);
-                    }}>
-                    {t("engines.getKey")}
-                  </Button>
-                )}
                 {provider.quota === true && (
                   <Button
                     size="sm"
@@ -747,8 +936,13 @@ function ProviderForm({
           )}
           <ProbePanel
             probe={probe}
+            checked={provider.lists_models === false}
+            issue={probeIssue}
             onRun={() => {
-              probe.run({ baseUrl: draft.baseUrl, key: draft.key });
+              const issue = checkProbeDraft(draft, provider, kind, t);
+              setProbeIssue(issue);
+              if (issue === undefined)
+                probe.run({ baseUrl: draft.baseUrl, key: draftSecret(draft), model: draft.model });
             }}
           />
           {problem !== undefined && (

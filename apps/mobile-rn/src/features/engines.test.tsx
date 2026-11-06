@@ -2,6 +2,7 @@
 // every model the provider lists, headed with 测试连接's count and asked for again as it opens;
 // Model Studio's sheet and its fallback note link the console page of free quota and usage.
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react-native";
+import { setupPageLabel, setupSteps, zhCN } from "@voltip/shared";
 import { MOCK_PROBE_MS, MockBackend } from "@voltip/shared/mock";
 
 import { openTab, renderApp } from "../test/render";
@@ -198,6 +199,112 @@ describe("a provider's sheet", () => {
     expect(sheet.queryByTestId("provider-model-id")).toBeNull();
   });
 
+  it("docs/dictation.md §3.15: a credential of several fields is saved as one value; 豆包语音 switches its set", async () => {
+    const { backend } = await renderApp();
+    const invoke = jest.spyOn(backend, "invoke");
+    const sheet = await openSheet(
+      "settings-speech",
+      "asr",
+      "volcengine_speech",
+      "火山引擎豆包语音",
+    );
+    expect(sheet.queryByTestId("provider-key")).toBeNull();
+    expect(sheet.getByTestId("credential-help")).toHaveTextContent(/豆包语音控制台/);
+    expect(sheet.getByTestId("credential-api_key")).toHaveProp("secureTextEntry", true);
+    await fireEvent.press(sheet.getByLabelText("显示"));
+    expect(sheet.getByTestId("credential-api_key")).toHaveProp("secureTextEntry", false);
+    // The old console's set: its two fields, both needed while nothing is stored.
+    await fireEvent.press(sheet.getByTestId("credential-set-app_token"));
+    expect(sheet.queryByTestId("credential-api_key")).toBeNull();
+    await fireEvent.changeText(sheet.getByTestId("credential-app_id"), "volc-app");
+    await fireEvent.press(sheet.getByTestId("provider-save"));
+    expect(await sheet.findByTestId("provider-problem")).toHaveTextContent("请填写 Access Token");
+    await fireEvent.changeText(sheet.getByTestId("credential-access_token"), "volc-token");
+    await fireEvent.press(sheet.getByTestId("provider-save"));
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("provider_key_set", {
+        provider: "volcengine_speech",
+        kind: "asr",
+        value: '{"set":"app_token","app_id":"volc-app","access_token":"volc-token"}',
+      });
+    });
+    await waitFor(() => {
+      expect(sheet.getByTestId("credential-app_id")).toHaveProp(
+        "placeholder",
+        "已保存，留空则不变",
+      );
+    });
+    expect(sheet.getByTestId("credential-app_id")).toHaveDisplayValue("");
+  });
+
+  it("tests a vendor without a model list with the form's credential and model", async () => {
+    const { backend } = await renderApp();
+    const invoke = jest.spyOn(backend, "invoke");
+    const sheet = await openSheet("settings-speech", "asr", "iflytek", "讯飞语音听写");
+    expect(sheet.getByTestId("provider-model-help")).toHaveTextContent(/不提供模型清单/);
+    await fireEvent.changeText(sheet.getByTestId("credential-app_id"), "595f23df");
+    await fireEvent.changeText(sheet.getByTestId("credential-api_key"), "iat-key");
+    await fireEvent.changeText(sheet.getByTestId("credential-api_secret"), "iat-secret");
+    await fireEvent.press(sheet.getByTestId("provider-probe"));
+    expect(invoke).toHaveBeenCalledWith("provider_probe", {
+      provider: "iflytek",
+      kind: "asr",
+      baseUrl: null,
+      key: '{"set":"default","app_id":"595f23df","api_key":"iat-key","api_secret":"iat-secret"}',
+      model: null,
+    });
+    await waitFor(() => {
+      expect(sheet.getByTestId("probe-result")).toHaveTextContent(`凭据有效 · ${MOCK_PROBE_MS} ms`);
+    }, LONG);
+  });
+
+  it("regression: 测试连接 with a credential field left empty names the fields and sends nothing", async () => {
+    // 2026-11-04, the packaged desktop app: with a field empty, 测试连接 answered 请先填写 API 密钥,
+    // a field these forms do not have. The phone's sheet shares the check.
+    const { backend } = await renderApp();
+    const invoke = jest.spyOn(backend, "invoke");
+    const sheet = await openSheet("settings-speech", "asr", "iflytek", "讯飞语音听写");
+    await fireEvent.changeText(sheet.getByTestId("credential-app_id"), "595f23df");
+    await fireEvent.press(sheet.getByTestId("provider-probe"));
+    expect(sheet.getByTestId("probe-result")).toHaveTextContent("请填写 API Key、API Secret");
+    expect(invoke).not.toHaveBeenCalledWith("provider_probe", expect.anything());
+  });
+
+  it("names on each recognition card whether it recognises while you speak and takes hot words", async () => {
+    // docs/dictation.md §3.15. The phone shows no live preview, so the built-in service has none.
+    await renderApp();
+    await openTab("settings");
+    await fireEvent.press(await screen.findByTestId("settings-speech"));
+    const abilities = async (id: string) =>
+      within(await screen.findByTestId(`provider-asr-${id}`)).queryByTestId(
+        `provider-asr-${id}-abilities`,
+      );
+    expect(await abilities("volcengine_speech")).toHaveTextContent("边说边识别热词");
+    expect(await abilities("iflytek")).toHaveTextContent("边说边识别");
+    expect(await abilities("glm")).toHaveTextContent("热词");
+    expect(await abilities("builtin")).toHaveTextContent("热词");
+    expect(await abilities("mimo")).toBeNull();
+  });
+
+  it("marks the realtime models and says under the model how it hears a take, as the model changes", async () => {
+    await renderApp();
+    const sheet = await openSheet("settings-speech", "asr", "stepfun", "阶跃星辰");
+    // The two lines: how the model hears a take, then where the dictionary's terms go.
+    expect(sheet.getByTestId("provider-abilities-help")).toHaveTextContent(
+      "松开后识别整段录音。词典的词条作为热词发给识别服务。",
+    );
+    await fireEvent.press(sheet.getByTestId("provider-model"));
+    const list = await screen.findByTestId("provider-model-sheet");
+    const stream = within(list).getByTestId("provider-model-option-stepaudio-2.5-asr-stream");
+    expect(stream).toHaveTextContent("stepaudio-2.5-asr-stream · 边说边识别", { exact: false });
+    await fireEvent.press(stream);
+    await waitFor(() => {
+      expect(sheet.getByTestId("provider-abilities-help")).toHaveTextContent(
+        "边说边识别：说话时就开始识别，松开后只等最后一句。词典的词条作为提示词发给识别服务。",
+      );
+    });
+  });
+
   it("says when the core refuses to test a connection", async () => {
     const { backend } = await renderApp();
     const sheet = await openSheet("settings-speech", "asr", "groq", "Groq");
@@ -224,6 +331,31 @@ describe("a provider's sheet", () => {
     await waitFor(() => {
       expect(backend.peek().settings.engines.asr_provider).toBe("builtin");
     });
+    // Nothing to set up (docs/dictation.md §3.16).
+    expect(sheet.queryByTestId("provider-setup-guide")).toBeNull();
+  });
+
+  it("docs/dictation.md §3.16: 配置方法 lists the provider's steps and opens its pages and its guide section", async () => {
+    const { backend } = await renderApp();
+    const sheet = await openSheet("settings-speech", "asr", "tencent", "腾讯云语音识别");
+    const steps = setupSteps("tencent", zhCN);
+    expect(sheet.getByTestId("provider-setup-steps")).toHaveTextContent(
+      steps.map((step, index) => `${index + 1}. ${step}`).join(""),
+    );
+    // The button's text follows its icon's glyph.
+    expect(sheet.getByTestId("provider-setup")).toHaveTextContent(setupPageLabel("tencent", zhCN), {
+      exact: false,
+    });
+    await fireEvent.press(sheet.getByTestId("provider-setup"));
+    expect(backend.setupPagesOpened).toEqual(["tencent"]);
+    await fireEvent.press(sheet.getByTestId("provider-console"));
+    expect(backend.consolesOpened).toEqual(["tencent"]);
+    // The key row no longer carries its own 获取密钥.
+    expect(sheet.getAllByText("获取密钥")).toHaveLength(1);
+    await fireEvent.press(sheet.getByTestId("provider-guide"));
+    expect(backend.guidesOpened).toEqual([
+      { page: "providers", locale: "zh-CN", provider: "tencent" },
+    ]);
   });
 });
 

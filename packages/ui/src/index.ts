@@ -55,6 +55,7 @@ export * from "./hooks/useRelayRecheck";
 export * from "./features/engines/useModelRefresh";
 export * from "./features/engines/useProviderProbe";
 export * from "./features/engines/ProviderCard";
+export * from "./features/engines/CredentialFields";
 export * from "./features/engines/ProviderMark";
 export * from "./features/engines/ChineseScript";
 export * from "./features/engines/FallbackSection";

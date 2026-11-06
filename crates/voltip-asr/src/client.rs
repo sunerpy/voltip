@@ -246,7 +246,7 @@ struct Upload {
 /// A non-2xx answer: a used-up quota first, whatever the status (docs/dictation.md §3.5; some
 /// services send OpenAI's `insufficient_quota` with 403, others with 429), then by status, each
 /// with what the service said (§3.12).
-fn http_error(status: StatusCode, retry_after_ms: Option<u64>, body: &str) -> AsrError {
+pub(crate) fn http_error(status: StatusCode, retry_after_ms: Option<u64>, body: &str) -> AsrError {
     if let Some(quota) = quota_error(body) {
         return quota;
     }

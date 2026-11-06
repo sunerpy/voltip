@@ -388,6 +388,7 @@ impl StreamingSession for RedecodeSession {
                 provider: receipt.provider,
                 fallback: receipt.fallback,
                 glossary_sent: receipt.glossary_sent,
+                note: None,
             });
         }
         self.close_current(true);
@@ -422,6 +423,7 @@ impl StreamingSession for RedecodeSession {
             provider: receipt.provider,
             fallback: receipt.fallback,
             glossary_sent: receipt.glossary_sent,
+            note: None,
         })
     }
 }
@@ -559,6 +561,7 @@ mod tests {
                 fallback: None,
                 // docs/dictation.md §30.6: the session's glossary went with its requests.
                 glossary_sent: Some(true),
+                note: None,
             }
         );
         // The previews grew by a second from the pre-roll on; the close carried the sentence with
@@ -674,7 +677,12 @@ mod tests {
             Box::new(s).finish().unwrap()
         })
         .await;
-        assert_eq!(fin, StreamFinal { committed: Vec::new(), tail: "第1段。".into(), model: None, provider: None, fallback: None, glossary_sent: Some(false) });
+        assert_eq!(
+            fin,
+            StreamFinal {
+                committed: Vec::new(), tail: "第1段。".into(), model: None, provider: None, fallback: None, glossary_sent: Some(false), note: None
+            }
+        );
         assert_eq!(transcriber.durations_ms(), [1000], "the preview only");
     }
 

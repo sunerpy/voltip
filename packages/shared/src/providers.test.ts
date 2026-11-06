@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { asrStreams, isDashscope, resolveEngineStatus } from "./providers";
+import { asrStreams, glossaryRoute, isDashscope, keyEntry, resolveEngineStatus } from "./providers";
 import { defaultEngineSettings } from "./schema";
 
 describe("Model Studio's recognition protocols (docs/dictation.md §3.4)", () => {
@@ -30,8 +30,10 @@ describe("Model Studio's recognition protocols (docs/dictation.md §3.4)", () =>
     ];
     for (const url of studio) {
       expect(isDashscope(url)).toBe(true);
-      for (const model of streams) expect(asrStreams(url, model), `${url} ${model}`).toBe(true);
-      for (const model of whole) expect(asrStreams(url, model), `${url} ${model}`).toBe(false);
+      for (const model of streams)
+        expect(asrStreams("aliyun", url, model), `${url} ${model}`).toBe(true);
+      for (const model of whole)
+        expect(asrStreams("aliyun", url, model), `${url} ${model}`).toBe(false);
     }
     for (const other of [
       "https://api.openai.com/v1",
@@ -41,8 +43,41 @@ describe("Model Studio's recognition protocols (docs/dictation.md §3.4)", () =>
       "",
     ]) {
       expect(isDashscope(other)).toBe(false);
-      expect(asrStreams(other, "qwen-audio-3.1-asr-flash-streaming")).toBe(false);
+      expect(asrStreams("custom", other, "qwen-audio-3.1-asr-flash-streaming")).toBe(false);
     }
+  });
+
+  it("a vendor with a protocol of its own keeps it at any address (docs/dictation.md §3.15)", () => {
+    const proxy = "https://proxy.example.test/asr";
+    const realtime = ["volcengine_speech", "tencent", "iflytek", "iflytek_rtasr", "baidu"] as const;
+    expect(realtime.filter((provider) => !asrStreams(provider, proxy, "any"))).toEqual([]);
+    expect(asrStreams("stepfun", proxy, " StepAudio-2.5-ASR-Stream ")).toBe(true);
+    expect(asrStreams("stepfun", proxy, "stepaudio-2.5-asr")).toBe(false);
+    expect(asrStreams("glm", proxy, "glm-asr-2512")).toBe(false);
+    expect(asrStreams("mimo", proxy, "mimo-v2.5-asr")).toBe(false);
+    expect(glossaryRoute("volcengine_speech", proxy, "volc.seedasr.sauc.duration")).toBe(
+      "hotwords",
+    );
+    expect(glossaryRoute("tencent", proxy, "16k_zh_en")).toBe("hotwords");
+    expect(glossaryRoute("glm", proxy, "glm-asr-2512")).toBe("hotwords");
+    expect(glossaryRoute("stepfun", proxy, "stepaudio-2.5-asr")).toBe("hotwords");
+    expect(glossaryRoute("stepfun", proxy, "stepaudio-2.5-asr-stream")).toBe("prompt");
+    const none = ["iflytek", "iflytek_rtasr", "baidu", "mimo"] as const;
+    expect(none.map((provider) => glossaryRoute(provider, proxy, "m"))).toEqual(
+      none.map(() => "not_supported"),
+    );
+    expect(glossaryRoute("openai", "https://api.openai.com/v1", "whisper-1")).toBe("prompt");
+    const studio = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+    expect(
+      [
+        "qwen-audio-3.1-asr-flash",
+        "fun-asr-realtime",
+        "fun-asr-flash-2026-06-15",
+        "fun-asr-flash-8k-realtime",
+      ].map((m) => glossaryRoute("aliyun", studio, m)),
+    ).toEqual(["hotwords", "prompt", "prompt", "not_supported"]);
+    expect(keyEntry("volcengine_speech", "asr")).toBe("provider-key.volcengine-speech");
+    expect(keyEntry("iflytek_rtasr", "asr")).toBe("provider-key.iflytek-rtasr");
   });
 
   it("the preview resolves a realtime model's stream as the live source and its text as final", () => {

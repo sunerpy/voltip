@@ -1184,6 +1184,8 @@ export class MockBackend implements Backend {
   readonly permissionRequests: Permission[] = [];
   /** Secret-store entries holding a user key (`keyEntry`). */
   private readonly userKeys = new Set<string>();
+  /** For a credential of several fields, the set each stored one is of (docs/dictation.md §3.15). */
+  private readonly credentialSets: Record<string, string> = {};
   private readonly builtIn: { asr?: BuiltInService; llm?: BuiltInService };
   private readonly probeModels: Partial<Record<ProviderId, readonly string[]>> | false;
   private readonly engineOverrides: Partial<EngineStatus>;
@@ -1199,12 +1201,14 @@ export class MockBackend implements Backend {
   readonly consoleSites: (SiteId | undefined)[] = [];
   /** Every `providerConsoleOpen` of a quota page, in order (tests). */
   readonly quotaPagesOpened: ProviderId[] = [];
+  /** Every `providerConsoleOpen` of a setup page, in order (tests). */
+  readonly setupPagesOpened: ProviderId[] = [];
   /** How many `provider_models_refresh` requests left (tests). */
   modelRefreshes = 0;
   /** `project_link_open` calls, for tests. */
   readonly linksOpened: ProjectLink[] = [];
-  /** `guide_open` calls (page and language), for tests. */
-  readonly guidesOpened: { page: GuidePage; locale: string }[] = [];
+  /** `guide_open` calls (page, language and the provider whose section), for tests. */
+  readonly guidesOpened: { page: GuidePage; locale: string; provider?: ProviderId }[] = [];
   /** `model_folder_open` calls (model ids), for tests. */
   readonly modelFoldersOpened: string[] = [];
   /** What the phone's `update_install` opened: `store` for the listing, else the release's version. */
@@ -2017,6 +2021,12 @@ export class MockBackend implements Backend {
     this.refineFailure = failure ?? undefined;
   }
 
+  /** From now on the secret store refuses every key written (`null`: it takes them again): the
+   *  core reports `message` and keeps what it had (tests and the dev pages). */
+  simulateKeyStoreFailure(message: string | null) {
+    this.keyStoreFailure = message ?? undefined;
+  }
+
   /** From now on another window is in front when a take's text is ready (`false`: the same one
    *  again): with `switched_window = copy_only` the text is copied, and `done`, the history and the
    *  longer dwell say so, as the core does (tests and the dev pages, docs/dictation.md §14.3). */
@@ -2694,8 +2704,32 @@ export class MockBackend implements Backend {
         });
         return;
       }
+      if (this.keyStoreFailure !== undefined) {
+        this.emit({ type: "error", message: this.keyStoreFailure });
+        return;
+      }
       if (value !== null && value.trim().length > 0) this.userKeys.add(entry);
       else this.userKeys.delete(entry);
+      // A credential of several fields: the set it names, else the stored one's, else the first.
+      const sets = providerSpec(provider).credential;
+      if (sets === undefined || value === null || value.trim().length === 0)
+        delete this.credentialSets[entry];
+      else {
+        let named: unknown;
+        try {
+          const parsed: unknown = JSON.parse(value);
+          named =
+            typeof parsed === "object" && parsed !== null && "set" in parsed
+              ? parsed.set
+              : undefined;
+        } catch {
+          named = undefined;
+        }
+        this.credentialSets[entry] =
+          typeof named === "string"
+            ? named
+            : (this.credentialSets[entry] ?? sets[0]?.id ?? "default");
+      }
       // Another key may be another account, with its own models.
       this.listedModels.delete(`${provider}:asr`);
       this.listedModels.delete(`${provider}:llm`);
@@ -3314,6 +3348,7 @@ export class MockBackend implements Backend {
 
   /** `simulateRefineFailure`: how the next takes' clean-up fails, if it does. */
   private refineFailure: RefineFailure | undefined;
+  private keyStoreFailure: string | undefined;
   private windowSwitched = false;
 
   /** How often 复制令牌 was pressed (tests; the token itself never reaches the interface). */
@@ -4290,6 +4325,11 @@ export class MockBackend implements Backend {
       this.quotaPagesOpened.push(provider);
       return Promise.resolve();
     }
+    if (page === "setup") {
+      if (spec.setup !== true) return Promise.reject(new Error(`${provider}: no setup page`));
+      this.setupPagesOpened.push(provider);
+      return Promise.resolve();
+    }
     if (!spec.console) return Promise.reject(new Error(`${provider}: no key page`));
     this.consolesOpened.push(provider);
     this.consoleSites.push(site);
@@ -4301,8 +4341,8 @@ export class MockBackend implements Backend {
     return Promise.resolve();
   }
 
-  guideOpen(page: GuidePage, locale: string): Promise<void> {
-    this.guidesOpened.push({ page, locale });
+  guideOpen(page: GuidePage, locale: string, provider?: ProviderId): Promise<void> {
+    this.guidesOpened.push(provider === undefined ? { page, locale } : { page, locale, provider });
     return Promise.resolve();
   }
 
@@ -4468,7 +4508,9 @@ export class MockBackend implements Backend {
       this.probeTimers.delete(handle);
       if (this.probeModels === false) return failed("unreachable");
       const models = this.listOf(provider, kind);
-      if (savedUrl !== undefined) this.storeList(provider, kind, savedUrl, models);
+      // A vendor that lists no models answers with its presets and fills no list (§3.15).
+      if (savedUrl !== undefined && spec.listsModels !== false)
+        this.storeList(provider, kind, savedUrl, models);
       this.emit({
         type: "provider_probe",
         provider,
@@ -4524,6 +4566,7 @@ export class MockBackend implements Backend {
   private refreshModels(provider: ProviderId, kind: ServiceKind) {
     const spec = providerSpec(provider);
     if (provider === "builtin" || provider === "local" || spec[kind] === undefined) return;
+    if (spec.listsModels === false) return;
     const saved = this.savedTarget(provider, kind);
     const url = saved.url;
     if (url === undefined || (spec.key === "required" && !saved.key)) return;
@@ -4549,6 +4592,7 @@ export class MockBackend implements Backend {
     const status = resolveEngineStatus({
       settings,
       userKeys: this.userKeys,
+      credentialSets: this.credentialSets,
       builtIn: this.builtIn,
       local: {
         id: localId,

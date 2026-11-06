@@ -10,6 +10,9 @@
 //! * [`AsrError`] — outcomes sorted into what the caller can act on (`Unauthorized`,
 //!   `RateLimited`, `Server`, `Service`, `QuotaExhausted`, `Network`, `Timeout`,
 //!   `BadResponse`, …), with [`AsrError::is_retryable`].
+//! * [`vendor`] — the services with protocols of their own (docs/dictation.md §3.15): 豆包语音,
+//!   Tencent Cloud, iFlytek, Baidu, StepFun, GLM-ASR and MiMo-ASR, each a [`vendor::VendorAsr`],
+//!   with what their realtime sessions share in [`realtime`] and [`split`].
 //!
 //! TLS is rustls; nothing here knows a production hostname — the core injects it.
 
@@ -17,12 +20,23 @@
 #![warn(missing_docs)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
+mod baidu;
 mod client;
 mod config;
+pub mod credentials;
 mod dashscope;
 pub mod duplex;
 mod error;
+mod iflytek;
+mod mimo;
 mod ogg_opus;
+pub mod realtime;
+pub mod split;
+mod stepfun;
+mod tencent;
+pub mod vendor;
+mod volcengine;
+mod zhipu;
 
 pub use client::{AsrClient, Transcript};
 pub use config::{AsrConfig, AudioUpload, DEFAULT_TIMEOUT, MAX_ERROR_BODY_CHARS, Metering, QUOTA_HEADER, normalize_base_url};

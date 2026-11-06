@@ -336,8 +336,12 @@ export class TauriBackend implements Backend {
     });
   }
 
-  async guideOpen(page: GuidePage, locale: string): Promise<void> {
-    await this.transport.invoke("guide_open", { page, locale });
+  async guideOpen(page: GuidePage, locale: string, provider?: ProviderId): Promise<void> {
+    await this.transport.invoke("guide_open", {
+      page,
+      locale,
+      ...(provider === undefined ? {} : { provider }),
+    });
   }
 
   async projectLinkOpen(link: ProjectLink): Promise<void> {

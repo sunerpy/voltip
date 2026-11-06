@@ -13,6 +13,7 @@ import {
   isRecognitionModel,
   modelDisplayName,
   modelFamilyName,
+  realtimeModel,
   recordingSourceLabel,
   zhT,
 } from "@voltip/shared";
@@ -111,13 +112,19 @@ function providerSections(status: EngineStatus, kind: ServiceKind, t: TFunction)
   return providersFor(status, kind).flatMap((provider) => {
     const service = provider[kind];
     if (provider.id === "local" || service === undefined || service.issue !== undefined) return [];
+    // docs/dictation.md §3.15: the recognition models that recognise while the take is spoken.
+    const realtime =
+      kind === "asr" ? realtimeModel(provider.id, service.base_url ?? "") : undefined;
     return [
       {
         label: t(`engines.provider.${provider.id}`),
         items: modelChoices(service).map((model) => ({
           kind: "radio" as const,
           id: choiceId({ kind: "remote", provider: provider.id, model }),
-          label: shortModel(model),
+          label:
+            realtime?.(model) === true
+              ? t("engines.field.modelRealtime", { model: shortModel(model) })
+              : shortModel(model),
           checked: service.active && model === service.model,
         })),
       },

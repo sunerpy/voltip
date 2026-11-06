@@ -185,6 +185,12 @@ voltip-pairing.workspace = true
 # start one in the process.
 voltip-relay = { workspace = true, features = ["server"] }
 wiremock.workspace = true
+# tests/live_services.rs: the realtime services' stand-ins on 127.0.0.1 (their WebSocket protocols,
+# gzip for 豆包语音, base64 audio for 讯飞 and 阶跃星辰); the versions voltip-asr already uses.
+base64.workspace = true
+flate2.workspace = true
+futures-util.workspace = true
+tokio-tungstenite.workspace = true
 # tests/ipc.rs: a secret store the system cannot open (docs/dictation.md §34) implements the trait,
 # whose reads return `Zeroizing`; the version voltip-identity already uses.
 zeroize.workspace = true

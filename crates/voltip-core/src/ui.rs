@@ -8,8 +8,8 @@ use voltip_pairing::{PairingState, Snapshot};
 use crate::phone::{PhoneTakeView, SentText};
 use crate::presets::{CustomPreset, PresetTryOutcome};
 use crate::{
-    CoreEvent, DeviceView, DictationStatus, DictionaryEntry, EngineStatus, HistoryEntry, ModelState, ProbeReport, RefineFailure, RelayStatus, ReplacementRule,
-    Scene, Settings,
+    CoreEvent, DeviceView, DictationStatus, DictionaryEntry, EngineStatus, HistoryEntry, ModelState, ProbeReport, ProviderId, RefineFailure, RelayStatus,
+    ReplacementRule, Scene, Settings,
 };
 
 /// Event name used on the Tauri event bus.
@@ -302,6 +302,9 @@ pub enum GuidePage {
     /// The phone's floating bubble and the background settings some phones need for it
     /// (docs/site/phone/index.md, its 「悬浮球」 / "Floating bubble" section; docs/dictation.md §20.12).
     Bubble,
+    /// 服务商设置 (docs/site/recognition/providers.md): what each provider needs, at the section of
+    /// the provider `guide_open` names (docs/dictation.md §3.16).
+    Providers,
 }
 
 impl GuidePage {
@@ -316,6 +319,7 @@ impl GuidePage {
             Self::Mcp => ("recognition/mcp", "recognition/mcp"),
             Self::Usage => ("recognition/cloud#built-in-usage", "recognition/cloud#内置服务的用量"),
             Self::Bubble => ("phone/#floating-bubble", "phone/#悬浮球"),
+            Self::Providers => ("recognition/providers", "recognition/providers"),
         };
         let (prefix, path) = if locale.trim().to_ascii_lowercase().starts_with("zh") { ("zh/", zh) } else { ("", en) };
         let page = match path.split_once('#') {
@@ -324,6 +328,21 @@ impl GuidePage {
         };
         format!("{GUIDE_SITE}/{prefix}{page}")
     }
+
+    /// [`Self::url`], at `provider`'s section of [`Self::Providers`]. Each provider's heading there
+    /// carries the same anchor in both languages, its wire name with hyphens (`volcengine-speech`);
+    /// the other pages have no provider sections and ignore it.
+    pub fn url_for(self, locale: &str, provider: Option<ProviderId>) -> String {
+        match (self, provider) {
+            (Self::Providers, Some(provider)) => format!("{}#{}", self.url(locale), provider_anchor(provider)),
+            _ => self.url(locale),
+        }
+    }
+}
+
+/// The anchor of `provider`'s section on the guide's 服务商设置 page.
+pub fn provider_anchor(provider: ProviderId) -> String {
+    provider.as_str().replace('_', "-")
 }
 
 /// `s` with every byte outside RFC 3986's unreserved set as `%XX`.
@@ -854,6 +873,16 @@ mod tests {
         assert_eq!(GuidePage::Bubble.url("zh-CN"), "https://voltip.firlab.app/zh/phone/#%E6%82%AC%E6%B5%AE%E7%90%83");
         assert_eq!(GuidePage::Bubble.url("en"), "https://voltip.firlab.app/phone/#floating-bubble");
         assert_eq!(serde_json::to_string(&GuidePage::Bubble).unwrap(), r#""bubble""#);
+        // docs/dictation.md §3.16: a provider's section, under one anchor in both languages.
+        assert_eq!(GuidePage::Providers.url("zh-CN"), "https://voltip.firlab.app/zh/recognition/providers");
+        assert_eq!(
+            GuidePage::Providers.url_for("zh-CN", Some(ProviderId::VolcengineSpeech)),
+            "https://voltip.firlab.app/zh/recognition/providers#volcengine-speech"
+        );
+        assert_eq!(GuidePage::Providers.url_for("en", Some(ProviderId::Groq)), "https://voltip.firlab.app/recognition/providers#groq");
+        assert_eq!(GuidePage::Providers.url_for("en", None), "https://voltip.firlab.app/recognition/providers");
+        assert_eq!(GuidePage::Privacy.url_for("en", Some(ProviderId::Groq)), GuidePage::Privacy.url("en"));
+        assert_eq!(serde_json::to_string(&GuidePage::Providers).unwrap(), r#""providers""#);
         assert_eq!(serde_json::to_string(&ProjectLink::Feedback).unwrap(), r#""feedback""#);
         assert_eq!(serde_json::from_str::<ProjectLink>(r#""source""#).unwrap(), ProjectLink::Source);
     }

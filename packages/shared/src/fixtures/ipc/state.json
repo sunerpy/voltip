@@ -734,6 +734,7 @@
         "key": "required",
         "on_device": false,
         "console": true,
+        "setup": true,
         "asr": {
           "model": "gpt-transcribe",
           "presets": ["gpt-transcribe", "gpt-4o-mini-transcribe", "whisper-1"],
@@ -811,6 +812,7 @@
         "key": "required",
         "on_device": false,
         "console": true,
+        "setup": true,
         "asr": {
           "model": "FunAudioLLM/SenseVoiceSmall",
           "presets": ["FunAudioLLM/SenseVoiceSmall", "TeleAI/TeleSpeechASR"],
@@ -842,6 +844,7 @@
         "on_device": false,
         "console": true,
         "quota": true,
+        "setup": true,
         "asr": {
           "model": "qwen-audio-3.1-asr-flash-streaming",
           "presets": [
@@ -872,10 +875,247 @@
         }
       },
       {
+        "id": "volcengine_speech",
+        "key": "required",
+        "credential": [
+          {
+            "id": "api_key",
+            "fields": [
+              {
+                "id": "api_key",
+                "secret": true,
+                "required": true
+              }
+            ]
+          },
+          {
+            "id": "app_token",
+            "fields": [
+              {
+                "id": "app_id",
+                "secret": false,
+                "required": true
+              },
+              {
+                "id": "access_token",
+                "secret": true,
+                "required": true
+              }
+            ]
+          }
+        ],
+        "lists_models": false,
+        "on_device": false,
+        "console": true,
+        "setup": true,
+        "asr": {
+          "model": "volc.seedasr.sauc.duration",
+          "presets": [
+            "volc.seedasr.sauc.duration",
+            "volc.bigasr.sauc.duration",
+            "volc.seedasr.sauc.concurrent"
+          ],
+          "base_url": "https://openspeech.bytedance.com",
+          "default_base_url": "https://openspeech.bytedance.com",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "tencent",
+        "key": "required",
+        "credential": [
+          {
+            "id": "default",
+            "fields": [
+              {
+                "id": "app_id",
+                "secret": false,
+                "required": true
+              },
+              {
+                "id": "secret_id",
+                "secret": false,
+                "required": true
+              },
+              {
+                "id": "secret_key",
+                "secret": true,
+                "required": true
+              }
+            ]
+          }
+        ],
+        "lists_models": false,
+        "on_device": false,
+        "console": true,
+        "setup": true,
+        "asr": {
+          "model": "16k_zh_en",
+          "presets": ["16k_zh_en", "Hy-ASR-3.0-preview", "16k_zh"],
+          "base_url": "https://asr.cloud.tencent.com",
+          "default_base_url": "https://asr.cloud.tencent.com",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "iflytek",
+        "key": "required",
+        "credential": [
+          {
+            "id": "default",
+            "fields": [
+              {
+                "id": "app_id",
+                "secret": false,
+                "required": true
+              },
+              {
+                "id": "api_key",
+                "secret": true,
+                "required": true
+              },
+              {
+                "id": "api_secret",
+                "secret": true,
+                "required": true
+              }
+            ]
+          }
+        ],
+        "lists_models": false,
+        "on_device": false,
+        "console": true,
+        "setup": true,
+        "asr": {
+          "model": "iat",
+          "presets": ["iat"],
+          "base_url": "https://iat-api.xfyun.cn",
+          "default_base_url": "https://iat-api.xfyun.cn",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "iflytek_rtasr",
+        "key": "required",
+        "credential": [
+          {
+            "id": "default",
+            "fields": [
+              {
+                "id": "app_id",
+                "secret": false,
+                "required": true
+              },
+              {
+                "id": "api_key",
+                "secret": true,
+                "required": true
+              }
+            ]
+          }
+        ],
+        "lists_models": false,
+        "on_device": false,
+        "console": true,
+        "setup": true,
+        "asr": {
+          "model": "rtasr",
+          "presets": ["rtasr"],
+          "base_url": "https://rtasr.xfyun.cn",
+          "default_base_url": "https://rtasr.xfyun.cn",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "baidu",
+        "key": "required",
+        "credential": [
+          {
+            "id": "default",
+            "fields": [
+              {
+                "id": "app_id",
+                "secret": false,
+                "required": true
+              },
+              {
+                "id": "api_key",
+                "secret": true,
+                "required": true
+              }
+            ]
+          }
+        ],
+        "lists_models": false,
+        "on_device": false,
+        "console": true,
+        "asr": {
+          "model": "15372",
+          "presets": ["15372", "1537", "15376"],
+          "base_url": "https://vop.baidu.com",
+          "default_base_url": "https://vop.baidu.com",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "stepfun",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "asr": {
+          "model": "stepaudio-2.5-asr",
+          "presets": ["stepaudio-2.5-asr", "stepaudio-2.5-asr-stream"],
+          "base_url": "https://api.stepfun.com/v1",
+          "default_base_url": "https://api.stepfun.com/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false,
+          "sites": [
+            {
+              "id": "cn",
+              "base_url": "https://api.stepfun.com/v1"
+            },
+            {
+              "id": "intl",
+              "base_url": "https://api.stepfun.ai/v1"
+            }
+          ]
+        }
+      },
+      {
         "id": "deepseek",
         "key": "required",
         "on_device": false,
         "console": true,
+        "setup": true,
         "llm": {
           "model": "deepseek-flash",
           "presets": ["deepseek-flash", "deepseek-v4-pro"],
@@ -922,6 +1162,28 @@
         "key": "required",
         "on_device": false,
         "console": true,
+        "asr": {
+          "model": "glm-asr-2512",
+          "presets": ["glm-asr-2512"],
+          "base_url": "https://open.bigmodel.cn/api/paas/v4",
+          "default_base_url": "https://open.bigmodel.cn/api/paas/v4",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false,
+          "sites": [
+            {
+              "id": "cn",
+              "base_url": "https://open.bigmodel.cn/api/paas/v4"
+            },
+            {
+              "id": "intl",
+              "base_url": "https://api.z.ai/api/paas/v4"
+            }
+          ]
+        },
         "llm": {
           "model": "glm-5.3-flash",
           "presets": ["glm-5.3-flash", "glm-4.7-flash", "glm-5.3"],
@@ -950,6 +1212,7 @@
         "key": "required",
         "on_device": false,
         "console": true,
+        "setup": true,
         "llm": {
           "model": "doubao-seed-2-1-lite-260915",
           "presets": [
@@ -972,6 +1235,7 @@
         "key": "required",
         "on_device": false,
         "console": true,
+        "setup": true,
         "llm": {
           "model": "hy3",
           "presets": ["hy3", "hy4-preview"],
@@ -990,6 +1254,19 @@
         "key": "required",
         "on_device": false,
         "console": true,
+        "setup": true,
+        "asr": {
+          "model": "mimo-v2.5-asr",
+          "presets": ["mimo-v2.5-asr"],
+          "base_url": "https://api.xiaomimimo.com/v1",
+          "default_base_url": "https://api.xiaomimimo.com/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        },
         "llm": {
           "model": "mimo-v2.6-flash",
           "presets": ["mimo-v2.6-flash", "mimo-v2.6-pro"],
@@ -1008,6 +1285,7 @@
         "key": "required",
         "on_device": false,
         "console": true,
+        "setup": true,
         "llm": {
           "model": "google/gemini-3.5-flash-lite",
           "presets": [
@@ -1030,6 +1308,7 @@
         "key": "none",
         "on_device": true,
         "console": false,
+        "setup": true,
         "llm": {
           "model": "",
           "presets": [],

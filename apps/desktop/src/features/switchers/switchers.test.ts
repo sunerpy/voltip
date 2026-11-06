@@ -2,6 +2,7 @@ import {
   type AudioDevice,
   type EngineSettings,
   type ModelInstallState,
+  type ProviderId,
   type UiState,
   createTranslator,
   defaultEngineSettings,
@@ -22,10 +23,16 @@ const INSTALLED: ModelInstallState = { kind: "installed", path: "/models/x", ins
 
 /** The state the preview reports for `engines`: the built-in service in both roles (the mock's
  *  default), a Groq key when `groq` is set, and the 均衡 and 轻量 models on disk. */
-async function state(engines: EngineSettings, { groq = false } = {}): Promise<UiState> {
+async function state(
+  engines: EngineSettings,
+  { groq = false, keyed = [] as ProviderId[] } = {},
+): Promise<UiState> {
   const backend = new MockBackend({
     settings: { engines },
-    providerKeys: groq ? [{ provider: "groq", kind: "asr" }] : [],
+    providerKeys: [...(groq ? ["groq" as const] : []), ...keyed].map((provider) => ({
+      provider,
+      kind: "asr" as const,
+    })),
     models: {
       "qwen3-asr-0.6b": INSTALLED,
       "sense-voice-small": INSTALLED,
@@ -108,6 +115,23 @@ describe("the 语音模型 menu", () => {
       items: ["✓ whisper-large-v3-turbo", "whisper-large-v3"],
     });
     expect(rows(groq).at(-1)).toEqual({ label: undefined, items: ["> Manage speech models…"] });
+  });
+});
+
+describe("the 语音模型 menu's realtime models (docs/dictation.md §3.15)", () => {
+  it("marks the models that recognise while you speak, and only in the speech menu", async () => {
+    const keyed = await state(
+      { ...defaultEngineSettings(), asr_provider: "aliyun" },
+      { keyed: ["aliyun"] },
+    );
+    const aliyun = rows(speechMenuSections(keyed.engines, [])).find(
+      (s) => s.label === "阿里云百炼",
+    );
+    expect(aliyun?.items).toEqual([
+      "✓ qwen-audio-3.1-asr-flash-streaming · 边说边识别",
+      "qwen-audio-3.1-asr-flash",
+      "fun-asr-realtime · 边说边识别",
+    ]);
   });
 });
 

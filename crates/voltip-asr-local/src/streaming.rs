@@ -194,6 +194,7 @@ mod tests {
                 provider: None,
                 fallback: None,
                 glossary_sent: None,
+                note: None,
             })
         }
     }
