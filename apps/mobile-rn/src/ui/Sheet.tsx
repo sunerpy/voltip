@@ -29,6 +29,8 @@ const DISMISS_DISTANCE = 80;
 const DISMISS_VELOCITY = 0.8;
 const OPEN_MS = 240;
 const CLOSE_MS = 180;
+/** The curve both slides follow, as a plain function: `Easing.cubic` is a method of `Easing`. */
+const cubic = (x: number) => Easing.cubic(x);
 /** The least room above an open sheet, under the status bar. */
 const SHEET_TOP_GAP = 8;
 
@@ -92,7 +94,7 @@ export function BottomSheet({
       const slide = Animated.timing(progress, {
         toValue: 1,
         duration: OPEN_MS,
-        easing: Easing.out(Easing.cubic),
+        easing: Easing.out(cubic),
         useNativeDriver: true,
       });
       slide.start();
@@ -103,7 +105,7 @@ export function BottomSheet({
     const slide = Animated.timing(progress, {
       toValue: 0,
       duration: CLOSE_MS,
-      easing: Easing.in(Easing.cubic),
+      easing: Easing.in(cubic),
       useNativeDriver: true,
     });
     slide.start(({ finished }) => {
