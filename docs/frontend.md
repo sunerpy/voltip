@@ -101,7 +101,8 @@ interface TrustedDevice { device_id: string; name: string; platform: Platform; p
 type DeviceConnection = { state: "offline" } | { state: "connecting" } | { state: "online" } | { state: "identity_changed"; presented_fingerprint: string };
 interface DeviceView { device: TrustedDevice; connection: DeviceConnection }
 interface Segment { text: string; start_ms: number; end_ms: number }
-interface LiveText { committed: Segment[]; current: string; degraded?: string; injected: number /* default 0：live_inject 已粘贴的句数（§12） */ }
+type LiveSource = "cloud" | "local" | "stream" /* 内置服务的预览、本地模型、服务商的实时识别模型（§11.8–§11.10） */
+interface LiveText { committed: Segment[]; current: string; degraded?: string; injected: number /* default 0：live_inject 已粘贴的句数（§12） */; source?: LiveSource /* 这些文字的来源，§11.10 */; provider?: ProviderId /* 给出文字的服务商，悬浮窗标签用它的短名 */ }
 type DictationPhase = { phase: "idle" } | { phase: "listening"; started_at: number; ready: boolean /* default false: 设备尚未送出样本 */; live?: LiveText; locked: boolean /* default false：hold_or_toggle 短按锁定（§13），总在 wire 上 */ } | { phase: "processing"; stage: "transcribing" | "finalizing" | "refining" | "inserting"; started_at: number; preview?: string }
   | { phase: "done"; text: string; raw_text: string; chars: number; via: "paste" | "clipboard"; refined: boolean; duration_ms: number; asr_ms: number; refine_ms?: number; refine_error?: string; mode: OutputMode /* default "whole_take" */; segments?: Segment[]; live_error?: string }
   | { phase: "failed"; message: string; code?: "no_speech" | "audio" | "asr" | "refine" | "inject" | "no_selection" | "selection_too_long" | "selection" | "edit_unavailable" | "edit_in_terminal" | "unknown"; text?: string } | { phase: "cancelled"; injected_chars: number /* default 0 */ };

@@ -420,7 +420,7 @@ Kimi（`api.moonshot.cn` / `api.moonshot.ai`）和智谱 GLM（智谱开放平�
 - 百度：START、一帧 160 ms 静音（5120 B）、FINISH，服务端在 FINISH 之后正常关闭连接即成功；`-3004`（鉴权失败）是失败，`-3005`（无效音频）与 `-3003` 只针对一句话，静音本来就没有句子，不算失败。
 - 阶跃、智谱、MiMo：`GET /models`，与润色相同（识别只保留含 `asr` 的模型，§3.3）。
 
-**实时会话**（`VendorAsr::realtime`）：调用方送来 16 kHz 16-bit 单声道 PCM（`RealtimeInput::Audio`，任意长度，客户端按各家要求分帧）和结束（`RealtimeInput::Finish`）；客户端回报正在说的句子（`RealtimeEvent::Partial`，到目前为止的整句）、说完的句子（`Sentence { text, begin_ms, end_ms }`，时间是整次会话的音频时间，跨连接时加上之前发出的音频）和结束（`Finished`）；没有给出任何文字的会话在 `Finished` 之前另发一条说明（`Note`，见下文「实时识别没有文字时」）。输入在 `Finish` 之前关闭（取消这次听写）时立即关闭连接，不再发送任何内容。会话出错，或连接在 `Finished` 之前断开，按错误结束：引擎照 §12 降级为整段识别，整段识别照常走候补链（§3.5、§3.14），这次听写照常完成。实时会话需要开启实时预览（`LiveSource::Stream`，与百炼的实时模型相同，§11.9）。
+**实时会话**（`VendorAsr::realtime`）：调用方送来 16 kHz 16-bit 单声道 PCM（`RealtimeInput::Audio`，任意长度，客户端按各家要求分帧）和结束（`RealtimeInput::Finish`）；客户端回报正在说的句子（`RealtimeEvent::Partial`，到目前为止的整句）、说完的句子（`Sentence { text, begin_ms, end_ms }`，时间是整次会话的音频时间，跨连接时加上之前发出的音频）和结束（`Finished`）；没有给出任何文字的会话在 `Finished` 之前另发一条说明（`Note`，见下文「实时识别没有文字时」）。输入在 `Finish` 之前关闭（取消这次听写）时立即关闭连接，不再发送任何内容。会话出错，或连接在 `Finished` 之前断开，按错误结束：引擎照 §12 降级为整段识别，整段识别照常走候补链（§3.5、§3.14），这次听写照常完成。选了实时识别模型就边说边识别（`LiveSource::Stream`，与百炼的实时模型相同，§11.9），不受实时预览的两个开关影响：「服务商的实时文字」只决定悬浮窗是否显示它的文字（§11.10）。
 
 **整段识别**（录音已在手上：重新识别、降级、长录音分段；实时识别模型在「服务商的实时文字」关闭时照样推流，§11.10）：
 
@@ -861,7 +861,7 @@ issue #192「模型下载，不能设置保存路径？C 盘满了」。用户�
 
 ## 11. 流式识别（边说边出字，2026-09-25 契约）
 
-**目标**：按住热键说话时，胶囊实时显示识别中的文字（部分结果），松开后仍走完整流水线（整段音频 → 最终识别 → 润色 → 注入 → 历史）。流式只改变**听写过程中的显示**，不改变最终文本的来源：最终文本以整段识别为准（本地 SenseVoice / Paraformer 或云端），流式只是预览。这样流式引擎不可用时行为与今天完全一致。
+**目标**：按住热键说话时，胶囊实时显示识别中的文字（部分结果），松开后仍走完整流水线（整段音频 → 最终识别 → 润色 → 注入 → 历史）。这一版流式只改变**听写过程中的显示**，不改变最终文本的来源：最终文本以整段识别为准（本地 SenseVoice / Paraformer 或云端），流式只是预览，流式引擎不可用时行为与之前一致。之后的流式输出方式（§12）和服务商的实时识别模型（§11.9）用实时识别的句子作为最终文本，失败时退回整段识别；悬浮窗显示谁的文字由 §11.10 的两个开关决定。
 
 **引擎**：`sherpa-onnx` `OnlineRecognizer`（流式 Zipformer transducer，`enable_endpoint = true`，`greedy_search`，2 线程）。目录新增第三条：
 
@@ -891,7 +891,7 @@ pub struct Segment { pub text: String, pub start_ms: u64, pub end_ms: u64 }
 pub trait LivePcm: Send { fn read(&mut self, out: &mut [f32]) -> usize; fn overrun(&self) -> bool; fn is_closed(&self) -> bool; }
 ```
 
-`AudioSource::start(device_id, on_level, on_ready, live)`；`Capture::live_pcm() -> Option<Box<dyn LivePcm>>`（桌面壳把 `voltip_audio::LiveConsumer` 包成 `LiveTap`，核心不依赖 rtrb）。`DictationPorts.streaming: Option<Arc<dyn StreamingTranscriber>>`：桌面壳总是插入 `LocalStreamingTranscriber`（同一模型库根目录），手机壳为 `None`；核心只在 `ResolvedEngines::live_preview_ready()`（`live_preview && 流式模型已安装`）时使用它，并在构造 / `configure` / 每次 `start` 时调用 `warm()`。
+`AudioSource::start(device_id, on_level, on_ready, live)`；`Capture::live_pcm() -> Option<Box<dyn LivePcm>>`（桌面壳把 `voltip_audio::LiveConsumer` 包成 `LiveTap`，核心不依赖 rtrb）。`DictationPorts.streaming: Option<Arc<dyn StreamingTranscriber>>`：桌面壳总是插入 `LocalStreamingTranscriber`（同一模型库根目录），手机壳为 `None`；核心只在这次听写用到本地模型时使用它（`LivePlan.text` 或 `LivePlan.shown` 为 `Local`，§11.10；本地模型可用的条件是 `ResolvedEngines::local_preview_ready()`：`local_preview && 流式模型已安装`），并在这种情况下于构造 / `configure` / 每次 `start` 时调用 `warm()`。
 
 **解码线程（`engine.rs` `run_live`，`spawn_blocking`）**：`CaptureStarted` 成功且 live 启用 → 取 `live_pcm()` → 线程内 `open()`；循环读 ≥ 1600 样本（100 ms）→ `feed` → `poll` 直到 `Idle`；`Partial` 经 `PartialThrottle` 节流 ≥ 80 ms 且文本有变才发 `Internal::Partial`，`Endpoint` 立即发 `Internal::Segment` 并重置节流；`open` 失败 / `overrun` / `Error` / 识别器 panic（`catch_unwind`）→ 一次 `Internal::StreamDegraded { reason }` 后线程结束；tap 关闭（录音停止或取消释放）→ `finish()` → `Internal::StreamFinished { result }`。
 
@@ -901,11 +901,16 @@ pub trait LivePcm: Send { fn read(&mut self, out: &mut [f32]) -> usize; fn overr
 
 ```rust
 Listening { started_at: u64, ready: bool, live: Option<LiveText> }
-pub struct LiveText { pub committed: Vec<Segment>, pub current: String, pub degraded: Option<String> }
+pub struct LiveText {
+    pub committed: Vec<Segment>, pub current: String, pub degraded: Option<String>,
+    pub injected: usize,              // §12 live_inject 已粘贴的句数
+    pub source: Option<LiveSource>,   // §11.10 这些文字的来源（cloud / stream / local）
+    pub provider: Option<ProviderId>, // §11.10 给出文字的服务商（本地模型为 None）
+}
 Processing { stage: ProcessingStage, started_at: u64, preview: Option<String> }
 ```
 
-新 `Internal`：`CaptureReady { session }`（`ready = true` 并重新取 `started_at`，胶囊计时不含设备启动；对过期 session 或非 `Listening` 忽略）、`Partial { session, current }`、`Segment { session, segment }`（推进 `committed`、清空 `current`）、`StreamDegraded { session, reason }`（置 `live.degraded`，之后的 `Partial` 忽略，已显示文本保留）、`StreamFinished { session, result }`（仍在 `Processing` 时用 `committed + tail` 替换 `preview`，失败保留原预览）。`Partial / Segment / StreamDegraded` 只在 `Listening` 且 session 匹配时折叠；`DictationStop` 把 `LiveText::preview()`（`committed + current`；中日韩边界不加空格，拉丁边界加空格）作为 `Processing.preview`，最终识别完成后替换。本增量**只有 whole_take 一条终稿路径**：流式任一环节失败都只降级预览，最终文本永远来自整段识别（本地或云端）。部分结果仍通过 `UiEvent::Dictation` 全量推送（≤ 12.5 Hz）；独立的 `dictation_live_subscribe` 事件流是后续增量。
+新 `Internal`：`CaptureReady { session }`（`ready = true` 并重新取 `started_at`，胶囊计时不含设备启动；对过期 session 或非 `Listening` 忽略）、`Partial { session, current }`、`Segment { session, segment }`（推进 `committed`、清空 `current`）、`StreamDegraded { session, reason }`（置 `live.degraded`，之后的 `Partial` 忽略，已显示文本保留）、`StreamFinished { session, result }`（仍在 `Processing` 时用 `committed + tail` 替换 `preview`，失败保留原预览）。2026-11-06 起另有 `LiveServed { session, provider }`（候补链的实时流打开时、重复识别的预览第一次回答后报告给出文字的服务商，改写 `LiveText.provider`）与 `Shown { session, event: ShownEvent }`（实时识别模型的文字不显示时，本地模型那一路的部分结果、句子、降级与收尾，只更新悬浮窗，§11.10）。`Partial / Segment / StreamDegraded` 只在 `Listening` 且 session 匹配时折叠；`DictationStop` 把 `LiveText::preview()`（`committed + current`；中日韩边界不加空格，拉丁边界加空格）作为 `Processing.preview`，最终识别完成后替换。这一版**只有 whole_take 一条终稿路径**：流式任一环节失败都只降级预览，最终文本来自整段识别（本地或云端）；流式输出方式（§12）与实时识别模型（§11.9）之后另有终稿路径。部分结果仍通过 `UiEvent::Dictation` 全量推送（≤ 12.5 Hz）；独立的 `dictation_live_subscribe` 事件流是后续增量。
 
 **设置**：最初是一个开关 `EngineSettings.live_preview`；2026-11-06 起分成「服务商的实时文字」（`provider_preview`）和「本地模型预览」（`local_preview`）两个开关，规则见 §11.10。本地模型预览仅当流式模型已安装才生效，与识别服务商无关：云端识别时也可用本地 Zipformer 预览。「识别设置」的「实时预览」块里是这两个开关和流式模型的卡片（未安装时可下载）。
 
