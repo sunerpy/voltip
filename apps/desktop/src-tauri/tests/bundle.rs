@@ -354,6 +354,45 @@ fn regression_the_transparent_pill_has_the_macos_private_api() {
     assert!(tauri.contains("\"macos-private-api\""), "{tauri}");
 }
 
+/// `cargo tauri build` and `cargo tauri dev` write the tauri features the CLI manages
+/// (`AppConfig::all_features` but `tray-icon`) as the config asks for them (`AppConfig::features`)
+/// into every `tauri` table of `[dependencies]` and `[target.*.dependencies]`. Tauri CLI 2.11 wrote
+/// `[dependencies]` only, 2.12 writes the target tables too: the local Linux package build of
+/// 2026-11-07 left the macOS and Windows tables changed, and the tree it built no longer matched
+/// the commit. Each table lists them already, so the CLI has nothing to write.
+#[test]
+fn regression_every_tauri_table_lists_the_features_the_tauri_cli_writes() {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
+    let out = std::process::Command::new(cargo)
+        .args(["metadata", "--format-version", "1", "--no-deps", "--offline", "--manifest-path"])
+        .arg(tauri_dir().join("Cargo.toml"))
+        .output()
+        .expect("cargo metadata");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let meta: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let desktop = meta["packages"].as_array().unwrap().iter().find(|p| p["name"] == "voltip-desktop").expect("voltip-desktop in the workspace");
+    let tables: Vec<&serde_json::Value> =
+        desktop["dependencies"].as_array().unwrap().iter().filter(|d| d["name"] == "tauri" && d["kind"].is_null()).collect();
+    let targets: Vec<&serde_json::Value> = tables.iter().map(|t| &t["target"]).collect();
+    assert_eq!(
+        targets,
+        [&serde_json::Value::Null, &serde_json::json!("cfg(target_os = \"macos\")"), &serde_json::json!("cfg(target_os = \"windows\")")],
+        "[dependencies] and the macOS and Windows tables"
+    );
+    let managed: Vec<&str> = tauri_utils::config::AppConfig::all_features().into_iter().filter(|f| *f != "tray-icon").collect();
+    for target in [Target::MacOS, Target::Windows, Target::Linux] {
+        let config = merged(target);
+        let mut asked: Vec<&str> = config.app.features().into_iter().filter(|f| managed.contains(f)).collect();
+        asked.sort_unstable();
+        for table in &tables {
+            let mut listed: Vec<&str> =
+                table["features"].as_array().unwrap().iter().map(|f| f.as_str().unwrap()).filter(|f| managed.contains(f)).collect();
+            listed.sort_unstable();
+            assert_eq!(listed, asked, "{target:?} build, the table for {}", table["target"]);
+        }
+    }
+}
+
 /// tauri-build writes the Windows resource file (exe icon, version info) from the first `.ico` in
 /// `bundle.icon`, else `icons/icon.ico`, and fails the build without one. A native Windows
 /// `cargo test --workspace` stopped at the mobile shell (2026-09-26), whose bundle lists a PNG.
