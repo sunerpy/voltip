@@ -96,8 +96,9 @@ fn every_container_and_codec_comes_out_as_two_seconds_of_16_khz_mono() {
 
 /// A raw AAC stream (ADTS, `.aac`) has no edit list to drop the encoder's priming by: the tone
 /// starts up to two frames late and the stream ends padded, which a subtitle's time hardly notices.
-/// Its length is not in the file: the reader's estimate (2.6 s for this one) is no proof that it was
-/// cut off, nor is an MP3's without an encoder header (here: the file cut in half).
+/// Its length is not in the file: the reader's estimate (2.6 s for this one with Symphonia 0.5,
+/// 2.09 s with 0.6) is no proof that it was cut off, nor is an MP3's without an encoder header
+/// (here: the file cut in half).
 #[test]
 fn regression_a_length_the_reader_estimates_is_no_proof_of_damage() {
     let probed = Decoder.probe(&fixture("tone.aac")).unwrap();
