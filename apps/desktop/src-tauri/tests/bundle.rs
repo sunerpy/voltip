@@ -384,6 +384,30 @@ fn regression_native_msvc_builds_read_c_and_cpp_sources_as_utf8() {
     }
 }
 
+/// The desktop links the whole C runtime statically on Windows: `.cargo/config.toml` builds the MSVC
+/// target with `+crt-static` and build.rs names the static Universal CRT, `libucrt.lib`. From
+/// tauri-build 2.7 on, `build.windows.staticVCRuntime` (default true) adds Tauri's own runtime
+/// linking to every build, which takes the Universal CRT from the system DLL instead
+/// (`/NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib`); next to `libucrt.lib` the MSVC linker found
+/// `__p___argc` twice and the native Windows `cargo test` stopped at the desktop library's tests
+/// (LNK2005, LNK1169; 2026-11-07, Tauri 2.12). tauri-build 2.6 did it only when the Tauri CLI set
+/// STATIC_VCRUNTIME, which a plain `cargo` build never does. tauri.conf.json turns it off (build
+/// settings stay there, window-config.test.ts); it acts on MSVC targets only. The package overlay
+/// keeps it off too.
+#[test]
+fn regression_tauri_build_leaves_the_windows_c_runtime_to_the_static_link() {
+    assert!(!merged(Target::Windows).build.windows.static_vc_runtime, "tauri.conf.json");
+    let (mut value, _) = tauri_utils::config::parse::read_from(Target::Windows, &tauri_dir()).unwrap();
+    let overlay: serde_json::Value = serde_json::from_str(&read(&tauri_dir().join("tauri.package-windows.conf.json"))).unwrap();
+    json_patch::merge(&mut value, &overlay);
+    let packaged: Config = serde_json::from_value(value).unwrap();
+    assert!(!packaged.build.windows.static_vc_runtime, "tauri.package-windows.conf.json");
+    // The static link it leaves the runtime to.
+    let cargo_config = read(&tauri_dir().join("../../../.cargo/config.toml"));
+    assert!(cargo_config.lines().any(|l| l.trim() == r#"rustflags = ["-C", "target-feature=+crt-static"]"#), ".cargo/config.toml");
+    assert!(read(&tauri_dir().join("build.rs")).contains(r#"println!("cargo:rustc-link-arg=libucrt.lib");"#), "build.rs");
+}
+
 /// The deb and the rpm name every library the Linux binary takes from the system. 0.0.4's deb did
 /// not name the BLAS transcribe.cpp links on Linux (its host decoder's `cblas_sgemv`, found on the
 /// build machine): apt installed the package and `voltip-desktop` then failed with
