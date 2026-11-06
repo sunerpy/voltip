@@ -26,7 +26,7 @@ url.workspace = true
 # The Internet Options values hyper-util's reader takes the proxies from, read for the system
 # fingerprint (`ProxyServer` can hold a user name and password): the version hyper-util pulls.
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-registry = "=0.6.1"
+windows-registry = "=0.100.0"
 
 [dev-dependencies]
 tokio.workspace = true
