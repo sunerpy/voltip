@@ -12,8 +12,9 @@
 #               the release candidate and CI sign both in a step of their own
 #               (.github/scripts/sign-android-package.sh).
 #
-# Needs ANDROID_HOME (platforms 36), NDK_HOME (clang for the Rust shell), JAVA_HOME (17+), the
-# Rust target aarch64-linux-android, cargo-ndk, and `pnpm install` at the root. React Native's
+# Needs ANDROID_HOME (platforms 37.0, the compileSdk Expo SDK 58's modules ask for), NDK_HOME
+# (clang for the Rust shell), JAVA_HOME (17+), the Rust target aarch64-linux-android, cargo-ndk, and
+# `pnpm install` at the root. React Native's
 # Gradle plugin compiles against a JDK 17 toolchain: JAVA_TOOLCHAINS (comma-separated JDK homes)
 # names one when JAVA_HOME is another version, since Gradle's own download of it comes from GitHub.
 # Writes dist/android-rn/Voltip_<version>_android_arm64.apk and .aab (with --unsigned

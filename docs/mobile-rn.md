@@ -232,7 +232,7 @@ scripts/build-android-rn.sh --unsigned  # 不签名：…_android_arm64-unsigned
    `cargo run -p voltip-uniffi-bindgen` 从这个库生成 UniFFI 的 Kotlin 绑定，写进模块源码（§3），然后用 NDK 的
    `llvm-strip --strip-all` 去掉打包那份的符号。
 2. `expo prebuild --platform android --clean`：Android 工程每次生成，不提交（`android/` 被 git 忽略）；
-   需要的原生配置都写在 `app.json` 与本地模块里（权限、FileProvider、minSdk 26、targetSdk 36）。注意相机和图片
+   需要的原生配置都写在 `app.json` 与本地模块里（权限、FileProvider、minSdk 26、compileSdk 37（Expo SDK 58 的模块要求，2026-11-07）、targetSdk 36）。注意相机和图片
    选择插件的 `recordAudioAndroid: false` / `cameraPermission: false` 会以 `tools:node="remove"` 删掉
    `RECORD_AUDIO` / `CAMERA`，所以不传这两项。第三方许可证文本由
    `scripts/release/third-party-notices.py --app mobile-rn`（Rust 外壳的 crate 与 `apps/mobile-rn` 的 npm 包）生成到

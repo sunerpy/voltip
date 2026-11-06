@@ -164,6 +164,28 @@ describe("the release config", () => {
     expect(properties.enableShrinkResourcesInReleaseBuilds).toBeUndefined();
   });
 
+  it("regression: compiles against the API level of Expo's own modules and still targets 36", () => {
+    // 2026-11-07, Expo SDK 58: its prebuilt modules ask for compileSdk 37 in their AAR metadata
+    // (minCompileSdk), and Gradle's checkReleaseAarMetadata stopped the build at 36. The compile
+    // level decides which APIs the code may call; how the app behaves follows targetSdk, which stays
+    // 36 (check-android-package.sh holds the packages to it).
+    const appJson = require("../app.json").expo;
+    const properties = appJson.plugins.find(
+      (plugin) => Array.isArray(plugin) && plugin[0] === "expo-build-properties",
+    )[1].android;
+    const path = require("node:path");
+    const expo = path.dirname(require.resolve("expo/package.json"));
+    const autolinking = path.dirname(require.resolve("expo-modules-autolinking/package.json", { paths: [expo] }));
+    const plugin = require("node:fs").readFileSync(
+      path.join(autolinking, "android/expo-gradle-plugin/expo-autolinking-plugin/src/main/kotlin/expo/modules/plugin/ExpoRootProjectPlugin.kt"),
+      "utf8",
+    );
+    const expoDefault = plugin.match(/getVersionOrDefault\("compileSdk", "(\d+)"\)/);
+    expect(expoDefault).not.toBeNull();
+    expect(properties.compileSdkVersion).toBe(Number(expoDefault[1]));
+    expect(properties.targetSdkVersion).toBe(36);
+  });
+
   it("regression: keeps the stack traces' line numbers in the app's own rules, which Android Gradle Plugin 9 still reads", () => {
     // 2026-11-07, Expo SDK 58 (AGP 9.2): a global option in a library's consumer rules fails the
     // module's build ("Global keep option -renamesourcefileattribute was specified as a

@@ -222,7 +222,7 @@ make android-apk        # scripts/build-android-rn.sh：调试密钥签名的 AP
 make android-clippy     # 对 aarch64-linux-android 跑 clippy：手机壳链接的每个工作区 crate，含只在 Android 上编译的代码
 ```
 
-发布用的包与 CI 的 `android` job 走同一条路（CI 上的工具链由 `.github/scripts/android-toolchain.sh` 固定：JDK 21、platform 36、build-tools 35.0.0、NDK 30.0.16248370（r30，当前的 LTS）；React Native 的 Gradle 插件另需 JDK 17 工具链）：
+发布用的包与 CI 的 `android` job 走同一条路（CI 上的工具链由 `.github/scripts/android-toolchain.sh` 固定：JDK 21、platform 37（compileSdk；2026-11-07 起，Expo SDK 58 的模块要求）、build-tools 35.0.0、NDK 30.0.16248370（r30，当前的 LTS）；React Native 的 Gradle 插件另需 JDK 17 工具链）：
 
 ```bash
 JAVA_TOOLCHAINS=<jdk17> scripts/build-android-rn.sh --unsigned   # dist/android-rn/Voltip_<版本>_android_arm64-unsigned.apk 与 .aab
