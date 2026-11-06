@@ -175,9 +175,14 @@ describe("the release config", () => {
     )[1].android;
     const path = require("node:path");
     const expo = path.dirname(require.resolve("expo/package.json"));
-    const autolinking = path.dirname(require.resolve("expo-modules-autolinking/package.json", { paths: [expo] }));
+    const autolinking = path.dirname(
+      require.resolve("expo-modules-autolinking/package.json", { paths: [expo] }),
+    );
     const plugin = require("node:fs").readFileSync(
-      path.join(autolinking, "android/expo-gradle-plugin/expo-autolinking-plugin/src/main/kotlin/expo/modules/plugin/ExpoRootProjectPlugin.kt"),
+      path.join(
+        autolinking,
+        "android/expo-gradle-plugin/expo-autolinking-plugin/src/main/kotlin/expo/modules/plugin/ExpoRootProjectPlugin.kt",
+      ),
       "utf8",
     );
     const expoDefault = plugin.match(/getVersionOrDefault\("compileSdk", "(\d+)"\)/);
@@ -207,7 +212,9 @@ describe("the release config", () => {
     expect(consumer.length).toBeGreaterThan(0);
     // Only rules about the module's own classes: keep rules (not -keepattributes) and -dontwarn.
     for (const rule of consumer) {
-      expect(rule).toMatch(/^-(keep|keepclassmembers|keepclasseswithmembers|keepnames|keepclassmembernames|keepclasseswithmembernames|dontwarn) /);
+      expect(rule).toMatch(
+        /^-(keep|keepclassmembers|keepclasseswithmembers|keepnames|keepclassmembernames|keepclasseswithmembernames|dontwarn) /,
+      );
     }
   });
 });

@@ -371,8 +371,7 @@ fn regression_every_tauri_table_lists_the_features_the_tauri_cli_writes() {
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let meta: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     let desktop = meta["packages"].as_array().unwrap().iter().find(|p| p["name"] == "voltip-desktop").expect("voltip-desktop in the workspace");
-    let tables: Vec<&serde_json::Value> =
-        desktop["dependencies"].as_array().unwrap().iter().filter(|d| d["name"] == "tauri" && d["kind"].is_null()).collect();
+    let tables: Vec<&serde_json::Value> = desktop["dependencies"].as_array().unwrap().iter().filter(|d| d["name"] == "tauri" && d["kind"].is_null()).collect();
     let targets: Vec<&serde_json::Value> = tables.iter().map(|t| &t["target"]).collect();
     assert_eq!(
         targets,
@@ -385,8 +384,7 @@ fn regression_every_tauri_table_lists_the_features_the_tauri_cli_writes() {
         let mut asked: Vec<&str> = config.app.features().into_iter().filter(|f| managed.contains(f)).collect();
         asked.sort_unstable();
         for table in &tables {
-            let mut listed: Vec<&str> =
-                table["features"].as_array().unwrap().iter().map(|f| f.as_str().unwrap()).filter(|f| managed.contains(f)).collect();
+            let mut listed: Vec<&str> = table["features"].as_array().unwrap().iter().map(|f| f.as_str().unwrap()).filter(|f| managed.contains(f)).collect();
             listed.sort_unstable();
             assert_eq!(listed, asked, "{target:?} build, the table for {}", table["target"]);
         }
