@@ -489,6 +489,20 @@ class ContinuousIntegration(unittest.TestCase):
         cargo = (ROOT / "Cargo.toml").read_text(encoding="utf-8")
         self.assertIn('[profile.release.package.voltip-mobile-rn]\nstrip = false', cargo)
 
+    def test_regression_the_native_module_keeps_its_release_unit_tests(self) -> None:
+        # 2026-11-07, Expo SDK 58: Android Gradle Plugin 9 creates unit tests only for the build
+        # type a module tests (android.onlyEnableUnitTestForTheTestedBuildType is true from 9.0),
+        # debug unless it names another, and Gradle stopped at "task 'testReleaseUnitTest' not
+        # found in project ':voltip-native'". The module tests its release build, which
+        # assembleRelease compiles anyway.
+        script = (ROOT / "scripts/build-android-rn.sh").read_text(encoding="utf-8")
+        code = "\n".join(line for line in script.splitlines() if not line.lstrip().startswith("#"))
+        self.assertIn(":voltip-native:testReleaseUnitTest", code)
+        gradle = (ROOT / "apps/mobile-rn/modules/voltip-native/android/build.gradle").read_text(encoding="utf-8")
+        start = gradle.index("\nandroid {\n")
+        android = gradle[start : gradle.index("\n}\n", start)]
+        self.assertRegex(android, r"\n  testBuildType 'release'\n")
+
     def test_regression_the_device_smoke_starts_the_app_by_its_release_name(self) -> None:
         # The candidate's Android leg once held Voltip_*.apk and Voltip-RN_*.apk, and `Voltip-RN_`
         # sorts first: the smoke took the first *.apk of the directory. It looks for the app's own
