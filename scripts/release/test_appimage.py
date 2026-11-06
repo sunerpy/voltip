@@ -23,7 +23,7 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 LIB = os.path.join(ROOT, "scripts", "lib", "appimage.sh")
-# What tauri-bundler 2.9.4 downloads when its tools directory has no AppRun-x86_64.
+# What tauri-bundler 2.9.4 and 2.10.4 download when their tools directory has no AppRun-x86_64.
 PINNED_URL = "https://github.com/tauri-apps/binary-releases/releases/download/apprun-old/AppRun-x86_64"
 PINNED_SHA256 = "f30140a43a0a59e46db21bdefdf749b9e9f2c6946e92afabbacf98b8ae73fb4f"
 CONTENT = b"\x7fELF an AppRun for the tests\n"
@@ -134,7 +134,8 @@ class PlacePinnedExecutable(unittest.TestCase):
         self.assertEqual(os.listdir(self.tools), ["AppRun-x86_64"], "no partial download is left behind")
 
     def test_regression_a_cached_file_with_mode_0770_becomes_0755_without_a_download(self) -> None:
-        # tauri-bundler 2.9.4 writes the AppRun it downloads with mode 0770, and packaged it so.
+        # tauri-bundler 2.9.4 and 2.10.4 write the AppRun they download with mode 0770, and 0.2.1
+        # was packaged so.
         write(self.file, CONTENT, 0o770)
         with Server({"AppRun-x86_64": OTHER}) as server:
             result = self.place(server)

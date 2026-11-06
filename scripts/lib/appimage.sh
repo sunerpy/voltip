@@ -3,14 +3,14 @@
 # AppImage carries. Sourced by scripts/build-linux-x64.sh and the Linux leg of
 # release-candidate.yml.
 #
-# tauri-bundler 2.9.4 (tauri-cli 2.11.4 and 2.11.5) downloads AppRun-x86_64 into its tools
-# directory, writes it with mode 0770 (`write_and_make_executable`) and copies it into the AppDir
-# with that mode; linuxdeploy keeps it as AppRun.wrapped. The squashfs records root as the owner,
-# and where the AppImage is mounted as recorded (firejail --appimage, in the AppImage catalogue's
-# test of 0.2.1) a user who is not root cannot run it: "AppRun.wrapped: Permission denied". The
-# bundler downloads the file only when it is missing, so the pinned copy placed here first, with
-# mode 0755, is the one it packages. The check stops a package that still carries an entry other
-# users cannot read or run.
+# tauri-bundler (2.9.4 in tauri-cli 2.11.4 and 2.11.5, 2.10.4 in tauri-cli 2.12.4) downloads
+# AppRun-x86_64 into its tools directory, writes it with mode 0770 (`write_and_make_executable`)
+# and copies it into the AppDir with that mode; linuxdeploy keeps it as AppRun.wrapped. The
+# squashfs records root as the owner, and where the AppImage is mounted as recorded (firejail
+# --appimage, in the AppImage catalogue's test of 0.2.1) a user who is not root cannot run it:
+# "AppRun.wrapped: Permission denied". The bundler downloads the file only when it is missing, so
+# the pinned copy placed here first, with mode 0755, is the one it packages. The check stops a
+# package that still carries an entry other users cannot read or run.
 
 VOLTIP_APPRUN_URL=https://github.com/tauri-apps/binary-releases/releases/download/apprun-old/AppRun-x86_64
 VOLTIP_APPRUN_SHA256=f30140a43a0a59e46db21bdefdf749b9e9f2c6946e92afabbacf98b8ae73fb4f

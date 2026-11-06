@@ -8,23 +8,23 @@
 # Environment: none required. Exit 0 only when `cargo-tauri --version` prints the pinned version.
 set -euo pipefail
 
-TAURI_CLI_VERSION="2.11.5"
+TAURI_CLI_VERSION="2.12.4"
 # SHA-256 of the release assets at
-# https://github.com/tauri-apps/tauri/releases/tag/tauri-cli-v2.11.5: the x86_64 Linux tarball
-# (recorded 2026-09-25) and the Apple silicon and Intel zips the macOS legs use (recorded
-# 2026-09-28).
+# https://github.com/tauri-apps/tauri/releases/tag/tauri-cli-v2.12.4: the x86_64 Linux tarball and
+# the Apple silicon and Intel zips the macOS legs use (recorded 2026-11-06; the Linux tarball's
+# digest checked on a download, the zips' against the digests GitHub lists for the assets).
 case "$(uname -s)-$(uname -m)" in
 Linux-x86_64)
 	asset="cargo-tauri-x86_64-unknown-linux-gnu.tgz"
-	TAURI_CLI_SHA256="e75e2a1e8d3bceba327a10640a08b0bfef6d7559e8e13274629189001f2fce08"
+	TAURI_CLI_SHA256="820ae3c7580ca637cad15f65638960ee2a96e5a491e224691c86d6f25e6c9e8a"
 	;;
 Darwin-arm64)
 	asset="cargo-tauri-aarch64-apple-darwin.zip"
-	TAURI_CLI_SHA256="7734f1d942dbe6e5fea91c1575452f4bf2cc942e6902f2d9d78513baa8527b24"
+	TAURI_CLI_SHA256="f71a34ada728ca2d1a51c28d6d21639e1e080898ec69ec8d49c5da3b7e8bc1be"
 	;;
 Darwin-x86_64)
 	asset="cargo-tauri-x86_64-apple-darwin.zip"
-	TAURI_CLI_SHA256="535b790c9d1995f67fdb21296a2abbf8026c7846b206cff9b93984eb740eab8b"
+	TAURI_CLI_SHA256="164d184c0e50800dcae7bb31f0815066ebd27efc3e3bb73117974bcd2e982192"
 	;;
 *)
 	echo "install-cargo-tauri: only x86_64 Linux and macOS (Apple silicon, Intel) are pinned (got $(uname -s) $(uname -m))" >&2
