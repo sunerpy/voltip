@@ -6,7 +6,8 @@
 //! 退出 Voltip. On Windows a left click (or a double click) shows the main window and a right click
 //! opens the menu. On macOS a click opens the menu once the system's double-click interval has
 //! passed, and a double click shows the main window instead (user request 2026-09-30,
-//! `voltip_platform::tray::ClickSeries`); a right click opens the menu at once. The menu is rebuilt
+//! `voltip_platform::tray::ClickSeries`); a right click, or a press through accessibility
+//! (VoiceOver, the keyboard's way into the menu bar), opens the menu at once. The menu is rebuilt
 //! when the language, the engine settings or the custom presets change.
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -119,7 +120,7 @@ pub fn install<R: Runtime>(app: &AppHandle<R>, locale: TrayLocale, updater: bool
     let model = MenuModel { locale, updater, polish, has_last: false };
     let menu = build_menu(app, &model)?;
     let macos = cfg!(target_os = "macos");
-    TrayIconBuilder::with_id(TRAY_ID)
+    let tray = TrayIconBuilder::with_id(TRAY_ID)
         .icon(image(TrayGlyph::Idle))
         .icon_as_template(macos)
         .tooltip(tray_tooltip(TrayGlyph::Idle, locale))
@@ -153,6 +154,10 @@ pub fn install<R: Runtime>(app: &AppHandle<R>, locale: TrayLocale, updater: bool
             _ => {}
         })
         .build(app)?;
+    #[cfg(target_os = "macos")]
+    open_menu_on_press(&tray);
+    #[cfg(not(target_os = "macos"))]
+    let _ = tray;
     app.manage(TrayState {
         shown: Mutex::new(Shown { glyph: TrayGlyph::Idle, locale }),
         menu: MenuSync::new(model),
@@ -222,6 +227,111 @@ fn double_click_interval_ms() -> u64 {
         .and_then(|interval| u64::try_from(interval.as_millis()).ok())
         .unwrap_or(500)
         .clamp(150, 2000)
+}
+
+/// macOS: a press of the status item through accessibility opens the menu, as it did before
+/// tray-icon 0.25.1. That version attaches the menu to the status item only while it shows it
+/// (tauri-apps/tray-icon#365, against clicks macOS 27 swallowed), so the press, which AppKit turns
+/// into the button's action, found neither a menu nor an action: VoiceOver and the keyboard opened
+/// nothing, and CI's tray smoke timed out waiting for the menu (2026-11-07). The button's action
+/// now opens it. Clicks never reach the action: tray-icon's view over the button takes them.
+#[cfg(target_os = "macos")]
+fn open_menu_on_press<R: Runtime>(tray: &TrayIcon<R>) {
+    // The app, not the tray: the target outlives a tray that goes away, and must not keep it.
+    let app = tray.app_handle().clone();
+    let attached = tray.with_inner_tray_icon(move |inner| {
+        let (Some(mtm), Some(item)) = (objc2::MainThreadMarker::new(), inner.ns_status_item()) else { return false };
+        press::attach(&item, mtm, move || open_menu_now(&app))
+    });
+    match attached {
+        Ok(true) => {}
+        Ok(false) => tracing::warn!("tray: the status item has no button to press"),
+        Err(e) => tracing::warn!(error = %e, "tray: the status item's press is not wired"),
+    }
+}
+
+/// The status item was pressed: the menu opens, unless it is showing already (AppKit presses the
+/// button itself to show it, and tray-icon attaches the menu for exactly that time).
+#[cfg(target_os = "macos")]
+fn open_menu_now<R: Runtime>(app: &AppHandle<R>) {
+    let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
+    // A click waiting to open the menu opens nothing.
+    if let Some(state) = app.try_state::<TrayState>() {
+        state.clicks.lock().cancel();
+    }
+    // On the main thread (the button's action), where `with_inner_tray_icon` runs inline.
+    let opened = tray.with_inner_tray_icon(|inner| {
+        let (Some(mtm), Some(item)) = (objc2::MainThreadMarker::new(), inner.ns_status_item()) else { return };
+        if press::showing(&item, mtm) {
+            return;
+        }
+        tracing::info!("tray press: menu");
+        inner.show_menu();
+    });
+    if let Err(e) = opened {
+        tracing::warn!(error = %e, "tray menu did not open after a press");
+    }
+}
+
+/// The target of the status item's button (`open_menu_on_press`).
+#[cfg(target_os = "macos")]
+mod press {
+    #![allow(unsafe_code)]
+
+    use std::cell::RefCell;
+
+    use objc2::rc::Retained;
+    use objc2::runtime::{AnyObject, NSObject};
+    use objc2::{DefinedClass as _, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
+    use objc2_app_kit::NSStatusItem;
+
+    pub struct Ivars {
+        open: Box<dyn Fn()>,
+    }
+
+    define_class!(
+        // SAFETY: NSObject has no subclassing requirements, and `Press` does not implement Drop.
+        #[unsafe(super(NSObject))]
+        #[thread_kind = MainThreadOnly]
+        #[name = "VoltipTrayPress"]
+        #[ivars = Ivars]
+        pub struct Press;
+
+        impl Press {
+            #[unsafe(method(press:))]
+            fn press(&self, _sender: Option<&AnyObject>) {
+                (self.ivars().open)();
+            }
+        }
+    );
+
+    thread_local! {
+        /// The buttons' targets, which AppKit does not retain: kept for the life of the process, so
+        /// a button can never call a released one (one per tray installed). Main thread only.
+        static TARGETS: RefCell<Vec<Retained<Press>>> = const { RefCell::new(Vec::new()) };
+    }
+
+    /// Make the button of `item` call `open` when pressed; false when the item has no button.
+    pub fn attach(item: &NSStatusItem, mtm: MainThreadMarker, open: impl Fn() + 'static) -> bool {
+        let Some(button) = item.button(mtm) else { return false };
+        let target = Press::alloc(mtm).set_ivars(Ivars { open: Box::new(open) });
+        // SAFETY: NSObject's `init`, on an allocated instance whose ivars are set.
+        let target: Retained<Press> = unsafe { msg_send![super(target), init] };
+        let object: &AnyObject = &target;
+        // SAFETY: `TARGETS` keeps the target alive for as long as the button can call it, and
+        // `press:` takes the sender and returns nothing, as an action does.
+        unsafe {
+            button.setTarget(Some(object));
+            button.setAction(Some(sel!(press:)));
+        }
+        TARGETS.with(|targets| targets.borrow_mut().push(target));
+        true
+    }
+
+    /// The status item shows its menu now.
+    pub fn showing(item: &NSStatusItem, mtm: MainThreadMarker) -> bool {
+        item.menu(mtm).is_some()
+    }
 }
 
 /// An AI 润色 entry: the engine settings with the switch flipped or the preset chosen, through the
