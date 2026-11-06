@@ -1,7 +1,13 @@
 // The window's side of the Expo config (plugins/display.js, docs/mobile-rn.md §5): AppTheme names no
 // system bar colours, no activity is held to one orientation, and app.config.js applies both to
 // every build.
-const { SCANNER_ACTIVITY, withScannerUnlocked, withoutSystemBarColors } = require("./display");
+const {
+  DOCUMENT_SCANNER,
+  SCANNER_ACTIVITY,
+  withScannerUnlocked,
+  withoutDocumentScanner,
+  withoutSystemBarColors,
+} = require("./display");
 
 /** styles.xml as Expo SDK 57's prebuild parses it, with what its system-bars plugin adds. */
 function styles() {
@@ -85,6 +91,52 @@ describe("the window config", () => {
     );
   });
 
+  it("regression: leaves out expo-camera's ML Kit document scanner, whose activity is held to portrait", () => {
+    // 2026-11-07, Expo SDK 58: expo-camera 58 brings ML Kit's document scanner, and the scanner's
+    // activity declares portrait (check-android-package.sh refused the package). The app scans no
+    // documents. Expo builds the app with expo-camera's prebuilt module, which brings the library
+    // whatever expo-camera's own Gradle switch says (expo.camera.document-scanner-enabled was false
+    // and the activity was still there), so the app's dependencies leave the library out.
+    const template =
+      'allprojects {\n  repositories {\n    google()\n  }\n}\n\napply plugin: "expo-root-project"\n';
+    const result = withoutDocumentScanner(template);
+    expect(result.startsWith(template)).toBe(true);
+    const exclusion = result.slice(template.length);
+    expect(exclusion).toContain('project(":app") {');
+    expect(exclusion).toContain(
+      `exclude group: "${DOCUMENT_SCANNER.group}", module: "${DOCUMENT_SCANNER.module}"`,
+    );
+    // Run twice (a second prebuild of the same file): one exclusion.
+    expect(withoutDocumentScanner(result)).toBe(result);
+    // The library is the one expo-camera's prebuilt module brings at run time (its Gradle metadata,
+    // which Gradle prefers to the POM).
+    const path = require("node:path");
+    const fs = require("node:fs");
+    const camera = path.dirname(require.resolve("expo-camera/package.json"));
+    const { version } = require("expo-camera/package.json");
+    const { publication } = require("expo-camera/expo-module.config.json").android;
+    const metadata = JSON.parse(
+      fs.readFileSync(
+        path.join(
+          camera,
+          publication.repository,
+          ...publication.groupId.split("."),
+          publication.artifactId,
+          version,
+          `${publication.artifactId}-${version}.module`,
+        ),
+        "utf8",
+      ),
+    );
+    const runtime = metadata.variants.filter(
+      (variant) =>
+        variant.attributes["org.gradle.category"] === "library" &&
+        variant.attributes["org.gradle.usage"] === "java-runtime",
+    );
+    expect(runtime).toHaveLength(1);
+    expect(runtime[0].dependencies).toContainEqual(expect.objectContaining(DOCUMENT_SCANNER));
+  });
+
   it("refuses a manifest without an application", () => {
     expect(() => withScannerUnlocked({ manifest: { $: {} } })).toThrow("no application element");
   });
@@ -111,5 +163,21 @@ describe("the window config", () => {
         (activity) => activity.$["android:name"] === SCANNER_ACTIVITY,
       ),
     ).toBe(true);
+    const project = await config.mods.android.projectBuildGradle({
+      ...config,
+      modRequest: { platform: "android", modName: "projectBuildGradle" },
+      modResults: { language: "groovy", contents: 'apply plugin: "expo-root-project"\n' },
+    });
+    expect(project.modResults.contents).toContain(
+      `exclude group: "${DOCUMENT_SCANNER.group}", module: "${DOCUMENT_SCANNER.module}"`,
+    );
+    // A Kotlin build script would not take the Groovy block: the template changed.
+    await expect(
+      config.mods.android.projectBuildGradle({
+        ...config,
+        modRequest: { platform: "android", modName: "projectBuildGradle" },
+        modResults: { language: "kt", contents: "" },
+      }),
+    ).rejects.toThrow("not Groovy");
   });
 });

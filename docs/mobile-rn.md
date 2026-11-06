@@ -190,7 +190,11 @@ JS ◀──sendEvent("voltip://event")── Kotlin VoltipHost（PlatformHost�
 - **横屏与大屏（2026-10-28 用户决定「完全放开方向，界面自适应」；Google Play 关于 Android 16 大屏的提示）**：
   - `app.json` 的 `orientation` 为 `default`，`MainActivity` 不再锁竖屏；ML Kit 扫码的
     `GmsBarcodeScanningDelegateActivity` 在它的库清单里锁了竖屏，`plugins/display.js` 用 `tools:remove="android:screenOrientation"`
-    去掉。清单里也没有 `resizeableActivity="false"` 与 `min/maxAspectRatio`（`check-android-package.sh` 检查，§6）。
+    去掉。expo-camera 58 默认还带 ML Kit 的文档扫描，它的 `GmsDocumentScanningDelegateActivity` 同样锁竖屏；应用不扫描文档，
+    `plugins/display.js` 在根工程的 `build.gradle` 里把 `com.google.android.gms:play-services-mlkit-document-scanner`
+    从 `:app` 的依赖中排除，这个库和它的页面都不进包（2026-11-07）。expo-camera 自己的开关
+    `expo.camera.document-scanner-enabled` 只在从源码构建它时生效：Expo SDK 58 用它的预编译模块，模块的 Gradle 元数据总是带上这个库。
+    清单里也没有 `resizeableActivity="false"` 与 `min/maxAspectRatio`（`check-android-package.sh` 检查，§6）。
   - 页面（`ui/kit.tsx` 的 `Page`）左右加上安全区（横屏时的刘海与导航栏），内容放在最宽 720 dp 的居中一列里（`PAGE_MAX_WIDTH`）；
     浮动底栏最宽 480 dp、居中（`DOCK_MAX_WIDTH`）；手机横屏（窗口宽大于高且高不足 480 dp，`ui/rail.ts` 的 `isRailWindow`）时
     标签栏改为屏幕左侧的竖向导航栏（宽 72 dp，距左侧安全区 16 dp，在状态栏与底部安全区之间居中），页面从它右侧开始
