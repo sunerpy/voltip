@@ -502,14 +502,22 @@ function AbilityHelp({
 }) {
   const { t } = useI18n();
   const state = useUiState();
+  const engines = state.settings.engines;
   const preview = previews ? state.models.find(isStreamingModel) : undefined;
+  // docs/dictation.md §11.10: 本地模型预览 has its own switch.
   const localPreview: LocalPreview =
-    preview === undefined ? "none" : preview.state.kind === "installed" ? "installed" : "missing";
+    preview === undefined
+      ? "none"
+      : !engines.local_preview
+        ? "off"
+        : preview.state.kind === "installed"
+          ? "installed"
+          : "missing";
   const lines = asrAbilityHelp(
     provider,
     url,
     model,
-    { previews, livePreview: state.settings.engines.live_preview, localPreview },
+    { previews, providerPreview: engines.provider_preview, localPreview },
     t,
   );
   return (

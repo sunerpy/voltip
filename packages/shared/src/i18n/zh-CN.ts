@@ -109,6 +109,33 @@ export const zhCN = {
       },
       tier: { preview: "预览", final: "最终" },
       livePreview: "预览",
+      /** docs/dictation.md §11.10: whose words the pill shows, after 预览. */
+      livePreviewFrom: "预览 · {source}",
+      /** The short names the preview tag uses. */
+      sourceName: {
+        builtin: "内置服务",
+        local: "本地模型",
+        openai: "OpenAI",
+        groq: "Groq",
+        google: "Google",
+        siliconflow: "硅基流动",
+        aliyun: "百炼",
+        volcengine_speech: "豆包语音",
+        tencent: "腾讯云",
+        iflytek: "讯飞听写",
+        iflytek_rtasr: "讯飞转写",
+        baidu: "百度",
+        stepfun: "阶跃星辰",
+        deepseek: "DeepSeek",
+        kimi: "Kimi",
+        glm: "智谱",
+        volcengine: "火山方舟",
+        hunyuan: "混元",
+        mimo: "MiMo",
+        openrouter: "OpenRouter",
+        ollama: "Ollama",
+        custom: "自定义接口",
+      },
       waitingMic: "等待麦克风",
       /** `hold_or_toggle` (docs/dictation.md §13): a short press locked the take. */
       lockedHint: "已锁定 · 再按一次结束",
@@ -487,6 +514,9 @@ export const zhCN = {
     },
     fallback: "实时识别模型未下载，当前按整段输出运行",
     fallbackPaused: "当前使用的候补模型不支持实时识别，按整段输出运行",
+    /** docs/dictation.md §11.10: the switches that could give a live source are off. */
+    fallbackOff: "实时预览已关闭，当前按整段输出运行",
+    previewOff: "实时预览已关闭",
     streamed:
       "所选识别模型是实时识别模型：说话时就已识别，按「边说边识别」运行，文字仍在松开后一次插入。",
     effective: "当前生效",
@@ -1696,11 +1726,12 @@ export const zhCN = {
       preview: "实时预览",
       hotwords: "热词",
       realtimeHelp: "边说边识别：说话时就开始识别，松开后只等最后一句。",
-      realtimeOffHelp: "这个模型能边说边识别；「实时预览」已关闭，现在松开后识别整段录音。",
+      realtimeHiddenHelp:
+        "边说边识别：说话时就开始识别，松开后只等最后一句；「服务商的实时文字」已关闭，悬浮窗不显示服务商的文字。",
       previewHelp: "说话时由内置服务显示预览，约每 2 秒更新一次；松开后识别整段录音。",
       wholeHelp: "松开后识别整段录音。",
       wholePreviewHelp:
-        "松开后识别整段录音；想在说话时看到文字，可在「识别设置」使用「实时预览」。",
+        "松开后识别整段录音；想在说话时看到文字，可在「识别设置」的「实时预览」打开「本地模型预览」并下载它的模型。",
       wholeLocalHelp: "松开后识别整段录音；说话时由本机的「实时预览」模型显示预览。",
       hotwordsHelp: "词典的词条作为热词发给识别服务。",
       promptHelp: "词典的词条作为提示词发给识别服务。",
@@ -1993,12 +2024,20 @@ export const zhCN = {
     installedCount: "{installed} / {total} 已安装",
     livePreview: {
       title: "实时预览",
-      note: "按住快捷键说话时，悬浮窗实时显示识别的文字。使用内置服务时，预览由内置服务提供，约每 2 秒更新一次，松开后仍识别整段录音；使用实时识别模型（如阿里云百炼的 qwen-audio-3.1-asr-flash-streaming）时，说话时就已识别，松开后只补最后一句；使用其他服务商或本地模型时，需要下载下面的「实时预览」模型，预览不影响最终文本。",
-      toggle: "实时预览",
+      note: "按住快捷键说话时，悬浮窗实时显示识别的文字，标签写明文字的来源。两项都打开时优先显示服务商的文字，服务商没有实时文字时才使用本地模型。",
+      /** docs/dictation.md §11.10: the provider's words (`provider_preview`). */
+      provider: "服务商的实时文字",
+      providerHelp:
+        "使用内置服务时，预览约每 2 秒更新一次，松开后仍识别整段录音；使用实时识别模型（如阿里云百炼的 qwen-audio-3.1-asr-flash-streaming）时，说话时就已识别，松开后只补最后一句。关闭后不显示这些文字：实时识别模型仍边说边识别，结果和速度不变；内置服务不再发送预览请求。",
+      /** The library's streaming model (`local_preview`). */
+      local: "本地模型预览",
+      localHelp:
+        "服务商没有实时文字时，由下面的「实时预览」模型在这台电脑上识别并显示，需要先下载；预览不影响最终文本。",
+      /** The status line's name for the library's model. */
+      localModel: "本地模型",
       state: {
-        ready: "已就绪",
-        cloud: "已就绪 · 内置服务",
-        stream: "已就绪 · 实时识别模型",
+        showing: "使用中 · {source}",
+        hidden: "不显示 · 实时识别照常进行",
         paused: "暂不可用 · 候补模型不支持实时识别",
         missing: "模型未下载",
         off: "已关闭",
@@ -2006,7 +2045,7 @@ export const zhCN = {
     },
     outputMode: {
       title: "输出方式",
-      note: "决定最终文本的生成方式和插入时机。后两种方式需要实时预览：使用内置服务或实时识别模型时可以直接使用，否则需要先下载「实时预览」模型；不满足时按「整段输出」运行。",
+      note: "决定最终文本的生成方式和插入时机。后两种方式需要说话时就有识别结果：实时识别模型可以直接使用；内置服务需要打开「服务商的实时文字」；其他情况需要打开「本地模型预览」并下载「实时预览」模型。不满足时按「整段输出」运行。",
       label: "输出方式",
     },
     vadTrim: {

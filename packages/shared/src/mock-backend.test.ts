@@ -95,7 +95,10 @@ import {
   MAX_PHONE_TEXT_CHARS,
   type BacktestDraft,
   type DictionaryDraft,
+  type EngineSettings,
   type HistoryEntry,
+  type ProviderId,
+  type ServiceKind,
   MAX_BACKTEST_LIMIT,
   NIL_ID,
   type RuleDraft,
@@ -1210,12 +1213,18 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
     backend.destroy();
   });
 
-  /** A desktop with the streaming model on disk: live preview is ready by default. */
-  function liveBackend(live_preview = true) {
+  /** A desktop with the streaming model on disk: 本地模型预览 is ready by default
+   *  (docs/dictation.md §11.10). */
+  function liveBackend(
+    local_preview = true,
+    engines: Partial<EngineSettings> = {},
+    providerKeys: { provider: ProviderId; kind: ServiceKind }[] = [],
+  ) {
     return new MockBackend({
       now: () => clock,
       history: [],
-      settings: { engines: { ...defaultEngineSettings(), live_preview } },
+      providerKeys,
+      settings: { engines: { ...defaultEngineSettings(), local_preview, ...engines } },
       models: {
         [MOCK_STREAMING_MODEL_ID]: {
           kind: "installed",
@@ -1228,7 +1237,11 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
 
   it("regression: with live preview ready the mock emits ready → throttled partials → a committed sentence → processing with the preview (docs/dictation.md §11)", async () => {
     const backend = liveBackend();
-    expect(backend.peek().engines.live_preview_ready).toBe(true);
+    expect(backend.peek().engines).toMatchObject({
+      live_ready: true,
+      live_source: "local",
+      preview_source: "local",
+    });
     expect(backend.peek().engines.asr_provider).toBe("builtin");
     const events = collect(backend);
     await backend.invoke("dictation_start");
@@ -1245,14 +1258,15 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
       ready: true,
       locked: false,
     });
-    // Each step is one full `dictation` push with the script's LiveText.
+    // Each step is one full `dictation` push with the script's LiveText, tagged with whose words
+    // they are (§11.10).
     for (const [n, live] of MOCK_LIVE_SCRIPT.entries()) {
       tick(MOCK_LIVE_STEP_MS);
       expect(backend.peek().dictation.phase, `step ${n}`).toEqual({
         phase: "listening",
         started_at: T0 + MOCK_MIC_READY_MS,
         ready: true,
-        live,
+        live: { ...live, source: "local" },
         locked: false,
       });
     }
@@ -1263,7 +1277,7 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
     // The script is exhausted: more time changes nothing.
     tick(MOCK_LIVE_STEP_MS * 3);
     const phase = backend.peek().dictation.phase;
-    expect(phase.phase === "listening" && phase.live).toEqual(last);
+    expect(phase.phase === "listening" && phase.live).toEqual({ ...last, source: "local" });
     // Stop: the preview (committed + current, CJK joined without spaces) rides into processing
     // and through the refine stage; the final text is the whole-take result as before.
     await backend.invoke("dictation_stop");
@@ -1292,12 +1306,12 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
     backend.destroy();
   });
 
-  it("regression: without the streaming model or with live_preview off there are no partials and no preview", async () => {
+  it("regression: without the streaming model or with 本地模型预览 off there are no partials and no preview", async () => {
     for (const backend of [
       new MockBackend({ now: () => clock, history: [] }),
       liveBackend(false),
     ]) {
-      expect(backend.peek().engines.live_preview_ready).toBe(false);
+      expect(backend.peek().engines.live_ready).toBe(false);
       await backend.invoke("dictation_start");
       tick(MOCK_MIC_READY_MS);
       tick(MOCK_LIVE_STEP_MS * (MOCK_LIVE_SCRIPT.length + 1));
@@ -1317,6 +1331,72 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
     }
   });
 
+  it("docs/dictation.md section 11.10: a realtime model's take streams whatever the pill shows — its own words tagged with the service, the local model's, or none", async () => {
+    const realtime: Partial<EngineSettings> = {
+      asr_provider: "aliyun",
+      providers: { aliyun: { asr_model: "qwen-audio-3.1-asr-flash-streaming" } },
+      refine_enabled: false,
+    };
+    const keys = [{ provider: "aliyun" as const, kind: "asr" as const }];
+    const last = MOCK_LIVE_SCRIPT.at(-1);
+    if (!last) throw new Error("script");
+    const cases = [
+      { provider_preview: true, local_preview: true, source: "stream", provider: "aliyun" },
+      { provider_preview: false, local_preview: true, source: "local", provider: undefined },
+      { provider_preview: false, local_preview: false, source: undefined, provider: undefined },
+    ] as const;
+    const seen = [];
+    for (const { provider_preview, local_preview } of cases) {
+      const backend = liveBackend(local_preview, { ...realtime, provider_preview }, keys);
+      const engines = backend.peek().engines;
+      await backend.invoke("dictation_start");
+      tick(MOCK_MIC_READY_MS);
+      tick(MOCK_LIVE_STEP_MS * (MOCK_LIVE_SCRIPT.length + 1));
+      const listening = backend.peek().dictation.phase;
+      await backend.invoke("dictation_stop");
+      const processing = backend.peek().dictation.phase;
+      tick(MOCK_FINALIZE_MS);
+      const done = backend.peek().dictation.phase;
+      seen.push({
+        switches: { provider_preview, local_preview },
+        engines: {
+          live_ready: engines.live_ready,
+          live_source: engines.live_source,
+          preview_source: engines.preview_source,
+          preview_provider: engines.preview_provider,
+          effective_output_mode: engines.effective_output_mode,
+        },
+        live: listening.phase === "listening" ? listening.live : listening.phase,
+        preview: processing.phase === "processing" ? processing.preview !== undefined : undefined,
+        // The stream's sentences are the take's text, seen or not.
+        done:
+          done.phase === "done"
+            ? { text: done.text, mode: done.mode, live_error: done.live_error }
+            : done.phase,
+      });
+      backend.destroy();
+      clock = T0;
+    }
+    expect(seen).toEqual(
+      cases.map(({ provider_preview, local_preview, source, provider }) => ({
+        switches: { provider_preview, local_preview },
+        engines: {
+          live_ready: true,
+          live_source: "stream",
+          preview_source: source,
+          preview_provider: provider,
+          effective_output_mode: "streaming_final",
+        },
+        live:
+          source === undefined
+            ? undefined
+            : { ...last, source, ...(provider === undefined ? {} : { provider }) },
+        preview: source !== undefined,
+        done: { text: livePreviewText(last), mode: "streaming_final", live_error: undefined },
+      })),
+    );
+  });
+
   it("regression: simulateLiveDegraded keeps the text shown so far, ignores later partials and leaves the final text alone; stop / cancel before ready drop the late ready mark", async () => {
     const backend = liveBackend();
     await backend.invoke("dictation_start");
@@ -1328,7 +1408,11 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
       phase: "listening",
       started_at: T0 + MOCK_MIC_READY_MS,
       ready: true,
-      live: { ...shown, degraded: "live tap overrun: the decoder fell behind the microphone" },
+      live: {
+        ...shown,
+        source: "local",
+        degraded: "live tap overrun: the decoder fell behind the microphone",
+      },
       locked: false,
     });
     tick(MOCK_LIVE_STEP_MS * MOCK_LIVE_SCRIPT.length);
@@ -1436,7 +1520,7 @@ describe("MockBackend history, engines and secrets", () => {
       asr_model: MOCK_ENGINE_BUILTIN.asr_model,
       asr_host: "",
       local_ready: false,
-      live_preview_ready: false,
+      live_ready: false,
       effective_output_mode: "whole_take",
       refine_enabled: true,
       llm_provider: "builtin",
@@ -1968,10 +2052,13 @@ describe("MockBackend local models (docs/dictation.md §10)", () => {
     expect(backend.peek().models[3]?.state.kind).toBe("downloading");
   });
 
-  it("regression: live_preview_ready is the switch plus the streaming model's install state, whatever the provider is; the switch folds into settings", async () => {
+  it("regression: live_ready is 本地模型预览 plus the streaming model's install state, whatever the provider is; each switch folds into settings on its own", async () => {
     const backend = new MockBackend({ now: () => clock });
-    expect(backend.peek().settings.engines.live_preview).toBe(true);
-    expect(backend.peek().engines.live_preview_ready).toBe(false);
+    expect(backend.peek().settings.engines).toMatchObject({
+      provider_preview: true,
+      local_preview: true,
+    });
+    expect(backend.peek().engines.live_ready).toBe(false);
     const events = collect(backend);
     // Installing the streaming model flips readiness (one `engines` push, local_ready untouched).
     await backend.invoke("model_download", { id: MOCK_STREAMING_MODEL_ID });
@@ -1980,7 +2067,8 @@ describe("MockBackend local models (docs/dictation.md §10)", () => {
     expect(backend.peek().engines).toMatchObject({
       asr_provider: "builtin",
       local_ready: false,
-      live_preview_ready: true,
+      live_ready: true,
+      preview_source: "local",
     });
     expect(events.filter((e) => e.type === "engines")).toHaveLength(1);
     // The streaming model is never the recognition model: local mode still resolves the default.
@@ -1989,20 +2077,27 @@ describe("MockBackend local models (docs/dictation.md §10)", () => {
     });
     expect(backend.peek().engines).toMatchObject({
       local_model: "qwen3-asr-0.6b",
-      live_preview_ready: true,
+      live_ready: true,
     });
     expect(backend.peek().models[4]?.active).toBe(false);
-    // Switching live preview off: the setting is persisted and readiness drops at once.
+    // docs/dictation.md §11.10: the provider's words off leave the local model's preview alone.
     await backend.invoke("settings_set_engines", {
-      engines: { ...defaultEngineSettings(), live_preview: false },
+      engines: { ...defaultEngineSettings(), provider_preview: false },
     });
-    expect(backend.peek().settings.engines.live_preview).toBe(false);
-    expect(backend.peek().engines.live_preview_ready).toBe(false);
+    expect(backend.peek().settings.engines.provider_preview).toBe(false);
+    expect(backend.peek().engines).toMatchObject({ live_ready: true, preview_source: "local" });
+    // Switching 本地模型预览 off: the setting is persisted and readiness drops at once.
+    await backend.invoke("settings_set_engines", {
+      engines: { ...defaultEngineSettings(), local_preview: false },
+    });
+    expect(backend.peek().settings.engines.local_preview).toBe(false);
+    expect(backend.peek().engines.live_ready).toBe(false);
+    expect(backend.peek().engines.preview_source).toBeUndefined();
     await backend.invoke("settings_set_engines", { engines: defaultEngineSettings() });
-    expect(backend.peek().engines.live_preview_ready).toBe(true);
+    expect(backend.peek().engines.live_ready).toBe(true);
     // Removing the streaming model drops readiness again.
     await backend.invoke("model_remove", { id: MOCK_STREAMING_MODEL_ID });
-    expect(backend.peek().engines.live_preview_ready).toBe(false);
+    expect(backend.peek().engines.live_ready).toBe(false);
     backend.destroy();
   });
 });
@@ -2134,16 +2229,21 @@ describe("MockBackend locale, auto-update and updater (docs/frontend.md §7)", (
     };
     const backend = new MockBackend({ builtIn });
     expect(backend.peek().engines).toMatchObject({
-      live_preview_ready: true,
+      live_ready: true,
       live_source: "cloud",
+      preview_source: "cloud",
+      preview_provider: "builtin",
     });
     const engines = backend.peek().settings.engines;
     await backend.invoke("settings_set_engines", {
       engines: { ...engines, output_mode: "live_inject" },
     });
     expect(backend.peek().engines.effective_output_mode).toBe("live_inject");
-    await backend.invoke("settings_set_engines", { engines: { ...engines, live_preview: false } });
-    expect(backend.peek().engines.live_preview_ready).toBe(false);
+    // docs/dictation.md §11.10: the provider's words off, the built-in service previews nothing.
+    await backend.invoke("settings_set_engines", {
+      engines: { ...engines, provider_preview: false },
+    });
+    expect(backend.peek().engines.live_ready).toBe(false);
     expect(backend.peek().engines.live_source).toBeUndefined();
     // Another provider does not preview by decoding again: without the model, no source.
     await backend.invoke("settings_set_engines", {
@@ -2157,7 +2257,7 @@ describe("MockBackend locale, auto-update and updater (docs/frontend.md §7)", (
     backend.destroy();
     // A built-in service that does not say so (the default here) has no source without the model.
     const quiet = new MockBackend();
-    expect(quiet.peek().engines).toMatchObject({ live_preview_ready: false });
+    expect(quiet.peek().engines).toMatchObject({ live_ready: false });
     expect(quiet.peek().engines.live_source).toBeUndefined();
     quiet.destroy();
   });
@@ -2456,32 +2556,32 @@ describe("MockBackend output modes (docs/dictation.md §12)", () => {
   if (!last) throw new Error("script");
   const preview = livePreviewText(last);
 
-  it("regression: effective_output_mode is the requested mode once the streaming model is installed and whole_take until then; it follows the install state and the live_preview switch", async () => {
+  it("regression: effective_output_mode is the requested mode once the streaming model is installed and whole_take until then; it follows the install state and the 本地模型预览 switch", async () => {
     const backend = new MockBackend({
       now: () => clock,
       history: [],
       settings: { engines: { ...defaultEngineSettings(), output_mode: "streaming_final" } },
     });
     expect(backend.peek().engines).toMatchObject({
-      live_preview_ready: false,
+      live_ready: false,
       effective_output_mode: "whole_take",
     });
     const events = collect(backend);
     await backend.invoke("model_download", { id: MOCK_STREAMING_MODEL_ID });
     tick(MOCK_MODEL_TICK_MS * (MOCK_MODEL_TICKS + 3));
     expect(backend.peek().engines).toMatchObject({
-      live_preview_ready: true,
+      live_ready: true,
       effective_output_mode: "streaming_final",
     });
     expect(events.some((e) => e.type === "engines")).toBe(true);
     await backend.invoke("settings_set_engines", {
-      engines: { ...backend.peek().settings.engines, live_preview: false },
+      engines: { ...backend.peek().settings.engines, local_preview: false },
     });
     expect(backend.peek().engines.effective_output_mode).toBe("whole_take");
     await backend.invoke("settings_set_engines", {
       engines: {
         ...backend.peek().settings.engines,
-        live_preview: true,
+        local_preview: true,
         output_mode: "live_inject",
       },
     });
@@ -4721,7 +4821,7 @@ describe("MockBackend audio cache (docs/dictation.md §26)", () => {
     const scene = new MockBackend({
       now: () => clock,
       history: [],
-      engines: { live_preview_ready: true },
+      engines: { live_ready: true },
       scenes: [
         {
           id: "00000000-0000-4000-8000-000000000001",

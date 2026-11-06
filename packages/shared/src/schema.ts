@@ -113,7 +113,7 @@ export type OutputMode = z.infer<typeof outputModeSchema>;
 export const liveSourceSchema = z.enum(["cloud", "local", "stream"]);
 export type LiveSource = z.infer<typeof liveSourceSchema>;
 
-/** The two modes that ride on the streaming recogniser (they need `live_preview_ready`). */
+/** The two modes that ride on the streaming recogniser (they need `live_ready`). */
 export function isStreamingOutputMode(mode: OutputMode): boolean {
   return mode !== "whole_take";
 }
@@ -283,9 +283,16 @@ export const engineSettingsSchema = z.object({
   local_threads: z.number().int().min(1).max(MAX_LOCAL_THREADS).nullable().optional(),
   /** ISO language hint (`zh`, `en`); absent = auto-detect. */
   language: z.string().optional(),
-  /** Live preview while listening (docs/dictation.md §11): on by default; only takes effect once
-   *  the streaming model (`zipformer-stream-zh-en`) is installed, whatever the provider. */
-  live_preview: z.boolean().default(true),
+  /** 服务商的实时文字 (docs/dictation.md §11.10): the pill shows the words the recognition service
+   *  gives while the take is spoken (the built-in service's preview, a realtime model's stream).
+   *  Off, a realtime model still recognises the take as it is spoken; its words are not shown and
+   *  the built-in service sends no preview requests. On by default. The core reads a settings file
+   *  with the former single `live_preview` switch into both (§11.10); this side never sees it. */
+  provider_preview: z.boolean().default(true),
+  /** 本地模型预览: the pill shows the library's streaming model's words
+   *  (`zipformer-stream-zh-en`) while the service gives none; only takes effect once that model is
+   *  installed. On by default. */
+  local_preview: z.boolean().default(true),
   /** Output mode (docs/dictation.md §12); the streaming modes fall back to `whole_take` while the
    *  streaming model is missing (`EngineStatus.effective_output_mode` says which one runs). */
   output_mode: outputModeSchema.default("whole_take"),
@@ -312,7 +319,7 @@ export const engineSettingsSchema = z.object({
 export type EngineSettings = z.infer<typeof engineSettingsSchema>;
 
 /** Defaults mirroring `EngineSettings::default()`: the built-in service for both, no local model
- *  picked, automatic device, live preview on, whole-take output without VAD, Simplified Chinese,
+ *  picked, automatic device, both live preview switches on, whole-take output without VAD, Simplified Chinese,
  *  refine on, paste injection. */
 export function defaultEngineSettings(): EngineSettings {
   return {
@@ -321,7 +328,8 @@ export function defaultEngineSettings(): EngineSettings {
     refine_enabled: true,
     refine_preset: DEFAULT_PRESET,
     local_device: "auto",
-    live_preview: true,
+    provider_preview: true,
+    local_preview: true,
     output_mode: "whole_take",
     vad_trim: false,
     chinese_script: "simplified",
@@ -1008,6 +1016,12 @@ export const liveTextSchema = z.object({
   degraded: z.string().optional(),
   /** `live_inject` (§12): how many committed sentences were already pasted into the front app. */
   injected: z.number().int().nonnegative().default(0),
+  /** Whose words these are (docs/dictation.md §11.10): the pill's tag names it. Absent from a
+   *  core that did not say. */
+  source: liveSourceSchema.optional(),
+  /** The service that gave them (the one standing in, if one does, §3.5), for `cloud` and
+   *  `stream`; absent for the local model. */
+  provider: providerIdSchema.optional(),
 });
 export type LiveText = z.infer<typeof liveTextSchema>;
 
@@ -2403,11 +2417,21 @@ export const engineStatusSchema = z.object({
   local_model: z.string().nullable().optional(),
   /** On-device and every model file present and checksummed. */
   local_ready: z.boolean().default(false),
-  /** `live_preview` is on and has a source (`live_source`). */
-  live_preview_ready: z.boolean().default(false),
-  /** Where the live preview comes from (docs/dictation.md §11.8): the built-in service decoding
-   *  the sentence again, or the library's streaming model; absent when there is none. */
+  /** Something recognises the next take while it is spoken (docs/dictation.md §11.10): the
+   *  streaming output modes take effect. */
+  live_ready: z.boolean().default(false),
+  /** What recognises the take while it is spoken (§11.8–§11.10): the built-in service decoding
+   *  the sentence again, a realtime model's stream (also while its words are hidden, or while a
+   *  whole-take model stands in for it, §3.5), or the library's streaming model; absent when
+   *  there is none. */
   live_source: liveSourceSchema.optional(),
+  /** Whose words the pill shows while the next take is spoken (§11.10); absent when it shows
+   *  none. Differs from `live_source` when the provider's words are off and the local model
+   *  shows its own. */
+  preview_source: liveSourceSchema.optional(),
+  /** The service whose words the pill shows (`cloud`, `stream`): the selected one, or the
+   *  fallback model standing in for it (§3.5); absent for the local model. */
+  preview_provider: providerIdSchema.optional(),
   /** The mode the next `dictation_start` really runs (§12): `output_mode`, or `whole_take` when a
    *  streaming mode was asked for but the streaming model is not ready. */
   effective_output_mode: outputModeSchema.default("whole_take"),
@@ -2442,7 +2466,7 @@ export function emptyEngineStatus(): EngineStatus {
     asr_model: "",
     asr_host: "",
     local_ready: false,
-    live_preview_ready: false,
+    live_ready: false,
     effective_output_mode: "whole_take",
     refine_enabled: true,
     refine_ready: false,
@@ -3773,7 +3797,7 @@ export interface CommandArgs {
   update_status: undefined;
   /** Local models (docs/dictation.md §10): fetch / verify a catalogue model, abort the download,
    *  or delete its directory. Activation is `settings_set_engines { asr_provider: "local", local_model }`;
-   *  the live preview switch is `settings_set_engines { live_preview }` (§11). */
+   *  the live preview switches are `settings_set_engines { provider_preview, local_preview }` (§11.10). */
   model_download: { id: string };
   model_cancel: { id: string };
   model_remove: { id: string };

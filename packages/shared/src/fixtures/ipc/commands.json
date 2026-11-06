@@ -299,7 +299,6 @@
         "inject": "paste",
         "insert_check": false,
         "language": "zh",
-        "live_preview": true,
         "llm_fallback": {
           "enabled": true,
           "models": [
@@ -313,8 +312,10 @@
         "local_device": "gpu",
         "local_gpu": "Vulkan0",
         "local_model": "paraformer-zh",
+        "local_preview": true,
         "local_threads": 4,
         "output_mode": "streaming_final",
+        "provider_preview": false,
         "providers": {
           "custom": {
             "asr_model": "Qwen/Qwen3-ASR-1.7B",

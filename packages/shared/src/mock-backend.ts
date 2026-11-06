@@ -1133,6 +1133,9 @@ export class MockBackend implements Backend {
    *  characters `live_inject` has pasted so far (what a cancel reports). */
   private takeMode: OutputMode = "whole_take";
   private injectedChars = 0;
+  /** What recognises the current take while it is spoken, also when the pill shows none of it
+   *  (docs/dictation.md §11.10): a streaming take's text comes from it. */
+  private takeLive: LiveText | undefined;
   /** Voice edit (docs/dictation.md §19): what the kind of the current (or last) take is, the text
    *  the foreground application has selected (`setSelection`), and the selection the current
    *  edit take copied at its press. */
@@ -4599,8 +4602,8 @@ export class MockBackend implements Backend {
         name: localRow?.name ?? localId,
         installed: this.modelState(localId)?.kind === "installed",
       },
-      liveReady:
-        settings.live_preview && this.modelState(MOCK_STREAMING_MODEL_ID)?.kind === "installed",
+      localPreviewReady:
+        settings.local_preview && this.modelState(MOCK_STREAMING_MODEL_ID)?.kind === "installed",
       quotaOut: Object.fromEntries(this.quotaOut),
       listed: Object.fromEntries(this.listedModels),
       // docs/dictation.md §3.14: a phone has no library of its own.
@@ -5263,7 +5266,7 @@ export class MockBackend implements Backend {
     const mode =
       sceneMode == null
         ? engines.effective_output_mode
-        : sceneMode === "whole_take" || engines.live_preview_ready
+        : sceneMode === "whole_take" || engines.live_ready
           ? sceneMode
           : "whole_take";
     const liveInject = wanted && mode === "live_inject";
@@ -5412,7 +5415,8 @@ export class MockBackend implements Backend {
 
   /** A new session interrupts any dwell and starts listening at once — `ready: false` until the
    *  simulated device delivers its first samples (`MOCK_MIC_READY_MS`), then `ready: true` with a
-   *  fresh `started_at`; with `live_preview_ready` the streaming partials follow (§11). */
+   *  fresh `started_at`; with `live_ready` the streaming partials follow (§11), shown in the pill
+   *  while `preview_source` names whose words they are (§11.10). */
   private startDictation(kind: TakeKind) {
     this.clearDictationTimers();
     this.pinned = undefined;
@@ -5428,6 +5432,7 @@ export class MockBackend implements Backend {
     // (§19) is always one whole take and matches no scene; it keeps the app as its context.
     this.takeMode = kind === "edit" ? "whole_take" : this.state.engines.effective_output_mode;
     this.injectedChars = 0;
+    this.takeLive = undefined;
     this.takeContext = undefined;
     this.takeScene = undefined;
     this.takeModeError = undefined;
@@ -5495,7 +5500,7 @@ export class MockBackend implements Backend {
       };
     const mode = scene?.overrides.output_mode;
     if (mode != null) {
-      const serviceable = mode === "whole_take" || this.state.engines.live_preview_ready;
+      const serviceable = mode === "whole_take" || this.state.engines.live_ready;
       this.takeMode = serviceable ? mode : "whole_take";
       if (!serviceable) this.takeModeError = MOCK_SCENE_MODE_NOT_READY;
     }
@@ -5519,22 +5524,30 @@ export class MockBackend implements Backend {
         ready: true,
         locked,
       });
-      if (!this.state.engines.live_preview_ready) return;
+      const engines = this.state.engines;
+      if (!engines.live_ready) return;
       const injecting = this.takeMode === "live_inject";
+      // §11.10: the pill shows the words of `preview_source`, tagged with it; with the provider's
+      // words off, a realtime model's stream still makes the take's text, unseen.
+      const shown = engines.preview_source;
+      const tag = {
+        ...(shown === undefined ? {} : { source: shown }),
+        ...(engines.preview_provider === undefined ? {} : { provider: engines.preview_provider }),
+      };
       const step = (n: number) => {
-        const live = MOCK_LIVE_SCRIPT[n];
+        const script = MOCK_LIVE_SCRIPT[n];
         const phase = this.state.dictation.phase;
-        if (live === undefined || !this.listeningIn(session) || phase.phase !== "listening") return;
+        if (script === undefined || !this.listeningIn(session) || phase.phase !== "listening")
+          return;
         // A degraded preview keeps what it showed and ignores later partials, like the core.
-        if (phase.live?.degraded !== undefined) return;
+        if (this.takeLive?.degraded !== undefined) return;
         // `live_inject` pastes every committed sentence the moment it closes (§12): the mock's
         // paste is instant, so `injected` follows `committed` and the cancel count follows both.
-        const injected = injecting ? live.committed.length : 0;
-        if (injecting) this.injectedChars = injectedChars(live.committed, injected);
-        this.emitPhase({
-          ...phase,
-          live: { ...structuredClone(live), injected },
-        });
+        const injected = injecting ? script.committed.length : 0;
+        if (injecting) this.injectedChars = injectedChars(script.committed, injected);
+        const live: LiveText = { ...structuredClone(script), injected, ...tag };
+        this.takeLive = live;
+        if (shown !== undefined) this.emitPhase({ ...phase, live });
         this.laterLive(MOCK_LIVE_STEP_MS, () => {
           step(n + 1);
         });
@@ -5591,10 +5604,12 @@ export class MockBackend implements Backend {
       committed: [],
       current: "",
       injected: 0,
-      ...phase.live,
+      ...this.takeLive,
       degraded: reason,
     };
-    this.emitPhase({ ...phase, live });
+    this.takeLive = live;
+    // §11.10: hidden words stop unseen; the take still falls back to the whole recording.
+    if (this.state.engines.preview_source !== undefined) this.emitPhase({ ...phase, live });
   }
 
   /** One hotkey edge into the activation machine (docs/dictation.md §13), simplified to what the
@@ -5688,10 +5703,13 @@ export class MockBackend implements Backend {
     const stoppedAt = this.now();
     const releasedAt = this.releasedAt ?? stoppedAt;
     this.releasedAt = undefined;
-    // The preview follows the take into processing until the final text replaces it (§11).
-    const live = current.live;
+    // The preview follows the take into processing until the final text replaces it (§11); a
+    // streaming take's text is what recognised it while it was spoken, also unseen (§11.10).
+    const shownLive = current.live;
+    const shownText = shownLive === undefined ? "" : livePreviewText(shownLive);
+    const carried = shownText.length > 0 ? { preview: shownText } : {};
+    const live = this.takeLive ?? shownLive;
     const preview = live === undefined ? "" : livePreviewText(live);
-    const carried = preview.length > 0 ? { preview } : {};
     const requested = this.takeMode;
     const liveError =
       requested === "whole_take"

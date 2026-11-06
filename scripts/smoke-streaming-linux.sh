@@ -81,8 +81,8 @@ install_model() {
 install_model zipformer-stream-zh-en "$stream_dir" encoder.int8.onnx decoder.onnx joiner.int8.onnx tokens.txt bpe.model
 install_model sense-voice-small "$model_dir" model.int8.onnx tokens.txt
 
-# Settings: local SenseVoice for the whole take, live preview on, streaming_final, no refine (no
-# network), locale zh-CN so the pill copy is Chinese.
+# Settings: local SenseVoice for the whole take, the local model's live preview on, streaming_final,
+# no refine (no network), locale zh-CN so the pill copy is Chinese.
 cat >"$app_data/settings.json" <<'EOF'
 {
   "schema": 1,
@@ -93,7 +93,8 @@ cat >"$app_data/settings.json" <<'EOF'
   "engines": {
     "asr_provider": "local",
     "local_model": "sense-voice-small",
-    "live_preview": true,
+    "provider_preview": true,
+    "local_preview": true,
     "output_mode": "streaming_final",
     "vad_trim": false,
     "language": "zh",

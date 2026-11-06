@@ -173,6 +173,19 @@ pnpm -C apps/desktop dev --host 127.0.0.1 --port 1430
    python3 docs/site/tools/crop-overlay.py --states card --width 688 --pad 20 --out docs/site/public/screens <dir>/overlay-*-*.png
    ```
 
+   The shortcuts page's pill with live text, `overlay-live-<lang>-<theme>.webp`, is a
+   listening pill with its caption and preview tag, cut like the card. Open
+   `/overlay?state=live`, find the mock backend from the devtools console (the
+   `memoizedProps.backend` of a fiber under `#root`), call `invoke("dictation_start")`, and
+   once the caption reads 把这段逻辑抽成一个 helper call `clearLiveTimers()` so it stays.
+   For English, first replace the caption through
+   `emitPhase({ ...phase, live: { ...phase.live, current: "Pull this logic out into a helper" } })`.
+   Save the rectangle of `.rounded-pill` as `live`, then:
+
+   ```bash
+   python3 docs/site/tools/crop-overlay.py --states live --width 688 --pad 20 --out docs/site/public/screens <dir>/overlay-*-*.png
+   ```
+
 4. The home pages' phone panels, `phone-pair-<lang>-<theme>.webp` and
    `phone-mic-<lang>-<theme>.webp`, are the pairing card and the phone microphone card of
    the 手机 page, where the mock has a paired phone online. Capture the page at device pixel

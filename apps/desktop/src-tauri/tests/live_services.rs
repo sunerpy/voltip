@@ -89,6 +89,9 @@ struct Service {
 
 /// What a take showed and how it ended.
 struct Take {
+    /// The state the take started from: the 实时预览 status names its source (docs/dictation.md
+    /// §11.10).
+    start: UiState,
     /// Every phase the webview was told, in order.
     phases: Vec<DictationPhase>,
     /// The state once the take is in the history and the usage record.
@@ -176,8 +179,22 @@ where
 }
 
 /// One take on `service`, answered by `answer`: started once the engines say the service streams
-/// the preview, stopped once `ready` holds.
+/// the take, stopped once `ready` holds.
 fn take<F, Fut>(service: &Service, answer: F, ready: impl Fn(&UiState, &Saw) -> bool + Send + 'static) -> (Take, Shared)
+where
+    F: Fn(Socket, usize, String, Shared) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
+{
+    take_with(service, |_| {}, answer, ready)
+}
+
+/// [`take`] with the engine settings as `edit` leaves them.
+fn take_with<F, Fut>(
+    service: &Service,
+    edit: impl FnOnce(&mut EngineSettings),
+    answer: F,
+    ready: impl Fn(&UiState, &Saw) -> bool + Send + 'static,
+) -> (Take, Shared)
 where
     F: Fn(Socket, usize, String, Shared) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = ()> + Send + 'static,
@@ -189,7 +206,8 @@ where
     // Model Studio keeps its public address (see the head of this file).
     let asr_url = (provider != ProviderId::Aliyun).then(|| format!("{origin}{}", service.base_path));
     let settings = ProviderSettings { asr_url, asr_model: Some(service.model.into()), ..Default::default() };
-    let engines = EngineSettings { asr_provider: provider, providers: [(provider, settings)].into(), refine_enabled: false, ..EngineSettings::default() };
+    let mut engines = EngineSettings { asr_provider: provider, providers: [(provider, settings)].into(), refine_enabled: false, ..EngineSettings::default() };
+    edit(&mut engines);
     SettingsStore::new(dir.path()).save(&Settings { relay_enabled: false, engines, ..Settings::default() }).unwrap();
     let mut config = CoreConfig::new(dir.path().to_path_buf());
     config.default_device_name = "Desk Test".into();
@@ -222,11 +240,11 @@ where
                 assert!(Instant::now() < deadline, "the core did not start");
                 std::thread::sleep(Duration::from_millis(20));
             }
-            let st = wait_state(&webview, &seen, "the service's own stream", |s, _| {
+            let start = wait_state(&webview, &seen, "the service's own stream", |s, _| {
                 s.identity.is_some() && s.engines.asr_provider == provider && s.engines.live_source == Some(LiveSource::Stream)
             });
-            assert!(!st.usage.builtin, "a test build has no built-in service to send audio to");
-            assert_eq!(st.engines.effective_output_mode, OutputMode::StreamingFinal, "the stream's sentences are the take's text");
+            assert!(!start.usage.builtin, "a test build has no built-in service to send audio to");
+            assert_eq!(start.engines.effective_output_mode, OutputMode::StreamingFinal, "the stream's sentences are the take's text");
             assert_eq!(invoke(&webview, "dictation_start", json!({})), Ok(Value::Null));
             wait_state(&webview, &seen, "the moment to stop", ready);
             assert_eq!(invoke(&webview, "dictation_stop", json!({})), Ok(Value::Null));
@@ -241,7 +259,7 @@ where
                     _ => None,
                 })
                 .collect();
-            Take { phases, end }
+            Take { start, phases, end }
         }));
         webview.close().unwrap();
         outcome
@@ -262,10 +280,22 @@ fn after_the_first_sentence(st: &UiState, saw: &Saw) -> bool {
         && saw.audio >= SENTENCE_AFTER + PARTIAL_AFTER
 }
 
-/// The pill showed the service's sentence so far, then its finished sentence; the take's text is
-/// the stream's; the history names the service and its model; the usage record counts the take.
+/// The pill showed the service's sentence so far, then its finished sentence, tagged with the
+/// service (docs/dictation.md §11.10); the take's text is the stream's; the history names the
+/// service and its model; the usage record counts the take.
 fn assert_streamed(service: &Service, take: &Take) {
+    assert_eq!(
+        (take.start.engines.preview_source, take.start.engines.preview_provider),
+        (Some(LiveSource::Stream), Some(service.provider)),
+        "{:?}: the 实时预览 status names the service",
+        service.provider
+    );
     let live: Vec<_> = take.phases.iter().filter_map(|p| if let DictationPhase::Listening { live: Some(l), .. } = p { Some(l) } else { None }).collect();
+    assert!(
+        live.iter().all(|l| (l.source, l.provider) == (Some(LiveSource::Stream), Some(service.provider))),
+        "{:?}: the pill's tag names the service: {live:?}",
+        service.provider
+    );
     assert!(live.iter().any(|l| l.committed.is_empty() && l.current == PARTIAL), "{:?}: the pill showed the sentence being spoken: {live:?}", service.provider);
     assert!(
         live.iter().any(|l| l.committed.first().is_some_and(|s| s.text == FIRST)),
@@ -390,6 +420,34 @@ const VOLC: Service = Service {
 fn volcengine_streams_into_the_pill() {
     let (take, saw) = take(&VOLC, |socket, _, path, saw| volc(socket, Volc::Speaks, path, saw), after_the_first_sentence);
     assert_streamed(&VOLC, &take);
+    assert_eq!(saw.lock().unwrap().paths, ["/api/v3/sauc/bigmodel_async"], "one live session, no recorded take");
+}
+
+/// docs/dictation.md §11.10 (user decision 2026-11-06): with 服务商的实时文字 off, a 豆包语音 take
+/// still streams to `bigmodel_async` — one live session, the stream's sentences as the take's
+/// text, no recognition of the recording afterwards — and the pill shows none of its words.
+#[test]
+fn with_the_providers_words_off_volcengine_still_streams_and_the_pill_shows_nothing() {
+    let (take, saw) = take_with(
+        &VOLC,
+        |engines| engines.provider_preview = false,
+        |socket, _, path, saw| volc(socket, Volc::Speaks, path, saw),
+        |_, saw| saw.audio >= SENTENCE_AFTER + PARTIAL_AFTER,
+    );
+    assert_eq!(
+        (take.start.engines.live_ready, take.start.engines.preview_source, take.start.engines.preview_provider),
+        (true, None, None),
+        "the stream runs and nothing is shown"
+    );
+    assert!(
+        take.phases.iter().all(|p| !matches!(p, DictationPhase::Listening { live: Some(_), .. } | DictationPhase::Processing { preview: Some(_), .. })),
+        "the pill shows no words: {:?}",
+        take.phases
+    );
+    let DictationPhase::Done { text, mode, live_error, .. } = &take.end.dictation.phase else { panic!("{:?}", take.end.dictation.phase) };
+    assert_eq!((text.as_str(), *mode, live_error), (TEXT, OutputMode::StreamingFinal, &None), "the stream's sentences are the take's text");
+    let entry = &take.end.history_recent[0];
+    assert_eq!((entry.asr_provider, entry.mode, entry.text.as_str()), (Some(ProviderId::VolcengineSpeech), OutputMode::StreamingFinal, TEXT));
     assert_eq!(saw.lock().unwrap().paths, ["/api/v3/sauc/bigmodel_async"], "one live session, no recorded take");
 }
 

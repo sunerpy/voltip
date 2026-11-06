@@ -61,7 +61,7 @@ function resolve(
       llm: { model: "qwen/qwen3.8-27b", key: true },
     },
     local: { id: "qwen3-asr-0.6b", name: "Qwen3-ASR 0.6B", installed: true },
-    liveReady: false,
+    localPreviewReady: false,
     ...(quotaOut === undefined ? {} : { quotaOut }),
     ...(library === undefined ? {} : { library }),
   });
@@ -241,20 +241,39 @@ describe("fallback models (docs/dictation.md §3.5)", () => {
   it("regression: the preview's live state and output mode follow the model standing in for a used-up realtime one", () => {
     // Goal review 2026-10-04, as `ResolvedEngines::status_with`: the selected model's retry time
     // while the chain runs; a stand-in taking whole recordings only leaves the takes whole.
+    // docs/dictation.md §11.10: the pill shows the words of the model standing in, named by it.
     const shown = (s: EngineStatus) => [
       s.live_source,
-      s.live_preview_ready,
+      s.live_ready,
       s.effective_output_mode,
       s.asr_fallback?.selected_retry_at_ms,
+      s.preview_source,
+      s.preview_provider,
     ];
     const realtimeFirst = studio();
-    expect(shown(resolve(realtimeFirst))).toEqual(["stream", true, "streaming_final", undefined]);
+    expect(shown(resolve(realtimeFirst))).toEqual([
+      "stream",
+      true,
+      "streaming_final",
+      undefined,
+      "stream",
+      "aliyun",
+    ]);
     expect(shown(resolve(realtimeFirst, undefined, { asr: 99 }))).toEqual([
       "stream",
       true,
       "streaming_final",
       99,
+      "stream",
+      "aliyun",
     ]);
+    const stepFirst: EngineSettings = {
+      ...realtimeFirst,
+      asr_fallback: { enabled: true, models: [entry("stepfun", "step-asr-1-stream")] },
+    };
+    expect(
+      shown(resolve(stepFirst, ["provider-key.aliyun", "provider-key.stepfun"], { asr: 99 })),
+    ).toEqual(["stream", true, "streaming_final", 99, "stream", "stepfun"]);
     const wholeFirst: EngineSettings = {
       ...realtimeFirst,
       asr_fallback: { enabled: true, models: [entry("aliyun", "qwen-audio-3.1-asr-flash")] },
@@ -264,6 +283,8 @@ describe("fallback models (docs/dictation.md §3.5)", () => {
       false,
       "whole_take",
       99,
+      undefined,
+      undefined,
     ]);
     const live: EngineSettings = { ...wholeFirst, output_mode: "live_inject" };
     expect(resolve(live, undefined, { asr: 99 }).effective_output_mode).toBe("whole_take");
@@ -277,6 +298,8 @@ describe("fallback models (docs/dictation.md §3.5)", () => {
       true,
       "streaming_final",
       undefined,
+      "stream",
+      "aliyun",
     ]);
   });
 

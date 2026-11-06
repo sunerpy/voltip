@@ -85,6 +85,59 @@ pub enum LiveSource {
     Stream,
 }
 
+/// What a configuration can recognise a take with while it is spoken, and what of it the pill
+/// shows (docs/dictation.md §11.10): the input of [`LiveSources::plan`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct LiveSources {
+    /// The built-in service previews ([`BuiltIn::asr_live_preview`]) and 服务商的实时文字 is on.
+    pub cloud: bool,
+    /// The recognition service in use is a realtime model ([`AsrProtocol::streams`]).
+    pub stream: bool,
+    /// 服务商的实时文字 is on: the pill shows the realtime model's words.
+    pub provider_shown: bool,
+    /// 本地模型预览 is on and the library's streaming model is installed.
+    pub local: bool,
+}
+
+impl LiveSources {
+    /// Whether any source is configured.
+    pub fn any(self) -> bool {
+        self.cloud || self.stream || self.local
+    }
+
+    /// The sources of the next take (docs/dictation.md §11.10). `stream_now`: the realtime model's
+    /// client streams now — a fallback model taking whole recordings may stand in for it (§3.5).
+    /// The take recognises with the built-in service's preview, else the realtime model, else the
+    /// local model; the pill shows that source's words, except a realtime model's with
+    /// 服务商的实时文字 off: the local model shows its own words then, when its switch allows.
+    pub fn plan(self, stream_now: bool) -> LivePlan {
+        let text = if self.cloud {
+            Some(LiveSource::Cloud)
+        } else if self.stream && stream_now {
+            Some(LiveSource::Stream)
+        } else if self.local {
+            Some(LiveSource::Local)
+        } else {
+            None
+        };
+        let shown = match text {
+            Some(LiveSource::Stream) if !self.provider_shown => self.local.then_some(LiveSource::Local),
+            other => other,
+        };
+        LivePlan { text, shown }
+    }
+}
+
+/// The live sources of one take (docs/dictation.md §11.10).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct LivePlan {
+    /// What recognises the take while it is spoken: its sentences are the streaming modes' text.
+    pub text: Option<LiveSource>,
+    /// Whose words the pill shows: `text`'s, or the local model's next to a realtime model whose
+    /// words are not shown (a second session on the same audio).
+    pub shown: Option<LiveSource>,
+}
+
 /// Where the final text comes from and when it is delivered (docs/dictation.md §12).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -93,10 +146,10 @@ pub enum OutputMode {
     #[default]
     WholeTake,
     /// The streaming recogniser's committed sentences + tail are the final text; the whole-take
-    /// transcriber is skipped. Needs `live_preview_ready`, otherwise falls back to `WholeTake`.
+    /// transcriber is skipped. Needs `live_ready`, otherwise falls back to `WholeTake`.
     StreamingFinal,
     /// Every sentence the streaming recogniser commits is injected at once; no refinement. Needs
-    /// `live_preview_ready`, otherwise falls back to `WholeTake`.
+    /// `live_ready`, otherwise falls back to `WholeTake`.
     LiveInject,
 }
 
@@ -247,9 +300,11 @@ impl FallbackSettings {
     }
 }
 
-/// `Settings.engines`.
+/// `Settings.engines`. Read through [`EngineSettings::deserialize`], which carries the single
+/// `live_preview` switch of older files over to [`EngineSettings::provider_preview`] and
+/// [`EngineSettings::local_preview`] (docs/dictation.md §11.10).
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(remote = "Self", default)]
 pub struct EngineSettings {
     /// Who recognises speech. `builtin` (the default) falls back to `local` in a build without the
     /// built-in service.
@@ -280,11 +335,18 @@ pub struct EngineSettings {
     /// Language hint (`zh`, `en`, …); `None` = auto-detect.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
-    /// Show partial results on the pill while recording (docs/dictation.md §11). Takes effect only
-    /// when the streaming model is installed; independent of the recognition provider.
-    pub live_preview: bool,
+    /// 服务商的实时文字 (docs/dictation.md §11.10): the pill shows the words the recognition
+    /// service gives while the take is spoken — the built-in service's preview, a realtime model's
+    /// sentences. Off, the built-in service sends no preview requests, and a realtime model still
+    /// recognises the take as it is spoken: only its words are not shown. Files written before it
+    /// read the single `live_preview` switch they hold.
+    pub provider_preview: bool,
+    /// 本地模型预览 (docs/dictation.md §11.10): the library's streaming model shows the words when
+    /// the service gives none, or 服务商的实时文字 is off. Takes effect once the model is
+    /// installed. Files written before it read `live_preview`, like `provider_preview`.
+    pub local_preview: bool,
     /// Output mode (docs/dictation.md §12); the two streaming modes only take effect when
-    /// `live_preview_ready`, otherwise a run behaves as `whole_take`.
+    /// `live_ready`, otherwise a run behaves as `whole_take`.
     pub output_mode: OutputMode,
     /// Trim leading / trailing silence with the Silero VAD before a local whole-take
     /// transcription (docs/dictation.md §12; fail-open, needs the `silero-vad` catalogue entry).
@@ -316,6 +378,32 @@ pub struct EngineSettings {
     pub llm_fallback: FallbackSettings,
 }
 
+/// The key files written before docs/dictation.md §11.10 hold the one 实时预览 switch under.
+const LEGACY_LIVE_PREVIEW: &str = "live_preview";
+
+impl Serialize for EngineSettings {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        Self::serialize(self, serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for EngineSettings {
+    /// The derived reading, after the single `live_preview` switch of an older file became both
+    /// switches it is missing (D41: an installed copy keeps what it had). A file holding a new
+    /// switch keeps it; `live_preview` itself is not written any more.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let mut value = serde_json::Value::deserialize(deserializer)?;
+        if let Some(fields) = value.as_object_mut()
+            && let Some(single) = fields.remove(LEGACY_LIVE_PREVIEW)
+        {
+            for key in ["provider_preview", "local_preview"] {
+                fields.entry(key).or_insert_with(|| single.clone());
+            }
+        }
+        Self::deserialize(value).map_err(serde::de::Error::custom)
+    }
+}
+
 impl Default for EngineSettings {
     fn default() -> Self {
         Self {
@@ -329,7 +417,8 @@ impl Default for EngineSettings {
             local_gpu: None,
             local_threads: None,
             language: None,
-            live_preview: true,
+            provider_preview: true,
+            local_preview: true,
             output_mode: OutputMode::WholeTake,
             vad_trim: false,
             chinese_script: ChineseScript::Simplified,
@@ -660,8 +749,10 @@ pub struct ResolvedEngines {
     pub refine_issue: Option<EngineIssue>,
     /// The clean-up model (`""` when none is chosen).
     pub refine_model: String,
-    /// `EngineSettings.live_preview`.
-    pub live_preview: bool,
+    /// `EngineSettings.provider_preview` (服务商的实时文字).
+    pub provider_preview: bool,
+    /// `EngineSettings.local_preview` (本地模型预览).
+    pub local_preview: bool,
     /// `EngineSettings.output_mode` as configured; see [`ResolvedEngines::effective_output_mode`].
     pub output_mode: OutputMode,
     /// `EngineSettings.vad_trim`.
@@ -1017,7 +1108,8 @@ impl ResolvedEngines {
             refine,
             refine_issue,
             refine_model,
-            live_preview: settings.live_preview,
+            provider_preview: settings.provider_preview,
+            local_preview: settings.local_preview,
             output_mode: settings.output_mode,
             vad_trim: settings.vad_trim,
             chinese_script: settings.chinese_script,
@@ -1082,43 +1174,57 @@ impl ResolvedEngines {
         self.asr_provider == ProviderId::Local
     }
 
-    /// Where the live preview comes from when it is on (docs/dictation.md §11.8, §11.9): the
-    /// built-in service when it recognises (user request 2026-09-30: Qwen3-ASR previews itself), a
-    /// realtime model of the service in use (it recognises while the take is spoken anyway);
-    /// otherwise the library's streaming model when it is installed. Other cloud services do not
-    /// preview: each preview is another request, which their owners pay for.
-    pub fn live_source(&self) -> Option<LiveSource> {
-        if !self.live_preview {
-            return None;
+    /// What this configuration can recognise a take with while it is spoken (docs/dictation.md
+    /// §11.8–§11.10): the built-in service when it recognises and previews (user request
+    /// 2026-09-30: Qwen3-ASR previews itself) with 服务商的实时文字 on, a realtime model of the
+    /// service in use whatever the switches say (it recognises while the take is spoken anyway), the
+    /// library's streaming model when 本地模型预览 is on and it is installed. Other cloud services do
+    /// not preview: each preview is another request, which their owners pay for.
+    pub fn live_sources(&self) -> LiveSources {
+        LiveSources {
+            cloud: self.provider_preview && self.cloud_preview,
+            stream: self.asr_streams,
+            provider_shown: self.provider_preview,
+            local: self.local_preview_ready(),
         }
-        if self.cloud_preview {
-            return Some(LiveSource::Cloud);
-        }
-        if self.asr_streams {
-            return Some(LiveSource::Stream);
-        }
-        self.streaming_model.as_ref().is_some_and(|m| m.installed).then_some(LiveSource::Local)
     }
 
-    /// The live preview has a source: the engine opens a streaming session next to every recording
-    /// (docs/dictation.md §11).
-    pub fn live_preview_ready(&self) -> bool {
+    /// 本地模型预览 is on and the library's streaming model is installed.
+    pub fn local_preview_ready(&self) -> bool {
+        self.local_preview && self.streaming_model.as_ref().is_some_and(|m| m.installed)
+    }
+
+    /// What recognises the next take while it is spoken ([`LivePlan::text`]), as long as no fallback
+    /// model stands in for the selected one (that is [`ResolvedEngines::status_with`]'s).
+    pub fn live_source(&self) -> Option<LiveSource> {
+        self.live_sources().plan(true).text
+    }
+
+    /// Whose words the pill shows while the next take is spoken ([`LivePlan::shown`]).
+    pub fn preview_source(&self) -> Option<LiveSource> {
+        self.live_sources().plan(true).shown
+    }
+
+    /// Something recognises the next take while it is spoken: the engine opens a streaming session
+    /// next to the recording (docs/dictation.md §11), and the streaming output modes take effect.
+    pub fn live_ready(&self) -> bool {
         self.live_source().is_some()
     }
 
     /// The output mode a `DictationStart` would run with now (docs/dictation.md §12): the two
-    /// streaming modes need [`ResolvedEngines::live_preview_ready`], otherwise `WholeTake`. A
-    /// realtime model's own stream turns `WholeTake` into `StreamingFinal` (§11.9): the same text,
-    /// inserted at the end, without recognising the take a second time.
+    /// streaming modes need something recognising the take while it is spoken
+    /// ([`ResolvedEngines::live_ready`]), otherwise `WholeTake`. A realtime model's own stream turns
+    /// `WholeTake` into `StreamingFinal` (§11.9): the same text, inserted at the end, without
+    /// recognising the take a second time — also while its words are not shown (§11.10).
     pub fn effective_output_mode(&self) -> OutputMode {
-        self.output_mode_with(self.live_preview_ready())
+        self.output_mode_with(self.live_source())
     }
 
-    /// [`ResolvedEngines::effective_output_mode`] with the live preview usable (`ready`) or not.
-    fn output_mode_with(&self, ready: bool) -> OutputMode {
+    /// [`ResolvedEngines::effective_output_mode`] with `text` recognising the take as it is spoken.
+    fn output_mode_with(&self, text: Option<LiveSource>) -> OutputMode {
         match self.output_mode {
-            OutputMode::WholeTake if ready && self.live_source() == Some(LiveSource::Stream) => OutputMode::StreamingFinal,
-            mode if mode.is_streaming() && !ready => OutputMode::WholeTake,
+            OutputMode::WholeTake if text == Some(LiveSource::Stream) => OutputMode::StreamingFinal,
+            mode if mode.is_streaming() && text.is_none() => OutputMode::WholeTake,
             mode => mode,
         }
     }
@@ -1156,10 +1262,17 @@ impl ResolvedEngines {
             (_, Some(r)) => host_of(&r.url),
         };
         // §3.5, §11.9: a realtime model's stream comes from the first model with quota left. While
-        // a model that takes whole recordings only stands in for it, no take previews or streams
-        // (the engine's `live_enabled`); the live source stays the realtime model.
-        let stand_in_streams = self.asr_stand_in(ledger).is_none_or(FallbackTarget::streams);
-        let live_preview_ready = self.live_preview_ready() && (self.live_source() != Some(LiveSource::Stream) || stand_in_streams);
+        // a model that takes whole recordings only stands in for it, the take does not stream (the
+        // engine's `live_plan`): the local model takes over when it can, otherwise nothing
+        // recognises while the take is spoken and the live source stays the realtime model.
+        let stand_in = self.asr_stand_in(ledger);
+        let plan = self.live_sources().plan(stand_in.is_none_or(FallbackTarget::streams));
+        let live_source = plan.text.or_else(|| self.asr_streams.then_some(LiveSource::Stream));
+        // §11.10: the provider whose words the pill shows — the one standing in, if one does.
+        let preview_provider = match plan.shown {
+            Some(LiveSource::Cloud | LiveSource::Stream) => Some(stand_in.map_or(self.asr_provider, |target| target.provider)),
+            Some(LiveSource::Local) | None => None,
+        };
         EngineStatus {
             asr_provider: self.asr_provider,
             asr_ready: self.asr_issue.is_none(),
@@ -1168,9 +1281,11 @@ impl ResolvedEngines {
             asr_host: user_host(self.asr_provider, &self.asr_remote),
             local_model: self.local_model.as_ref().map(|m| m.id.clone()),
             local_ready: self.local_model.as_ref().is_some_and(|m| m.installed),
-            live_preview_ready,
-            live_source: self.live_source(),
-            effective_output_mode: self.output_mode_with(live_preview_ready),
+            live_ready: plan.text.is_some(),
+            live_source,
+            preview_source: plan.shown,
+            preview_provider,
+            effective_output_mode: self.output_mode_with(plan.text),
             language: self.language.clone(),
             refine_enabled: self.refine_enabled,
             llm_provider: self.llm_provider,
@@ -1183,7 +1298,7 @@ impl ResolvedEngines {
             asr_fallback: self.asr_fallback.status(ledger),
             llm_fallback: self.refine_fallback.status(ledger),
             // §30.6: a fallback model standing in sends its requests its own way.
-            glossary: self.asr_stand_in(ledger).map_or_else(|| self.glossary_route(), |target| Some(target.glossary_route())),
+            glossary: stand_in.map_or_else(|| self.glossary_route(), |target| Some(target.glossary_route())),
         }
     }
 }
@@ -1484,13 +1599,23 @@ pub struct EngineStatus {
     pub local_model: Option<String>,
     /// On-device and the model's files are on disk and verified.
     pub local_ready: bool,
-    /// `live_preview` is on and has a source ([`EngineStatus::live_source`]), so the pill shows
-    /// partial text while recording. `false` with the source `stream` while a fallback model that
-    /// takes whole recordings only stands in for the realtime model (docs/dictation.md §3.5).
-    pub live_preview_ready: bool,
-    /// Where the live preview comes from; `None` when it is off or has no source.
+    /// The next take recognises while it is spoken ([`EngineStatus::live_source`], docs/dictation.md
+    /// §11.10), so the streaming output modes take effect; whether the pill shows its words is
+    /// [`EngineStatus::preview_source`]. `false` with the source `stream` while a fallback model
+    /// that takes whole recordings only stands in for the realtime model (§3.5) and the local model
+    /// cannot take over.
+    pub live_ready: bool,
+    /// What recognises the next take while it is spoken; `None` when nothing does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub live_source: Option<LiveSource>,
+    /// Whose words the pill shows while the next take is spoken (docs/dictation.md §11.10); `None`
+    /// when it shows none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview_source: Option<LiveSource>,
+    /// The provider whose words those are when the source is `cloud` or `stream`: the selected one,
+    /// or the fallback model's that stands in for it (§3.5). `None` for the local model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview_provider: Option<ProviderId>,
     /// The output mode the next `DictationStart` really runs with (docs/dictation.md §12).
     pub effective_output_mode: OutputMode,
     /// Language hint.
@@ -1589,8 +1714,10 @@ impl Default for EngineStatus {
             asr_host: String::new(),
             local_model: None,
             local_ready: false,
-            live_preview_ready: false,
+            live_ready: false,
             live_source: None,
+            preview_source: None,
+            preview_provider: None,
             effective_output_mode: OutputMode::WholeTake,
             language: None,
             refine_enabled: true,
@@ -1703,11 +1830,11 @@ mod tests {
     fn defaults_and_serde_shapes() {
         let s = EngineSettings::default();
         assert_eq!((s.asr_provider, s.llm_provider), (ProviderId::Builtin, ProviderId::Builtin));
-        assert!(s.refine_enabled && s.live_preview && !s.vad_trim);
+        assert!(s.refine_enabled && s.provider_preview && s.local_preview && !s.vad_trim);
         assert_eq!(s.inject, InjectMode::Paste);
         assert_eq!(
             serde_json::to_string(&s).unwrap(),
-            r#"{"asr_provider":"builtin","llm_provider":"builtin","refine_enabled":true,"refine_preset":"proofread","local_device":"auto","live_preview":true,"output_mode":"whole_take","vad_trim":false,"chinese_script":"simplified","inject":"paste"}"#
+            r#"{"asr_provider":"builtin","llm_provider":"builtin","refine_enabled":true,"refine_preset":"proofread","local_device":"auto","provider_preview":true,"local_preview":true,"output_mode":"whole_take","vad_trim":false,"chinese_script":"simplified","inject":"paste"}"#
         );
         let parsed: EngineSettings = serde_json::from_str(
             r#"{"asr_provider":"groq","providers":{"groq":{"asr_model":"whisper-large-v3"},"custom":{"llm_url":"http://10.0.0.2:8000/v1"}},"local_threads":6,"local_device":"gpu","local_gpu":"Vulkan0"}"#,
@@ -2060,7 +2187,7 @@ mod tests {
         let (streaming, none) = (library(true), library(false));
         let source = |settings: &EngineSettings, built_in: &BuiltIn, models: &[ModelState]| {
             let e = ResolvedEngines::resolve_with_models(settings, &UserSecrets::default(), built_in, models);
-            assert_eq!(e.live_preview_ready(), e.live_source().is_some());
+            assert_eq!(e.live_ready(), e.live_source().is_some());
             assert_eq!(e.status().live_source, e.live_source());
             e.live_source()
         };
@@ -2069,7 +2196,7 @@ mod tests {
         assert_eq!(source(&builtin, &PREVIEWING, &streaming), Some(LiveSource::Cloud), "the service's own model before the local one");
         assert_eq!(source(&builtin, &BUILT, &none), None, "a built-in service that does not preview");
         assert_eq!(source(&builtin, &BUILT, &streaming), Some(LiveSource::Local));
-        let off = EngineSettings { live_preview: false, ..EngineSettings::default() };
+        let off = EngineSettings { provider_preview: false, local_preview: false, ..EngineSettings::default() };
         assert_eq!(source(&off, &PREVIEWING, &streaming), None);
         let custom = EngineSettings {
             asr_provider: ProviderId::Custom,
@@ -2094,11 +2221,12 @@ mod tests {
     fn a_realtime_model_streams_the_take_and_its_text_is_final() {
         let mut secrets = UserSecrets::default();
         secrets.set(ProviderId::Aliyun, ServiceKind::Asr, Some("sk-test".into()));
-        let aliyun = |model: &str, output_mode: OutputMode, live_preview: bool| EngineSettings {
+        let aliyun = |model: &str, output_mode: OutputMode, shown: bool| EngineSettings {
             asr_provider: ProviderId::Aliyun,
             providers: with_provider(ProviderId::Aliyun, ProviderSettings { asr_model: Some(model.into()), ..Default::default() }),
             output_mode,
-            live_preview,
+            provider_preview: shown,
+            local_preview: shown,
             ..EngineSettings::default()
         };
         for models in [library(true), library(false)] {
@@ -2108,15 +2236,16 @@ mod tests {
             assert_eq!(e.live_source(), Some(LiveSource::Stream), "the service's own stream before the local model");
             assert_eq!(e.effective_output_mode(), OutputMode::StreamingFinal, "no second recognition of the take");
             let st = e.status();
-            assert_eq!((st.live_source, st.live_preview_ready, st.effective_output_mode), (Some(LiveSource::Stream), true, OutputMode::StreamingFinal));
+            assert_eq!((st.live_source, st.live_ready, st.effective_output_mode), (Some(LiveSource::Stream), true, OutputMode::StreamingFinal));
             for mode in [OutputMode::StreamingFinal, OutputMode::LiveInject] {
                 let e = ResolvedEngines::resolve_with_models(&aliyun("qwen-audio-3.1-asr-flash-message", mode, true), &secrets, &BUILT, &models);
                 assert_eq!((e.live_source(), e.effective_output_mode()), (Some(LiveSource::Stream), mode), "{mode:?}");
             }
-            // Preview off: no stream, the whole take goes to the service after the take.
+            // Both switches off (docs/dictation.md §11.10): the model still recognises while the
+            // take is spoken; the pill only shows none of it.
             let off =
                 ResolvedEngines::resolve_with_models(&aliyun("qwen-audio-3.1-asr-flash-streaming", OutputMode::WholeTake, false), &secrets, &BUILT, &models);
-            assert_eq!((off.live_source(), off.effective_output_mode()), (None, OutputMode::WholeTake));
+            assert_eq!((off.live_source(), off.preview_source(), off.effective_output_mode()), (Some(LiveSource::Stream), None, OutputMode::StreamingFinal));
             // The service's whole-file model previews like any other cloud service.
             let file = ResolvedEngines::resolve_with_models(&aliyun("qwen-audio-3.1-asr-flash", OutputMode::WholeTake, true), &secrets, &BUILT, &models);
             assert!(!file.asr_streams);
@@ -2148,27 +2277,117 @@ mod tests {
     }
 
     #[test]
-    fn live_preview_readiness_follows_the_setting_and_the_streaming_model_only() {
+    fn the_local_preview_follows_its_switch_and_the_streaming_model_only() {
         let secrets = UserSecrets::default();
         let cloud = EngineSettings::default();
         let r = ResolvedEngines::resolve_with_models(&cloud, &secrets, &BUILT, &library(true));
-        assert!(r.live_preview && r.live_preview_ready());
+        assert!(r.local_preview && r.live_ready());
         assert_eq!(r.streaming_model, Some(LocalModelRef { id: "zipformer-stream-zh-en".into(), name: "实时预览".into(), installed: true }));
-        assert!(r.status().live_preview_ready, "remote ASR + installed streaming model: the pill previews");
+        assert!(r.status().live_ready, "remote ASR + installed streaming model: the pill previews");
         let r = ResolvedEngines::resolve_with_models(&cloud, &secrets, &BUILT, &library(false));
-        assert!(!r.live_preview_ready() && !r.status().live_preview_ready, "streaming model not installed");
-        let off = EngineSettings { live_preview: false, ..EngineSettings::default() };
+        assert!(!r.live_ready() && !r.status().live_ready, "streaming model not installed");
+        let off = EngineSettings { local_preview: false, ..EngineSettings::default() };
         let r = ResolvedEngines::resolve_with_models(&off, &secrets, &BUILT, &library(true));
-        assert!(!r.live_preview_ready() && r.streaming_model.is_some(), "switched off; the model is still known");
+        assert!(!r.live_ready() && r.streaming_model.is_some(), "switched off; the model is still known");
         let r = ResolvedEngines::resolve(&cloud, &secrets, &BUILT);
-        assert!(r.streaming_model.is_none() && !r.live_preview_ready(), "no library (the phone): nothing to preview with");
+        assert!(r.streaming_model.is_none() && !r.live_ready(), "no library (the phone): nothing to preview with");
         let local = EngineSettings { asr_provider: ProviderId::Local, ..EngineSettings::default() };
         let r = ResolvedEngines::resolve_with_models(&local, &secrets, &BUILT, &library(true));
-        assert!(r.live_preview_ready() && r.status().local_ready);
+        assert!(r.live_ready() && r.status().local_ready);
+    }
+
+    /// docs/dictation.md §11.10 (D41): a settings file written with the single 实时预览 switch
+    /// reads it into both switches; a file that holds a new switch keeps it. Neither file is
+    /// refused, and `live_preview` is not written any more.
+    #[test]
+    fn regression_settings_with_the_single_live_preview_switch_read_it_into_both() {
+        let read = |json: &str| {
+            let s: EngineSettings = serde_json::from_str(json).unwrap_or_else(|e| panic!("{json}: {e}"));
+            (s.provider_preview, s.local_preview)
+        };
+        assert_eq!(read(r#"{"live_preview":false}"#), (false, false), "switched off before: both off");
+        assert_eq!(read(r#"{"live_preview":true}"#), (true, true));
+        assert_eq!(read("{}"), (true, true), "nothing written: both on, as on a new install");
+        assert_eq!(read(r#"{"live_preview":false,"local_preview":true}"#), (false, true), "the new switch wins");
+        assert_eq!(read(r#"{"provider_preview":false,"local_preview":true,"live_preview":true}"#), (false, true));
+        assert!(serde_json::from_str::<EngineSettings>(r#"{"live_preview":"yes"}"#).is_err(), "a wrong type is refused, as before");
+        let written = serde_json::to_value(EngineSettings { provider_preview: false, ..EngineSettings::default() }).unwrap();
+        assert!(written.get("live_preview").is_none(), "{written}");
+        assert_eq!((written["provider_preview"].as_bool(), written["local_preview"].as_bool()), (Some(false), Some(true)));
+        // The whole settings file reads the same way.
+        let file: crate::settings::Settings = serde_json::from_str(
+            r#"{"schema":1,"theme":"light","follow_system_theme":false,"relay_enabled":true,"engines":{"asr_provider":"local","live_preview":false}}"#,
+        )
+        .unwrap();
+        assert_eq!((file.engines.asr_provider, file.engines.provider_preview, file.engines.local_preview), (ProviderId::Local, false, false));
+    }
+
+    /// docs/dictation.md §11.10 (D37–D39): 服务商的实时文字 and 本地模型预览 each decide their own
+    /// source. With both on the provider's words win — the built-in service's preview, a realtime
+    /// model's sentences — and the local model shows the rest; switched off, the built-in service
+    /// previews nothing and a realtime model keeps recognising while the take is spoken, unseen.
+    #[test]
+    fn the_two_switches_pick_their_own_sources_and_the_providers_words_come_first() {
+        const PREVIEWING: BuiltIn = BuiltIn { asr_live_preview: true, ..BUILT };
+        let mut secrets = UserSecrets::default();
+        secrets.set(ProviderId::Aliyun, ServiceKind::Asr, Some("sk-test".into()));
+        secrets.set(ProviderId::Custom, ServiceKind::Asr, Some("sk-test".into()));
+        let builtin = EngineSettings::default();
+        let realtime = EngineSettings {
+            asr_provider: ProviderId::Aliyun,
+            providers: with_provider(
+                ProviderId::Aliyun,
+                ProviderSettings { asr_model: Some("qwen-audio-3.1-asr-flash-streaming".into()), ..Default::default() },
+            ),
+            ..EngineSettings::default()
+        };
+        let whole = EngineSettings {
+            asr_provider: ProviderId::Custom,
+            providers: with_provider(ProviderId::Custom, ProviderSettings { asr_url: Some("https://asr.example.test".into()), ..Default::default() }),
+            ..EngineSettings::default()
+        };
+        use LiveSource::{Cloud, Local, Stream};
+        // (settings, provider switch, local switch) → (live source, shown source, shown provider, output mode)
+        let cases = [
+            (&builtin, true, true, Some(Cloud), Some(Cloud), Some(ProviderId::Builtin), OutputMode::WholeTake),
+            (&builtin, false, true, Some(Local), Some(Local), None, OutputMode::WholeTake),
+            (&builtin, true, false, Some(Cloud), Some(Cloud), Some(ProviderId::Builtin), OutputMode::WholeTake),
+            (&builtin, false, false, None, None, None, OutputMode::WholeTake),
+            (&realtime, true, true, Some(Stream), Some(Stream), Some(ProviderId::Aliyun), OutputMode::StreamingFinal),
+            (&realtime, false, true, Some(Stream), Some(Local), None, OutputMode::StreamingFinal),
+            (&realtime, true, false, Some(Stream), Some(Stream), Some(ProviderId::Aliyun), OutputMode::StreamingFinal),
+            (&realtime, false, false, Some(Stream), None, None, OutputMode::StreamingFinal),
+            (&whole, true, true, Some(Local), Some(Local), None, OutputMode::WholeTake),
+            (&whole, false, true, Some(Local), Some(Local), None, OutputMode::WholeTake),
+            (&whole, true, false, None, None, None, OutputMode::WholeTake),
+        ];
+        for (settings, provider_preview, local_preview, live, shown, provider, mode) in cases {
+            let settings = EngineSettings { provider_preview, local_preview, ..settings.clone() };
+            let e = ResolvedEngines::resolve_with_models(&settings, &secrets, &PREVIEWING, &library(true));
+            let at = format!("{:?} provider {provider_preview} local {local_preview}", settings.asr_provider);
+            assert_eq!((e.live_source(), e.preview_source(), e.effective_output_mode()), (live, shown, mode), "{at}");
+            let st = e.status();
+            assert_eq!((st.live_source, st.live_ready, st.preview_source, st.preview_provider), (live, live.is_some(), shown, provider), "{at}");
+        }
+        // The local model not downloaded: its switch shows nothing yet.
+        let off = EngineSettings { provider_preview: false, ..builtin.clone() };
+        let e = ResolvedEngines::resolve_with_models(&off, &secrets, &PREVIEWING, &library(false));
+        assert_eq!((e.live_source(), e.preview_source()), (None, None));
+        // A streaming mode runs on whatever recognises while the take is spoken, shown or not.
+        for (settings, provider_preview, local_preview, mode) in [
+            (&realtime, false, false, OutputMode::LiveInject),
+            (&builtin, false, true, OutputMode::StreamingFinal),
+            (&builtin, false, false, OutputMode::WholeTake),
+        ] {
+            let settings = EngineSettings { provider_preview, local_preview, output_mode: OutputMode::LiveInject, ..settings.clone() };
+            let settings = EngineSettings { output_mode: if mode == OutputMode::WholeTake { OutputMode::StreamingFinal } else { mode }, ..settings };
+            let e = ResolvedEngines::resolve_with_models(&settings, &secrets, &PREVIEWING, &library(true));
+            assert_eq!(e.effective_output_mode(), mode, "{:?} provider {provider_preview} local {local_preview}", settings.asr_provider);
+        }
     }
 
     /// The output mode (docs/dictation.md §12) rides on the live preview: a streaming mode is
-    /// effective only while `live_preview_ready`, otherwise the status says `whole_take`.
+    /// effective only while `live_ready`, otherwise the status says `whole_take`.
     #[test]
     fn streaming_output_modes_need_the_live_preview_and_serialize_snake_case() {
         let secrets = UserSecrets::default();
@@ -2179,13 +2398,13 @@ mod tests {
             assert_eq!(mode.is_streaming(), mode != OutputMode::WholeTake);
             let settings = EngineSettings { output_mode: mode, vad_trim: true, ..EngineSettings::default() };
             let ready = ResolvedEngines::resolve_with_models(&settings, &secrets, &BUILT, &library(true));
-            assert!(ready.live_preview_ready() && ready.vad_trim);
+            assert!(ready.live_ready() && ready.vad_trim);
             assert_eq!(ready.effective_output_mode(), mode, "ready: the setting is effective");
             assert_eq!(ready.status().effective_output_mode, mode);
             let not_installed = ResolvedEngines::resolve_with_models(&settings, &secrets, &BUILT, &library(false));
             assert_eq!(not_installed.effective_output_mode(), OutputMode::WholeTake, "{wire}: no streaming model → whole take");
-            let off = ResolvedEngines::resolve_with_models(&EngineSettings { live_preview: false, ..settings.clone() }, &secrets, &BUILT, &library(true));
-            assert_eq!(off.effective_output_mode(), OutputMode::WholeTake, "{wire}: preview off → whole take");
+            let off = ResolvedEngines::resolve_with_models(&EngineSettings { local_preview: false, ..settings.clone() }, &secrets, &BUILT, &library(true));
+            assert_eq!(off.effective_output_mode(), OutputMode::WholeTake, "{wire}: the local preview off → whole take");
         }
         let parsed: EngineSettings = serde_json::from_str(r#"{"output_mode":"live_inject","vad_trim":true}"#).unwrap();
         assert_eq!((parsed.output_mode, parsed.vad_trim), (OutputMode::LiveInject, true));
@@ -2569,7 +2788,7 @@ mod tests {
         let resolved = ResolvedEngines::resolve(&settings, &secrets, &BUILT);
         let shown = |resolved: &ResolvedEngines, ledger: &QuotaLedger| {
             let status = resolved.status_with(ledger);
-            (status.live_source, status.live_preview_ready, status.effective_output_mode)
+            (status.live_source, status.live_ready, status.effective_output_mode)
         };
         let streaming = (Some(LiveSource::Stream), true, OutputMode::StreamingFinal);
         let whole = (Some(LiveSource::Stream), false, OutputMode::WholeTake);
@@ -2593,6 +2812,45 @@ mod tests {
         assert_eq!(inject.status().effective_output_mode, OutputMode::LiveInject);
         let off = EngineSettings { asr_fallback: FallbackSettings { enabled: false, ..settings.asr_fallback.clone() }, ..settings.clone() };
         assert_eq!(shown(&ResolvedEngines::resolve(&off, &secrets, &BUILT), &ledger), streaming, "no chain, no stand-in");
+    }
+
+    /// docs/dictation.md §3.5, §11.10: the words the pill shows name the model that gives them. A
+    /// realtime fallback model standing in shows its own provider; one taking whole recordings has
+    /// no words to show, and the local model takes over when its switch is on and it is installed —
+    /// then its words are also what a streaming mode uses.
+    #[test]
+    fn the_shown_source_follows_the_model_that_stands_in() {
+        let (settings, mut secrets) = studio_with_fallbacks();
+        let shown = |resolved: &ResolvedEngines, ledger: &QuotaLedger| {
+            let st = resolved.status_with(ledger);
+            (st.live_source, st.live_ready, st.preview_source, st.preview_provider)
+        };
+        let resolved = ResolvedEngines::resolve_with_models(&settings, &secrets, &BUILT, &library(true));
+        let keys: Vec<QuotaKey> =
+            std::iter::once(resolved.asr_fallback.selected.clone().unwrap()).chain(resolved.asr_fallback.targets().map(|t| t.key.clone())).collect();
+        let ledger = QuotaLedger::with_clock(|| 1_000);
+        let aliyun = (Some(LiveSource::Stream), true, Some(LiveSource::Stream), Some(ProviderId::Aliyun));
+        assert_eq!(shown(&resolved, &ledger), aliyun);
+        ledger.mark(&keys[0], SwitchReason::Quota);
+        assert_eq!(shown(&resolved, &ledger), aliyun, "-message is Model Studio's realtime model too");
+        ledger.mark(&keys[1], SwitchReason::Quota);
+        let local = (Some(LiveSource::Local), true, Some(LiveSource::Local), None);
+        assert_eq!(shown(&resolved, &ledger), local, "Groq takes whole recordings: the local model shows the words");
+        assert_eq!(resolved.status_with(&ledger).effective_output_mode, OutputMode::WholeTake);
+        let no_local = ResolvedEngines::resolve_with_models(&EngineSettings { local_preview: false, ..settings.clone() }, &secrets, &BUILT, &library(true));
+        assert_eq!(shown(&no_local, &ledger), (Some(LiveSource::Stream), false, None, None), "nothing shows the words then");
+        let hidden = ResolvedEngines::resolve_with_models(&EngineSettings { provider_preview: false, ..settings.clone() }, &secrets, &BUILT, &library(true));
+        assert_eq!(shown(&hidden, &QuotaLedger::with_clock(|| 1_000)), (Some(LiveSource::Stream), true, Some(LiveSource::Local), None));
+        // Another vendor's realtime model standing in names that vendor.
+        secrets.set(ProviderId::Stepfun, ServiceKind::Asr, Some("sk-step".into()));
+        let stepfun = EngineSettings {
+            asr_fallback: FallbackSettings { enabled: true, on_outage: false, models: vec![fallback_entry(ProviderId::Stepfun, "step-asr-1-stream")] },
+            ..settings.clone()
+        };
+        let resolved = ResolvedEngines::resolve(&stepfun, &secrets, &BUILT);
+        let ledger = QuotaLedger::with_clock(|| 1_000);
+        ledger.mark(resolved.asr_fallback.selected.as_ref().unwrap(), SwitchReason::Quota);
+        assert_eq!(shown(&resolved, &ledger), (Some(LiveSource::Stream), true, Some(LiveSource::Stream), Some(ProviderId::Stepfun)));
     }
 
     /// The view the engine hands the client factory for one fallback model: only that service changes.

@@ -26,7 +26,7 @@ Voltip is a dictation app for Windows, macOS and Linux. You hold a shortcut, spe
 ## How a dictation works
 
 1. **Hold the shortcut**, Ctrl+Alt+Space by default. Voltip opens the microphone and shows a small overlay at the bottom of the screen with the input level.
-2. **Speak.** With the live transcription model installed, the words appear in the overlay as you say them.
+2. **Speak.** With the built-in service, a realtime model or the downloaded live transcription model, the words appear in the overlay as you say them, with a tag naming where they come from.
 3. **Release the keys.** The recording is recognised, either on your computer with a downloaded model or by a cloud service. Voltip then applies your dictionary, AI polish if it is on, and your replacement rules.
 4. **The text is pasted at your cursor** in the app you were using, and a copy is saved in the history on your computer.
 

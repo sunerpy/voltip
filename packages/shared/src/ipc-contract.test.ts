@@ -1431,7 +1431,7 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
         llm: { model: "qwen/qwen3.8-27b", key: true },
       },
       local: { id: "qwen3-asr-0.6b", name: local?.name ?? "", installed: true },
-      liveReady: true,
+      localPreviewReady: true,
       // docs/dictation.md §3.14: the recognition chain's models of this device resolve against it.
       library: fixture.models,
       // docs/dictation.md §3.3: the list Groq gave for its saved key (contract.rs's sample).
@@ -1469,10 +1469,17 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     // the local model, the custom one being out after its outage. Without one the preview reports
     // the selected model's (the built-in service's prompt).
     expect(fixture.engines.glossary).toBe("not_supported");
+    // §11.10: the pill names the service whose words it shows — the model standing in, which the
+    // ledger picks (here this device's model); without one, the built-in service.
+    expect([fixture.engines.preview_source, fixture.engines.preview_provider]).toEqual([
+      "cloud",
+      "local",
+    ]);
     expect(resolved).toEqual({
       ...fixture.engines,
       asr_fallback: withoutLedger,
       glossary: "prompt",
+      preview_provider: "builtin",
     });
     expect(resolved.asr_fallback?.models.map((m) => m.skip ?? m.issue ?? "ready")).toEqual([
       "ready",

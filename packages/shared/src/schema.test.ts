@@ -103,7 +103,7 @@ const ENGINES: EngineStatus = {
   asr_model: "Qwen/Qwen3-ASR-1.7B",
   asr_host: "",
   local_ready: false,
-  live_preview_ready: false,
+  live_ready: false,
   effective_output_mode: "whole_take",
   refine_enabled: true,
   llm_provider: "groq",
@@ -504,7 +504,8 @@ describe("dictation contract (docs/dictation.md)", () => {
       llm_provider: "builtin",
       refine_enabled: true,
       local_device: "auto",
-      live_preview: true,
+      provider_preview: true,
+      local_preview: true,
       output_mode: "whole_take",
       vad_trim: false,
       chinese_script: "simplified",
@@ -531,8 +532,35 @@ describe("dictation contract (docs/dictation.md)", () => {
     expect(engineSettingsSchema.safeParse({ providers: { azure: {} } }).success).toBe(false);
     expect(engineSettingsSchema.safeParse({ local_threads: 0 }).success).toBe(false);
     expect(engineSettingsSchema.safeParse({ local_device: "npu" }).success).toBe(false);
-    // `live_preview` is `#[serde(default = true)]`: absent reads as on, false stays false.
-    expect(engineSettingsSchema.parse({ live_preview: false }).live_preview).toBe(false);
+    // docs/dictation.md §11.10: both live preview switches are on by default; false stays false,
+    // each on its own.
+    expect(engineSettingsSchema.parse({ provider_preview: false })).toMatchObject({
+      provider_preview: false,
+      local_preview: true,
+    });
+    expect(engineSettingsSchema.parse({ local_preview: false })).toMatchObject({
+      provider_preview: true,
+      local_preview: false,
+    });
+    // The pill's tag and the 实时预览 status name whose words they are.
+    expect(
+      liveTextSchema.parse({ current: "你好", source: "stream", provider: "volcengine_speech" }),
+    ).toEqual({
+      committed: [],
+      current: "你好",
+      injected: 0,
+      source: "stream",
+      provider: "volcengine_speech",
+    });
+    expect(liveTextSchema.safeParse({ source: "radio" }).success).toBe(false);
+    expect(
+      engineStatusSchema.parse({
+        live_ready: true,
+        live_source: "stream",
+        preview_source: "local",
+      }),
+    ).toMatchObject({ live_ready: true, live_source: "stream", preview_source: "local" });
+    expect(engineStatusSchema.safeParse({ preview_provider: "nobody" }).success).toBe(false);
     // Events carry the same shapes flattened next to `type`.
     expect(
       uiEventSchema.safeParse({

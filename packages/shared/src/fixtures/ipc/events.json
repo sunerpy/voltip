@@ -14,7 +14,8 @@
         "refine_enabled": true,
         "refine_preset": "proofread",
         "local_device": "auto",
-        "live_preview": true,
+        "provider_preview": true,
+        "local_preview": true,
         "output_mode": "whole_take",
         "vad_trim": false,
         "chinese_script": "simplified",
@@ -139,7 +140,7 @@
       "asr_model": "",
       "asr_host": "",
       "local_ready": false,
-      "live_preview_ready": false,
+      "live_ready": false,
       "effective_output_mode": "whole_take",
       "refine_enabled": true,
       "refine_ready": false,
@@ -448,7 +449,8 @@
       },
       "local_device": "auto",
       "language": "zh",
-      "live_preview": true,
+      "provider_preview": true,
+      "local_preview": true,
       "output_mode": "whole_take",
       "vad_trim": false,
       "chinese_script": "simplified",
@@ -849,7 +851,8 @@
           }
         ],
         "current": "然后加上错误",
-        "injected": 0
+        "injected": 0,
+        "source": "local"
       },
       "locked": false
     },
@@ -877,7 +880,8 @@
         ],
         "current": "然后加上错误",
         "degraded": "live tap overrun: the decoder fell behind the microphone",
-        "injected": 0
+        "injected": 0,
+        "source": "local"
       },
       "locked": false
     },
@@ -910,7 +914,9 @@
           }
         ],
         "current": "然后加上错误",
-        "injected": 1
+        "injected": 1,
+        "source": "stream",
+        "provider": "aliyun"
       },
       "locked": false
     },
@@ -1614,8 +1620,10 @@
     "asr_model": "Qwen/Qwen3-ASR-1.7B",
     "asr_host": "",
     "local_ready": false,
-    "live_preview_ready": true,
+    "live_ready": true,
     "live_source": "cloud",
+    "preview_source": "cloud",
+    "preview_provider": "local",
     "effective_output_mode": "whole_take",
     "language": "zh",
     "refine_enabled": true,
@@ -2332,8 +2340,7 @@
     "asr_model": "Qwen/Qwen3-ASR-1.7B",
     "asr_host": "",
     "local_ready": false,
-    "live_preview_ready": false,
-    "live_source": "cloud",
+    "live_ready": false,
     "effective_output_mode": "whole_take",
     "language": "zh",
     "refine_enabled": true,
@@ -3050,8 +3057,729 @@
     "asr_model": "Qwen/Qwen3-ASR-1.7B",
     "asr_host": "",
     "local_ready": false,
-    "live_preview_ready": true,
+    "live_ready": true,
+    "live_source": "stream",
+    "preview_source": "local",
+    "effective_output_mode": "streaming_final",
+    "language": "zh",
+    "refine_enabled": true,
+    "llm_provider": "groq",
+    "refine_ready": true,
+    "refine_model": "openai/gpt-oss-20b",
+    "refine_host": "api.groq.com",
+    "inject": "paste",
+    "providers": [
+      {
+        "id": "builtin",
+        "key": "builtin",
+        "on_device": false,
+        "console": false,
+        "asr": {
+          "model": "Qwen/Qwen3-ASR-1.7B",
+          "presets": ["Qwen/Qwen3-ASR-1.7B"],
+          "key": {
+            "set": true,
+            "source": "builtin"
+          },
+          "active": true
+        },
+        "llm": {
+          "model": "qwen/qwen3.8-27b",
+          "presets": ["qwen/qwen3.8-27b"],
+          "key": {
+            "set": true,
+            "source": "builtin"
+          },
+          "active": false
+        }
+      },
+      {
+        "id": "local",
+        "key": "none",
+        "on_device": true,
+        "console": false,
+        "asr": {
+          "model": "qwen3-asr-0.6b",
+          "presets": [],
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "active": false
+        }
+      },
+      {
+        "id": "openai",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "setup": true,
+        "asr": {
+          "model": "gpt-transcribe",
+          "presets": ["gpt-transcribe", "gpt-4o-mini-transcribe", "whisper-1"],
+          "base_url": "https://api.openai.com/v1",
+          "default_base_url": "https://api.openai.com/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        },
+        "llm": {
+          "model": "gpt-6-luna",
+          "presets": ["gpt-6-luna", "gpt-6-sol"],
+          "base_url": "https://api.openai.com/v1",
+          "default_base_url": "https://api.openai.com/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "groq",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "asr": {
+          "model": "whisper-large-v3-turbo",
+          "presets": ["whisper-large-v3-turbo", "whisper-large-v3"],
+          "base_url": "https://api.groq.com/openai/v1",
+          "default_base_url": "https://api.groq.com/openai/v1",
+          "key": {
+            "set": true,
+            "source": "user"
+          },
+          "active": false
+        },
+        "llm": {
+          "model": "openai/gpt-oss-20b",
+          "presets": ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"],
+          "base_url": "https://api.groq.com/openai/v1",
+          "default_base_url": "https://api.groq.com/openai/v1",
+          "key": {
+            "set": true,
+            "source": "user"
+          },
+          "active": true,
+          "listed": ["openai/gpt-oss-120b", "qwen/qwen3.8-27b"]
+        }
+      },
+      {
+        "id": "google",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "llm": {
+          "model": "gemini-3.5-flash-lite",
+          "presets": ["gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.1-flash-lite"],
+          "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+          "default_base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "siliconflow",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "setup": true,
+        "asr": {
+          "model": "FunAudioLLM/SenseVoiceSmall",
+          "presets": ["FunAudioLLM/SenseVoiceSmall", "TeleAI/TeleSpeechASR"],
+          "base_url": "https://api.siliconflow.cn/v1",
+          "default_base_url": "https://api.siliconflow.cn/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        },
+        "llm": {
+          "model": "Qwen/Qwen3-8B",
+          "presets": ["Qwen/Qwen3-8B", "deepseek-ai/DeepSeek-V3"],
+          "base_url": "https://api.siliconflow.cn/v1",
+          "default_base_url": "https://api.siliconflow.cn/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "aliyun",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "quota": true,
+        "setup": true,
+        "asr": {
+          "model": "qwen-audio-3.1-asr-flash-streaming",
+          "presets": [
+            "qwen-audio-3.1-asr-flash-streaming",
+            "qwen-audio-3.1-asr-flash",
+            "fun-asr-realtime"
+          ],
+          "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "default_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        },
+        "llm": {
+          "model": "qwen3.8-flash",
+          "presets": ["qwen3.8-flash", "qwen3.8-max", "qwen3.7-flash"],
+          "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "default_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "volcengine_speech",
+        "key": "required",
+        "credential": [
+          {
+            "id": "api_key",
+            "fields": [
+              {
+                "id": "api_key",
+                "secret": true,
+                "required": true
+              }
+            ]
+          },
+          {
+            "id": "app_token",
+            "fields": [
+              {
+                "id": "app_id",
+                "secret": false,
+                "required": true
+              },
+              {
+                "id": "access_token",
+                "secret": true,
+                "required": true
+              }
+            ]
+          }
+        ],
+        "lists_models": false,
+        "on_device": false,
+        "console": true,
+        "setup": true,
+        "asr": {
+          "model": "volc.seedasr.sauc.duration",
+          "presets": [
+            "volc.seedasr.sauc.duration",
+            "volc.bigasr.sauc.duration",
+            "volc.seedasr.sauc.concurrent"
+          ],
+          "base_url": "https://openspeech.bytedance.com",
+          "default_base_url": "https://openspeech.bytedance.com",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "tencent",
+        "key": "required",
+        "credential": [
+          {
+            "id": "default",
+            "fields": [
+              {
+                "id": "app_id",
+                "secret": false,
+                "required": true
+              },
+              {
+                "id": "secret_id",
+                "secret": false,
+                "required": true
+              },
+              {
+                "id": "secret_key",
+                "secret": true,
+                "required": true
+              }
+            ]
+          }
+        ],
+        "lists_models": false,
+        "on_device": false,
+        "console": true,
+        "setup": true,
+        "asr": {
+          "model": "16k_zh_en",
+          "presets": ["16k_zh_en", "Hy-ASR-3.0-preview", "16k_zh"],
+          "base_url": "https://asr.cloud.tencent.com",
+          "default_base_url": "https://asr.cloud.tencent.com",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "iflytek",
+        "key": "required",
+        "credential": [
+          {
+            "id": "default",
+            "fields": [
+              {
+                "id": "app_id",
+                "secret": false,
+                "required": true
+              },
+              {
+                "id": "api_key",
+                "secret": true,
+                "required": true
+              },
+              {
+                "id": "api_secret",
+                "secret": true,
+                "required": true
+              }
+            ]
+          }
+        ],
+        "lists_models": false,
+        "on_device": false,
+        "console": true,
+        "setup": true,
+        "asr": {
+          "model": "iat",
+          "presets": ["iat"],
+          "base_url": "https://iat-api.xfyun.cn",
+          "default_base_url": "https://iat-api.xfyun.cn",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "iflytek_rtasr",
+        "key": "required",
+        "credential": [
+          {
+            "id": "default",
+            "fields": [
+              {
+                "id": "app_id",
+                "secret": false,
+                "required": true
+              },
+              {
+                "id": "api_key",
+                "secret": true,
+                "required": true
+              }
+            ]
+          }
+        ],
+        "lists_models": false,
+        "on_device": false,
+        "console": true,
+        "setup": true,
+        "asr": {
+          "model": "rtasr",
+          "presets": ["rtasr"],
+          "base_url": "https://rtasr.xfyun.cn",
+          "default_base_url": "https://rtasr.xfyun.cn",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "baidu",
+        "key": "required",
+        "credential": [
+          {
+            "id": "default",
+            "fields": [
+              {
+                "id": "app_id",
+                "secret": false,
+                "required": true
+              },
+              {
+                "id": "api_key",
+                "secret": true,
+                "required": true
+              }
+            ]
+          }
+        ],
+        "lists_models": false,
+        "on_device": false,
+        "console": true,
+        "asr": {
+          "model": "15372",
+          "presets": ["15372", "1537", "15376"],
+          "base_url": "https://vop.baidu.com",
+          "default_base_url": "https://vop.baidu.com",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "stepfun",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "asr": {
+          "model": "stepaudio-2.5-asr",
+          "presets": ["stepaudio-2.5-asr", "stepaudio-2.5-asr-stream"],
+          "base_url": "https://api.stepfun.com/v1",
+          "default_base_url": "https://api.stepfun.com/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false,
+          "sites": [
+            {
+              "id": "cn",
+              "base_url": "https://api.stepfun.com/v1"
+            },
+            {
+              "id": "intl",
+              "base_url": "https://api.stepfun.ai/v1"
+            }
+          ]
+        }
+      },
+      {
+        "id": "deepseek",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "setup": true,
+        "llm": {
+          "model": "deepseek-flash",
+          "presets": ["deepseek-flash", "deepseek-v4-pro"],
+          "base_url": "https://api.deepseek.com",
+          "default_base_url": "https://api.deepseek.com",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "kimi",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "llm": {
+          "model": "kimi-k3.1-pro-highspeed",
+          "presets": ["kimi-k3.1-pro-highspeed", "kimi-k3.1-pro", "kimi-k3"],
+          "base_url": "https://api.moonshot.cn/v1",
+          "default_base_url": "https://api.moonshot.cn/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false,
+          "sites": [
+            {
+              "id": "cn",
+              "base_url": "https://api.moonshot.cn/v1"
+            },
+            {
+              "id": "intl",
+              "base_url": "https://api.moonshot.ai/v1"
+            }
+          ]
+        }
+      },
+      {
+        "id": "glm",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "asr": {
+          "model": "glm-asr-2512",
+          "presets": ["glm-asr-2512"],
+          "base_url": "https://open.bigmodel.cn/api/paas/v4",
+          "default_base_url": "https://open.bigmodel.cn/api/paas/v4",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false,
+          "sites": [
+            {
+              "id": "cn",
+              "base_url": "https://open.bigmodel.cn/api/paas/v4"
+            },
+            {
+              "id": "intl",
+              "base_url": "https://api.z.ai/api/paas/v4"
+            }
+          ]
+        },
+        "llm": {
+          "model": "glm-5.3-flash",
+          "presets": ["glm-5.3-flash", "glm-4.7-flash", "glm-5.3"],
+          "base_url": "https://open.bigmodel.cn/api/paas/v4",
+          "default_base_url": "https://open.bigmodel.cn/api/paas/v4",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false,
+          "sites": [
+            {
+              "id": "cn",
+              "base_url": "https://open.bigmodel.cn/api/paas/v4"
+            },
+            {
+              "id": "intl",
+              "base_url": "https://api.z.ai/api/paas/v4"
+            }
+          ]
+        }
+      },
+      {
+        "id": "volcengine",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "setup": true,
+        "llm": {
+          "model": "doubao-seed-2-1-lite-260915",
+          "presets": [
+            "doubao-seed-2-1-lite-260915",
+            "doubao-seed-2-1-turbo-260628",
+            "doubao-seed-2-0-mini-260428"
+          ],
+          "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+          "default_base_url": "https://ark.cn-beijing.volces.com/api/v3",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "hunyuan",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "setup": true,
+        "llm": {
+          "model": "hy3",
+          "presets": ["hy3", "hy4-preview"],
+          "base_url": "https://tokenhub.tencentmaas.com/v1",
+          "default_base_url": "https://tokenhub.tencentmaas.com/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "mimo",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "setup": true,
+        "asr": {
+          "model": "mimo-v2.5-asr",
+          "presets": ["mimo-v2.5-asr"],
+          "base_url": "https://api.xiaomimimo.com/v1",
+          "default_base_url": "https://api.xiaomimimo.com/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        },
+        "llm": {
+          "model": "mimo-v2.6-flash",
+          "presets": ["mimo-v2.6-flash", "mimo-v2.6-pro"],
+          "base_url": "https://api.xiaomimimo.com/v1",
+          "default_base_url": "https://api.xiaomimimo.com/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "openrouter",
+        "key": "required",
+        "on_device": false,
+        "console": true,
+        "setup": true,
+        "llm": {
+          "model": "google/gemini-3.5-flash-lite",
+          "presets": [
+            "google/gemini-3.5-flash-lite",
+            "deepseek/deepseek-v4-flash",
+            "openai/gpt-6-luna"
+          ],
+          "base_url": "https://openrouter.ai/api/v1",
+          "default_base_url": "https://openrouter.ai/api/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "key_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "ollama",
+        "key": "none",
+        "on_device": true,
+        "console": false,
+        "setup": true,
+        "llm": {
+          "model": "",
+          "presets": [],
+          "base_url": "http://127.0.0.1:11434/v1",
+          "default_base_url": "http://127.0.0.1:11434/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "issue": "model_missing",
+          "active": false
+        }
+      },
+      {
+        "id": "custom",
+        "key": "optional",
+        "on_device": false,
+        "console": false,
+        "asr": {
+          "model": "Qwen/Qwen3-ASR-1.7B",
+          "presets": [],
+          "base_url": "https://asr.example.test",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "active": false
+        },
+        "llm": {
+          "model": "claude-opus-5-5",
+          "presets": [],
+          "base_url": "http://127.0.0.1:8787/v1",
+          "key": {
+            "set": false,
+            "source": "none"
+          },
+          "active": false
+        }
+      }
+    ],
+    "asr_fallback": {
+      "enabled": true,
+      "in_use": true,
+      "selected_retry_at_ms": 1758787000000,
+      "selected_retry_reason": "quota",
+      "models": [
+        {
+          "provider": "custom",
+          "model": "qwen3-asr-flash",
+          "retry_at_ms": 1758700660000,
+          "retry_reason": "outage"
+        },
+        {
+          "provider": "builtin",
+          "model": "Qwen/Qwen3-ASR-1.7B",
+          "skip": "same_as_selected"
+        },
+        {
+          "provider": "local",
+          "model": "qwen3-asr-0.6b"
+        },
+        {
+          "provider": "local",
+          "model": "paraformer-zh",
+          "issue": "model_not_installed"
+        }
+      ]
+    },
+    "llm_fallback": {
+      "enabled": true,
+      "in_use": true,
+      "models": [
+        {
+          "provider": "openai",
+          "model": "gpt-6-luna",
+          "issue": "key_missing"
+        }
+      ]
+    },
+    "glossary": "not_supported"
+  },
+  {
+    "type": "engines",
+    "asr_provider": "builtin",
+    "asr_ready": true,
+    "asr_model": "Qwen/Qwen3-ASR-1.7B",
+    "asr_host": "",
+    "local_ready": false,
+    "live_ready": true,
     "live_source": "cloud",
+    "preview_source": "cloud",
+    "preview_provider": "local",
     "effective_output_mode": "live_inject",
     "language": "zh",
     "refine_enabled": true,
@@ -3768,7 +4496,7 @@
     "asr_model": "",
     "asr_host": "",
     "local_ready": false,
-    "live_preview_ready": false,
+    "live_ready": false,
     "effective_output_mode": "whole_take",
     "refine_enabled": true,
     "refine_ready": false,
@@ -3793,8 +4521,9 @@
     "asr_host": "",
     "local_model": "paraformer-zh",
     "local_ready": true,
-    "live_preview_ready": true,
+    "live_ready": true,
     "live_source": "local",
+    "preview_source": "local",
     "effective_output_mode": "streaming_final",
     "language": "zh",
     "refine_enabled": true,
@@ -4509,7 +5238,7 @@
     "asr_host": "",
     "local_model": "paraformer-zh",
     "local_ready": false,
-    "live_preview_ready": false,
+    "live_ready": false,
     "effective_output_mode": "whole_take",
     "language": "zh",
     "refine_enabled": true,
@@ -6475,7 +7204,8 @@
       },
       "local_device": "auto",
       "language": "zh",
-      "live_preview": true,
+      "provider_preview": true,
+      "local_preview": true,
       "output_mode": "whole_take",
       "vad_trim": false,
       "chinese_script": "simplified",
@@ -6581,7 +7311,8 @@
       "live": {
         "committed": [],
         "current": "改得更正式",
-        "injected": 0
+        "injected": 0,
+        "source": "local"
       },
       "locked": false
     },

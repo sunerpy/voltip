@@ -26,7 +26,9 @@ import {
   hotkeyMethodText,
   joinLiveText,
   liveCaptionParts,
+  livePreviewTag,
   livePreviewText,
+  previewSourceName,
   liveTextGap,
   modelDescription,
   modelDictionaryKey,
@@ -565,6 +567,35 @@ describe("live preview text (docs/dictation.md §11)", () => {
       committed: "",
       current: "把这段",
     });
+  });
+});
+
+describe("whose words the live preview shows (docs/dictation.md §11.10)", () => {
+  it("the pill's tag names the service by its short name, or the local model", () => {
+    expect(livePreviewTag({ source: "stream", provider: "volcengine_speech" })).toBe(
+      "预览 · 豆包语音",
+    );
+    expect(livePreviewTag({ source: "local" })).toBe("预览 · 本地模型");
+    expect(livePreviewTag({ source: "cloud", provider: "builtin" })).toBe("预览 · 内置服务");
+    // A model of this device standing in for the built-in service.
+    expect(livePreviewTag({ source: "cloud", provider: "local" })).toBe("预览 · 本地模型");
+    // A core that does not say whose words they are.
+    expect(livePreviewTag({})).toBe("预览");
+    expect(livePreviewTag({ source: "stream", provider: "tencent" }, "en")).toBe(
+      "Preview · Tencent Cloud",
+    );
+    expect(livePreviewTag({ source: "local" }, "en")).toBe("Preview · Local model");
+  });
+
+  it("the 实时预览 status names the service in full, or the local model", () => {
+    expect(previewSourceName("stream", "volcengine_speech")).toBe("火山引擎豆包语音");
+    expect(previewSourceName("cloud", "builtin")).toBe("内置服务");
+    expect(previewSourceName("local", undefined)).toBe("本地模型");
+    expect(previewSourceName("cloud", "local")).toBe("本地模型");
+    expect(previewSourceName("stream", "stepfun", "en")).toBe("StepFun");
+    // A core that names no provider gets the source's own name.
+    expect(previewSourceName("cloud", undefined)).toBe("内置服务");
+    expect(previewSourceName("stream", undefined)).toBe("边说边识别");
   });
 });
 

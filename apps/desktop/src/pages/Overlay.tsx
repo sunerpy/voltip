@@ -1,13 +1,16 @@
 import {
+  DEFAULT_LOCALE,
   type DictationPhase,
   type DictationStatus,
   type LiveText,
+  type Locale,
   type PasteOutcome,
   type TFunction,
   formatElapsed,
   formatSeconds,
   joinLiveText,
   liveCaptionParts,
+  livePreviewTag,
   presetRefLabel,
   recordingSourceLabel,
   sceneLabel,
@@ -121,16 +124,21 @@ const LIVE_BARS = 36;
 /** The pill's caption from the core's live preview; `undefined` until any text arrived (a degraded
  *  preview keeps showing what it had — the pill itself says nothing about it). Under `live_inject`
  *  (docs/dictation.md §12) the first `injected` committed sentences are already in the front app
- *  and come back as the fainter `injected` part. */
-export function pillLiveCaption(live: LiveText | undefined): PillLiveCaption | undefined {
+ *  and come back as the fainter `injected` part. The tag names whose words they are (§11.10). */
+export function pillLiveCaption(
+  live: LiveText | undefined,
+  locale: Locale = DEFAULT_LOCALE,
+): PillLiveCaption | undefined {
   if (live === undefined) return undefined;
   const parts = liveCaptionParts(live);
   if (parts.committed.length === 0 && parts.current.length === 0) return undefined;
-  if (live.injected <= 0) return parts;
+  const tag = live.source === undefined ? {} : { tag: livePreviewTag(live, locale) };
+  if (live.injected <= 0) return { ...parts, ...tag };
   return {
     injected: joinLiveText(live.committed.slice(0, live.injected).map((s) => s.text)),
     committed: joinLiveText(live.committed.slice(live.injected).map((s) => s.text)),
     current: parts.current,
+    ...tag,
   };
 }
 
@@ -301,7 +309,7 @@ export function Overlay({ state }: OverlayProps) {
         waiting={phase.phase === "listening" && !phase.ready}
         // docs/dictation.md §13: a short press under hold_or_toggle locked the take.
         locked={phase.phase === "listening" && phase.locked}
-        live={phase.phase === "listening" ? pillLiveCaption(phase.live) : undefined}
+        live={phase.phase === "listening" ? pillLiveCaption(phase.live, locale) : undefined}
         preview={phase.phase === "processing" ? phase.preview : undefined}
         label={
           phase.phase === "processing"

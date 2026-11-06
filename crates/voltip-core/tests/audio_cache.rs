@@ -465,7 +465,8 @@ async fn regression_a_trial_in_live_inject_runs_no_clean_up() {
         asr_provider: ProviderId::Custom,
         llm_provider: ProviderId::Custom,
         refine_enabled: true,
-        live_preview: true,
+        provider_preview: true,
+        local_preview: true,
         providers: [(ProviderId::Custom, custom)].into(),
         ..EngineSettings::default()
     };
