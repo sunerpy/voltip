@@ -31,6 +31,16 @@ const TEMPLATE = `android {
 }
 `;
 
+// The same parts as Expo SDK 58's template writes them: the release build type already names
+// Android's optimizing R8 rules, and crunches PNGs unless a property says otherwise.
+const TEMPLATE_58 = TEMPLATE.replace(
+  'proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"\n',
+  `proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+            def enablePngCrunchInRelease = findProperty('android.enablePngCrunchInReleaseBuilds') ?: 'true'
+            crunchPngs enablePngCrunchInRelease.toBoolean()
+`,
+);
+
 describe("the release config", () => {
   it("numbers a version as the Tauri phone app does", () => {
     expect(versionCode("0.0.45")).toBe(45);
@@ -67,10 +77,28 @@ describe("the release config", () => {
     expect(gradle.split("\n")).toHaveLength(TEMPLATE.split("\n").length);
   });
 
-  it("refuses a template whose release build type names no default R8 rules", () => {
-    expect(() => optimizedReleaseGradle(optimizedReleaseGradle(TEMPLATE))).toThrow(
-      "the template changed",
+  it("regression: leaves Expo SDK 58's release build type, which already optimizes, as it is", () => {
+    // `expo prebuild` stopped here with SDK 58 ("does not name proguard-android.txt; the template
+    // changed"): its template names the optimizing rules itself.
+    expect(TEMPLATE_58).not.toBe(TEMPLATE);
+    expect(optimizedReleaseGradle(TEMPLATE_58)).toBe(TEMPLATE_58);
+    // Optimizing twice changes nothing either.
+    expect(optimizedReleaseGradle(optimizedReleaseGradle(TEMPLATE))).toBe(
+      optimizedReleaseGradle(TEMPLATE),
     );
+    // The unsigned build still loses the debug key there, and only there.
+    const unsigned = unsignedReleaseGradle(TEMPLATE_58);
+    expect(unsigned.slice(unsigned.indexOf("release {"))).not.toContain("signingConfig");
+    expect(unsigned).toContain(
+      "debug {\n            signingConfig signingConfigs.debug\n        }",
+    );
+    expect(unsigned.split("\n")).toHaveLength(TEMPLATE_58.split("\n").length - 1);
+  });
+
+  it("refuses a template whose release build type names no default R8 rules", () => {
+    const noDefaults = TEMPLATE.replace('getDefaultProguardFile("proguard-android.txt"), ', "");
+    expect(noDefaults).toContain('proguardFiles "proguard-rules.pro"');
+    expect(() => optimizedReleaseGradle(noDefaults)).toThrow("the template changed");
     expect(() => optimizedReleaseGradle("android {\n}\n")).toThrow("no release build type");
     // The debug build type's rules are not the release build's.
     const debugOnly = TEMPLATE.replace(
@@ -83,8 +111,8 @@ describe("the release config", () => {
     expect(() => optimizedReleaseGradle(debugOnly)).toThrow("the template changed");
   });
 
-  /** app/build.gradle as app.config.js's mods leave it, built with `env`. */
-  async function builtGradle(env) {
+  /** app/build.gradle as app.config.js's mods leave `template`, built with `env`. */
+  async function builtGradle(env, template = TEMPLATE) {
     const appJson = require("../app.json").expo;
     const appConfig = require("../app.config");
     const before = { ...process.env };
@@ -94,7 +122,7 @@ describe("the release config", () => {
       const result = await config.mods.android.appBuildGradle({
         ...config,
         modRequest: { platform: "android", modName: "appBuildGradle" },
-        modResults: { language: "groovy", contents: TEMPLATE },
+        modResults: { language: "groovy", contents: template },
       });
       return result.modResults.contents;
     } finally {
@@ -119,6 +147,11 @@ describe("the release config", () => {
     const unsigned = await builtGradle({ VOLTIP_RN_UNSIGNED: "1" });
     expect(unsigned).toContain('getDefaultProguardFile("proguard-android-optimize.txt")');
     expect(unsigned.slice(unsigned.indexOf("release {"))).not.toContain("signingConfig");
+    // Expo SDK 58's template, which `expo prebuild` hands the mods today.
+    expect(await builtGradle({}, TEMPLATE_58)).toBe(TEMPLATE_58);
+    const unsigned58 = await builtGradle({ VOLTIP_RN_UNSIGNED: "1" }, TEMPLATE_58);
+    expect(unsigned58).toContain('getDefaultProguardFile("proguard-android-optimize.txt")');
+    expect(unsigned58.slice(unsigned58.indexOf("release {"))).not.toContain("signingConfig");
   });
 
   it("switches R8 on for release builds in app.json, without shrinking resources", () => {

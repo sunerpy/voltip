@@ -246,8 +246,9 @@ scripts/build-android-rn.sh --unsigned  # 不签名：…_android_arm64-unsigned
    （Gradle 自动下载会去 GitHub，本机不可用）。
    **R8**（2026-10-28，Google Play 关于混淆与优化的提示）：
    - `app.json` 的 `expo-build-properties` 设 `android.enableMinifyInReleaseBuilds: true`；`plugins/release.js` 的
-     `withOptimizedRelease` 把模板 release 构建类型的 `getDefaultProguardFile("proguard-android.txt")` 换成
-     `proguard-android-optimize.txt`，模板变了就报错（`plugins/release.test.js`）。不开 `shrinkResources`。
+     `withOptimizedRelease` 保证模板 release 构建类型用 `proguard-android-optimize.txt`：Expo SDK 57 的模板写的是
+     `getDefaultProguardFile("proguard-android.txt")`，插件把它换掉；SDK 58 的模板本来就用优化版，原样保留；两者都没有就报错
+     （`plugins/release.test.js`）。不开 `shrinkResources`。
    - keep 规则只写在本地模块的 `consumer-rules.pro`，随模块交给应用：UniFFI 与 JNA 按名字查找的类，以及
      `-keepattributes SourceFile,LineNumberTable` 和 `-renamesourcefileattribute SourceFile`（堆栈保留行号，用 mapping 还原）。
    - 2026-10-28 的构建：AAB 的 `BUNDLE-METADATA/com.android.tools/r8.json` 中混淆、优化、缩减分别覆盖 80.8 %、80.4 %、81.0 %
