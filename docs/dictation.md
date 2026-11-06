@@ -3066,7 +3066,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 - 端口 `voltip_core::import::MediaDecoder`（`CoreConfig.media_decoder`）：`extensions()`、`probe(path)`、`decode_to_pcm(path, out, progress, cancel)`。桌面壳接 `voltip_media::Decoder`；手机没有解码器，`UiState.imports.available` 为假，导入命令被拒绝。
 - 输出与长录音的录音文件相同（§22.3）：16 kHz 单声道 16 位小端裸 PCM。先写 `<out>.part`，完成后改名，所以 `out` 只在完整时存在；取消时报 `Cancelled` 并删除 `.part`。
 - 逐包读取、逐块解码，多声道按平均值混成单声道，用本机语音服务的 `StreamResampler`（§23）逐块重采样后写出。内存里只有一个包和一块样本，与文件长度无关。
-- 格式：Symphonia =0.5.5（特性 `aac alac flac isomp4 mkv mp3 ogg pcm vorbis wav`，没有默认特性）读容器并解码，Opus 由 `opus-rs` =0.1.34 解码。
+- 格式：Symphonia =0.6.1（特性 `aac alac flac id3v2 isomp4 mkv mp3 ogg pcm vorbis wav`，没有默认特性）读容器并解码，Opus 由 `opus-rs` =0.1.40 解码。`id3v2` 让探测跳过 MP3 开头的 ID3v2 标签：带封面的标签常超过 1 MB，而探测只在开头 1 MB 内找第一帧（0.5 版总会读这个标签）。空的 Opus 包不交给 `opus-rs`：它把空包当作丢包，按缓冲区大小补出 120 ms 的声音。
 
   | 容器 | 扩展名（`EXTENSIONS`） | 音频编码 |
   |---|---|---|
@@ -3079,7 +3079,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
   | Matroska / WebM | mkv、mka、webm | Vorbis、Opus、FLAC、AAC、MP3、PCM |
 
 - 只读一条音轨：读取器的默认音轨，没有就第一条；视频轨跳过。MP4 按编辑列表去掉编码器的前导样本（`mp4.rs`）；Opus 去掉 pre-skip。
-- 错误（`MediaError` → `ImportFailure`）：读不了 `unreadable`（系统的原话）；不是能读的音视频文件 `unsupported_format`；没有音轨 `no_audio`；音轨的编码没有解码器 `unsupported_codec`，按容器的标记写明编码名（`sniff.rs`：AC-3、E-AC-3、AC-4、DTS、TrueHD、MLP、AMR、MPEG-H、WavPack、TTA 等）；损坏或截断 `corrupt`；写不了 `storage`。MP3（没有编码器头时）和 ADTS 的时长是读取器估计的，不用来判断截断。
+- 错误（`MediaError` → `ImportFailure`）：读不了 `unreadable`（系统的原话）；不是能读的音视频文件 `unsupported_format`；没有音轨 `no_audio`；音轨的编码没有解码器 `unsupported_codec`，写明编码名：读取器认得的按它给的编码（AC-3、TrueHD、RealAudio 等），不认得的按容器的标记（`sniff.rs`：AC-3、E-AC-3、AC-4、DTS、TrueHD、MLP、AMR、MPEG-H、WavPack、TTA 等）；损坏或截断 `corrupt`，MP4 与 Matroska 的最后一个盒子或元素超出文件末尾时也算截断（`mp4.rs`、`mkv.rs`，读取器此时只报找不到索引或分段）；写不了 `storage`。MP3（没有编码器头时）和 ADTS 的时长是读取器估计的，不用来判断截断。MP4 的音轨按它在文件里的顺序找编辑列表：Symphonia 0.6 的音轨 ID 是 `tkhd` 里的编号，不是顺序。
 
 ### 31.2 队列（`voltip_core::import`、`runtime/import.rs`）
 

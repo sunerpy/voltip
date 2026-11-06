@@ -1,5 +1,5 @@
 //! Opus packets (an `.opus` or `.ogg` file's, a WebM or Matroska `A_OPUS` track's) decoded with
-//! `opus-rs`: Symphonia 0.5 reads these containers but has no Opus decoder. The stream's
+//! `opus-rs`: Symphonia 0.6 reads these containers but has no Opus decoder. The stream's
 //! `OpusHead` (the codec's extra data) gives the channels and the pre-skip, the encoder's start-up
 //! samples that are not part of the sound (RFC 7845 §4.2).
 
@@ -51,7 +51,7 @@ pub struct Opus {
 }
 
 impl Opus {
-    /// A decoder for `head`'s stream; it drops the pre-skip itself (Symphonia 0.5's readers leave
+    /// A decoder for `head`'s stream; it drops the pre-skip itself (Symphonia 0.6's readers leave
     /// it in, the Ogg one too), unless the container trims the first packet ([`Opus::decode`]).
     pub fn new(head: Head) -> Result<Self, MediaError> {
         let channels = usize::from(head.channels);
@@ -69,6 +69,12 @@ impl Opus {
     /// start has taken the pre-skip off itself. Returns the interleaved frames left; a packet that
     /// does not decode is an error for the caller to pass over.
     pub fn decode(&mut self, packet: &[u8], trim_start: usize, trim_end: usize) -> Result<&[f32], String> {
+        // Every Opus packet has at least its ToC byte (RFC 6716 §3.1). opus-rs takes an empty one
+        // for a lost packet and conceals as many samples as there is room for (120 ms here), which
+        // would put time into the file that is not in it.
+        if packet.is_empty() {
+            return Err("an empty Opus packet".into());
+        }
         let frames = self.decoder.decode(packet, MAX_FRAME, &mut self.frame).map_err(str::to_owned)?;
         let frames = frames.min(MAX_FRAME);
         if trim_start > 0 {
@@ -125,5 +131,22 @@ mod tests {
         assert_eq!(trimmed.decode(packet, 312, 0).unwrap().len(), 648, "a container that trims the start took the pre-skip off");
         assert_eq!(trimmed.decode(packet, 0, 0).unwrap().len(), 960, "and nothing more is dropped");
         assert!(trimmed.decode(&[], 0, 0).is_err(), "an empty packet does not decode");
+    }
+
+    /// An empty packet is not one (RFC 6716 §3.1): it is left out without adding time, and the
+    /// stream goes on after it. opus-rs 0.1.40 conceals it as a lost packet, as long as the room
+    /// it is given (120 ms here).
+    #[test]
+    fn regression_an_empty_packet_adds_no_time() {
+        let mut encoder = opus_rs::OpusEncoder::new(RATE as i32, 1, opus_rs::Application::Audio).unwrap();
+        let tone: Vec<f32> = (0..960).map(|i| (i as f32 * 0.05).sin() * 0.5).collect();
+        let mut packet = vec![0u8; 1500];
+        let n = encoder.encode(&tone, 960, &mut packet).unwrap();
+        let packet = &packet[..n];
+
+        let mut opus = Opus::new(Head { channels: 1, pre_skip: 0 }).unwrap();
+        assert_eq!(opus.decode(packet, 0, 0).unwrap().len(), 960);
+        assert!(opus.decode(&[], 0, 0).is_err(), "no concealed samples");
+        assert_eq!(opus.decode(packet, 0, 0).unwrap().len(), 960, "the next packet decodes as before");
     }
 }

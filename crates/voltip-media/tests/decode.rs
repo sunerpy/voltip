@@ -121,6 +121,32 @@ fn regression_a_length_the_reader_estimates_is_no_proof_of_damage() {
     assert!((0.5..1.5).contains(&seconds) && samples.is_some(), "what is there is decoded: {seconds} s");
 }
 
+/// Cover art makes an MP3's ID3v2 tag large. The reader skips the tag, however long, to the first
+/// frame; searching past it for one gives up after a megabyte (Symphonia 0.6 reads ID3v2 only with
+/// its `id3v2` feature), which made such a file "not a media file".
+#[test]
+fn regression_an_mp3_with_an_id3v2_tag_over_a_megabyte_decodes() {
+    let bytes = std::fs::read(fixture("tone.mp3")).unwrap();
+    // tone.mp3's own tag: "ID3", version 4.0, no flags, a synchsafe size, then that many bytes.
+    assert_eq!(&bytes[..6], b"ID3\x04\0\0");
+    let old = bytes[6..10].iter().fold(0usize, |size, &b| size << 7 | usize::from(b & 0x7f));
+    let size = 1_500_000usize;
+    let mut tag = b"ID3\x04\0\0".to_vec();
+    tag.extend((0..4).rev().map(|i| ((size >> (7 * i)) & 0x7f) as u8));
+    tag.extend_from_slice(&bytes[10..10 + old]);
+    // The rest of the tag is padding, as a tagger leaves room for a picture.
+    tag.resize(10 + size, 0);
+    let dir = tempfile::tempdir().unwrap();
+    let tagged = dir.path().join("cover.mp3");
+    std::fs::write(&tagged, [tag.as_slice(), &bytes[10 + old..]].concat()).unwrap();
+
+    let probed = Decoder.probe(&tagged).unwrap();
+    assert_eq!((probed.container.as_str(), probed.codec.as_str()), ("mp3", "mp3"));
+    let (result, samples, _out) = decode_path(&tagged);
+    assert_eq!(result.unwrap().samples, decode("tone.mp3").1.len() as u64);
+    assert!(rms(&samples.unwrap()[RATE / 10..RATE * 14 / 10]) > 0.3, "the tone is there");
+}
+
 /// The open dialog and a drop take the files of these extensions: every fixture's is one, and the
 /// list says each once, lowercase.
 #[test]
@@ -207,12 +233,12 @@ fn what_cannot_be_decoded_says_why() {
     assert!(matches!(decode_path(&dir.path().join("missing.wav")).0, Err(MediaError::Unreadable(_))));
 }
 
-/// A file cut off is damaged, whether what is missing is the index (an MP4's `moov` at its end)
-/// or the samples a header announced.
+/// A file cut off is damaged, whether what is missing is the index (an MP4's `moov` at its end),
+/// the rest of a Matroska segment or the samples a header announced.
 #[test]
 fn a_file_cut_off_is_damaged_and_leaves_nothing_behind() {
     let dir = tempfile::tempdir().unwrap();
-    for name in ["tone.m4a", "tone.wav", "tone.flac"] {
+    for name in ["tone.m4a", "tone.wav", "tone.flac", "tone.mkv", "tone.webm"] {
         let bytes = std::fs::read(fixture(name)).unwrap();
         let cut = dir.path().join(format!("cut-{name}"));
         std::fs::write(&cut, &bytes[..bytes.len() / 2]).unwrap();
