@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.3.0](https://github.com/sunerpy/voltip/compare/v0.2.1...v0.3.0) (2026-11-07)
+
+
+### Features
+
+* **relay:** 设备票据：只有官方构建能用托管中继和内置服务（先统计） ([#218](https://github.com/sunerpy/voltip/issues/218)) ([1428436](https://github.com/sunerpy/voltip/commit/14284360d93b9b395e0d0008a16eae288b4016b5))
+* 国内语音识别服务商：豆包语音、腾讯云、讯飞、百度、阶跃星辰、智谱、小米，带配置方法与实时识别 ([#221](https://github.com/sunerpy/voltip/issues/221)) ([ab593cd](https://github.com/sunerpy/voltip/commit/ab593cdca4cf295e5854bfb9621949027254c328))
+* 实时预览分成「服务商的实时文字」与「本地模型预览」两个开关，悬浮窗标签写明来源 ([#223](https://github.com/sunerpy/voltip/issues/223)) ([77746d2](https://github.com/sunerpy/voltip/commit/77746d23283b3d80f9ec2e9d3174bf9699406628))
+* 电脑端单键触发被系统移除或断开后自动恢复，本机识别出错或取消后不再卡住 ([#207](https://github.com/sunerpy/voltip/issues/207)) ([b3a97fa](https://github.com/sunerpy/voltip/commit/b3a97fa8d2296685f13b799ef647869bb36acd9b))
+* 电脑端导入音频或视频文件，排队转写进历史，可导出字幕与文本 ([#206](https://github.com/sunerpy/voltip/issues/206)) ([1dc345e](https://github.com/sunerpy/voltip/commit/1dc345e182329e3a92f2651655185f90a9e2530e))
+* 电脑端新增自动备份，每周、更新安装前和替换导入前各备份一份，每台电脑保留自己最近 5 份 ([#209](https://github.com/sunerpy/voltip/issues/209)) ([fd31c75](https://github.com/sunerpy/voltip/commit/fd31c75e2fdc2fd2d454de5f54a19e7ad5531b6d))
+* 电脑端服务出错时可改用候补模型，本机模型可作候补，历史记录写明实际服务商 ([#210](https://github.com/sunerpy/voltip/issues/210)) ([90537f0](https://github.com/sunerpy/voltip/commit/90537f0912881bbfd497c4b9eeba435f46c7c292))
+* 电脑端粘贴后确认文字是否写入，没写进去或识别失败时结果卡片常驻 ([#205](https://github.com/sunerpy/voltip/issues/205)) ([1cfaa40](https://github.com/sunerpy/voltip/commit/1cfaa4059096705c8f3da04b8942510ad3c3f046))
+* 电脑端记录每次听写的各段耗时与术语表去向，可选「可以说话」提示音，可试识别和不裁剪静音重新识别，新安装默认松开后继续录音 150 毫秒 ([#214](https://github.com/sunerpy/voltip/issues/214)) ([0d7cff5](https://github.com/sunerpy/voltip/commit/0d7cff5f59d283d1419bd1870d16a9b646309bd5))
+* 电脑端词典新增学习建议，一键把 AI 润色改正的写法加入词典或忽略，规则页提示有问题的规则 ([#208](https://github.com/sunerpy/voltip/issues/208)) ([d3b727d](https://github.com/sunerpy/voltip/commit/d3b727d2d90fd8f428168366a9354b85a1bd913c))
+* 电脑端词典的学习建议可以勾选后批量加入词典或忽略，可以全部忽略和整批撤销，默认只显示出现 2 次及以上的建议 ([#216](https://github.com/sunerpy/voltip/issues/216)) ([128e096](https://github.com/sunerpy/voltip/commit/128e096df61e35b5354189d11b0bc056459733d4))
+
+
+### Bug Fixes
+
+* Linux AppImage 的 AppRun.wrapped 改为所有用户可运行，打包后检查包内文件的权限 ([#219](https://github.com/sunerpy/voltip/issues/219)) ([0aa184f](https://github.com/sunerpy/voltip/commit/0aa184f1765ee6b0d01c5eb26f821621d9c2b435))
+* **refine:** 改写内置 AI 预设的润色提示词，不再遗漏口述里的要求、条件和例外 ([#226](https://github.com/sunerpy/voltip/issues/226)) ([ba17069](https://github.com/sunerpy/voltip/commit/ba170694a5fd8a16538f3b576f0509ec0fd2c294))
+* 内置服务统计期间的今日用量只显示已用量，不再写「暂不限量」 ([#225](https://github.com/sunerpy/voltip/issues/225)) ([f0001e2](https://github.com/sunerpy/voltip/commit/f0001e28252439452e59517ef0d76afe85be773a))
+* 电脑端取消听写后原本为空的剪贴板重新清空，仅复制到剪贴板时不再提示窗口已切换 ([#202](https://github.com/sunerpy/voltip/issues/202)) ([385c3bf](https://github.com/sunerpy/voltip/commit/385c3bf64f42bd4c90cf155a48712d99b3b92584))
+* 电脑端悬浮窗在窗口较多、有置顶或全屏窗口时也显示在最上层 ([#215](https://github.com/sunerpy/voltip/issues/215)) ([c73595a](https://github.com/sunerpy/voltip/commit/c73595ae38927e2ce939034927795cc4acf850cd))
+* 窗口不再漏掉状态变化，中继连上后不会一直显示「认证中」；电脑端窗口运行的界面不是程序自带的时自动重新加载一次 ([#217](https://github.com/sunerpy/voltip/issues/217)) ([190991f](https://github.com/sunerpy/voltip/commit/190991fcf4d0c5b40cecad7aa76912329a0063b9))
+* 系统钥匙串不可用时电脑端显示说明后退出，不再在启动时崩溃 ([#220](https://github.com/sunerpy/voltip/issues/220)) ([0033193](https://github.com/sunerpy/voltip/commit/003319341a49c80c8433094a47fad6724feef1f2))
+
 ## [0.2.1](https://github.com/sunerpy/voltip/compare/v0.2.0...v0.2.1) (2026-10-29)
 
 
