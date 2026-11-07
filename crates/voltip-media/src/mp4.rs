@@ -88,7 +88,51 @@ fn timescale(file: &mut File, body: u64) -> Option<u32> {
     read_u32(file).filter(|&t| t > 0)
 }
 
-/// The edit list of the `track`-th `trak` of `file` (the order Symphonia numbers them in); `None`
+/// Whether `file` ends inside one of its top-level boxes: it was cut off, as a download or a copy
+/// that stopped early leaves it (an MP4's `moov` often comes last, so its index is what is lost).
+/// A box of size 0 runs to the end of the file by definition.
+pub fn cut_off(file: &mut File) -> bool {
+    let Ok(meta) = file.metadata() else { return false };
+    let len = meta.len();
+    let mut at = 0u64;
+    for _ in 0..MAX_BOXES {
+        if at == len {
+            return false;
+        }
+        if at + 8 > len {
+            return true;
+        }
+        if file.seek(SeekFrom::Start(at)).is_err() {
+            return false;
+        }
+        let Some(size) = read_u32(file) else { return false };
+        let end = match size {
+            0 => return false,
+            1 => {
+                if at + 16 > len {
+                    return true;
+                }
+                let mut kind = [0u8; 4];
+                if file.read_exact(&mut kind).is_err() {
+                    return false;
+                }
+                match read_u64(file) {
+                    Some(size) if size >= 16 => at.checked_add(size),
+                    _ => return false,
+                }
+            }
+            n if n >= 8 => at.checked_add(u64::from(n)),
+            _ => return false,
+        };
+        match end {
+            Some(end) if end <= len => at = end,
+            _ => return true,
+        }
+    }
+    false
+}
+
+/// The edit list of the `track`-th `trak` of `file` (the order Symphonia lists them in); `None`
 /// when it has none or the file cannot be walked. An empty edit (a pause before the track starts)
 /// is passed over: the import keeps the sound's own timeline.
 pub fn edit(file: &mut File, track: usize) -> Option<Edit> {
@@ -174,6 +218,22 @@ mod tests {
         assert_eq!(edit(&mut f, 1), Some(Edit { skip: 1024, keep: Some(96_000) }), "the empty edit is passed over");
         assert_eq!(edit(&mut f, 0), None, "no edit list");
         assert_eq!(edit(&mut f, 2), None, "no such track");
+    }
+
+    /// Where the file ends says whether it was cut off: inside a box's header or content, not
+    /// after its last box or in a box that runs to the end (size 0).
+    #[test]
+    fn a_file_that_ends_inside_a_box_was_cut_off() {
+        let whole = [mp4_box(b"ftyp", b"M4A \0\0\0\0"), mp4_box(b"mdat", &[7u8; 100]), mp4_box(b"moov", &[0u8; 40])].concat();
+        assert!(!cut_off(&mut file(std::slice::from_ref(&whole))), "the whole file");
+        assert!(cut_off(&mut file(&[whole[..60].to_vec()])), "in the mdat's content");
+        assert!(cut_off(&mut file(&[whole[..whole.len() - 44].to_vec()])), "in the moov's header");
+        assert!(!cut_off(&mut file(&[whole[..whole.len() - 48].to_vec()])), "after the mdat: no index, but nothing cut");
+        let to_the_end = [mp4_box(b"ftyp", b"M4A \0\0\0\0"), b"\0\0\0\0mdat".to_vec(), vec![7u8; 100]].concat();
+        assert!(!cut_off(&mut file(&[to_the_end])), "a box of size 0 runs to the end");
+        let large = [mp4_box(b"ftyp", b"M4A \0\0\0\0"), b"\0\0\0\x01mdat".to_vec(), 1_000u64.to_be_bytes().to_vec(), vec![7u8; 100]].concat();
+        assert!(cut_off(&mut file(&[large])), "a 64-bit size past the end");
+        assert!(!cut_off(&mut file(&[b"\0\0\0\x02ftypM4A ".to_vec()])), "a size no box has: broken, not cut");
     }
 
     #[test]

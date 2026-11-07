@@ -3,15 +3,20 @@
 //! [`crate::dictation::remote::RemoteFeed`] takes. `opus-rs` (a pure-Rust port of libopus 1.6)
 //! on both ends, so the phone needs no C toolchain.
 //!
-//! VoIP application at 24 kbit/s VBR: about a tenth of the PCM stream (256 kbit/s), which
-//! recognition does not notice on speech.
+//! VoIP application, VBR, at the rate the takes went before `opus-rs` 0.1.40 (the user's decision of
+//! 2026-11-07, docs/dictation.md §20.1): about 78 kbit/s on speech, a third of the PCM stream
+//! (256 kbit/s). 0.1.34 gave the encoder the whole packet buffer whatever `bitrate_bps` said;
+//! 0.1.40 keeps to `bitrate_bps`. Set to 96 kbit/s, it writes the packets 0.1.34 wrote (speech, a
+//! tone, noise and a voiced stand-in, compared byte for byte): on such input the encoder stops
+//! below the setting by itself.
 
 use opus_rs::{Application, OpusDecoder, OpusEncoder};
 use serde_bytes::ByteBuf;
 use voltip_protocol::app::{MAX_OPUS_PACKET_BYTES, TAKE_OPUS_FRAME_SAMPLES, TAKE_SAMPLE_RATE_HZ};
 
-/// Target bitrate of a take's Opus stream.
-pub(super) const TAKE_OPUS_BITRATE_BPS: i32 = 24_000;
+/// Target bitrate of a take's Opus stream: the encoder's own limit for 16 kHz speech lies below it
+/// (module doc), so a take comes out at about 78 kbit/s.
+pub(super) const TAKE_OPUS_BITRATE_BPS: i32 = 96_000;
 
 /// Phone: PCM16 LE in, one Opus packet per complete 20 ms frame out.
 pub(super) struct TakeEncoder {
@@ -119,7 +124,7 @@ mod tests {
         assert_eq!(packets.len(), 50);
         assert!(encoder.finish().unwrap().is_empty(), "16 000 samples are exactly 50 frames");
         let bytes: usize = packets.iter().map(|p| p.len()).sum();
-        assert!(bytes < pcm.len() / 5, "Opus at 24 kbit/s is far smaller than PCM: {bytes} bytes");
+        assert!(bytes < pcm.len() / 5, "Opus is far smaller than PCM: {bytes} bytes");
         assert!(packets.iter().all(|p| !p.is_empty() && p.len() <= MAX_OPUS_PACKET_BYTES));
         let mut decoder = TakeDecoder::new().unwrap();
         let decoded = decoder.decode(&packets);
@@ -128,6 +133,43 @@ mod tests {
         // most of the original energy.
         let (orig, back) = (energy(&pcm[3_200..]), energy(&decoded[3_200..]));
         assert!(back > orig * 0.5 && back < orig * 1.5, "energy {back} vs {orig}");
+    }
+
+    /// Two seconds of a voiced-speech stand-in, PCM16 LE: a harmonic series whose pitch glides
+    /// between 110 and 220 Hz, at a syllable rate of 4 Hz, over a little noise (a fixed generator).
+    fn voiced(samples: usize) -> Vec<u8> {
+        let mut seed: u32 = 7;
+        let mut noise = move || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            f64::from(seed >> 8) / f64::from(1u32 << 24) - 0.5
+        };
+        let rate = f64::from(TAKE_SAMPLE_RATE_HZ);
+        let mut phase = 0.0_f64;
+        (0..samples)
+            .flat_map(|i| {
+                let t = i as f64 / rate;
+                phase += std::f64::consts::TAU * (165.0 + 55.0 * (std::f64::consts::TAU * 0.7 * t).sin()) / rate;
+                let harmonics: f64 = (1..30).map(|k| (f64::from(k) * phase).sin() / f64::from(k)).sum();
+                let envelope = 0.5 + 0.5 * (std::f64::consts::TAU * 4.0 * t).sin();
+                (((harmonics * 0.12 * envelope + noise() * 0.07) * f64::from(i16::MAX)) as i16).to_le_bytes()
+            })
+            .collect()
+    }
+
+    /// A phone take goes at the rate it went before `opus-rs` 0.1.40 (the user's decision of
+    /// 2026-11-07, docs/dictation.md §20.1): 0.1.34 gave the encoder the whole packet buffer
+    /// whatever `bitrate_bps` said, about 78 kbit/s on speech; 0.1.40 keeps to `bitrate_bps`, and at
+    /// 24 kbit/s a take came out at under a third of that.
+    #[test]
+    fn regression_a_take_goes_at_the_rate_it_did_before_opus_rs_0_1_40() {
+        let mut encoder = TakeEncoder::new().unwrap();
+        let mut packets = encoder.push(&voiced(2 * TAKE_SAMPLE_RATE_HZ as usize)).unwrap();
+        packets.extend(encoder.finish().unwrap());
+        assert_eq!(packets.len(), 100);
+        let bits: usize = packets.iter().map(|p| p.len() * 8).sum();
+        let kbit_s = bits as f64 / 2.0 / 1000.0;
+        assert!((60.0..110.0).contains(&kbit_s), "{kbit_s:.1} kbit/s");
+        assert!(packets.iter().all(|p| p.len() <= MAX_OPUS_PACKET_BYTES));
     }
 
     #[test]
@@ -139,8 +181,13 @@ mod tests {
         assert!(encoder.finish().unwrap().is_empty(), "nothing pending after the flush");
         let mut decoder = TakeDecoder::new().unwrap();
         assert_eq!(decoder.decode(&tail).len(), TAKE_OPUS_FRAME_SAMPLES * 2);
-        // A packet whose table of contents asks for two channels does not decode on a mono decoder.
+        // A code 3 packet that holds no frame is malformed (RFC 6716 §3.4, R5): it does not
+        // decode, and the take goes on with the next packet.
+        let malformed = ByteBuf::from(vec![0x03, 0x00]);
+        assert_eq!(decoder.decode(&[malformed, tail[0].clone()]).len(), TAKE_OPUS_FRAME_SAMPLES * 2);
+        // A packet whose table of contents asks for two channels is mixed down to mono, as libopus
+        // does it: 10 ms of SILK, two bytes a sample. opus-rs 0.1.34 refused it.
         let stereo = ByteBuf::from(vec![0x04, 0, 0]);
-        assert_eq!(decoder.decode(&[stereo]).len(), 0);
+        assert_eq!(decoder.decode(&[stereo]).len(), TAKE_SAMPLE_RATE_HZ as usize / 100 * 2);
     }
 }

@@ -7,8 +7,6 @@
 -keepclassmembers class * extends com.sun.jna.** { public *; }
 # android-native-keyring-store's two JNI entries (Keyring.kt) are bound by name.
 -keep class io.crates.keyring.** { *; }
-# The release build's stack traces keep their line numbers (docs/mobile-rn.md §6): R8's map, shipped
-# with every release as Voltip_<version>_android_arm64-mapping.txt (Google Play reads the AAB's own
-# copy), turns them back into the source's classes, methods and lines.
--keepattributes SourceFile,LineNumberTable
--renamesourcefileattribute SourceFile
+# Only rules about classes: the options that keep the stack traces' line numbers are global, and
+# Android Gradle Plugin 9 fails this module's build on a global option here. They are in the app's
+# own rules (app.json, expo-build-properties android.extraProguardRules; docs/mobile-rn.md §6).

@@ -13,6 +13,7 @@
 #![warn(missing_docs)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
+mod mkv;
 mod mp4;
 mod opus;
 mod sniff;
@@ -21,13 +22,16 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 
-use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::{self, CodecParameters, CodecType, DecoderOptions};
+use symphonia::core::codecs::CodecParameters;
+use symphonia::core::codecs::audio::well_known::CODEC_ID_OPUS;
+use symphonia::core::codecs::audio::{AudioCodecId, AudioCodecParameters, AudioDecoder, AudioDecoderOptions, CODEC_ID_NULL_AUDIO};
 use symphonia::core::errors::Error;
-use symphonia::core::formats::{FormatOptions, FormatReader, Packet, Track};
+use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::{FormatOptions, FormatReader, Track, TrackType};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::probe::Hint;
+use symphonia::core::packet::Packet;
+use symphonia::core::units::TimeBase;
 use voltip_core::CancelToken;
 use voltip_core::import::{MediaDecoder, MediaError, MediaInfo, PcmInfo};
 use voltip_serve::StreamResampler;
@@ -38,6 +42,10 @@ pub const RATE: u32 = voltip_core::dictation::PCM_SAMPLE_RATE_HZ;
 const BLOCK: usize = 4096;
 /// Progress is reported at most this often, in milliseconds of the file.
 const PROGRESS_EVERY_MS: u64 = 250;
+/// Why a file whose end is missing is damaged, in Symphonia 0.5's words: the import shows it
+/// after 文件已损坏或不完整, and it did not change with the readers of 0.6, which say "unexpected
+/// end of file" (Ogg) or report a format they do not support (MP4, Matroska).
+const END_OF_STREAM: &str = "end of stream";
 
 /// The file extensions of what the decoder reads: the containers above under their usual names.
 pub const EXTENSIONS: &[&str] = &["wav", "mp3", "m4a", "m4b", "aac", "flac", "ogg", "oga", "opus", "mp4", "m4v", "mov", "mkv", "mka", "webm"];
@@ -118,7 +126,7 @@ fn remove(path: &Path) {
 
 /// The track's decoder.
 enum Codec {
-    Symphonia(Box<dyn codecs::Decoder>),
+    Symphonia(Box<dyn AudioDecoder>),
     /// Boxed: the decoder's state is a few kilobytes.
     Opus(Box<opus::Opus>),
 }
@@ -145,10 +153,17 @@ struct Source {
     pending: Option<Packet>,
 }
 
-/// Whether `track` is an audio track: it has a codec Symphonia knows, or a sample rate (an audio
-/// track in a codec it does not know). Video tracks have neither.
-fn is_audio(track: &Track) -> bool {
-    track.codec_params.codec != codecs::CODEC_TYPE_NULL || track.codec_params.sample_rate.is_some()
+/// The codec parameters of `track` when it is an audio track. A reader that does not know a
+/// track's codec gives it no parameters, or audio ones with the null codec (an audio track in a
+/// codec it does not know).
+fn audio_params(track: &Track) -> Option<&AudioCodecParameters> {
+    track.codec_params.as_ref().and_then(CodecParameters::audio)
+}
+
+/// The decoders drop the encoder's delay and padding that the readers mark on the packets (an
+/// MP3's encoder header, an Ogg stream's granule positions).
+fn decoder_options() -> AudioDecoderOptions {
+    AudioDecoderOptions::default().gapless(true)
 }
 
 impl Source {
@@ -165,39 +180,46 @@ impl Source {
         if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
             hint.with_extension(ext);
         }
-        // Gapless: the readers that know an encoder's delay and padding (MP3, Ogg) trim them.
-        let options = FormatOptions { enable_gapless: true, ..FormatOptions::default() };
-        let probed = symphonia::default::get_probe()
-            .format(&hint, MediaSourceStream::new(Box::new(stream), Default::default()), &options, &MetadataOptions::default())
+        let format = symphonia::default::get_probe()
+            .probe(&hint, MediaSourceStream::new(Box::new(stream), Default::default()), FormatOptions::default(), MetadataOptions::default())
             .map_err(|e| match (e, container) {
+                // The MP4 and Matroska readers stop at a box or element that runs past the end of
+                // the file and then miss the index or the segment: a file cut off, not one of
+                // another format.
+                (Error::Unsupported(_), Some("mp4" | "mov")) if mp4::cut_off(&mut file) => MediaError::Corrupt(END_OF_STREAM.into()),
+                (Error::Unsupported(_), Some("mkv" | "webm")) if mkv::cut_off(&mut file) => MediaError::Corrupt(END_OF_STREAM.into()),
                 (Error::Unsupported(_), _) | (_, None) => MediaError::UnsupportedFormat,
+                (Error::IoError(e), Some(_)) if e.kind() == ErrorKind::UnexpectedEof => MediaError::Corrupt(END_OF_STREAM.into()),
                 (e, Some(_)) => MediaError::Corrupt(e.to_string()),
             })?;
-        let format = probed.format;
-        let tracks: Vec<&Track> = format.tracks().iter().filter(|t| is_audio(t)).collect();
+        let tracks: Vec<&Track> = format.tracks().iter().filter(|t| audio_params(t).is_some()).collect();
         let audio_tracks = u32::try_from(tracks.len()).unwrap_or(u32::MAX);
-        let Some(track) = format.default_track().filter(|t| is_audio(t)).or(tracks.first().copied()).cloned() else {
-            // The MP4 reader drops a track whose codec it does not know: name it, if one is there.
+        let selected = format.default_track(TrackType::Audio).or(tracks.first().copied());
+        let Some((track, params)) = selected.and_then(|t| audio_params(t).map(|p| (t.clone(), p.clone()))) else {
+            // A track whose codec the reader does not know has no parameters: name it, if one is
+            // there.
             return Err(sniff::unsupported_codec(&mut file).map_or(MediaError::NoAudio, |name| MediaError::UnsupportedCodec(name.to_owned())));
         };
-        let params = &track.codec_params;
+        // The track's place in the file: an MP4 track's ID is its `tkhd` one, not its position.
+        let position = format.tracks().iter().position(|t| t.id == track.id).unwrap_or_default();
+        let length = track_length(&track, format.media_info());
         let mut pre_skip = 0;
-        let (codec, rate, channels) = if params.codec == codecs::CODEC_TYPE_NULL {
+        let (codec, rate, channels) = if params.codec == CODEC_ID_NULL_AUDIO {
             let name = sniff::unsupported_codec(&mut file).unwrap_or("unknown");
             return Err(MediaError::UnsupportedCodec(name.to_owned()));
-        } else if params.codec == codecs::CODEC_TYPE_OPUS {
+        } else if params.codec == CODEC_ID_OPUS {
             let head = opus::Head::parse(params.extra_data.as_deref().unwrap_or_default())?;
             let opus = opus::Opus::new(head)?;
             // An Ogg stream's granule positions count the pre-skip (RFC 7845 §4).
             pre_skip = if container == Some("ogg") { u64::from(head.pre_skip) } else { 0 };
             (Codec::Opus(Box::new(opus)), opus::RATE, u16::from(head.channels))
         } else {
-            let decoder = symphonia::default::get_codecs().make(params, &DecoderOptions::default()).map_err(|e| match e {
+            let decoder = symphonia::default::get_codecs().make_audio_decoder(&params, &decoder_options()).map_err(|e| match e {
                 Error::Unsupported(_) => MediaError::UnsupportedCodec(codec_name(params.codec).to_owned()),
                 e => MediaError::Corrupt(e.to_string()),
             })?;
             let rate = params.sample_rate.filter(|&r| r > 0).ok_or_else(|| MediaError::Corrupt("the audio track has no sample rate".into()))?;
-            (Codec::Symphonia(decoder), rate, channels_of(params))
+            (Codec::Symphonia(decoder), rate, channels_of(&params))
         };
         let mut source =
             Self { format, track: track.id, codec, info: MediaInfo::default(), rate, skip: 0, keep: None, expected: None, exact: false, pending: None };
@@ -205,11 +227,11 @@ impl Source {
         // packet says, and is decoded again from the start.
         let channels = if channels == 0 { source.first_channels() } else { channels };
         let container = container.unwrap_or("unknown").to_owned();
-        let edit = if matches!(container.as_str(), "mp4" | "mov") { mp4::edit(&mut file, track.id as usize) } else { None };
-        let to_frames = |units: u64| frames_at(params, units, rate);
+        let edit = if matches!(container.as_str(), "mp4" | "mov") { mp4::edit(&mut file, position) } else { None };
+        let to_frames = |units: u64| frames_at(track.time_base, units, rate);
         let skip = edit.map_or(0, |e| to_frames(e.skip));
         let keep = edit.and_then(|e| e.keep).map(to_frames);
-        let expected = keep.or_else(|| params.n_frames.map(to_frames).map(|f| f.saturating_sub(skip + pre_skip)));
+        let expected = keep.or_else(|| length.map(|(base, units)| frames_at(base, units, rate)).map(|f| f.saturating_sub(skip + pre_skip)));
         source.info = MediaInfo {
             container,
             codec: codec_name(params.codec).to_owned(),
@@ -229,14 +251,14 @@ impl Source {
         let Codec::Symphonia(decoder) = &mut self.codec else { return 0 };
         loop {
             match self.format.next_packet() {
-                Ok(packet) if packet.track_id() != self.track => continue,
-                Ok(packet) => {
-                    let channels = decoder.decode(&packet).map(|d| d.spec().channels.count()).unwrap_or(0);
+                Ok(Some(packet)) if packet.track_id != self.track => continue,
+                Ok(Some(packet)) => {
+                    let channels = decoder.decode(&packet).map(|d| d.spec().channels().count()).unwrap_or(0);
                     decoder.reset();
                     self.pending = Some(packet);
                     return u16::try_from(channels).unwrap_or(0);
                 }
-                Err(_) => return 0,
+                Ok(None) | Err(_) => return 0,
             }
         }
     }
@@ -260,7 +282,7 @@ impl Source {
         let rate = u64::from(self.rate);
         let total_ms = self.info.duration_ms;
         let mut mono: Vec<f32> = Vec::with_capacity(BLOCK * 2);
-        let mut buffer: Option<SampleBuffer<f32>> = None;
+        let mut buffer: Vec<f32> = Vec::new();
         let (mut seen, mut kept, mut reported_ms) = (0u64, 0u64, None::<u64>);
         let (mut packets, mut failures) = (0u64, 0u64);
         loop {
@@ -268,13 +290,14 @@ impl Source {
                 return Err(MediaError::Cancelled);
             }
             let next = match self.pending.take() {
-                Some(packet) => Ok(packet),
+                Some(packet) => Ok(Some(packet)),
                 None => self.format.next_packet(),
             };
             let packet = match next {
-                Ok(packet) => packet,
-                // How a reader says the stream ended, and how a cut-off file ends too: the length
-                // check below tells them apart.
+                Ok(Some(packet)) => packet,
+                // How a reader says the stream ended, and how a cut-off file may end too: the
+                // length check below tells them apart.
+                Ok(None) => break,
                 Err(Error::IoError(e)) if e.kind() == ErrorKind::UnexpectedEof => break,
                 Err(Error::ResetRequired) => {
                     self.reset()?;
@@ -282,14 +305,14 @@ impl Source {
                 }
                 Err(e) => return Err(MediaError::Corrupt(e.to_string())),
             };
-            if packet.track_id() != self.track {
+            if packet.track_id != self.track {
                 continue;
             }
             packets += 1;
             let (frames, channels): (&[f32], usize) = match &mut self.codec {
                 Codec::Opus(opus) => {
                     let channels = opus.channels();
-                    match opus.decode(&packet.data, packet.trim_start as usize, packet.trim_end as usize) {
+                    match opus.decode(&packet.data, frames_of(packet.trim_start), frames_of(packet.trim_end)) {
                         Ok(frames) => (frames, channels),
                         Err(e) => {
                             failures += 1;
@@ -300,16 +323,8 @@ impl Source {
                 }
                 Codec::Symphonia(decoder) => match decoder.decode(&packet) {
                     Ok(decoded) => {
-                        let spec = *decoded.spec();
-                        let needed = decoded.capacity() * spec.channels.count();
-                        if buffer.as_ref().is_none_or(|b| b.capacity() < needed) {
-                            buffer = Some(SampleBuffer::new(decoded.capacity() as u64, spec));
-                        }
-                        let samples = buffer.as_mut().map(|b| {
-                            b.copy_interleaved_ref(decoded);
-                            b.samples()
-                        });
-                        (samples.unwrap_or_default(), spec.channels.count().max(1))
+                        decoded.copy_to_vec_interleaved(&mut buffer);
+                        (buffer.as_slice(), decoded.spec().channels().count().max(1))
                     }
                     Err(Error::DecodeError(e)) => {
                         failures += 1;
@@ -372,58 +387,119 @@ impl Source {
     /// The reader started a new stream (a chained Ogg file): the same kind of track goes on with a
     /// new decoder.
     fn reset(&mut self) -> Result<(), MediaError> {
-        let track = self.format.default_track().filter(|t| is_audio(t)).or_else(|| self.format.tracks().iter().find(|t| is_audio(t))).cloned();
-        let Some(track) = track else { return Err(MediaError::Corrupt("the audio stream ended in a new stream without audio".into())) };
-        self.track = track.id;
+        let track = self.format.default_track(TrackType::Audio).or_else(|| self.format.tracks().iter().find(|t| audio_params(t).is_some()));
+        let Some((id, params)) = track.and_then(|t| audio_params(t).map(|p| (t.id, p.clone()))) else {
+            return Err(MediaError::Corrupt("the audio stream ended in a new stream without audio".into()));
+        };
+        self.track = id;
         if let Codec::Symphonia(decoder) = &mut self.codec {
-            *decoder =
-                symphonia::default::get_codecs().make(&track.codec_params, &DecoderOptions::default()).map_err(|e| MediaError::Corrupt(e.to_string()))?;
+            *decoder = symphonia::default::get_codecs().make_audio_decoder(&params, &decoder_options()).map_err(|e| MediaError::Corrupt(e.to_string()))?;
         }
         Ok(())
     }
 }
 
-/// `units` of the track's time base as frames at `rate`.
-fn frames_at(params: &CodecParameters, units: u64, rate: u32) -> u64 {
-    match params.time_base {
-        Some(base) if base.denom > 0 => (u128::from(units) * u128::from(base.numer) * u128::from(rate) / u128::from(base.denom)) as u64,
-        _ => units,
+/// How long the track is as the reader says, in units of the time base given with it (`None`:
+/// frames): the track's duration, else its frame count, else the whole file's duration (all a
+/// Matroska file gives).
+fn track_length(track: &Track, media: &symphonia::core::formats::MediaInfo) -> Option<(Option<TimeBase>, u64)> {
+    match (track.duration, track.num_frames) {
+        (Some(duration), _) => Some((track.time_base, duration.get())),
+        (None, Some(frames)) => Some((None, frames)),
+        (None, None) => media.duration.map(|duration| (media.time_base, duration.get())),
     }
 }
 
-fn channels_of(params: &CodecParameters) -> u16 {
-    let count = params.channels.map(|c| c.count()).or_else(|| params.channel_layout.map(|l| l.into_channels().count()));
-    count.and_then(|c| u16::try_from(c).ok()).unwrap_or(0)
+/// `units` of `base` as frames at `rate`; without a time base they are frames already.
+fn frames_at(base: Option<TimeBase>, units: u64, rate: u32) -> u64 {
+    match base {
+        Some(base) => (u128::from(units) * u128::from(base.numer.get()) * u128::from(rate) / u128::from(base.denom.get())) as u64,
+        None => units,
+    }
+}
+
+/// A packet's trim, in frames.
+fn frames_of(trim: symphonia::core::units::Duration) -> usize {
+    usize::try_from(trim.get()).unwrap_or(usize::MAX)
+}
+
+fn channels_of(params: &AudioCodecParameters) -> u16 {
+    params.channels.as_ref().map(|c| c.count()).and_then(|c| u16::try_from(c).ok()).unwrap_or(0)
 }
 
 /// A codec's name: the short one of those the import decodes, the usual one of the others.
-fn codec_name(codec: CodecType) -> &'static str {
-    use codecs::*;
+fn codec_name(codec: AudioCodecId) -> &'static str {
+    use symphonia::core::codecs::audio::well_known::*;
     match codec {
-        CODEC_TYPE_MP3 => "mp3",
-        CODEC_TYPE_MP2 => "mp2",
-        CODEC_TYPE_MP1 => "mp1",
-        CODEC_TYPE_AAC => "aac",
-        CODEC_TYPE_ALAC => "alac",
-        CODEC_TYPE_FLAC => "flac",
-        CODEC_TYPE_VORBIS => "vorbis",
-        CODEC_TYPE_OPUS => "opus",
-        CODEC_TYPE_ADPCM_G722 | CODEC_TYPE_ADPCM_G726 | CODEC_TYPE_ADPCM_G726LE | CODEC_TYPE_ADPCM_MS | CODEC_TYPE_ADPCM_IMA_WAV | CODEC_TYPE_ADPCM_IMA_QT => {
-            "ADPCM"
-        }
-        CODEC_TYPE_EAC3 => "E-AC-3",
-        CODEC_TYPE_AC4 => "AC-4",
-        CODEC_TYPE_DCA => "DTS",
-        CODEC_TYPE_WMA => "WMA",
-        CODEC_TYPE_SPEEX => "Speex",
-        CODEC_TYPE_MUSEPACK => "Musepack",
-        CODEC_TYPE_ATRAC1 | CODEC_TYPE_ATRAC3 | CODEC_TYPE_ATRAC3PLUS | CODEC_TYPE_ATRAC9 => "ATRAC",
-        CODEC_TYPE_WAVPACK => "WavPack",
-        CODEC_TYPE_MONKEYS_AUDIO => "Monkey's Audio",
-        CODEC_TYPE_TTA => "TTA",
-        CODEC_TYPE_NULL => "unknown",
+        CODEC_ID_MP3 => "mp3",
+        CODEC_ID_MP2 => "mp2",
+        CODEC_ID_MP1 => "mp1",
+        CODEC_ID_AAC => "aac",
+        CODEC_ID_ALAC => "alac",
+        CODEC_ID_FLAC => "flac",
+        CODEC_ID_VORBIS => "vorbis",
+        CODEC_ID_OPUS => "opus",
+        CODEC_ID_ADPCM_G722 | CODEC_ID_ADPCM_G726 | CODEC_ID_ADPCM_G726LE | CODEC_ID_ADPCM_MS | CODEC_ID_ADPCM_IMA_WAV | CODEC_ID_ADPCM_IMA_QT => "ADPCM",
+        CODEC_ID_EAC3 => "E-AC-3",
+        CODEC_ID_AC4 => "AC-4",
+        CODEC_ID_DCA => "DTS",
+        CODEC_ID_WMA => "WMA",
+        CODEC_ID_SPEEX => "Speex",
+        CODEC_ID_MUSEPACK => "Musepack",
+        CODEC_ID_ATRAC1 | CODEC_ID_ATRAC3 | CODEC_ID_ATRAC3PLUS | CODEC_ID_ATRAC9 => "ATRAC",
+        CODEC_ID_WAVPACK => "WavPack",
+        CODEC_ID_MONKEYS_AUDIO => "Monkey's Audio",
+        CODEC_ID_TTA => "TTA",
+        CODEC_ID_AC3 => "AC-3",
+        CODEC_ID_TRUEHD => "TrueHD",
+        CODEC_ID_RA10 | CODEC_ID_RA20 | CODEC_ID_COOK | CODEC_ID_SIPR | CODEC_ID_RALF => "RealAudio",
+        CODEC_ID_SBC => "SBC",
+        CODEC_ID_APTX => "aptX",
+        CODEC_ID_APTX_HD => "aptX HD",
+        CODEC_ID_LDAC => "LDAC",
+        CODEC_ID_BINK_AUDIO => "Bink Audio",
+        CODEC_ID_SMACKER_AUDIO => "Smacker audio",
         // Every PCM variant, A-law and µ-law included, decodes.
-        _ => "pcm",
+        CODEC_ID_PCM_S32LE
+        | CODEC_ID_PCM_S32LE_PLANAR
+        | CODEC_ID_PCM_S32BE
+        | CODEC_ID_PCM_S32BE_PLANAR
+        | CODEC_ID_PCM_S24LE
+        | CODEC_ID_PCM_S24LE_PLANAR
+        | CODEC_ID_PCM_S24BE
+        | CODEC_ID_PCM_S24BE_PLANAR
+        | CODEC_ID_PCM_S16LE
+        | CODEC_ID_PCM_S16LE_PLANAR
+        | CODEC_ID_PCM_S16BE
+        | CODEC_ID_PCM_S16BE_PLANAR
+        | CODEC_ID_PCM_S8
+        | CODEC_ID_PCM_S8_PLANAR
+        | CODEC_ID_PCM_U32LE
+        | CODEC_ID_PCM_U32LE_PLANAR
+        | CODEC_ID_PCM_U32BE
+        | CODEC_ID_PCM_U32BE_PLANAR
+        | CODEC_ID_PCM_U24LE
+        | CODEC_ID_PCM_U24LE_PLANAR
+        | CODEC_ID_PCM_U24BE
+        | CODEC_ID_PCM_U24BE_PLANAR
+        | CODEC_ID_PCM_U16LE
+        | CODEC_ID_PCM_U16LE_PLANAR
+        | CODEC_ID_PCM_U16BE
+        | CODEC_ID_PCM_U16BE_PLANAR
+        | CODEC_ID_PCM_U8
+        | CODEC_ID_PCM_U8_PLANAR
+        | CODEC_ID_PCM_F32LE
+        | CODEC_ID_PCM_F32LE_PLANAR
+        | CODEC_ID_PCM_F32BE
+        | CODEC_ID_PCM_F32BE_PLANAR
+        | CODEC_ID_PCM_F64LE
+        | CODEC_ID_PCM_F64LE_PLANAR
+        | CODEC_ID_PCM_F64BE
+        | CODEC_ID_PCM_F64BE_PLANAR
+        | CODEC_ID_PCM_ALAW
+        | CODEC_ID_PCM_MULAW => "pcm",
+        // The null codec, and one a reader names by an ID of its own.
+        _ => "unknown",
     }
 }
 
@@ -435,31 +511,38 @@ mod tests {
     /// import decodes by its short name, the others by their usual one.
     #[test]
     fn codecs_are_named_as_users_know_them() {
-        use codecs::*;
+        use symphonia::core::codecs::audio::well_known::*;
         let names: Vec<&str> = [
-            CODEC_TYPE_MP3,
-            CODEC_TYPE_MP2,
-            CODEC_TYPE_MP1,
-            CODEC_TYPE_AAC,
-            CODEC_TYPE_ALAC,
-            CODEC_TYPE_FLAC,
-            CODEC_TYPE_VORBIS,
-            CODEC_TYPE_OPUS,
-            CODEC_TYPE_ADPCM_MS,
-            CODEC_TYPE_ADPCM_IMA_WAV,
-            CODEC_TYPE_EAC3,
-            CODEC_TYPE_AC4,
-            CODEC_TYPE_DCA,
-            CODEC_TYPE_WMA,
-            CODEC_TYPE_SPEEX,
-            CODEC_TYPE_MUSEPACK,
-            CODEC_TYPE_ATRAC3,
-            CODEC_TYPE_WAVPACK,
-            CODEC_TYPE_MONKEYS_AUDIO,
-            CODEC_TYPE_TTA,
-            CODEC_TYPE_NULL,
-            CODEC_TYPE_PCM_S16LE,
-            CODEC_TYPE_PCM_ALAW,
+            CODEC_ID_MP3,
+            CODEC_ID_MP2,
+            CODEC_ID_MP1,
+            CODEC_ID_AAC,
+            CODEC_ID_ALAC,
+            CODEC_ID_FLAC,
+            CODEC_ID_VORBIS,
+            CODEC_ID_OPUS,
+            CODEC_ID_ADPCM_MS,
+            CODEC_ID_ADPCM_IMA_WAV,
+            CODEC_ID_EAC3,
+            CODEC_ID_AC4,
+            CODEC_ID_DCA,
+            CODEC_ID_WMA,
+            CODEC_ID_SPEEX,
+            CODEC_ID_MUSEPACK,
+            CODEC_ID_ATRAC3,
+            CODEC_ID_WAVPACK,
+            CODEC_ID_MONKEYS_AUDIO,
+            CODEC_ID_TTA,
+            CODEC_ID_NULL_AUDIO,
+            CODEC_ID_PCM_S16LE,
+            CODEC_ID_PCM_ALAW,
+            CODEC_ID_PCM_F32BE_PLANAR,
+            CODEC_ID_AC3,
+            CODEC_ID_TRUEHD,
+            CODEC_ID_COOK,
+            CODEC_ID_RA10,
+            CODEC_ID_APTX,
+            AudioCodecId::new(symphonia::core::common::FourCc::new(*b"xyzw")),
         ]
         .into_iter()
         .map(codec_name)
@@ -489,7 +572,14 @@ mod tests {
                 "TTA",
                 "unknown",
                 "pcm",
-                "pcm"
+                "pcm",
+                "pcm",
+                "AC-3",
+                "TrueHD",
+                "RealAudio",
+                "RealAudio",
+                "aptX",
+                "unknown"
             ]
         );
     }
@@ -497,9 +587,7 @@ mod tests {
     /// A track without a time base counts in frames already.
     #[test]
     fn frames_follow_the_time_base_when_there_is_one() {
-        let mut params = CodecParameters::new();
-        assert_eq!(frames_at(&params, 4_800, 48_000), 4_800);
-        params.with_time_base(symphonia::core::units::TimeBase::new(1, 1000));
-        assert_eq!(frames_at(&params, 1_500, 16_000), 24_000);
+        assert_eq!(frames_at(None, 4_800, 48_000), 4_800);
+        assert_eq!(frames_at(TimeBase::try_new(1, 1000), 1_500, 16_000), 24_000);
     }
 }

@@ -1,6 +1,6 @@
 // The six-digit pairing code: one real input under six drawn cells (`_ _ _   _ _ _`), the numeric
 // keyboard, and `onComplete` once when the sixth digit lands.
-import { useRef } from "react";
+import { type ComponentRef, useRef } from "react";
 import { Pressable, TextInput, View } from "react-native";
 import { Text } from "react-native-paper";
 
@@ -26,7 +26,7 @@ export function CodeInput({
 }) {
   const theme = useAppTheme();
   const t = useT();
-  const input = useRef<TextInput>(null);
+  const input = useRef<ComponentRef<typeof TextInput>>(null);
   const digits = value.replace(/\D/g, "").slice(0, CODE_LENGTH);
   return (
     <View style={{ gap: 8 }}>

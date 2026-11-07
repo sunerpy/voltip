@@ -30,7 +30,7 @@ zbus = "=5.19.0"
 
 # UI Automation: the version tao already compiles, with the features it already enables.
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "=0.61.3", features = ["Win32_Foundation", "Win32_System_Com", "Win32_System_Ole", "Win32_UI_Accessibility"] }
+windows = { version = "=0.62.2", features = ["Win32_Foundation", "Win32_System_Com", "Win32_System_Ole", "Win32_UI_Accessibility"] }
 
 # CF types for the Accessibility API, whose declarations src/macos.rs writes itself: the versions
 # the desktop shell already pulls.
@@ -57,7 +57,7 @@ windows-sys = { version = "=0.61.2", features = [
 # tests/focus_macos.rs: AppKit on the main thread (a window with a text view); the versions the
 # desktop shell already pulls.
 [target.'cfg(target_os = "macos")'.dev-dependencies]
-objc2 = "=0.6.4"
+objc2 = "=0.6.5"
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "libc", "NSApplication", "NSGraphics", "NSResponder", "NSRunningApplication", "NSText", "NSTextView", "NSView", "NSWindow", "NSWorkspace"] }
 objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSGeometry", "NSString"] }
 

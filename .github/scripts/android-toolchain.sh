@@ -2,14 +2,15 @@
 # The Android toolchain on a GitHub-hosted Ubuntu runner, for CI's `android` job and the release
 # candidate's `bundle-android` leg (docs/runbook.md 发布 · Android): JDK 21 from the runner image
 # and the SDK packages the build and check-android-package.sh use, pinned: the platform of
-# compileSdk / targetSdk, the build tools (apksigner, zipalign, aapt2) and the NDK (clang for the
+# compileSdk (37, which Expo SDK 58's prebuilt modules ask for; the app targets 36, which needs no
+# platform of its own), the build tools (apksigner, zipalign, aapt2) and the NDK (clang for the
 # C parts of the dependencies, llvm-readelf). The image's own NDK and build tools change with
 # every image update; these do not.
 #
 # Writes JAVA_HOME, ANDROID_HOME and NDK_HOME to $GITHUB_ENV and the JDK to $GITHUB_PATH.
 set -euo pipefail
 
-PLATFORM="platforms;android-36"
+PLATFORM="platforms;android-37.0"
 BUILD_TOOLS_VERSION="35.0.0"
 NDK_VERSION="30.0.16248370"
 
@@ -32,7 +33,7 @@ for tool in "$sdk/build-tools/$BUILD_TOOLS_VERSION/apksigner" "$sdk/build-tools/
   "$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" "$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"; do
   [ -x "$tool" ] || fail "$tool is missing after the install"
 done
-[ -d "$sdk/platforms/android-36" ] || fail "platforms/android-36 is missing after the install"
+[ -d "$sdk/platforms/android-37.0" ] || fail "platforms/android-37.0 is missing after the install"
 
 {
   echo "JAVA_HOME=$java_home"

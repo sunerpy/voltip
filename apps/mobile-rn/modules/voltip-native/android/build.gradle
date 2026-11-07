@@ -11,6 +11,10 @@ version = '0.0.44'
 
 android {
   namespace "dev.voltip.rn"
+  // The JVM unit tests below run against the release build, which assembleRelease compiles
+  // anyway. Android Gradle Plugin 9 creates unit tests only for the build type named here (debug
+  // by default), so without it there is no testReleaseUnitTest task.
+  testBuildType 'release'
   defaultConfig {
     versionCode 1
     versionName '0.0.44'

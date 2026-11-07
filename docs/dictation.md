@@ -273,7 +273,7 @@ Kimi（`api.moonshot.cn` / `api.moonshot.ai`）和智谱 GLM（智谱开放平�
   - Paseo 等整段结果的时间是固定的 25 s（§23.8），所以这类请求在 Voltip 返回前 1–3 s 被 Paseo 判为超时；用户在 Paseo 中重试时，`voltip-server` 在 90 s 内复用同一条慢连接（reqwest 连接池的空闲期限），同样失败。
   - 两处都会让听写失败：上传数据量是 Voltip 的问题，固定的 25 s 是 Paseo 的问题。中国大陆的桌面端和手机端访问首尔的内置服务也走同样的跨境线路，实时预览（§11.8）每秒重发一次正在说的句子，受影响更大。
 - **处理**：发往内置服务的识别请求，`file` 改为 Ogg Opus（RFC 7845）：`voltip_cloud::asr_upload` 对 `builtin` 返回 `AudioUpload::OggOpus`，其他服务商仍发 WAV（各家都接受 WAV；没有验证过的格式不发）。编码在 `voltip-asr` 的 `ogg_opus.rs`：与手机录音相同的编码器（`opus-rs`，§20.1），VoIP、20 ms 一帧、24 kbit/s VBR；在阻塞线程池中运行。WAV 不是 16 位单声道，或采样率不是 Opus 支持的 8 / 12 / 16 / 24 / 48 kHz 时照常发 WAV。
-  - `opus-rs` 0.1.34 在 VBR 下按输出缓冲区的大小而不是 `bitrate_bps` 给 SILK 分配码率：给 1276 字节的缓冲区，语音编出来约 75 kbit/s。所以每包缓冲区按码率给 61 字节（60 字节加 TOC），实测语音约 21 kbit/s，约为 WAV 的 1/12。手机录音的 Opus（§20.1）用的是整个缓冲区，实际码率同样高于 24 kbit/s，本次未改。
+  - `opus-rs` 0.1.34 在 VBR 下按输出缓冲区的大小而不是 `bitrate_bps` 给 SILK 分配码率：给 1276 字节的缓冲区，语音编出来约 75 kbit/s。所以每包缓冲区按码率给 61 字节（60 字节加 TOC），实测语音约 21 kbit/s，约为 WAV 的 1/12。手机录音的 Opus（§20.1）用的是整个缓冲区，实际码率同样高于 24 kbit/s，本次未改。0.1.40（2026-11）按 `bitrate_bps` 分配码率，61 字节仍是每包的上限：一段 58 s 的中文语音编出 20.1 kbit/s（0.1.34 为 20.2）；手机录音用整个缓冲区，按 24 kbit/s 的设置会降到 22.5 kbit/s（0.1.34 为 78.2）；用户选择保持升级前的码率（2026-11-07），手机录音的设置改为 96 kbit/s，编出的包与 0.1.34 逐字节相同（§20.1）。
   - 内置服务的 vLLM 用 libsndfile 1.2.2 读取音频，支持 Ogg Opus，失败时改用 PyAV。
 - **实测**（2026-10-12）：7 段中文、中英混合和方言样音，每种格式各识别 3 遍，与 WAV 文本相比字符差异 0.5 %，与 32、40、75 kbit/s 相同；编码复杂度降到 5 或 0 时为 1.3 %，所以保留默认的 9。37.7 s 的样音从 1.2 MB 降到约 98 KB；编码在构建主机的一个核上用时约 0.47 s。同一台主机经同一出口、每次新建连接各请求 16 次：WAV 有 3 次超过 20 s（最长 31.8 s，拥塞窗口 6–12 个报文并有重传），Ogg Opus 全部在 1.5–2.5 s；网络正常时 Opus 因为编码多约 0.4 s。Opus 的 16 次里没有出现变慢的连接，约 100 KB 的请求在慢启动阶段就已发完。由同一段样音重复拼成的 3 分钟与 5 分钟录音（7 段与 11 段，§22 的长录音路径）经 `voltip-server` 分别用时 8.7 s 与 13 s。
 - **测试**：`voltip-asr` 的 `ogg_opus` 测试（RFC 7845 页结构与 CRC、各页长度下颗粒位置递增到录音结束、`regression_a_take_stays_at_the_budgets_bitrate_and_decodes_back_to_it`、只编码 Opus 能直接接受的 WAV、扩展格式与多余块）、`an_ogg_opus_upload_sends_the_take_as_opus_and_anything_else_as_the_wav`；`voltip-cloud` 的 `regression_the_built_in_service_gets_ogg_opus_and_every_other_service_the_wav`。同一次排查修正了 `voltip-asr` 与 `voltip-refine` 中四个测试的竞争（`refused_connection_is_a_network_error`、`timeout_and_network`、`a_connection_refused_once_is_tried_again_and_the_{take,polish}_goes_through`）：先释放的端口在客户端重试的 1.3 s 内可能被另一个测试的服务占用，现在改为只绑定、不监听的套接字。
@@ -1186,7 +1186,7 @@ Wayland 剪贴板：arboard `wayland-data-control`（wl-clipboard-rs；KDE 与 w
   - 三种包都用 `files` 把 `libsherpa-onnx-c-api.so`、`libonnxruntime.so` 放进 `/usr/lib/voltip/`。
 - `build.rs`：把两只 .so 暂存到 `resources/linux/`（git 忽略）；RUNPATH 为 `$ORIGIN:$ORIGIN/../lib/voltip`。前者供 `cargo run` 和冒烟使用，后者供 deb / rpm 使用。`libsherpa-onnx-c-api.so` 自带 RPATH `$ORIGIN`，能找到同目录的 onnxruntime。AppImage 由 linuxdeploy 改写为 `$ORIGIN/../lib`，并在 `usr/lib` 再放一份这对库。
 - `scripts/build-linux-x64.sh`（`make linux-x64`）：执行 `cargo tauri build --ci --bundles deb,rpm,appimage --features gpu-vulkan`（Vulkan 输入见 §10.6），做提供方密钥扫描，确认二进制链接了 `libvulkan.so.1`，产物与 `SHA256SUMS.txt` 输出到 `dist/linux-x64/`；然后解包三棵树跑 `ldd`，在无显示环境下运行 `--list-models` 与 `--list-compute`，并用 `LD_DEBUG=libs` 记录 sherpa-onnx 和 Vulkan loader 的实际加载路径，结果写入 `dist/linux-x64/build-info.txt`（CI 与 release 的产物里也有这份记录）。`VOLTIP_BUILD_REUSE=1` 只复查已有产物。Ubuntu 24.04 的 `rpm2cpio` 处理这些 rpm 时会返回 1，但输出的载荷完整（`rpm -K` 摘要 OK），因此以解包结果为准。
-- AppImage 的 AppRun 与文件权限（2026-11-04）：tauri-bundler 2.9.4（tauri-cli 2.11.4、2.11.5）把 `AppRun-x86_64` 下载到工具目录（`$XDG_CACHE_HOME/tauri`；`XDG_CACHE_HOME` 未设置或不是绝对路径时为 `~/.cache/tauri`）时设成 0770，复制进 AppDir 时保留这个权限，linuxdeploy 把它留作 `AppRun.wrapped`；工具目录里已有这个文件就不再下载。squashfs 里的文件属于 root，firejail `--appimage`（AppImage 目录的测试）按记录的属主挂载，普通用户启动时报 `AppRun.wrapped: Permission denied`（0.2.1）。`scripts/lib/appimage.sh` 的 `voltip_appimage_apprun` 在打包前放好固定的 AppRun：文件不在就从 tauri-apps/binary-releases 的 `apprun-old` 发布下载，核对 SHA-256 后设成 0755；文件在且内容相同只改权限；内容不同就让构建失败，文件原样留下等人查看（打包器会把工具目录里的任何文件打进每个用户运行的包）。打包后 `voltip_check_appimage_permissions` 用 `<AppImage> --appimage-offset` 取文件系统的偏移，`unsquashfs -lln -o <偏移>` 列出全部条目：符号链接以外的条目缺少 o+r，或属主能执行而其他用户不能（目录：不能进入），就拒绝出包。`make linux-x64` 与发布候选的 Linux 腿都做这两步。
+- AppImage 的 AppRun 与文件权限（2026-11-04）：tauri-bundler 2.9.4（tauri-cli 2.11.4、2.11.5）与 2.10.4（tauri-cli 2.12.4）把 `AppRun-x86_64` 下载到工具目录（`$XDG_CACHE_HOME/tauri`；`XDG_CACHE_HOME` 未设置或不是绝对路径时为 `~/.cache/tauri`）时设成 0770，复制进 AppDir 时保留这个权限，linuxdeploy 把它留作 `AppRun.wrapped`；工具目录里已有这个文件就不再下载。squashfs 里的文件属于 root，firejail `--appimage`（AppImage 目录的测试）按记录的属主挂载，普通用户启动时报 `AppRun.wrapped: Permission denied`（0.2.1）。`scripts/lib/appimage.sh` 的 `voltip_appimage_apprun` 在打包前放好固定的 AppRun：文件不在就从 tauri-apps/binary-releases 的 `apprun-old` 发布下载，核对 SHA-256 后设成 0755；文件在且内容相同只改权限；内容不同就让构建失败，文件原样留下等人查看（打包器会把工具目录里的任何文件打进每个用户运行的包）。打包后 `voltip_check_appimage_permissions` 用 `<AppImage> --appimage-offset` 取文件系统的偏移，`unsquashfs -lln -o <偏移>` 列出全部条目：符号链接以外的条目缺少 o+r，或属主能执行而其他用户不能（目录：不能进入），就拒绝出包。`make linux-x64` 与发布候选的 Linux 腿都做这两步。
 
 ### 14.6 冒烟
 
@@ -1265,7 +1265,7 @@ Wayland 剪贴板：arboard `wayland-data-control`（wl-clipboard-rs；KDE 与 w
 - 听写状态用右下角的角标表示（跟随 `UiEvent::Dictation`，`platform::glyph_for`）：空闲时没有角标（done / failed / cancelled 的停留也算空闲），录音时是红点（macOS 为实心圆点），处理中是蓝点（macOS 为圆环）。角标外有一圈白色间隔（macOS 为镂空）。提示文字同步变化：`Voltip`、`Voltip · 正在听写`、`Voltip · 正在处理`。
 - 菜单依次为：打开 Voltip、设置…、检查更新…（仅在构建带更新源时出现）、分隔线、退出 Voltip。语言跟随 `settings.locale`。设为 `system` 时按系统显示语言解析：Windows 用 `GetUserDefaultUILanguage`，macOS 用 `NSLocale.preferredLanguages` 首项，与 webview 的 `navigator.language` 同源；读不到时用中文。
 - 「设置…」和「检查更新…」先显示主窗，再向主窗发 `voltip://tray`（`{ action: "settings" | "update" }`），由界面打开设置对话框或更新对话框；更新状态为空闲、已是最新或失败时，顺带检查一次。
-- Windows 左键单击或双击显示主窗，右键弹出菜单。macOS 双击显示主窗而不弹菜单，单击在系统的双击间隔（`NSEvent.doubleClickInterval`，限定在 150–2000 ms）过后弹出菜单，右键立即弹出菜单（2026-09-30 用户要求）。tray-icon 只在 Windows 上报告双击，所以 macOS 关掉 `show_menu_on_left_click`，由 `voltip_platform::tray::ClickSeries` 按左键抬起的时刻区分单击与双击：第一次抬起后等一个间隔，期间再抬起一次即为双击；等待结束仍无第二次时在主线程调用 `show_menu()`（`performClick`，菜单关闭前不返回，因此不占用运行时的工作线程）；每次等待带代次号，过期的定时什么也不做，右键按下会取消正在等待的单击。冒烟脚本用真实鼠标事件验证：`scripts/smoke-tray-macos.sh` 第 4e 步单击后菜单出现的时刻不早于日志里的间隔（`tray click: menu after_ms=…`）、双击后主窗出现且菜单不出现，菜单是否打开以 App 发出的 AXMenuOpened 通知为准（辅助功能树里状态栏菜单不论开没开都在）；`scripts/smoke-tray-windows.ps1` 第 4e 步双击后主窗可见，并记下系统是否报告了双击（图标在通知区溢出面板里时，主窗弹出可能先关掉面板；双击落在面板关闭的时刻时找到按钮重试，最多四次，App 日志的 `tray click: main window` 记下每次收到的单击）。
+- Windows 左键单击或双击显示主窗，右键弹出菜单。macOS 双击显示主窗而不弹菜单，单击在系统的双击间隔（`NSEvent.doubleClickInterval`，限定在 150–2000 ms）过后弹出菜单，右键立即弹出菜单（2026-09-30 用户要求）。macOS 上经辅助功能的按下（VoiceOver、用键盘进入菜单栏）也立即弹出菜单：tray-icon 0.25.1 起只在菜单弹出的那段时间把它挂到状态栏项上（tauri-apps/tray-icon#365，为了不让 macOS 27 吞掉左键单击），按下由 AppKit 转成状态栏按钮的 action，按钮既没有 action 也没有菜单，于是什么都不打开（2026-11-07 CI 的托盘冒烟等不到菜单）。现在按钮的 action 调 `show_menu()`，菜单正在显示时不再打开；鼠标单击到不了这个 action，tray-icon 盖在按钮上的视图收走了鼠标事件。tray-icon 只在 Windows 上报告双击，所以 macOS 关掉 `show_menu_on_left_click`，由 `voltip_platform::tray::ClickSeries` 按左键抬起的时刻区分单击与双击：第一次抬起后等一个间隔，期间再抬起一次即为双击；等待结束仍无第二次时在主线程调用 `show_menu()`（`performClick`，菜单关闭前不返回，因此不占用运行时的工作线程）；每次等待带代次号，过期的定时什么也不做，右键按下会取消正在等待的单击。冒烟脚本 `scripts/smoke-tray-macos.sh` 第 3–4d 步用辅助功能的按下打开菜单并选择各项；用真实鼠标事件验证：第 4e 步单击后菜单出现的时刻不早于日志里的间隔（`tray click: menu after_ms=…`）、双击后主窗出现且菜单不出现，菜单是否打开以 App 发出的 AXMenuOpened 通知为准（辅助功能树里状态栏菜单不论开没开都在）；`scripts/smoke-tray-windows.ps1` 第 4e 步双击后主窗可见，并记下系统是否报告了双击（图标在通知区溢出面板里时，主窗弹出可能先关掉面板；双击落在面板关闭的时刻时找到按钮重试，最多四次，App 日志的 `tray click: main window` 记下每次收到的单击）。
 - 关闭主窗口（标题栏 ×、Alt+F4、红色交通灯）的行为由 `main_window_close` 决定：macOS 总是隐藏，Dock 与托盘都能找回；Windows 有托盘时隐藏，没有托盘时退出；Linux 退出。此前关闭会销毁主窗口，而预热的悬浮窗仍让进程存活，托盘和二次启动都找不到窗口，也没有退出入口（2026-09-28 用户反馈）。
 
 ### 15.5 打包矩阵
@@ -1278,7 +1278,7 @@ Wayland 剪贴板：arboard `wayland-data-control`（wl-clipboard-rs；KDE 与 w
   - `files`：`Resources/{en,zh-Hans}.lproj/InfoPlist.strings`，源文件在 `src-tauri/macos/`。
 - `src-tauri/Info.plist`：`NSMicrophoneUsageDescription`。打包器自动合并，`generate_context!` 在 dev 构建里嵌入二进制，所以 `cargo run` 也带着这条说明。系统弹窗的语言跟随 macOS 系统语言。
 - Windows：`webviewInstallMode { embedBootstrapper, silent }`、`allowDowngrades false`、`nsis.installMode currentUser`（仅在 Windows 构建上覆盖 `both`）、`nsis.installerHooks ./nsis/installer-hooks.nsh`（应用内更新时安装器不显示窗口，§9）。引导程序（约 1.8 MB）打进安装包而不是安装时下载：在 Linux 上交叉构建的安装器用系统 NSIS 的 `NSISdl` 插件下载，它取不到 `https://go.microsoft.com` 的引导程序地址，没有 WebView2 的机器上静默安装会以退出码 2 中止（2026-09-26 CI `windows-native`，Windows Server 2022）。Windows 10 / 11 通常已带 WebView2，不走这条路径。
-- `resources/macos/` 不入库。`tests/bundle.rs` 用 `tauri-utils` 2.9.3 的 `config::parse::read_from` 合并各目标配置，再按 `Config` schema 解析并逐项断言。
+- `resources/macos/` 不入库。`tests/bundle.rs` 用 `tauri-utils` 2.10.2 的 `config::parse::read_from` 合并各目标配置，再按 `Config` schema 解析并逐项断言。
 - ggml CPU 基线（2026-09-26）：`.cargo/config.toml` 的 `TRANSCRIBE_CMAKE_ARGS` 为所有构建钉住 `GGML_NATIVE=OFF` + x86_64 Haswell 档（SSE4.2 / AVX / AVX2 / FMA / F16C / BMI2）。此前 Linux 构建用 `-march=native`（在 CI 的 AVX-512 主机上打包会让旧处理器非法指令崩溃），Windows 交叉构建则关掉了全部 SIMD。实测 Qwen3-ASR-0.6B、16 s 中文：native 1.57 s、Haswell 档 1.77 s、仅 SSE4.2 7.3 s、无 SIMD（旧 Windows 包）14.4 s。低于该档的处理器由 `gguf.rs` 在加载前拒绝并说明原因（改用「轻量」或云端），不会崩溃；SenseVoice / Paraformer / 流式模型（ONNX Runtime 运行时分派）不受影响。aarch64 上 x86 选项无效，`GGML_NATIVE=OFF` 保留编译器默认目标（macOS 为 apple-m1）；Intel Mac 的包同样是 Haswell 档。
 
 ### 15.6 跨目标检查门与真机运行
@@ -1871,7 +1871,7 @@ Rust：`voltip-platform` `cmd_c_keycode` 表与终端表（`terminal_ids_are_per
 
 解码时校验采样率、PCM 长度、Opus 包数与包长、文字长度；超限的消息整条拒收。旧 `seq`（第二条路径上的重复块）丢弃，缺块照常接着拼。
 
-**Opus（2026-09-28）**：手机先发 PCM；电脑的第一条 `take_status` 带着 `opus: true`，手机从下一块起把 16 kHz 录音按 20 ms 一帧编成 Opus（VoIP、24 kbit/s VBR，约为 PCM 的十分之一），最后不满一帧的尾巴补静音；电脑按 `seq` 把解码出的 PCM 接进同一个 `RemoteFeed`。旧版电脑不带这个字段，手机就一直发 PCM；旧版手机只发 PCM，新版电脑照收，两个方向都兼容。两端都用 `opus-rs`（libopus 1.6 的纯 Rust 移植，BSD-3-Clause），手机端不需要 C 工具链；编码器出错时这次录音剩下的部分退回 PCM，解不出的包跳过。`PhoneTakeView.opus` 告诉手机界面音频正以 Opus 传输（`crates/voltip-core/src/runtime/take_codec.rs`）。
+**Opus（2026-09-28）**：手机先发 PCM；电脑的第一条 `take_status` 带着 `opus: true`，手机从下一块起把 16 kHz 录音按 20 ms 一帧编成 Opus（VoIP、VBR，`bitrate_bps` 为 96 kbit/s：语音实际约 78 kbit/s，约为 PCM 的三分之一。`opus-rs` 0.1.34 不看这个设置，按每包缓冲区的大小分配码率；0.1.40 按设置分配，96 kbit/s 时编出的包与 0.1.34 逐字节相同（58 s 中文语音、单音、噪声、合成浊音实测），本机 SenseVoice 的识别结果也与升级前一样，与原音频相差 7 字。2026-11-07 用户选择保持升级前的码率，§3.9），最后不满一帧的尾巴补静音；电脑按 `seq` 把解码出的 PCM 接进同一个 `RemoteFeed`。旧版电脑不带这个字段，手机就一直发 PCM；旧版手机只发 PCM，新版电脑照收，两个方向都兼容。两端都用 `opus-rs`（libopus 1.6 的纯 Rust 移植，BSD-3-Clause），手机端不需要 C 工具链；编码器出错时这次录音剩下的部分退回 PCM，解不出的包跳过。`PhoneTakeView.opus` 告诉手机界面音频正以 Opus 传输（`crates/voltip-core/src/runtime/take_codec.rs`）。
 
 ### 20.2 电脑端（`crates/voltip-core/src/runtime/takes.rs`、`dictation/remote.rs`）
 
@@ -1889,7 +1889,7 @@ Rust：`voltip-platform` `cmd_c_keycode` 表与终端表（`terminal_ids_are_per
 
 ### 20.4 门禁
 
-Rust：`voltip-protocol` `take_messages_roundtrip_and_are_validated`（含 `take_opus` 的上限与 `opus` 缺省为假）；`runtime::take_codec` 两个单测（一秒 50 个包、解码后等长、尾帧补齐、坏包跳过）；`dictation::remote` 三个单测（早到的块补放、上限、丢弃即关闭）；`phone::desktop_phases_become_the_phones_take_states`；`crates/voltip-core/tests/e2e.rs@a_phone_streams_a_take_the_desktop_delivers`（真中继：先 PCM 后 Opus 送达、取消、忙碌）；桌面 `audio::only_a_recording_phone_take_is_forwarded_to_the_meters`、`tests/ipc.rs@phone_take_commands_are_refused_on_the_desktop`；手机 `microphone::the_phone_microphone_opens_a_live_tap`、`tests/ipc.rs@phone_take_commands_reach_the_core`。TS：IPC 夹具覆盖每个 `phone_take` 状态与 `dictation.remote`；手机 `PhoneMic.test.tsx`；桌面 `Devices.test.tsx`（手机麦克风面板）与 `Overlay.test.tsx`（胶囊标签）。
+Rust：`voltip-protocol` `take_messages_roundtrip_and_are_validated`（含 `take_opus` 的上限与 `opus` 缺省为假）；`runtime::take_codec` 三个单测（一秒 50 个包、解码后等长、尾帧补齐、坏包跳过，以及 `regression_a_take_goes_at_the_rate_it_did_before_opus_rs_0_1_40`：两秒合成浊音的码率在 60–110 kbit/s 之间）；`dictation::remote` 三个单测（早到的块补放、上限、丢弃即关闭）；`phone::desktop_phases_become_the_phones_take_states`；`crates/voltip-core/tests/e2e.rs@a_phone_streams_a_take_the_desktop_delivers`（真中继：先 PCM 后 Opus 送达、取消、忙碌）；桌面 `audio::only_a_recording_phone_take_is_forwarded_to_the_meters`、`tests/ipc.rs@phone_take_commands_are_refused_on_the_desktop`；手机 `microphone::the_phone_microphone_opens_a_live_tap`、`tests/ipc.rs@phone_take_commands_reach_the_core`。TS：IPC 夹具覆盖每个 `phone_take` 状态与 `dictation.remote`；手机 `PhoneMic.test.tsx`；桌面 `Devices.test.tsx`（手机麦克风面板）与 `Overlay.test.tsx`（胶囊标签）。
 
 ### 20.5 未验证
 
@@ -3066,7 +3066,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 - 端口 `voltip_core::import::MediaDecoder`（`CoreConfig.media_decoder`）：`extensions()`、`probe(path)`、`decode_to_pcm(path, out, progress, cancel)`。桌面壳接 `voltip_media::Decoder`；手机没有解码器，`UiState.imports.available` 为假，导入命令被拒绝。
 - 输出与长录音的录音文件相同（§22.3）：16 kHz 单声道 16 位小端裸 PCM。先写 `<out>.part`，完成后改名，所以 `out` 只在完整时存在；取消时报 `Cancelled` 并删除 `.part`。
 - 逐包读取、逐块解码，多声道按平均值混成单声道，用本机语音服务的 `StreamResampler`（§23）逐块重采样后写出。内存里只有一个包和一块样本，与文件长度无关。
-- 格式：Symphonia =0.5.5（特性 `aac alac flac isomp4 mkv mp3 ogg pcm vorbis wav`，没有默认特性）读容器并解码，Opus 由 `opus-rs` =0.1.34 解码。
+- 格式：Symphonia =0.6.1（特性 `aac alac flac id3v2 isomp4 mkv mp3 ogg pcm vorbis wav`，没有默认特性）读容器并解码，Opus 由 `opus-rs` =0.1.40 解码。`id3v2` 让探测跳过 MP3 开头的 ID3v2 标签：带封面的标签常超过 1 MB，而探测只在开头 1 MB 内找第一帧（0.5 版总会读这个标签）。空的 Opus 包不交给 `opus-rs`：它把空包当作丢包，按缓冲区大小补出 120 ms 的声音。
 
   | 容器 | 扩展名（`EXTENSIONS`） | 音频编码 |
   |---|---|---|
@@ -3079,7 +3079,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
   | Matroska / WebM | mkv、mka、webm | Vorbis、Opus、FLAC、AAC、MP3、PCM |
 
 - 只读一条音轨：读取器的默认音轨，没有就第一条；视频轨跳过。MP4 按编辑列表去掉编码器的前导样本（`mp4.rs`）；Opus 去掉 pre-skip。
-- 错误（`MediaError` → `ImportFailure`）：读不了 `unreadable`（系统的原话）；不是能读的音视频文件 `unsupported_format`；没有音轨 `no_audio`；音轨的编码没有解码器 `unsupported_codec`，按容器的标记写明编码名（`sniff.rs`：AC-3、E-AC-3、AC-4、DTS、TrueHD、MLP、AMR、MPEG-H、WavPack、TTA 等）；损坏或截断 `corrupt`；写不了 `storage`。MP3（没有编码器头时）和 ADTS 的时长是读取器估计的，不用来判断截断。
+- 错误（`MediaError` → `ImportFailure`）：读不了 `unreadable`（系统的原话）；不是能读的音视频文件 `unsupported_format`；没有音轨 `no_audio`；音轨的编码没有解码器 `unsupported_codec`，写明编码名：读取器认得的按它给的编码（AC-3、TrueHD、RealAudio 等），不认得的按容器的标记（`sniff.rs`：AC-3、E-AC-3、AC-4、DTS、TrueHD、MLP、AMR、MPEG-H、WavPack、TTA 等）；损坏或截断 `corrupt`，MP4 与 Matroska 的最后一个盒子或元素超出文件末尾时也算截断（`mp4.rs`、`mkv.rs`，读取器此时只报找不到索引或分段）；写不了 `storage`。MP3（没有编码器头时）和 ADTS 的时长是读取器估计的，不用来判断截断。MP4 的音轨按它在文件里的顺序找编辑列表：Symphonia 0.6 的音轨 ID 是 `tkhd` 里的编号，不是顺序。
 
 ### 31.2 队列（`voltip_core::import`、`runtime/import.rs`）
 

@@ -35,7 +35,7 @@
 ## 2. 总体结构
 
 ```
-apps/mobile-rn (Expo SDK 57 · RN 0.86.3 · React 19.2.3 · react-native-paper 5 MD3 · React Navigation 7)
+apps/mobile-rn (Expo SDK 58 · RN 0.88.1 · React 19.3.0 · react-native-paper 5 MD3 · React Navigation 7)
   src/          界面：页面、主题、导航；@voltip/shared 的 TauriBackend + RN 传输层
   modules/voltip-native   本地 Expo 模块（Kotlin）：invoke / 事件 / 平台回调；Keyring.kt
   rust/         crate voltip-mobile-rn → libvoltip_rn.so（cdylib）：命令分发 + UniFFI 接口（ffi.rs）
@@ -190,7 +190,11 @@ JS ◀──sendEvent("voltip://event")── Kotlin VoltipHost（PlatformHost�
 - **横屏与大屏（2026-10-28 用户决定「完全放开方向，界面自适应」；Google Play 关于 Android 16 大屏的提示）**：
   - `app.json` 的 `orientation` 为 `default`，`MainActivity` 不再锁竖屏；ML Kit 扫码的
     `GmsBarcodeScanningDelegateActivity` 在它的库清单里锁了竖屏，`plugins/display.js` 用 `tools:remove="android:screenOrientation"`
-    去掉。清单里也没有 `resizeableActivity="false"` 与 `min/maxAspectRatio`（`check-android-package.sh` 检查，§6）。
+    去掉。expo-camera 58 默认还带 ML Kit 的文档扫描，它的 `GmsDocumentScanningDelegateActivity` 同样锁竖屏；应用不扫描文档，
+    `plugins/display.js` 在根工程的 `build.gradle` 里把 `com.google.android.gms:play-services-mlkit-document-scanner`
+    从 `:app` 的依赖中排除，这个库和它的页面都不进包（2026-11-07）。expo-camera 自己的开关
+    `expo.camera.document-scanner-enabled` 只在从源码构建它时生效：Expo SDK 58 用它的预编译模块，模块的 Gradle 元数据总是带上这个库。
+    清单里也没有 `resizeableActivity="false"` 与 `min/maxAspectRatio`（`check-android-package.sh` 检查，§6）。
   - 页面（`ui/kit.tsx` 的 `Page`）左右加上安全区（横屏时的刘海与导航栏），内容放在最宽 720 dp 的居中一列里（`PAGE_MAX_WIDTH`）；
     浮动底栏最宽 480 dp、居中（`DOCK_MAX_WIDTH`）；手机横屏（窗口宽大于高且高不足 480 dp，`ui/rail.ts` 的 `isRailWindow`）时
     标签栏改为屏幕左侧的竖向导航栏（宽 72 dp，距左侧安全区 16 dp，在状态栏与底部安全区之间居中），页面从它右侧开始
@@ -210,9 +214,10 @@ JS ◀──sendEvent("voltip://event")── Kotlin VoltipHost（PlatformHost�
   录音、词典、规则（导入 / 导出）、场景、记录设置、电脑设置、关于、反馈。
 - **文字**：全部走 `@voltip/shared` 的类型化字典（`zh-CN.ts` 定义键，`en.ts` 对应），新增文案两种语言同时加；
   用语按现有产品文案的标准（memory `feedback-ui-copy-register`）。
-- **React 版本**：RN 0.86 要求 React 19.2.3，仓库其余部分是 19.3.0，所以 RN 版不能引用 `@voltip/ui`
-  （会出现两份 React）。`BackendProvider`、`I18nProvider`、`useNow`、`useHistoryList` 等不依赖 DOM 的
-  hooks 复制到 `apps/mobile-rn/src/backend`，逻辑本身仍在 `@voltip/shared`。
+- **React 版本**：RN 0.88 内置的渲染器是 React 19.3.0，Expo SDK 58 也固定这个版本；仓库其余部分是
+  19.3.1，所以 RN 版不能引用 `@voltip/ui`（会出现两份 React）。`BackendProvider`、`I18nProvider`、
+  `useNow`、`useHistoryList` 等不依赖 DOM 的 hooks 复制到 `apps/mobile-rn/src/backend`，逻辑本身仍在
+  `@voltip/shared`。
 
 ## 6. 构建
 
@@ -231,7 +236,7 @@ scripts/build-android-rn.sh --unsigned  # 不签名：…_android_arm64-unsigned
    `cargo run -p voltip-uniffi-bindgen` 从这个库生成 UniFFI 的 Kotlin 绑定，写进模块源码（§3），然后用 NDK 的
    `llvm-strip --strip-all` 去掉打包那份的符号。
 2. `expo prebuild --platform android --clean`：Android 工程每次生成，不提交（`android/` 被 git 忽略）；
-   需要的原生配置都写在 `app.json` 与本地模块里（权限、FileProvider、minSdk 26、targetSdk 36）。注意相机和图片
+   需要的原生配置都写在 `app.json` 与本地模块里（权限、FileProvider、minSdk 26、compileSdk 37（Expo SDK 58 的模块要求，2026-11-07）、targetSdk 36）。注意相机和图片
    选择插件的 `recordAudioAndroid: false` / `cameraPermission: false` 会以 `tools:node="remove"` 删掉
    `RECORD_AUDIO` / `CAMERA`，所以不传这两项。第三方许可证文本由
    `scripts/release/third-party-notices.py --app mobile-rn`（Rust 外壳的 crate 与 `apps/mobile-rn` 的 npm 包）生成到
@@ -246,10 +251,14 @@ scripts/build-android-rn.sh --unsigned  # 不签名：…_android_arm64-unsigned
    （Gradle 自动下载会去 GitHub，本机不可用）。
    **R8**（2026-10-28，Google Play 关于混淆与优化的提示）：
    - `app.json` 的 `expo-build-properties` 设 `android.enableMinifyInReleaseBuilds: true`；`plugins/release.js` 的
-     `withOptimizedRelease` 把模板 release 构建类型的 `getDefaultProguardFile("proguard-android.txt")` 换成
-     `proguard-android-optimize.txt`，模板变了就报错（`plugins/release.test.js`）。不开 `shrinkResources`。
-   - keep 规则只写在本地模块的 `consumer-rules.pro`，随模块交给应用：UniFFI 与 JNA 按名字查找的类，以及
-     `-keepattributes SourceFile,LineNumberTable` 和 `-renamesourcefileattribute SourceFile`（堆栈保留行号，用 mapping 还原）。
+     `withOptimizedRelease` 保证模板 release 构建类型用 `proguard-android-optimize.txt`：Expo SDK 57 的模板写的是
+     `getDefaultProguardFile("proguard-android.txt")`，插件把它换掉；SDK 58 的模板本来就用优化版，原样保留；两者都没有就报错
+     （`plugins/release.test.js`）。不开 `shrinkResources`。
+   - 针对类的 keep 规则只写在本地模块的 `consumer-rules.pro`，随模块交给应用：UniFFI 与 JNA 按名字查找的类。
+     保留堆栈行号的 `-keepattributes SourceFile,LineNumberTable` 和 `-renamesourcefileattribute SourceFile`（用 mapping 还原）
+     是全局选项，写在 `app.json` 的 `expo-build-properties` `android.extraProguardRules`，由 `expo prebuild` 写进应用的
+     `proguard-rules.pro`：Android Gradle Plugin 9（Expo SDK 58）不允许库的 consumer 规则带全局选项，本地模块的构建在
+     `exportReleaseConsumerProguardFiles` 失败，预编译 AAR 里的则被应用的 R8 忽略（2026-11-07，`plugins/release.test.js`）。
    - 2026-10-28 的构建：AAB 的 `BUNDLE-METADATA/com.android.tools/r8.json` 中混淆、优化、缩减分别覆盖 80.8 %、80.4 %、81.0 %
      （`stats.noObfuscationPercentage` 等为 19.2、19.6、19.0）；APK 由约 33 MB 降到 30.3 MB；R8 没有报缺少的类。
    - mapping：脚本把 `app/build/outputs/mapping/release/mapping.txt` 复制为
@@ -265,7 +274,8 @@ scripts/build-android-rn.sh --unsigned  # 不签名：…_android_arm64-unsigned
      「下一发布版本的待处理问题」只剩这一条 Android 15 无边框提示（指向 2001）；Android 16 的大屏提示和 DEX 1 % 的提示已经消失。
 4. 发布前扫描：APK 和 AAB 的每个条目都过 `voltip_scan_provider_keys`；JS 包是 Hermes 字节码，字符串表首尾相接，图标名
    （`task-outline` 等）会被误认成 `sk-…`，所以它改为扫描 Metro 打包前的源码（packager source map 的
-   `sourcesContent`），并检查构建环境里的密钥值不在字节码中。`.env.build` 以外的生产主机名不得出现在源码树里
+   `sourcesContent`，由 `scripts/release/bundled-sources.py` 取出；React Native 0.88 的 Metro 把它写成按模块分段的
+   index map，2026-11-07 起逐段读取），并检查构建环境里的密钥值不在字节码中。`.env.build` 以外的生产主机名不得出现在源码树里
    （`check-no-production-hosts.sh` 照常覆盖 `apps/mobile-rn`）。
 5. 发布（`docs/runbook.md` 发布 · Android；0.0.50 起是这条腿唯一的应用）：发布候选的 `bundle-android` 腿在签名之前
    运行 `build-android-rn.sh --unsigned`（注入内置服务的值），签名一步用发布密钥签 APK 和 AAB
@@ -347,7 +357,7 @@ scripts/build-android-rn.sh --unsigned  # 不签名：…_android_arm64-unsigned
 
 ## 9. 风险与取舍
 
-- 两份 React（19.2.3 / 19.3.0）与复制的 hooks：并存期间的代价；RN 胜出后把不依赖 DOM 的 hooks 抽到一个以
+- 两份 React（19.3.0 / 19.3.1）与复制的 hooks：并存期间的代价；RN 胜出后把不依赖 DOM 的 hooks 抽到一个以
   react 为 peer 依赖的包。
 - 复制的 Rust 外壳模块：同上，二选一后合并。
 - APK 体积：实测 64.0 MB（arm64；`libvoltip_rn.so` 19.8 MB，许可证文本压缩后约 0.13 MB），比预估的 45–50 MB 大；RN 胜出后再看

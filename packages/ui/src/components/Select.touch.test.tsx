@@ -108,7 +108,7 @@ describe("Select under the touch presentation", () => {
     expect(list.querySelectorAll('[data-icon="check"]')).toHaveLength(1);
     expect(within(list).getByRole("option", { name: "中文 · zh" })).toHaveFocus();
     expect(within(list).getByRole("option", { name: "中文 · zh" })).toContainElement(
-      list.querySelector('[data-icon="check"]') as HTMLElement,
+      list.querySelector('[data-icon="check"]'),
     );
   });
 

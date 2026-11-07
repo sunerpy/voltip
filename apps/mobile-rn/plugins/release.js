@@ -52,20 +52,23 @@ function unsignedReleaseGradle(text) {
 
 /**
  * `app/build.gradle` whose release build type runs R8 with Android's optimizing defaults
- * (`proguard-android-optimize.txt`). The template names `proguard-android.txt`, which carries
- * `-dontoptimize`: R8 would then shrink and obfuscate but not optimize, and Google Play measures all
- * three (help answer 17492799). R8 itself is switched on by `enableMinifyInReleaseBuilds` in
- * app.json. Throws when the template no longer names the file, as `unsignedReleaseGradle` does.
+ * (`proguard-android-optimize.txt`). Expo SDK 57's template named `proguard-android.txt`, which
+ * carries `-dontoptimize`: R8 would then shrink and obfuscate but not optimize, and Google Play
+ * measures all three (help answer 17492799). SDK 58's names the optimizing file itself and is left
+ * as it is. R8 itself is switched on by `enableMinifyInReleaseBuilds` in app.json. Throws when the
+ * release build type names neither file, as `unsignedReleaseGradle` does for its signing.
  */
 function optimizedReleaseGradle(text) {
   return editRelease(text, (block) => {
     const plain = 'getDefaultProguardFile("proguard-android.txt")';
+    const optimizing = 'getDefaultProguardFile("proguard-android-optimize.txt")';
+    if (block.includes(optimizing) && !block.includes(plain)) return block;
     if (!block.includes(plain)) {
       throw new Error(
-        "app/build.gradle: the release build type does not name proguard-android.txt; the template changed",
+        "app/build.gradle: the release build type names no default R8 rules; the template changed",
       );
     }
-    return block.replace(plain, 'getDefaultProguardFile("proguard-android-optimize.txt")');
+    return block.replace(plain, optimizing);
   });
 }
 

@@ -40,7 +40,7 @@ required-features = ["keychain-harness"]
 [build-dependencies]
 # build.rs reads the app version from package.json (already in the graph through tauri-build).
 serde_json.workspace = true
-tauri-build = { version = "=2.6.3", features = [] }
+tauri-build = { version = "=2.7.4", features = [] }
 
 [dependencies]
 async-trait.workspace = true
@@ -52,15 +52,16 @@ serde_json.workspace = true
 # private NSWindow API (`app.macOSPrivateApi` in tauri.conf.json; tauri-build requires the two to
 # agree, and it reads only this table). No effect on the other platforms. The app is not meant for
 # the Mac App Store, which rejects private API use.
-tauri = { version = "=2.11.6", default-features = false, features = ["wry", "macos-private-api"] }
-tauri-plugin-opener = "=2.5.4"
+tauri = { version = "=2.12.5", default-features = false, features = ["wry", "macos-private-api"] }
+tauri-plugin-opener = "=2.5.5"
 tauri-plugin-global-shortcut = "=2.3.2"
 # The save dialog of 导出字幕 / 导出文本 (src/export.rs, docs/dictation.md §22); called from Rust
-# only. 2.7.3 is the newest release for tauri 2.11 (2.8 needs tauri 2.12).
+# only. 2.7.3 takes tauri 2.10 and later; 2.8.4 moves to a new major version of the dialog
+# library it wraps (rfd 0.17), which wants its own check of the save dialog on every platform.
 tauri-plugin-dialog = "=2.7.3"
 # `voltip --toggle` / `--cancel` reach the running instance (docs/dictation.md §13). No default
 # features: `semver` (version comparison between instances) and `deep-link` are not needed.
-tauri-plugin-single-instance = { version = "=2.4.3", default-features = false }
+tauri-plugin-single-instance = { version = "=2.4.5", default-features = false }
 clap.workspace = true
 # In-app updates (src/update.rs). No default features: TLS comes from the workspace's reqwest
 # `rustls` feature (aws-lc-rs) through feature unification; the plugin's own `rustls-tls` default
@@ -110,17 +111,21 @@ sherpa-onnx-sys.workspace = true
 
 # The tray (src/platform/tray.rs) exists where the shell is a background utility. Linux keeps the
 # base feature set: `tray-icon` there needs libayatana-appindicator at link time, and the Linux
-# shell has no tray.
+# shell has no tray. The macOS and Windows tables inherit `tauri` from the workspace: Tauri CLI
+# 2.12 merges the features of every `tauri` table it reads, whatever their target, and a
+# `tray-icon` among them makes a Linux bundle require appindicator and depend on it
+# (tauri-apps/tauri#16250); it neither reads nor writes a table that inherits (tests/bundle.rs,
+# regression_no_tauri_table_the_tauri_cli_reads_turns_the_tray_on).
 [target.'cfg(target_os = "macos")'.dependencies]
-tauri = { version = "=2.11.6", default-features = false, features = ["wry", "tray-icon"] }
+tauri = { workspace = true, features = ["tray-icon"] }
 # TCC checks / requests for the microphone and Accessibility (docs/dictation.md §15.1). Called
 # from Rust (`src/platform/macos.rs`); the plugin's own webview commands are not
 # registered, so no capability grants them.
 tauri-plugin-macos-permissions = "=2.3.0"
 # The frontmost application for scenes (docs/dictation.md §18.2): `NSWorkspace.frontmostApplication`.
 # The exact versions tray-icon / muda already pull; only the two AppKit classes the probe touches.
-objc2 = "=0.6.4"
-objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "libc", "NSEvent", "NSRunningApplication", "NSWorkspace"] }
+objc2 = "=0.6.5"
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "libc", "NSButton", "NSControl", "NSEvent", "NSMenu", "NSResponder", "NSRunningApplication", "NSStatusBarButton", "NSStatusItem", "NSView", "NSWorkspace"] }
 # The tray menu's language when `settings.locale` is `system` (`NSLocale.preferredLanguages`), and
 # the wake and session notifications the lone-key tap checks itself on (docs/dictation.md §29);
 # the versions objc2-app-kit already pulls.
@@ -147,10 +152,10 @@ x11rb = { version = "=0.14.0", features = ["xinput"] }
 # tauri implements its window handles with, at the version it pulls.
 raw-window-handle = "=0.6.2"
 # `_exit` (src/exit.rs); the version the graph already has.
-libc = "=0.2.189"
+libc = "=0.2.191"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-tauri = { version = "=2.11.6", default-features = false, features = ["wry", "tray-icon"] }
+tauri = { workspace = true, features = ["tray-icon"] }
 # Same version tokio / tempfile / mio already pull, so the cross-build compiles it once. Feature
 # set = exactly what src/platform/windows.rs calls: foreground window → process → token integrity
 # level, the input desktop name, the CapabilityAccessManager consent store in the registry, for
@@ -169,10 +174,10 @@ windows-sys = { version = "=0.61.2", features = [
 ] }
 
 [dev-dependencies]
-tauri = { version = "=2.11.6", default-features = false, features = ["wry", "test"] }
+tauri = { version = "=2.12.5", default-features = false, features = ["wry", "test"] }
 # tests/bundle.rs: the merged per-target tauri.*.conf.json through Tauri's own config schema (the
 # version tauri-build already resolves, so nothing new is compiled).
-tauri-utils = { version = "=2.9.3", default-features = false }
+tauri-utils = { version = "=2.10.2", default-features = false }
 # tests/bundle.rs: merges a --config overlay the way the Tauri CLI does (the version tauri-utils
 # already uses).
 json-patch = { version = "=4.2.0", default-features = false }

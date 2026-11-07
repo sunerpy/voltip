@@ -37,7 +37,7 @@ async function ask(spec: ConfirmSpec) {
 /** The colour the confirming button's label `text` is drawn in. */
 function labelColor(text: string): TextStyle["color"] {
   const label = within(screen.getByTestId("shell-confirm")).getByText(text);
-  return StyleSheet.flatten(label.props.style as TextStyle).color;
+  return (StyleSheet.flatten(label.props.style as TextStyle) ?? {}).color;
 }
 
 describe("shell.confirm", () => {
