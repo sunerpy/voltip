@@ -38,8 +38,11 @@ use crate::realtime::{self, BYTES_PER_MS, Pace, Socket};
 use crate::split;
 use crate::vendor::{self, RealtimeEvent, RealtimeEvents, RealtimeInput, VendorAsr};
 
-/// One audio frame: 200 ms of 16 kHz 16-bit mono, what the doc recommends sending every 200 ms
-/// (建议每 200ms 发送 200ms 时长的数据包, 6400 bytes at 16 kHz).
+/// One audio frame of a recorded take (Hy-ASR's, over the WebSocket): 200 ms of 16 kHz 16-bit
+/// mono, what the doc recommends sending every 200 ms (建议每 200ms 发送 200ms 时长的数据包, 6400
+/// bytes at 16 kHz). A live session sends 100 ms frames ([`realtime::LIVE_PACKET_BYTES`]): the doc
+/// asks for no more audio a second than plays in it (1:1), not for that size (docs/dictation.md
+/// §3.15).
 const FRAME_BYTES: usize = 200 * BYTES_PER_MS;
 /// The text message that ends a session's audio.
 const END: &str = r#"{"type":"end"}"#;
@@ -184,58 +187,15 @@ impl TencentAsr {
         let body = response.text().await.map_err(map_reqwest)?;
         flash_text(status, retry, &body)
     }
-}
 
-#[async_trait]
-impl VendorAsr for TencentAsr {
-    fn model(&self) -> &str {
-        &self.model
-    }
-
-    fn sends_glossary(&self, glossary: &[String]) -> bool {
-        hotword_list(glossary).is_some()
-    }
-
-    /// A recorded take: one flash request, or for Hy-ASR realtime sessions over its pieces.
-    async fn transcribe(&self, wav: &[u8], language: Option<&str>, glossary: &[String]) -> Result<Transcript, AsrError> {
-        let started = std::time::Instant::now();
-        let pcm = pcm_of(wav)?;
-        let text = if pcm.is_empty() {
-            String::new()
-        } else if takes_flash(&self.model) {
-            self.flash(wav, glossary).await?
-        } else {
-            let mut texts = Vec::new();
-            for piece in split::quiet_cuts(pcm, self.piece_ms) {
-                let piece = realtime::transcribe_whole(self, &pcm[piece], language, glossary, FRAME_BYTES, WEBSOCKET_PACE, self.config.timeout).await?;
-                texts.push(piece.text);
-            }
-            join_sentences(&texts)
-        };
-        let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        tracing::debug!(latency_ms, chars = text.chars().count(), "Tencent Cloud transcribed a whole take");
-        Ok(Transcript { text, latency_ms, model: self.model.clone() })
-    }
-
-    /// The probe of docs/dictation.md §3.15: the realtime handshake; only its answer with `code` 0
-    /// is success (the service sends it once the signature checks out). The session then ends.
-    async fn probe(&self) -> Result<(), AsrError> {
-        let (mut outgoing, _incoming) = self.open(&[]).await?;
-        let _ = outgoing.send(Message::text(END)).await;
-        let _ = outgoing.close().await;
-        Ok(())
-    }
-
-    fn streams(&self) -> bool {
-        true
-    }
-
-    async fn realtime(
+    /// One realtime session: the audio in frames of `frame_bytes` (the rest before the end
+    /// marker), the service's results, `Finished` at `final`.
+    async fn session(
         &self,
-        _language: Option<&str>,
         glossary: &[String],
         mut input: mpsc::UnboundedReceiver<RealtimeInput>,
         events: RealtimeEvents,
+        frame_bytes: usize,
     ) -> Result<(), AsrError> {
         let (mut outgoing, mut incoming) = self.open(glossary).await?;
         let mut slices = Slices::default();
@@ -249,10 +209,10 @@ impl VendorAsr for TencentAsr {
                 item = input.recv(), if finish_by.is_none() => match item {
                     Some(RealtimeInput::Audio(pcm)) => {
                         pending.extend_from_slice(&pcm);
-                        while pending.len() >= FRAME_BYTES {
-                            let frame: Vec<u8> = pending.drain(..FRAME_BYTES).collect();
+                        while pending.len() >= frame_bytes {
+                            let frame: Vec<u8> = pending.drain(..frame_bytes).collect();
                             send(&mut outgoing, &mut incoming, Message::binary(frame)).await?;
-                            sent += FRAME_BYTES;
+                            sent += frame_bytes;
                         }
                     }
                     Some(RealtimeInput::Finish) => {
@@ -281,6 +241,62 @@ impl VendorAsr for TencentAsr {
                 () = tokio::time::sleep_until(finish_by.unwrap_or_else(Instant::now)), if finish_by.is_some() => return Err(AsrError::Timeout),
             }
         }
+    }
+}
+
+#[async_trait]
+impl VendorAsr for TencentAsr {
+    fn model(&self) -> &str {
+        &self.model
+    }
+
+    fn sends_glossary(&self, glossary: &[String]) -> bool {
+        hotword_list(glossary).is_some()
+    }
+
+    /// A recorded take: one flash request, or for Hy-ASR realtime sessions over its pieces.
+    async fn transcribe(&self, wav: &[u8], _language: Option<&str>, glossary: &[String]) -> Result<Transcript, AsrError> {
+        let started = std::time::Instant::now();
+        let pcm = pcm_of(wav)?;
+        let text = if pcm.is_empty() {
+            String::new()
+        } else if takes_flash(&self.model) {
+            self.flash(wav, glossary).await?
+        } else {
+            let mut texts = Vec::new();
+            for piece in split::quiet_cuts(pcm, self.piece_ms) {
+                let session = |input, events| self.session(glossary, input, events, FRAME_BYTES);
+                let piece = realtime::whole_take(&self.model, session, &pcm[piece], FRAME_BYTES, WEBSOCKET_PACE, self.config.timeout).await?;
+                texts.push(piece.text);
+            }
+            join_sentences(&texts)
+        };
+        let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        tracing::debug!(latency_ms, chars = text.chars().count(), "Tencent Cloud transcribed a whole take");
+        Ok(Transcript { text, latency_ms, model: self.model.clone() })
+    }
+
+    /// The probe of docs/dictation.md §3.15: the realtime handshake; only its answer with `code` 0
+    /// is success (the service sends it once the signature checks out). The session then ends.
+    async fn probe(&self) -> Result<(), AsrError> {
+        let (mut outgoing, _incoming) = self.open(&[]).await?;
+        let _ = outgoing.send(Message::text(END)).await;
+        let _ = outgoing.close().await;
+        Ok(())
+    }
+
+    fn streams(&self) -> bool {
+        true
+    }
+
+    async fn realtime(
+        &self,
+        _language: Option<&str>,
+        glossary: &[String],
+        input: mpsc::UnboundedReceiver<RealtimeInput>,
+        events: RealtimeEvents,
+    ) -> Result<(), AsrError> {
+        self.session(glossary, input, events, realtime::LIVE_PACKET_BYTES).await
     }
 }
 
@@ -796,7 +812,7 @@ mod tests {
     }
 
     /// A live session: signed as the service checks it, with the parameters of the doc's 握手阶段
-    /// and the cleaned glossary; audio reframed into 200 ms frames, the rest before the end
+    /// and the cleaned glossary; audio reframed into 100 ms frames, the rest before the end
     /// marker; partials, each finished sentence once with its times, `Finished` at `final`.
     #[tokio::test]
     async fn a_live_session_is_signed_as_the_service_checks_it_and_passes_on_its_results() {
@@ -850,7 +866,7 @@ mod tests {
         let order: Vec<&str> = raw.split('&').map(|pair| pair.split('=').next().unwrap()).collect();
         assert_eq!(order.last(), Some(&"signature"), "the signature last, after the sorted parameters");
         assert!(order[..order.len() - 1].is_sorted());
-        assert_eq!(connection.sizes(), [6400, 6400, 200], "200 ms frames, the rest before the end");
+        assert_eq!(connection.sizes(), [3200, 3200, 3200, 3200, 200], "100 ms frames, the rest before the end");
         assert_eq!(connection.texts, [END]);
         assert!(connection.closed);
     }
@@ -982,6 +998,24 @@ mod tests {
         assert!(matches!(client(&base, "16k_zh_en").probe().await, Err(AsrError::Network(_))));
     }
 
+    /// docs/dictation.md §3.15 (2026-11-08): a live session sends a frame of 100 ms, whatever sizes
+    /// the audio comes in. About a second fed as the core feeds it, a little over 100 ms at a time,
+    /// goes out in 3200-byte frames and the rest before the end marker. Hy-ASR's recorded takes
+    /// keep their 200 ms frames (`hy_asr_takes_go_over_the_websocket_in_pieces_at_the_pace_they_play`).
+    #[tokio::test]
+    async fn a_live_session_sends_100_ms_frames_whatever_the_feed() {
+        let (base, seen, mut ended) = serve(Script { after_end: vec![last()], ..Script::default() }).await;
+        let feeds: Vec<Vec<u8>> = (1..=10u8).map(|n| vec![n; 3400]).collect();
+        let (outcome, _) = live(&client(&base, "16k_zh_en"), &[], &feeds, true).await;
+        assert_eq!(outcome, Ok(()));
+        wait(&mut ended).await;
+        let seen = seen.lock().unwrap();
+        let mut want = vec![3200; 10];
+        want.push(2000);
+        assert_eq!(seen[0].sizes(), want, "100 ms frames, the rest before the end");
+        assert_eq!(seen[0].texts, [END]);
+    }
+
     /// A cancelled take: the input closes before `Finish`; the connection closes at once without
     /// the end marker, and the session says nothing more.
     #[tokio::test]
@@ -991,7 +1025,7 @@ mod tests {
         assert_eq!((outcome, said), (Ok(()), vec![]));
         wait(&mut ended).await;
         let seen = seen.lock().unwrap();
-        assert_eq!(seen[0].sizes(), [6400], "nothing after the cancel");
+        assert_eq!(seen[0].sizes(), [3200, 3200], "nothing after the cancel");
         assert!(seen[0].texts.is_empty());
         assert!(seen[0].closed);
     }
@@ -1063,8 +1097,8 @@ mod tests {
     }
 
     /// Hy-ASR is no flash engine: its recorded take goes over the realtime WebSocket, cut into
-    /// pieces (shortened here), one session each in order, at the pace it plays; the pieces'
-    /// sentences joined.
+    /// pieces (shortened here), one session each in order, in 200 ms frames at the pace it plays
+    /// (a live session's 100 ms frames are for the preview only); the pieces' sentences joined.
     #[tokio::test]
     async fn hy_asr_takes_go_over_the_websocket_in_pieces_at_the_pace_they_play() {
         let script = Script { after_end: vec![result(2, Some(0), "第{n}段。", Some((0, 300))), last()], ..Script::default() };
@@ -1086,7 +1120,8 @@ mod tests {
         for (connection, piece) in seen.iter().zip(&pieces) {
             assert!(connection.signed);
             assert_eq!(connection.sizes().iter().sum::<usize>(), piece.len());
-            assert!(connection.sizes().iter().all(|&n| n <= 6400));
+            let frames: Vec<usize> = (0..piece.len()).step_by(6400).map(|at| (piece.len() - at).min(6400)).collect();
+            assert_eq!(connection.sizes(), frames, "200 ms frames, the rest last");
             assert_eq!(connection.texts, [END]);
             let params = connection.params();
             assert_eq!((params["engine_model_type"].as_str(), params["hotword_list"].as_str()), ("Hy-ASR-3.0-preview", "腾讯云|10"));

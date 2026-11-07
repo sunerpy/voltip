@@ -8,10 +8,11 @@
 //! Every message is one binary frame: a 4-byte header (protocol version and header size, message
 //! type and its flags, serialization and compression), the payload's size (4 bytes, big-endian)
 //! and the payload. The client sends one full client request (the JSON parameters), then
-//! audio-only requests of 200 ms of PCM, the last one flagged `0b0010`. The service answers with
-//! full server responses, acknowledgements it reads past, or an error frame (a code and a
-//! message). A response's flags say what follows the header, as the official demos read them: a
-//! sequence number (`0b0001`), an event number (`0b0100`), and whether it is the last (`0b0010`).
+//! audio-only requests of PCM (100 ms each in a live session, 200 ms for a recorded take and the
+//! probe), the last one flagged `0b0010`. The service answers with full server responses,
+//! acknowledgements it reads past, or an error frame (a code and a message). A response's flags say
+//! what follows the header, as the official demos read them: a sequence number (`0b0001`), an event
+//! number (`0b0100`), and whether it is the last (`0b0010`).
 //! A response may carry an error of its own in its JSON (`code`, `message`). The client gzips its
 //! payloads; the service answers with the compression each frame's header names.
 
@@ -45,8 +46,10 @@ use crate::vendor::{self, RealtimeEvent, RealtimeEvents, RealtimeInput, VendorAs
 const LIVE_PATH: &str = "/api/v3/sauc/bigmodel_async";
 /// Where recorded takes and the probe go: 流式输入, which answers the last packet with the text.
 const WHOLE_PATH: &str = "/api/v3/sauc/bigmodel_nostream";
-/// One audio packet: 200 ms of 16 kHz 16-bit mono, the size the doc finds best
-/// (单包为200ms大小时性能最优).
+/// One audio packet of a recorded take and of the probe: 200 ms of 16 kHz 16-bit mono, the size the
+/// doc finds best for its 双向流式 mode (单包为200ms大小时性能最优). A live session sends 100 ms packets
+/// ([`realtime::LIVE_PACKET_BYTES`]), the shortest of the 100–200 ms the doc asks for, so the first
+/// words of a sentence wait less for the rest of their packet (docs/dictation.md §3.15).
 const FRAME_BYTES: usize = 200 * BYTES_PER_MS;
 /// How long one packet plays.
 const FRAME_DURATION: Duration = Duration::from_millis(200);
@@ -268,8 +271,8 @@ impl VendorAsr for VolcengineAsr {
                 item = input.recv(), if finish_by.is_none() => match item {
                     Some(RealtimeInput::Audio(pcm)) => {
                         pending.extend_from_slice(&pcm);
-                        while pending.len() >= FRAME_BYTES {
-                            let frame: Vec<u8> = pending.drain(..FRAME_BYTES).collect();
+                        while pending.len() >= realtime::LIVE_PACKET_BYTES {
+                            let frame: Vec<u8> = pending.drain(..realtime::LIVE_PACKET_BYTES).collect();
                             send(&mut outgoing, &mut incoming, client_frame(AUDIO_ONLY_REQUEST, NO_SEQUENCE, RAW, &frame)?).await?;
                             sent += frame.len();
                         }
@@ -1105,7 +1108,7 @@ mod tests {
         assert!(matches!(&err, AsrError::Network(m) if !m.contains("127.0.0.1")), "{err:?}");
     }
 
-    /// A live session: audio of any length reframed into 200 ms packets, the rest in the last
+    /// A live session: audio of any length reframed into 100 ms packets, the rest in the last
     /// one; the parameters of 二遍识别; partials while the utterance is not definite, each
     /// definite one once as a sentence with its times, `Finished` after the last result.
     #[tokio::test]
@@ -1149,13 +1152,17 @@ mod tests {
         let connection = &seen[0];
         assert_eq!(connection.path, LIVE_PATH);
         let audio = connection.audio();
-        assert_eq!(audio.iter().map(|f| (f.payload.len(), f.flags)).collect::<Vec<_>>(), vec![(6400, 0), (6400, 0), (200, 2)]);
+        assert_eq!(audio.iter().map(|f| (f.payload.len(), f.flags)).collect::<Vec<_>>(), vec![(3200, 0), (3200, 0), (3200, 0), (3200, 0), (200, 2)]);
         assert!(connection.frames.iter().all(|f| f.well_formed));
         let mut first = vec![1; 1000];
-        first.extend(vec![2; 5400]);
-        let mut second = vec![2; 3600];
-        second.extend(vec![3; 2800]);
-        assert_eq!((&audio[0].payload, &audio[1].payload, &audio[2].payload), (&first, &second, &vec![3; 200]), "the audio in order, the rest last");
+        first.extend(vec![2; 2200]);
+        let mut fourth = vec![2; 400];
+        fourth.extend(vec![3; 2800]);
+        assert_eq!(
+            (&audio[0].payload, &audio[1].payload, &audio[2].payload, &audio[3].payload, &audio[4].payload),
+            (&first, &vec![2; 3200], &vec![2; 3200], &fourth, &vec![3; 200]),
+            "the audio in order, the rest last"
+        );
         let parameters = connection.parameters();
         assert_eq!(parameters["audio"], json!({ "format": "pcm", "codec": "raw", "rate": 16000, "bits": 16, "channel": 1 }), "二遍识别 takes no language");
         assert_eq!(
@@ -1179,9 +1186,29 @@ mod tests {
         wait(&mut ended).await;
         let seen = seen.lock().unwrap();
         let audio = seen[0].audio();
-        assert_eq!(audio.iter().map(|f| (f.payload.len(), f.flags)).collect::<Vec<_>>(), vec![(6400, 0), (3200, 2)]);
-        assert_eq!(audio[1].payload, vec![0; 3200]);
+        assert_eq!(audio.iter().map(|f| (f.payload.len(), f.flags)).collect::<Vec<_>>(), vec![(3200, 0), (3200, 0), (3200, 2)]);
+        assert_eq!(audio[2].payload, vec![0; 3200]);
         assert!(seen[0].parameters()["request"].get("corpus").is_none(), "no glossary, no corpus");
+    }
+
+    /// docs/dictation.md §3.15 (2026-11-08): a live session sends a packet of 100 ms, whatever sizes
+    /// the audio comes in. About a second fed as the core feeds it, a little over 100 ms at a time,
+    /// goes out in 3200-byte packets and the rest in the last one. Recorded takes and the probe keep
+    /// their 200 ms packets (the tests of `whole` and `probe`).
+    #[tokio::test]
+    async fn a_live_session_sends_100_ms_packets_whatever_the_feed() {
+        let script = Script { after_last: vec![response(LAST_RESULT, -2, &json!({ "result": { "text": "" } }), false)], ..Script::default() };
+        let (base, seen, mut ended) = serve(script).await;
+        let feeds: Vec<Vec<u8>> = (1..=10u8).map(|n| vec![n; 3400]).collect();
+        let (result, _) = live(&client(&base, API_KEY), &[], &feeds, true).await;
+        assert_eq!(result, Ok(()));
+        wait(&mut ended).await;
+        let seen = seen.lock().unwrap();
+        let audio = seen[0].audio();
+        let mut want = vec![(3200, 0); 10];
+        want.push((2000, LAST_PACKET));
+        assert_eq!(audio.iter().map(|f| (f.payload.len(), f.flags)).collect::<Vec<_>>(), want, "100 ms packets, the rest in the last");
+        assert_eq!(audio.iter().flat_map(|f| f.payload.clone()).collect::<Vec<_>>(), feeds.concat(), "the audio in order");
     }
 
     /// A recorded take goes to `bigmodel_nostream` in 200 ms packets at most twice as fast as it
@@ -1269,7 +1296,7 @@ mod tests {
         assert_eq!((result, said), (Ok(()), vec![]));
         wait(&mut ended).await;
         let seen = seen.lock().unwrap();
-        assert_eq!(seen[0].audio().iter().map(|f| (f.payload.len(), f.flags)).collect::<Vec<_>>(), vec![(6400, 0)], "nothing after the cancel");
+        assert_eq!(seen[0].audio().iter().map(|f| (f.payload.len(), f.flags)).collect::<Vec<_>>(), vec![(3200, 0), (3200, 0)], "nothing after the cancel");
         assert!(seen[0].closed);
     }
 

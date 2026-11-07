@@ -6,12 +6,14 @@
 //! 1. the service says `session.created`; the client sends `session.update` (16 kHz PCM, the model,
 //!    the language, the glossary as the `prompt`, the service's own pause detection), and the audio
 //!    waits until the service confirms it with `session.updated`;
-//! 2. `input_audio_buffer.append` frames of base64 PCM; the pause detection cuts the take into
-//!    items, and the service answers each with `…transcription.delta` (the item's text so far: its
-//!    settled part `text`, then the tail it may still correct, `stash`) and, once the item is
-//!    committed, `…transcription.completed`;
-//! 3. at the end of the take the client sends a second of silence, so the pause detection closes the
-//!    sentence being spoken, then commits what is left, and waits for the items still open.
+//! 2. `input_audio_buffer.append` frames of base64 PCM, at most 100 ms each, sent as the audio comes
+//!    ([`realtime::live_packets`]); the pause detection cuts the take into items, and the service
+//!    answers each with `…transcription.delta` (the item's text so far: its settled part `text`,
+//!    then the tail it may still correct, `stash`) and, once the item is committed,
+//!    `…transcription.completed`;
+//! 3. at the end of the take the client sends a second of silence (ten appends of 100 ms), so the
+//!    pause detection closes the sentence being spoken, then commits what is left, and waits for the
+//!    items still open.
 //!
 //! A recorded take for a `…-stream` model goes to `stepaudio-2.5-asr` with the same key, which
 //! transcribes it in a second instead of as long as it plays; its receipt names that model.
@@ -46,8 +48,6 @@ pub const MAX_PROMPT_CHARS: usize = 1_000;
 /// The longest piece one whole-file request carries: 45 minutes of WAV is 86 MB, within the
 /// service's 100 MB.
 pub const MAX_PIECE_MS: u64 = 45 * 60_000;
-/// Most audio one `append` carries (one second).
-const MAX_APPEND_BYTES: usize = 1_000 * BYTES_PER_MS;
 /// The pause after which the service's detection closes a sentence.
 const PAUSE_MS: u64 = 800;
 /// The silence sent at the end of a take: longer than [`PAUSE_MS`], so the detection closes the
@@ -235,14 +235,18 @@ impl VendorAsr for StepfunAsr {
             };
             tokio::select! {
                 item = input.recv() => match item {
+                    // The doc lowers latency with smaller pieces (延迟过高：减小音频分块大小): each feed
+                    // goes at once, in appends of at most 100 ms (docs/dictation.md §3.15).
                     Some(RealtimeInput::Audio(pcm)) if end.is_none() => {
-                        for chunk in pcm.chunks(MAX_APPEND_BYTES) {
-                            session.sent_ms += u64::try_from(chunk.len() / BYTES_PER_MS).unwrap_or(0);
-                            sink.send(append(chunk)).await.map_err(realtime::map_ws)?;
+                        session.sent_ms += u64::try_from(pcm.len() / BYTES_PER_MS).unwrap_or(0);
+                        for packet in realtime::live_packets(&pcm) {
+                            sink.send(append(packet)).await.map_err(realtime::map_ws)?;
                         }
                     }
                     Some(RealtimeInput::Finish) if end.is_none() => {
-                        sink.send(append(&[0u8; CLOSING_SILENCE_MS * BYTES_PER_MS])).await.map_err(realtime::map_ws)?;
+                        for packet in realtime::live_packets(&[0u8; CLOSING_SILENCE_MS * BYTES_PER_MS]) {
+                            sink.send(append(packet)).await.map_err(realtime::map_ws)?;
+                        }
                         let commit = event_id();
                         sink.send(Message::text(json!({ "event_id": commit, "type": "input_audio_buffer.commit" }).to_string())).await.map_err(realtime::map_ws)?;
                         let now = tokio::time::Instant::now();
@@ -675,6 +679,8 @@ mod tests {
                     let (mut sink, mut stream) = socket.split();
                     let mut say = vec![json!({ "type": "session.created", "event_id": "e0" })];
                     let mut first_audio = true;
+                    // The closing silence comes in several appends; the pause detection answers once.
+                    let mut first_silence = true;
                     loop {
                         for event in say.drain(..) {
                             let _ = sink.send(Message::text(event.to_string())).await;
@@ -736,7 +742,7 @@ mod tests {
                                             json!({ "type": "conversation.item.input_audio_transcription.delta", "item_id": "i2", "text": "世" }),
                                         ]);
                                     }
-                                } else if silence && script == Script::StopThenRefuse {
+                                } else if silence && script == Script::StopThenRefuse && std::mem::take(&mut first_silence) {
                                     say.extend([
                                         json!({ "type": "input_audio_buffer.speech_stopped", "audio_start_ms": 2100, "item_id": "i2" }),
                                         json!({ "type": "input_audio_buffer.committed", "item_id": "i2" }),
@@ -821,14 +827,36 @@ mod tests {
         let seen = seen.lock().unwrap();
         assert_eq!(seen.authorization.as_deref(), Some("Bearer sf-test"));
         let sizes: Vec<usize> = seen.appends.iter().map(Vec::len).collect();
-        assert_eq!(sizes, [32_000, 32_000, 3_200, 32_000], "one second per append, then a second of silence");
-        assert!(seen.appends[3].iter().all(|b| *b == 0) && seen.committed);
+        assert_eq!(sizes, [3_200; 31], "100 ms per append: two seconds, 100 ms, then a second of silence");
+        let (speech, silence) = seen.appends.split_at(21);
+        assert_eq!(speech.concat(), [pcm(2), pcm(1)[..3_200].to_vec()].concat(), "the audio in order");
+        assert!(silence.iter().all(|a| a.iter().all(|b| *b == 0)) && seen.committed);
         let input = &seen.update.as_ref().unwrap()["session"]["audio"]["input"];
         assert_eq!(input["format"], json!({ "type": "pcm", "codec": "pcm_s16le", "rate": 16000, "bits": 16, "channel": 1 }));
         assert_eq!(input["transcription"]["model"], "stepaudio-2.5-asr-stream");
         assert_eq!(input["transcription"]["language"], "zh");
         assert_eq!(input["transcription"]["prompt"], "专业术语：Voltip");
         assert_eq!(input["turn_detection"], json!({ "type": "server_vad", "silence_duration_ms": 800, "threshold": 0.6 }));
+    }
+
+    /// docs/dictation.md §3.15 (2026-11-08): no append carries more than 100 ms, and none waits for
+    /// more audio. About a second fed as the core feeds it, a little over 100 ms at a time, goes as
+    /// two equal appends per feed, at once; the closing second of silence as ten appends of 100 ms,
+    /// then the commit.
+    #[tokio::test]
+    async fn live_appends_carry_at_most_100_ms() {
+        let (base, seen) = serve(Script::CommitTheOpenItem).await;
+        let audio = pcm(2)[..34_000].to_vec();
+        let feeds: Vec<Vec<u8>> = audio.chunks(3_400).map(<[u8]>::to_vec).collect();
+        let (result, events) = run(&live(&base), &feeds, true).await;
+        assert_eq!((result, events.last()), (Ok(()), Some(&RealtimeEvent::Finished)));
+        let seen = seen.lock().unwrap();
+        let sizes: Vec<usize> = seen.appends.iter().map(Vec::len).collect();
+        let mut want = vec![1_700; 20];
+        want.extend([3_200; 10]);
+        assert_eq!(sizes, want, "each feed in two appends of 53 ms, then the closing second in ten of 100 ms");
+        assert_eq!(seen.appends[..20].concat(), audio, "the audio in order");
+        assert!(seen.appends[20..].iter().all(|a| a.iter().all(|b| *b == 0)) && seen.committed);
     }
 
     /// The end of a take in each case the service may answer it: the commit taking the item being
