@@ -1,7 +1,9 @@
 //! What the realtime protocols share (docs/dictation.md §3.15): the WebSocket through the proxy,
-//! a recorded take fed to a realtime session at the pace its service asks for, the deadline that
-//! pace needs, and the take's sentences joined into its text.
+//! the longest packet of audio a live session sends, a recorded take fed to a realtime session at
+//! the pace its service asks for, the deadline that pace needs, and the take's sentences joined
+//! into its text.
 
+use std::future::Future;
 use std::time::{Duration, Instant};
 
 use tokio::net::TcpStream;
@@ -14,7 +16,7 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use crate::client::Transcript;
 use crate::dashscope::{join_sentences, service_error};
 use crate::error::AsrError;
-use crate::vendor::{RealtimeEvent, RealtimeInput, VendorAsr};
+use crate::vendor::{RealtimeEvent, RealtimeEvents, RealtimeInput, VendorAsr};
 
 /// Deadline of the TCP connection and the WebSocket handshake.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -22,6 +24,12 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub const SAMPLE_RATE: u32 = 16_000;
 /// Bytes of one millisecond of that PCM.
 pub const BYTES_PER_MS: usize = 32;
+/// The longest packet of audio a live session sends: 100 ms (docs/dictation.md §3.15, 2026-11-08).
+/// A packet that waits until it is full holds the first words of a sentence back until the rest of
+/// it is recorded, so with shorter packets they reach the service, and the preview, sooner (豆包语音
+/// showed its first word about 0.55 s after speech began with 200 ms packets, 0.48 s with 100 ms).
+/// Recorded takes and the probes keep the packets their services suggest.
+pub const LIVE_PACKET_BYTES: usize = 100 * BYTES_PER_MS;
 
 /// A realtime connection.
 pub type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -90,6 +98,18 @@ impl Pace {
     }
 }
 
+/// `pcm` (16-bit) in the fewest packets of at most [`LIVE_PACKET_BYTES`], as equal as whole
+/// samples allow: for the services that take the audio as it comes (阿里云百炼, 阶跃星辰). None waits
+/// for more audio, and none is a sliver: the core feeds 100 ms or more at a time, so a longer feed
+/// goes as parts of at least 50 ms; a take's last bit may be shorter, as it was.
+pub fn live_packets(pcm: &[u8]) -> impl Iterator<Item = &[u8]> {
+    // Samples, a trailing odd byte counting as one, so every edge falls between whole samples.
+    let samples = pcm.len().div_ceil(2);
+    let count = samples.div_ceil(LIVE_PACKET_BYTES / 2);
+    let edge = move |i: usize| if i == count { pcm.len() } else { 2 * (i * samples / count) };
+    (0..count).map(move |i| &pcm[edge(i)..edge(i + 1)])
+}
+
 /// How long `pcm` plays (16 kHz, 16-bit mono).
 pub fn played(pcm: &[u8]) -> Duration {
     Duration::from_millis(u64::try_from(pcm.len() / BYTES_PER_MS).unwrap_or(u64::MAX))
@@ -134,12 +154,23 @@ pub async fn transcribe_whole(
     pace: Pace,
     timeout: Duration,
 ) -> Result<Transcript, AsrError> {
+    whole_take(client.model(), |input, events| client.realtime(language, glossary, input, events), pcm, frame_bytes, pace, timeout).await
+}
+
+/// [`transcribe_whole`] on sessions `session` opens, for `model`: a client whose recorded takes
+/// go in other packets than its live sessions' ([`LIVE_PACKET_BYTES`]) passes a session of its
+/// own with their size.
+pub async fn whole_take<S, F>(model: &str, session: S, pcm: &[u8], frame_bytes: usize, pace: Pace, timeout: Duration) -> Result<Transcript, AsrError>
+where
+    S: FnOnce(mpsc::UnboundedReceiver<RealtimeInput>, RealtimeEvents) -> F,
+    F: Future<Output = Result<(), AsrError>>,
+{
     let started = Instant::now();
     let deadline = whole_take_deadline(timeout, played(pcm), pace);
     let (input_tx, input) = mpsc::unbounded_channel();
     let (events_tx, mut events) = mpsc::unbounded_channel();
     let run = async {
-        let session = client.realtime(language, glossary, input, events_tx);
+        let session = session(input, events_tx);
         let sending = feed(&input_tx, pcm, frame_bytes, pace);
         let collect = async {
             let mut sentences = Vec::new();
@@ -158,7 +189,7 @@ pub async fn transcribe_whole(
     let sentences = tokio::time::timeout(deadline, run).await.map_err(|_| AsrError::Timeout)??;
     let text = join_sentences(&sentences);
     let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-    Ok(Transcript { text, latency_ms, model: client.model().to_owned() })
+    Ok(Transcript { text, latency_ms, model: model.to_owned() })
 }
 
 #[cfg(test)]
@@ -196,6 +227,37 @@ mod tests {
                 }
             }
             assert_eq!(frames, 25, "{pace:?}");
+        }
+    }
+
+    /// docs/dictation.md §3.15 (2026-11-08): a live feed in the fewest packets of at most 100 ms,
+    /// as equal as whole samples allow, nothing dropped or reordered: 100 ms goes as it is, the
+    /// core's usual 106 ms as two of 53 ms, its longest (just under 200 ms) as two, a second as ten
+    /// of 100 ms; nothing makes no packet, and an odd byte stays with the last.
+    #[test]
+    fn live_packets_hold_at_most_100_ms_each() {
+        let sizes = |bytes: usize| -> Vec<usize> {
+            let pcm: Vec<u8> = (0..bytes).map(|i| (i % 251) as u8).collect();
+            let packets: Vec<&[u8]> = live_packets(&pcm).collect();
+            assert_eq!(packets.concat(), pcm, "{bytes}: everything, in order");
+            assert!(packets.iter().all(|p| p.len() <= LIVE_PACKET_BYTES), "{bytes}: {packets:?}");
+            packets.iter().map(|p| p.len()).collect()
+        };
+        assert_eq!(LIVE_PACKET_BYTES, 3200);
+        assert_eq!(sizes(0), Vec::<usize>::new());
+        assert_eq!(sizes(640), [640]);
+        assert_eq!(sizes(3200), [3200]);
+        assert_eq!(sizes(3202), [1600, 1602]);
+        assert_eq!(sizes(3400), [1700, 1700]);
+        assert_eq!(sizes(6398), [3198, 3200]);
+        assert_eq!(sizes(6400), [3200, 3200]);
+        assert_eq!(sizes(6402), [2134, 2134, 2134]);
+        assert_eq!(sizes(32_000), [3200; 10]);
+        assert_eq!(sizes(3201), [1600, 1601]);
+        // Every edge between whole samples.
+        for bytes in (0..20_000).step_by(2) {
+            let pcm = vec![0u8; bytes];
+            assert!(live_packets(&pcm).all(|p| p.len() % 2 == 0), "{bytes}");
         }
     }
 

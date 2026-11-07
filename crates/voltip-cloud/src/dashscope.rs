@@ -162,7 +162,14 @@ async fn drive(options: &DuplexOptions, mut inbox: mpsc::UnboundedReceiver<Comma
     loop {
         tokio::select! {
             command = inbox.recv() => match command {
-                Some(Command::Audio(pcm)) if !finishing => sender.audio(pcm).await.map_err(|e| e.to_string())?,
+                // The core feeds a little over 100 ms at a time; each feed goes at once, in packets
+                // of at most 100 ms, the size the doc asks for (建议每包音频时长为100ms左右,
+                // docs/dictation.md §3.15).
+                Some(Command::Audio(pcm)) if !finishing => {
+                    for packet in voltip_asr::realtime::live_packets(&pcm) {
+                        sender.audio(packet.to_vec()).await.map_err(|e| e.to_string())?;
+                    }
+                }
                 Some(Command::Finish) if !finishing => {
                     finishing = true;
                     sender.finish().await.map_err(|e| e.to_string())?;
@@ -213,6 +220,8 @@ pub(crate) mod tests {
     pub(crate) struct Seen {
         pub run_task: Option<Value>,
         pub audio_bytes: usize,
+        /// The size of each binary frame, in order.
+        pub frames: Vec<usize>,
         pub finished: bool,
         pub closed: bool,
     }
@@ -268,7 +277,11 @@ pub(crate) mod tests {
                     }
                 }
                 Ok(Message::Binary(bytes)) => {
-                    seen.lock().unwrap().audio_bytes += bytes.len();
+                    {
+                        let mut seen = seen.lock().unwrap();
+                        seen.audio_bytes += bytes.len();
+                        seen.frames.push(bytes.len());
+                    }
                     frames += 1;
                     words += 1;
                     let id = (frames - 1) / 3 + 1;
@@ -379,6 +392,31 @@ pub(crate) mod tests {
         let seen = seen.lock().unwrap();
         assert!(seen.closed && !seen.finished, "closed without finish-task");
         assert_eq!(seen.audio_bytes, 3200);
+    }
+
+    /// docs/dictation.md §3.15 (2026-11-08): no packet of a live take carries more than 100 ms, and
+    /// none waits for more audio. A feed of 100 ms goes as it is; a longer one, as the core's often
+    /// is, in equal parts at once, each well over the 1 KB the service suggests at the least.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn live_packets_carry_at_most_100_ms() {
+        let (origin, seen) = serve(None).await;
+        let streaming = transcriber(&origin, "fun-asr-realtime", DashscopeMode::Duplex).streaming(&[]).unwrap();
+        let fin = tokio::task::spawn_blocking(move || {
+            let mut session = streaming.open(None).unwrap();
+            for _ in 0..10 {
+                session.feed(&[0.25; 1700]);
+            }
+            session.feed(&[0.25; 1600]);
+            session.finish()
+        })
+        .await
+        .unwrap();
+        assert!(fin.is_ok(), "{fin:?}");
+        let seen = seen.lock().unwrap();
+        let mut want = vec![1700; 20];
+        want.push(3200);
+        assert_eq!(seen.frames, want, "a feed of 106 ms in two packets of 53 ms, one of 100 ms as it is");
+        assert!(seen.finished);
     }
 
     /// Nobody answers the last sentence: `finish` gives up after its timeout instead of hanging

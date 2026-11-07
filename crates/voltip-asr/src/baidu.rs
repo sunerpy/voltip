@@ -3,8 +3,9 @@
 //! the `dev_pid`.
 //!
 //! The URL carries only a request id (`sn`, a UUID); the credential goes in the START frame, with
-//! the `dev_pid` and the audio's format. The audio follows in binary frames of 160 ms (each 20 to
-//! 200 ms but the last). The service answers with the sentence being spoken (`MID_TEXT`) and each
+//! the `dev_pid` and the audio's format. The audio follows in binary frames (each 20 to 200 ms
+//! but the last): 100 ms for a live take, 160 ms (the size the doc suggests) for a recorded take
+//! and the probe. The service answers with the sentence being spoken (`MID_TEXT`) and each
 //! finished one (`FIN_TEXT`, with its start and end in milliseconds of the audio), sends a
 //! `HEARTBEAT` every 5 seconds, and closes the connection once it has answered FINISH: that close
 //! is the end of the request. An error comes as a `FIN_TEXT` with an `err_no`: `-3005` (audio
@@ -32,7 +33,9 @@ use crate::error::AsrError;
 use crate::realtime::{self, BYTES_PER_MS, Pace, Socket};
 use crate::vendor::{self, RealtimeEvent, RealtimeEvents, RealtimeInput, VendorAsr};
 
-/// Bytes of one audio frame: 160 ms of 16 kHz 16-bit mono, the size the service suggests.
+/// Bytes of one audio frame of a recorded take and of the probe: 160 ms of 16 kHz 16-bit mono, the
+/// size the service suggests. A live take goes in 100 ms frames ([`realtime::LIVE_PACKET_BYTES`],
+/// docs/dictation.md §3.15), within the 20 to 200 ms the doc allows.
 const FRAME_BYTES: usize = 5120;
 /// A recorded take goes out as fast as the connection takes it (docs/dictation.md §3.15).
 const WHOLE_TAKE_PACE: Pace = Pace::Burst;
@@ -136,12 +139,13 @@ impl VendorAsr for BaiduAsr {
 
     /// A recorded take on one request, as fast as the connection takes it (docs/dictation.md
     /// §3.15).
-    async fn transcribe(&self, wav: &[u8], language: Option<&str>, glossary: &[String]) -> Result<Transcript, AsrError> {
+    async fn transcribe(&self, wav: &[u8], _language: Option<&str>, _glossary: &[String]) -> Result<Transcript, AsrError> {
         let pcm = pcm_of(wav)?;
         if pcm.is_empty() {
             return Ok(Transcript { text: String::new(), latency_ms: 0, model: self.model.clone() });
         }
-        realtime::transcribe_whole(self, pcm, language, glossary, FRAME_BYTES, WHOLE_TAKE_PACE, self.config.timeout).await
+        let session = |input, events| self.session(input, events, FRAME_BYTES);
+        realtime::whole_take(&self.model, session, pcm, FRAME_BYTES, WHOLE_TAKE_PACE, self.config.timeout).await
     }
 
     /// START, one frame of silence and FINISH: the service closes the connection once it has
@@ -173,7 +177,7 @@ impl VendorAsr for BaiduAsr {
         true
     }
 
-    /// One request: binary audio in 5120-byte frames, FINISH on [`RealtimeInput::Finish`], and the
+    /// One request: binary audio in 100 ms frames, FINISH on [`RealtimeInput::Finish`], and the
     /// service's sentences until it closes the connection. A take given up (its input closed)
     /// sends CANCEL; after FINISH the request lasts as long as the caller waits. However the
     /// request ends, the connection closes.
@@ -181,19 +185,27 @@ impl VendorAsr for BaiduAsr {
         &self,
         _language: Option<&str>,
         _glossary: &[String],
-        mut input: mpsc::UnboundedReceiver<RealtimeInput>,
+        input: mpsc::UnboundedReceiver<RealtimeInput>,
         events: RealtimeEvents,
     ) -> Result<(), AsrError> {
+        self.session(input, events, realtime::LIVE_PACKET_BYTES).await
+    }
+}
+
+impl BaiduAsr {
+    /// One request with the audio in frames of `frame_bytes` (see [`run`]); the connection closes
+    /// however it ends.
+    async fn session(&self, mut input: mpsc::UnboundedReceiver<RealtimeInput>, events: RealtimeEvents, frame_bytes: usize) -> Result<(), AsrError> {
         let mut socket = self.open().await?;
-        let result = run(&mut socket, &mut input, &events).await;
+        let result = run(&mut socket, &mut input, &events, frame_bytes).await;
         let _ = socket.close(None).await;
         result
     }
 }
 
 /// A request until everything was said ([`RealtimeEvent::Finished`]), the take was given up (its
-/// input closed: CANCEL) or it failed.
-async fn run(socket: &mut Socket, input: &mut mpsc::UnboundedReceiver<RealtimeInput>, events: &RealtimeEvents) -> Result<(), AsrError> {
+/// input closed: CANCEL) or it failed; the audio in frames of `frame_bytes`.
+async fn run(socket: &mut Socket, input: &mut mpsc::UnboundedReceiver<RealtimeInput>, events: &RealtimeEvents, frame_bytes: usize) -> Result<(), AsrError> {
     let (mut pending, mut sent, mut last_end_ms, mut finished) = (Vec::<u8>::new(), 0usize, 0u64, false);
     loop {
         tokio::select! {
@@ -227,11 +239,11 @@ async fn run(socket: &mut Socket, input: &mut mpsc::UnboundedReceiver<RealtimeIn
             item = input.recv() => match item {
                 Some(RealtimeInput::Audio(pcm)) if !finished => {
                     pending.extend_from_slice(&pcm);
-                    sent += send_audio(socket, &mut pending, false).await?;
+                    sent += send_audio(socket, &mut pending, frame_bytes, false).await?;
                 }
                 Some(RealtimeInput::Finish) if !finished => {
                     finished = true;
-                    sent += send_audio(socket, &mut pending, true).await?;
+                    sent += send_audio(socket, &mut pending, frame_bytes, true).await?;
                     if let Err(error) = socket.send(Message::text(FINISH)).await {
                         return Err(said_before(socket, error).await);
                     }
@@ -246,12 +258,12 @@ async fn run(socket: &mut Socket, input: &mut mpsc::UnboundedReceiver<RealtimeIn
     }
 }
 
-/// Send `pending`'s whole frames, and with `flush` the rest as the last (shorter) one; the bytes
-/// sent.
-async fn send_audio(socket: &mut Socket, pending: &mut Vec<u8>, flush: bool) -> Result<usize, AsrError> {
+/// Send `pending`'s whole frames of `frame_bytes`, and with `flush` the rest as the last (shorter)
+/// one; the bytes sent.
+async fn send_audio(socket: &mut Socket, pending: &mut Vec<u8>, frame_bytes: usize, flush: bool) -> Result<usize, AsrError> {
     let mut at = 0;
-    while pending.len() - at >= FRAME_BYTES || (flush && pending.len() > at) {
-        let end = (at + FRAME_BYTES).min(pending.len());
+    while pending.len() - at >= frame_bytes || (flush && pending.len() > at) {
+        let end = (at + frame_bytes).min(pending.len());
         if let Err(error) = socket.send(Message::binary(pending[at..end].to_vec())).await {
             return Err(said_before(socket, error).await);
         }
@@ -488,7 +500,7 @@ mod tests {
         assert!(matches!(futures_util::FutureExt::now_or_never(client.transcribe(&wav(100, 8_000), None, &[])), Some(Err(AsrError::Audio(_)))));
     }
 
-    /// START carries the credential and the model as numbers; the audio goes in 160 ms binary
+    /// START carries the credential and the model as numbers; the audio goes in 100 ms binary
     /// frames and a shorter last one, then FINISH. The sentence so far and the finished one, with
     /// the service's times, come back; a heartbeat and a sentence's `-3005` are skipped; the
     /// service's close ends the take.
@@ -504,6 +516,7 @@ mod tests {
                 RealtimeEvent::Partial { text: "北".into() },
                 RealtimeEvent::Partial { text: "北京".into() },
                 RealtimeEvent::Partial { text: "北京天".into() },
+                RealtimeEvent::Partial { text: "北京天气".into() },
                 RealtimeEvent::Sentence { text: SENTENCE.into(), begin_ms: 20, end_ms: 375 },
                 RealtimeEvent::Finished,
             ]
@@ -517,7 +530,7 @@ mod tests {
                 json!({ "type": "FINISH" })
             ]
         );
-        assert_eq!(seen.binary(0), [audio[..5120].to_vec(), audio[5120..10_240].to_vec(), audio[10_240..].to_vec()]);
+        assert_eq!(seen.binary(0), [audio[..3200].to_vec(), audio[3200..6400].to_vec(), audio[6400..9600].to_vec(), audio[9600..].to_vec()]);
         assert!(matches!(seen.frames[0].last(), Some(Message::Text(_))), "FINISH after the audio");
         let url = Url::parse(&format!("ws://h{}", seen.handshakes[0].0)).unwrap();
         assert_eq!(url.path(), "/realtime_asr");
@@ -605,6 +618,27 @@ mod tests {
         assert_eq!(silent.probe().await, Err(AsrError::Timeout), "a handshake alone is not success");
     }
 
+    /// docs/dictation.md §3.15 (2026-11-08): a live take's audio goes in frames of 100 ms (the doc
+    /// allows 20 to 200 ms but the last), whatever sizes it comes in. About a second fed as the core
+    /// feeds it, a little over 100 ms at a time, goes out in 3200-byte frames and the rest last,
+    /// then FINISH. Recorded takes and the probe keep their 160 ms frames
+    /// (`baidu_a_whole_take_goes_in_a_burst`, `baidu_probe_succeeds_when_the_service_closes_after_finish`).
+    #[tokio::test]
+    async fn baidu_a_live_take_goes_in_100_ms_frames_whatever_the_feed() {
+        let (base, seen) = serve_baidu(Baidu::Recognises).await;
+        let audio = pcm(34_000);
+        let inputs: Vec<RealtimeInput> = audio.chunks(3400).map(|feed| RealtimeInput::Audio(feed.to_vec())).chain([RealtimeInput::Finish]).collect();
+        let (result, _) = live(&baidu_at(&base, "15372"), None, inputs).await;
+        result.unwrap();
+        let seen = seen.lock().unwrap();
+        let frames = seen.binary(0);
+        let mut want = vec![3200; 10];
+        want.push(2000);
+        assert_eq!(frames.iter().map(Vec::len).collect::<Vec<_>>(), want, "100 ms frames, the rest last");
+        assert_eq!(frames.concat(), audio, "the audio in order");
+        assert_eq!(seen.json(0).last(), Some(&json!({ "type": "FINISH" })));
+    }
+
     /// A take cancelled (its input closed before `Finish`) sends CANCEL instead of FINISH and closes,
     /// without `Finished`.
     #[tokio::test]
@@ -615,7 +649,8 @@ mod tests {
         let (events_tx, mut events_rx) = mpsc::unbounded_channel();
         let watch = seen.clone();
         let drive = async move {
-            tx.send(RealtimeInput::Audio(pcm(2 * FRAME_BYTES))).unwrap();
+            // Two frames of 100 ms.
+            tx.send(RealtimeInput::Audio(pcm(6400))).unwrap();
             eventually("START and two frames", || watch.lock().unwrap().frames.first().is_some_and(|f| f.len() == 3)).await;
             drop(tx);
         };
