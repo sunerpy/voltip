@@ -37,6 +37,15 @@ describe("the talk card while the phone recognises with the built-in service", (
     expect(screen.queryByTestId("usage-notice-asr_near")).toBeNull();
   });
 
+  it("says only what was used while the service counts without a limit", async () => {
+    await renderApp({ mock: { usage: sampleUsage("count") } });
+    expect(await screen.findByTestId("talk-usage-text")).toHaveTextContent(
+      /^内置服务 · 今日已用 23 分钟$/,
+    );
+    expect(screen.queryByTestId("talk-usage-bar")).toBeNull();
+    expect(screen.queryByTestId("usage-notice-asr_near")).toBeNull();
+  });
+
   it("turns amber from 80 % with a notice per service, each closed for the day", async () => {
     const { backend } = await renderApp({ mock: { usage: sampleUsage("near") } });
     expect(await screen.findByTestId("talk-usage-text")).toHaveTextContent(
@@ -199,18 +208,50 @@ describe("设置 › 用量 (board 16)", () => {
     expect(screen.queryByTestId("usage-computer-note")).toBeNull();
   });
 
-  it("says 暂不限量 in the counting period", async () => {
+  it("says only what was used in the counting period", async () => {
+    // 2026-11-07, the user: today's usage shows the amount used, not 暂不限量 or 统计期间不设上限.
     await renderApp({ mock: { usage: sampleUsage("count") } });
     await openTab("settings");
+    const row = await screen.findByTestId("settings-usage");
+    expect(row).toHaveTextContent(/识别 23 分钟 · 润色 41 次/);
+    expect(row).not.toHaveTextContent(/暂不限量|不设上限/);
+    await fireEvent.press(row);
+    const asr = await screen.findByTestId("usage-card-asr");
+    expect(within(asr).getByTestId("usage-numbers-asr")).toHaveTextContent(/^23 分钟$/);
+    expect(within(asr).queryByTestId("usage-status-asr")).toBeNull();
+    expect(within(asr).getByTestId("usage-reset-asr")).toHaveTextContent(/重置 · (还有|不到)/);
+    const llm = screen.getByTestId("usage-card-llm");
+    expect(within(llm).getByTestId("usage-numbers-llm")).toHaveTextContent(/^41 次$/);
+    expect(within(llm).queryByTestId("usage-status-llm")).toBeNull();
+    expect(screen.getByTestId("phone-usage")).not.toHaveTextContent(/暂不限量|不设上限/);
+  });
+
+  it("follows the service's reports from counting to limits and back, without a restart", async () => {
+    const { backend } = await renderApp({ mock: { usage: sampleUsage("count") } });
+    expect(await screen.findByTestId("talk-usage-text")).toHaveTextContent(
+      /^内置服务 · 今日已用 23 分钟$/,
+    );
+    expect(screen.queryByTestId("talk-usage-bar")).toBeNull();
+    // The service sets its limits: the next answer's report (or question) says so.
+    await act(async () => {
+      backend.simulateUsage({ quota: sampleUsage("ok").quota });
+    });
+    expect(screen.getByTestId("talk-usage-text")).toHaveTextContent("内置服务 · 今日 23 / 60 分钟");
+    expect(screen.getByTestId("talk-usage-bar")).toBeOnTheScreen();
+    await openTab("settings");
     expect(await screen.findByTestId("settings-usage")).toHaveTextContent(
-      /识别 23 分钟 · 润色 41 次 · 暂不限量/,
+      /识别 23 \/ 60 分钟 · 润色 41 \/ 100 次/,
     );
     await fireEvent.press(screen.getByTestId("settings-usage"));
     const asr = await screen.findByTestId("usage-card-asr");
-    expect(within(asr).getByTestId("usage-status-asr")).toHaveTextContent("暂不限量");
-    expect(within(asr).getByTestId("usage-numbers-asr")).toHaveTextContent(
-      "23 分钟 · 统计期间不设上限",
-    );
+    expect(within(asr).getByTestId("usage-status-asr")).toHaveTextContent("剩余 37 分钟");
+    expect(within(asr).getByTestId("usage-numbers-asr")).toHaveTextContent("23 / 60 分钟");
+    // And back to counting.
+    await act(async () => {
+      backend.simulateUsage({ quota: sampleUsage("count").quota });
+    });
+    expect(within(asr).queryByTestId("usage-status-asr")).toBeNull();
+    expect(within(asr).getByTestId("usage-numbers-asr")).toHaveTextContent(/^23 分钟$/);
   });
 
   it("is not there in a build without the built-in service", async () => {
@@ -353,6 +394,17 @@ describe("设置 › 悬浮球 (boards 18a/18b)", () => {
     const guide = jest.spyOn(backend, "guideOpen");
     await fireEvent.press(screen.getByTestId("bubble-vendor"));
     expect(guide).toHaveBeenCalledWith("bubble", "zh-CN");
+  });
+
+  it("shows the amount used alone in the counting period", async () => {
+    const bubble = fakeBubble({
+      permissions: { microphone: true, overlay: true, notifications: true },
+    });
+    await renderApp({ bubble, mock: { usage: sampleUsage("count") } });
+    await openBubble();
+    expect(await screen.findByTestId("bubble-usage")).toHaveTextContent(
+      /^使用内置服务时计入这部手机的用量 · 今日已用 23 分钟$/,
+    );
   });
 
   it("shows 不复制 beside the result only when asked, and only while the result shows", async () => {

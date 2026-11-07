@@ -62,12 +62,11 @@ interface UsageCard {
   rows: Row[];
   /** What colours the icon and fills the one-line form: the tighter built-in service. */
   worst?: ServiceUsage;
-  /** The header's right side: when the day resets, 暂不限量, 本机统计 or 无法获取. */
+  /** The header's right side: when the day resets, 本机统计 or 无法获取. */
   right: string;
   /** Neither service uses the built-in one. */
   own: boolean;
   unknown: boolean;
-  unlimited: boolean;
   /** The service has not reported yet (the first minutes after start). */
   pending: boolean;
 }
@@ -107,25 +106,22 @@ function useUsageCard(): UsageCard | undefined {
       : builtinRows.map((r) => r.usage).reduce((a, b) => tighter(a, b));
   const unknown = builtinRows.some((r) => r.usage.tone === "unknown");
   const pending = builtinRows.length > 0 && builtinRows.every((r) => r.usage.tone === "pending");
-  const unlimited =
-    builtinRows.length > 0 && builtinRows.every((r) => r.usage.tone === "unlimited");
   const reset = builtinRows.find((r) => r.usage.resetAtMs !== undefined)?.usage.resetAtMs;
+  // The counting period shows the reset as the limits do: its rows say what was used alone
+  // (2026-11-07, the user: no 暂不限量).
   const right = own
     ? t("usage.card.own")
     : unknown
       ? t("usage.unavailable")
-      : unlimited
-        ? t("usage.unlimited")
-        : reset === undefined
-          ? ""
-          : t("usage.resetShort", { time: resetClock(reset) });
+      : reset === undefined
+        ? ""
+        : t("usage.resetShort", { time: resetClock(reset) });
   return {
     rows,
     ...(worst === undefined ? {} : { worst }),
     right,
     own,
     unknown,
-    unlimited,
     pending,
   };
 }
@@ -160,9 +156,7 @@ function FullUsage({ card, active, disabled, onOpen }: PartProps) {
     <button
       type="button"
       data-testid="sidebar-usage-card"
-      data-mode={
-        card.own ? "own" : card.unknown ? "unknown" : card.unlimited ? "unlimited" : "builtin"
-      }
+      data-mode={card.own ? "own" : card.unknown ? "unknown" : "builtin"}
       data-tone={card.worst?.tone}
       title={t("usage.card.open")}
       disabled={disabled}
@@ -218,9 +212,9 @@ function FullUsage({ card, active, disabled, onOpen }: PartProps) {
                 )}
             </span>
           ))}
-          {(card.own || card.unlimited) && (
+          {card.own && (
             <span className="border-t border-border pt-1.5 text-[11px] text-fg-subtle">
-              {card.own ? t("usage.card.ownNote") : t("usage.unlimitedShort")}
+              {t("usage.card.ownNote")}
             </span>
           )}
         </span>
@@ -233,20 +227,21 @@ function FullUsage({ card, active, disabled, onOpen }: PartProps) {
 function CompactUsage({ card, active, disabled, onOpen }: PartProps) {
   const { t, locale } = useI18n();
   const worst = card.worst;
+  // The numbers keep a space after the service's name (`润色 41 / 100 次`, `识别 23 分钟`); a state
+  // does not (`识别剩余 8 分钟`).
+  const numbers = worst !== undefined && (worst.tone === "ok" || worst.tone === "unlimited");
   const value = card.own
     ? t("usage.card.own")
     : card.pending
       ? t("usage.pending")
       : card.unknown
         ? t("usage.unavailable")
-        : card.unlimited
-          ? t("usage.unlimited")
-          : worst === undefined
-            ? ""
-            : t(worst.tone === "ok" ? "usage.card.compactNumbers" : "usage.card.compactValue", {
-                service: t(`usage.short.${worst.kind}`),
-                value: usageValue(worst, locale),
-              });
+        : worst === undefined
+          ? ""
+          : t(numbers ? "usage.card.compactNumbers" : "usage.card.compactValue", {
+              service: t(`usage.short.${worst.kind}`),
+              value: usageValue(worst, locale),
+            });
   return (
     <button
       type="button"

@@ -312,6 +312,49 @@ mod tests {
         assert!(!usage.view(false, NOW).builtin);
     }
 
+    /// The service moves from counting to limits and back (docs/runbook.md: the admin site
+    /// switches it): the view follows the newest report, from an answer's header or from the
+    /// quota query, in either direction, with no restart.
+    #[tokio::test]
+    async fn the_view_follows_the_service_from_counting_to_limits_and_back() {
+        let (mut usage, mut rx, _dir) = runtime();
+        let day = beijing_day(NOW);
+        let modes = |usage: &UsageRuntime, at: u64| {
+            let quota = usage.view(true, at).quota.unwrap();
+            (quota.mode, quota.asr.used_seconds, quota.asr.limit_seconds, quota.refine.limit)
+        };
+        // An answer's header, in the counting period.
+        usage.metering.report(&format!("mode=count; basis=device; day={day}; reset={RESET}; asr=95/-; refine=3/-"));
+        let note = rx.recv().await.unwrap();
+        usage.receive(note, NOW);
+        assert_eq!(modes(&usage, NOW), (QuotaMode::Count, 95, None, None));
+        // The next answer's header carries the limits.
+        usage.metering.report(&format!("mode=limit; basis=device; day={day}; reset={RESET}; asr=120/3600; refine=4/100"));
+        let note = rx.recv().await.unwrap();
+        usage.receive(note, NOW + 1_000);
+        assert_eq!(modes(&usage, NOW + 1_000), (QuotaMode::Limit, 120, Some(3600), Some(100)), "counting to limits, from an answer");
+        // The quota query finds the counting period again.
+        let counting =
+            QuotaReport { asr: AsrQuota { used_seconds: 130, limit_seconds: None }, refine: RefineQuota { used: 5, limit: None }, ..report(RESET, 130) };
+        usage.receive(UsageInbound::Probed(Ok(counting.clone())), NOW + 2_000);
+        assert_eq!(modes(&usage, NOW + 2_000), (QuotaMode::Count, 130, None, None), "limits to counting, from the query");
+        // And limits again, from the query.
+        let limited = QuotaReport {
+            mode: QuotaMode::Limit,
+            asr: AsrQuota { used_seconds: 140, limit_seconds: Some(3600) },
+            refine: RefineQuota { used: 6, limit: Some(100) },
+            ..counting
+        };
+        usage.receive(UsageInbound::Probed(Ok(limited)), NOW + 3_000);
+        assert_eq!(modes(&usage, NOW + 3_000), (QuotaMode::Limit, 140, Some(3600), Some(100)), "counting to limits, from the query");
+        // Back to counting, from an answer.
+        usage.metering.report(&format!("mode=count; basis=device; day={day}; reset={RESET}; asr=150/-; refine=7/-"));
+        let note = rx.recv().await.unwrap();
+        usage.receive(note, NOW + 4_000);
+        assert_eq!(modes(&usage, NOW + 4_000), (QuotaMode::Count, 150, None, None), "limits to counting, from an answer");
+        assert_eq!(usage.view(true, NOW + 4_000).reported_at, Some(NOW + 4_000));
+    }
+
     /// The metering's notes reach the runtime's queue; an answered request goes into the record.
     #[tokio::test]
     async fn the_meterings_notes_reach_the_record() {

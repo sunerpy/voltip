@@ -153,17 +153,16 @@ function ServiceCard({ kind }: { kind: ServiceKind }) {
   );
 }
 
-/** The big number: today's use over the limit, what is left on the right. */
+/** The big number: today's use over the limit, what is left on the right; the use alone in the
+ *  counting period (2026-11-07, the user: no 暂不限量). */
 function Numbers({ usage }: { usage: ServiceUsage }) {
   const { t, locale } = useI18n();
   const status =
     usage.tone === "out"
       ? t("usage.usedUpToday")
-      : usage.tone === "unlimited"
-        ? t("usage.unlimited")
-        : usage.tone === "ok" || usage.tone === "near"
-          ? usageLeft(usage, locale)
-          : undefined;
+      : usage.tone === "ok" || usage.tone === "near"
+        ? usageLeft(usage, locale)
+        : undefined;
   if (usage.tone === "unknown" || usage.tone === "pending") return null;
   return (
     <div

@@ -179,7 +179,8 @@ export function usageInline(
             amount: usageAmount(usage.kind, usage.left ?? 0, locale),
           });
     case "unlimited":
-      return translate(locale, "usage.inline.unlimited", {
+      // The counting period: what was used alone (2026-11-07, the user: no 暂不限量).
+      return translate(locale, "usage.todayUsed", {
         amount: usageAmount(usage.kind, usage.used, locale),
       });
     case "unknown":
@@ -196,7 +197,7 @@ export function usageInline(
 
 /** Both services in one line, as the phone's 设置 › 用量 row says it (Penpot 「用量与额度」 board
  *  16a): `识别 23 / 60 分钟 · 润色 41 / 100 次`, what is left from 80 % on, 已用完 at the limit, the
- *  amounts with 暂不限量 in the counting period; one line for the day when it cannot be told. */
+ *  amounts alone in the counting period; one line for the day when it cannot be told. */
 export function usageSummary(
   view: UsageView,
   nowMs: number,
@@ -214,8 +215,7 @@ export function usageSummary(
         : "usage.card.compactValue",
       { service: translate(locale, `usage.short.${usage.kind}`), value: usageValue(usage, locale) },
     );
-  const line = `${part(asr)} · ${part(llm)}`;
-  return asr.tone === "unlimited" ? `${line} · ${translate(locale, "usage.unlimited")}` : line;
+  return `${part(asr)} · ${part(llm)}`;
 }
 
 /** `00:00` or `16:00`: the local clock time of a reset. */

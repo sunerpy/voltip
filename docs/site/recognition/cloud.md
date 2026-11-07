@@ -25,7 +25,7 @@ The built-in service counts each device's use by day. Every device can use 60 mi
 - Speech recognition counts the length of the audio sent; a request that fails or is refused does not count, and the live preview of a recording is not counted twice.
 - Each AI polish and each voice edit counts once; a retry on another built-in model is not counted again.
 - Recordings a phone sends to a computer count toward that computer; recordings a phone recognises itself count toward the phone.
-- For a while after this feature arrives, the built-in service only counts, without a limit, and the app shows **No limit yet**.
+- For a while after this feature arrives, the built-in service only counts, without a limit, and the app shows only the amount used, for example **Used today: 12 min**. Once the limits apply, the app shows the amount used against the daily limit, for example **12 / 60 min used**, from your next use of the built-in service or the usage check Voltip makes every 10 minutes; no update is needed.
 
 On a computer, the **Usage** card in the sidebar shows both services and the time of the reset; click it to open the **Usage** page: the last 7 days, where today's use came from, and other providers' use this month as this computer recorded it (a dictation recognised while you speak counts the audio sent). The home page, under each model, and the built-in service's cards on the Speech models and AI models pages show today's use too. On a phone, the **Talk** page shows today's use while the phone recognises, and **Settings › Usage** has the details.
 
