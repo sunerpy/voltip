@@ -8077,6 +8077,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "voltip-refine-eval"
+version = "0.0.0"
+dependencies = [
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "uuid",
+ "voltip-cloud",
+ "voltip-core",
+ "voltip-net",
+ "voltip-protocol",
+ "voltip-refine",
+]
+
+[[package]]
 name = "voltip-relay"
 version = "0.0.0"
 dependencies = [

@@ -16,6 +16,8 @@
 //!   ([`edit_user_message`]), `max_tokens` from [`edit_token_budget`], a cut-off answer refused as
 //!   [`RefineError::Truncated`], the answer tidied by [`clean_edit_answer`].
 //! * [`clean_answer`] — the post-processing (quotes, code fences, line endings), hardware-free.
+//! * [`refine_request`] — the body [`RefineClient::refine_with`] posts, as JSON, without sending it:
+//!   what the prompt evaluation sends (docs/refine-eval.md).
 //! * [`RefineError`] — mirrors `voltip_asr::AsrError`, plus [`RefineError::EmptyAnswer`] for
 //!   "the model said nothing", which callers treat as "use the raw text".
 //!
@@ -31,7 +33,7 @@ mod error;
 mod presets;
 mod prompt;
 
-pub use client::{RefineClient, Refined, clean_answer, clean_edit_answer, edit_token_budget, list_models};
+pub use client::{RefineClient, Refined, clean_answer, clean_edit_answer, edit_token_budget, list_models, refine_request};
 pub use config::{DEFAULT_TIMEOUT, MAX_ERROR_BODY_CHARS, Metering, PURPOSE_HEADER, QUOTA_HEADER, ReasoningEffort, RefineApi, RefineConfig, normalize_base_url};
 pub use error::{RefineError, is_quota_exhausted};
 pub use presets::{BUILTIN_OUTPUT_CAP, MIN_OUTPUT_TOKENS, OUTPUT_CONTRACT, Preset, USER_OUTPUT_CAP, output_token_budget};

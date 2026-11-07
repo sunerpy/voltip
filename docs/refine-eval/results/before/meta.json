@@ -1,0 +1,165 @@
+{
+ "calls": {
+  "calls": 688,
+  "models": {
+   "openai.gpt-oss-120b-1:0": {
+    "calls": 258,
+    "failed": 0,
+    "input_tokens": 193281,
+    "output_tokens": 24755,
+    "usd": 0.0438
+   },
+   "openai.gpt-oss-20b-1:0": {
+    "calls": 258,
+    "failed": 0,
+    "input_tokens": 193281,
+    "output_tokens": 19807,
+    "usd": 0.0195
+   },
+   "us.anthropic.claude-opus-5-5": {
+    "calls": 172,
+    "failed": 0,
+    "input_tokens": 194810,
+    "output_tokens": 78108,
+    "usd": 2.3414
+   }
+  },
+  "usd": 2.4047
+ },
+ "commit": "f909b3355a64bd21a16402bb84d630e194286aed+dirty",
+ "digests": {
+  "preset:chat": "ce36773bb6deede5059238539110198b81fc40d5e778c3a492fa95bfd41534e4",
+  "preset:formal": "a1c57fba35942dae371abff74866c164b237a07e01c04f142d9501e571012f78",
+  "preset:intent": "2da1a8438e4ac7461d7fa690e69fbfd86392a21bce10fcb4c5ee7c59c022f96a",
+  "preset:notes": "df05cd4ceb9b56066642f35cc044d94945a776ea54f6fa8e0493fc3423503447",
+  "preset:prompt": "ca625199ebea1f8261d5e403c5978f1b3f5c22f15fe67525343248364fa59247",
+  "preset:proofread": "58ff51f7e3963a3466fbe4d06dbd5d3b822e7d6e95afac7dbdfb38f4ce4fc56a",
+  "preset:punctuation": "24122ac7511b84153c849c091f1ed947fead9ec53404258b0666ca948720cddf",
+  "preset:translate": "3dc5fb32ae64b8388138486f1012edeb2427ba1a1f23bee63185dc756ec82015",
+  "scene:academic": "d9946a40f4d75f2a432e31e40d0b673073ff0e7f16070e65e235f755df7f215a",
+  "scene:coding": "3268a378539d2fe04d81588595ef6605046abacde9014689470055e6aeb02f1d",
+  "scene:finance": "a9ac1bc871b0295a576873126b385772ed92be99b9e677bfb81c8572a6084b0c",
+  "scene:legal": "8019b5e6a41577db13a06ebdd39e6a1fce453f01473dcbb092c0139c987ea872",
+  "scene:medical": "c701b69128b0602294af92b9a12a9cd9c48d788264ba973003e6e48c79f5ad72",
+  "scene:office": "ba409ac0010bbd71ce8386668e8d919fcad5e9311996560ba7d335f3b36b3260"
+ },
+ "generated_at": "2026-11-07",
+ "judge": {
+  "effort": "medium",
+  "model": "us.anthropic.claude-opus-5-5"
+ },
+ "ledger": {
+  "calls": 2656,
+  "models": {
+   "openai.gpt-oss-120b-1:0": {
+    "calls": 1016,
+    "failed": 0,
+    "input_tokens": 939614,
+    "output_tokens": 98293,
+    "usd": 0.1999
+   },
+   "openai.gpt-oss-20b-1:0": {
+    "calls": 1014,
+    "failed": 0,
+    "input_tokens": 938037,
+    "output_tokens": 78339,
+    "usd": 0.0892
+   },
+   "us.anthropic.claude-opus-5-5": {
+    "calls": 626,
+    "failed": 0,
+    "input_tokens": 711952,
+    "output_tokens": 294611,
+    "usd": 8.74
+   }
+  },
+  "usd": 9.0291
+ },
+ "lengths": [
+  {
+   "chars": 685,
+   "limit": 4000,
+   "unit": "preset:proofread"
+  },
+  {
+   "chars": 1357,
+   "limit": 4000,
+   "unit": "preset:prompt"
+  },
+  {
+   "chars": 331,
+   "limit": 4000,
+   "unit": "preset:intent"
+  },
+  {
+   "chars": 281,
+   "limit": 4000,
+   "unit": "preset:chat"
+  },
+  {
+   "chars": 308,
+   "limit": 4000,
+   "unit": "preset:translate"
+  },
+  {
+   "chars": 322,
+   "limit": 4000,
+   "unit": "preset:notes"
+  },
+  {
+   "chars": 192,
+   "limit": 4000,
+   "unit": "preset:punctuation"
+  },
+  {
+   "chars": 226,
+   "limit": 4000,
+   "unit": "preset:formal"
+  },
+  {
+   "chars": 38,
+   "limit": 500,
+   "unit": "scene:coding"
+  },
+  {
+   "chars": 25,
+   "limit": 500,
+   "unit": "scene:office"
+  },
+  {
+   "chars": 50,
+   "limit": 500,
+   "unit": "scene:legal"
+  },
+  {
+   "chars": 57,
+   "limit": 500,
+   "unit": "scene:medical"
+  },
+  {
+   "chars": 55,
+   "limit": 500,
+   "unit": "scene:finance"
+  },
+  {
+   "chars": 51,
+   "limit": 500,
+   "unit": "scene:academic"
+  }
+ ],
+ "models": {
+  "120b": "openai.gpt-oss-120b-1:0",
+  "20b": "openai.gpt-oss-20b-1:0"
+ },
+ "note": "提示词为 main 上 f909b335 的版本，即这次修改之前",
+ "request_params": {
+  "fields": [
+   {
+    "reasoning_effort": "low",
+    "temperature": 0.2
+   }
+  ],
+  "max_tokens": "min(按预设的输出预算 + 256, max(900, 输出预算))"
+ },
+ "runs": 3
+}

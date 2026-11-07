@@ -16,6 +16,7 @@ members = [
     "crates/voltip-asr",
     "crates/voltip-asr-local",
     "crates/voltip-refine",
+    "crates/voltip-refine-eval",
     "crates/voltip-reply",
     "crates/voltip-cloud",
     "crates/voltip-inject",
