@@ -11,7 +11,8 @@ How to work in this repository, for coding agents and people alike. `CONTRIBUTIN
   pairing, transport, relay, the device tickets official builds show the hosted relay and the
   built-in service (`voltip-access`), the network proxy every connection follows (`voltip-net`), what a
   service said when it refused a request (`voltip-reply`), the local speech service's HTTP layer
-  (`voltip-serve`), and the Tauri bridge.
+  (`voltip-serve`), the requests and digests of the AI polish prompt evaluation
+  (`voltip-refine-eval`), and the Tauri bridge.
 - `apps/desktop`, `apps/mobile` — the Tauri 2 shells (`src-tauri/`) and their React front ends.
 - `apps/mobile-rn` — the phone app on React Native (Expo, `docs/mobile-rn.md`): its own Rust shell
   (`rust/`, UniFFI), shipped beside the Tauri phone app as `Voltip-RN_<version>_android_arm64.apk`.
@@ -82,6 +83,10 @@ make help                        # everything else
 
 ## Tests
 
+- A change to a built-in preset, a scene instruction or the shared polish prompt fails
+  `voltip-refine-eval`'s record test until the prompt evaluation runs again: `make refine-eval`
+  (Amazon Bedrock, by hand only, never in CI; docs/refine-eval.md). Commit its report and record with
+  the change.
 - Every fixed bug gets a regression test that fails without the fix (`regression_…` in Rust,
   `it("regression: …")` in TypeScript).
 - Never weaken, skip or delete a test to get a green run.

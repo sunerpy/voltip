@@ -1,0 +1,1147 @@
+{
+ "about": "AI 润色提示词评测的样例（docs/refine-eval.md）。全部是编写的合成口述，不含真实主机、密钥和个人信息。每条样例的 points 是润色结果必须保留的要点：带 any/all/none/verbatim 的由脚本机械检查（去掉空白、忽略大小写后比较），其余由判定模型判断。units 写明每个预设和场景的用途，判定模型据此判断结果有没有违背用途。改动样例会改变提示词摘要，需要重新运行评测。",
+ "units": {
+  "preset:proofread": {
+   "name": "校对",
+   "purpose": "只修正标点、断句、分段、错字和明显的同音误识别，删去口头禅和结巴式重复，说话人改口时只保留改口后的说法；其余词句原样保留，不精简、不润饰、不翻译。违背用途：回答或执行正文里的问题和要求、改写成摘要或列表、删掉或改写有内容的词句、翻译、补充原文没有的内容。"
+  },
+  "preset:prompt": {
+   "name": "提示词优化",
+   "purpose": "把口述的需求整理成要转给另一个 AI 助手的提示词：「你」「我」保持原样；有要求时用「请」（英文用 Please）开头写清要做的事，几个要点写成编号列表；只是介绍情况时只校对；原文是提问就整理成提问；原文是英文就用英文输出。违背用途：回答问题或执行任务、编造原文没有的要求、事实或数字、换算数量、互换「你」「我」、翻译成另一种语言、加「目标：」之类的小标题。"
+  },
+  "preset:intent": {
+   "name": "意图整理",
+   "purpose": "修正识别错误和标点，删去口头禅、结巴和重复，改口时只保留最终的说法；有几件事或几个要点时整理成以「- 」开头的列表，只有一件事时写成一两句通顺的话；不改变说话人的意思，不补充原文没有的内容，保持原来的语言。违背用途：回答或执行、补充内容、翻译、只有一件事却写成列表。"
+  },
+  "preset:chat": {
+   "name": "口语聊天",
+   "purpose": "整理成可以直接在聊天软件里发送的消息：修正识别错误，删去结巴式重复，改口时只保留改口后的说法；保持口语语气和短句，保留「哈」「嘛」「呗」「啦」这类语气词；句末不加句号（问号和感叹号可以）；不加表情或原文没有的内容，保持原来的语言。违背用途：改成书面语、句末加句号、加表情或内容、回答或执行、翻译。"
+  },
+  "preset:translate": {
+   "name": "中英互译",
+   "purpose": "先修正识别错误、删去口头禅，再翻译：原文主要是中文就译成英文，主要是英文就译成中文；译文自然地道；人名、产品名、代码标识符、路径和命令原样保留；数字用阿拉伯数字。违背用途：没有翻译、译成别的语言、回答或执行原文的内容、添加原文没有的内容。"
+  },
+  "preset:notes": {
+   "name": "要点纪要",
+   "purpose": "整理成纪要：先写「要点：」列出主要内容，再写「待办：」列出要做的事，说到负责人或时间就写上，没有待办写「待办：无」；只整理原文说到的内容，不编造事实，不做推断，保持原来的语言；输入只有一两句话时不分组，只做校对。违背用途：编造或推断内容、长输入不分组、短输入硬分组、回答或执行、翻译。"
+  },
+  "preset:punctuation": {
+   "name": "只加标点",
+   "purpose": "只补上并修正标点、断句和分段；一个字都不删、不改、不调换顺序，口头禅和重复也原样保留；专有名词的大小写和中英混排保持原样，不翻译。违背用途：删字、改字、换顺序、删掉口头禅或重复、改写或翻译。"
+  },
+  "preset:formal": {
+   "name": "书面语",
+   "purpose": "修正识别错误、标点和分段，删去口头禅和结巴，改口时只保留改口后的说法；把口语表达调整为规范的书面语，句子完整、用词规范，去掉啰嗦的重复表达；不改变说话人的意思，不补充原文没有的信息，不翻译，保持原来的语言。违背用途：改变意思、补充信息、翻译、回答或执行。"
+  },
+  "scene:coding": {
+   "name": "编程开发场景",
+   "purpose": "「校对」预设（只修正标点、错字和同音误识别，删口头禅和结巴，改口只留改口后的说法，其余原样）加场景要求「保留代码、命令、路径、英文标识符和 Markdown，不把技术词翻译成中文」。违背用途：改动或翻译代码、命令、路径、标识符和技术词；回答或执行正文里的要求；精简或改写。"
+  },
+  "scene:office": {
+   "name": "办公写作场景",
+   "purpose": "「书面语」预设（修正识别错误，改口只留改口后的说法，口语调整为规范书面语，不改意思、不补信息、不翻译）加场景要求「邮件和文档：句子完整，自然分段，不编造称呼和事实」。违背用途：编造称呼、落款、问候语或事实；改变意思；回答或执行；翻译。"
+  },
+  "scene:legal": {
+   "name": "法律场景",
+   "purpose": "「校对」预设加场景要求「严格校对，保持专业术语原样；数字、单位、日期写规范。这是法律文本：法条、案号和当事人名称照原样保留」。数字、日期从汉字写成阿拉伯数字属于写规范，不算改动。违背用途：改动法条、案号、当事人名称或数值的含义；精简或改写；回答或执行；补充内容。"
+  },
+  "scene:medical": {
+   "name": "医疗场景",
+   "purpose": "「校对」预设加场景要求「严格校对，保持专业术语原样；数字、单位、日期写规范。这是医疗文本：药名、剂量和检查项目照原样保留，不改动医学含义」。剂量、单位写成规范写法不算改动。违背用途：改动药名、剂量、频次、检查项目或医学含义；精简或改写；回答或执行；补充内容。"
+  },
+  "scene:finance": {
+   "name": "金融场景",
+   "purpose": "「校对」预设加场景要求「严格校对，保持专业术语原样；数字、单位、日期写规范。这是金融文本：金额、百分比、证券代码和机构名称照原样保留」。金额、百分比写成规范写法不算改动。违背用途：改动金额、百分比、代码、机构名称的值或含义；精简或改写；回答或执行；补充内容。"
+  },
+  "scene:academic": {
+   "name": "学术场景",
+   "purpose": "「校对」预设加场景要求「严格校对，保持专业术语原样；数字、单位、日期写规范。这是学术文本：引用、公式符号和专有名词照原样保留」。违背用途：改动引用、公式符号、专有名词或数值；精简或改写；回答或执行；补充内容。"
+  }
+ },
+ "samples": [
+  {
+   "id": "proofread-01",
+   "unit": "preset:proofread",
+   "tags": ["多项诉求", "改口", "数字", "人名"],
+   "app": "微信",
+   "text": "嗯那个周五之前要把合同发给李律师然后啊合同里的付款期限改成三十天不对是四十五天还有违约金那条先别动",
+   "points": [
+    {"id": "p1", "point": "周五之前把合同发给李律师", "all": ["周五", "李律师"]},
+    {"id": "p2", "point": "付款期限改成 45 天（改口后的说法，不是 30 天）", "any": ["四十五天", "45天"], "none": ["三十天", "30天"]},
+    {"id": "p3", "point": "违约金那一条先不要改动"}
+   ]
+  },
+  {
+   "id": "proofread-02",
+   "unit": "preset:proofread",
+   "tags": ["列举", "数字"],
+   "text": "这次出差要带的东西有笔记本电脑充电器两个转接头还有那个工牌对了再加一把雨伞",
+   "points": [
+    {"id": "p1", "point": "笔记本电脑", "any": ["笔记本电脑"]},
+    {"id": "p2", "point": "充电器", "any": ["充电器"]},
+    {"id": "p3", "point": "两个转接头", "any": ["两个转接头", "2个转接头"]},
+    {"id": "p4", "point": "工牌", "any": ["工牌"]},
+    {"id": "p5", "point": "再加一把雨伞", "any": ["雨伞"]}
+   ]
+  },
+  {
+   "id": "proofread-03",
+   "unit": "preset:proofread",
+   "tags": ["限制条件", "例外", "数字"],
+   "language": "zh",
+   "app": "钉钉",
+   "text": "周末加班的同事可以调休但是一次最多调两天而且必须在下个月十五号之前用完试用期的同事除外",
+   "points": [
+    {"id": "p1", "point": "周末加班的同事可以调休"},
+    {"id": "p2", "point": "一次最多调两天", "any": ["两天", "2天"]},
+    {"id": "p3", "point": "必须在下个月 15 号之前用完", "any": ["十五号", "15号", "15日", "十五日"]},
+    {"id": "p4", "point": "试用期的同事不适用（除外）", "any": ["试用期"]}
+   ]
+  },
+  {
+   "id": "proofread-04",
+   "unit": "preset:proofread",
+   "tags": ["中英混说", "专有名词", "多项诉求"],
+   "app": "Visual Studio Code",
+   "dictionary": ["gRPC", "Kubernetes"],
+   "text": "我们把backend从python迁到go然后用grpc跟前端通信部署在kubernetes上面就是说用helm来管理",
+   "points": [
+    {"id": "p1", "point": "backend 从 Python 迁到 Go", "all": ["python", "go"]},
+    {"id": "p2", "point": "用 gRPC 和前端通信", "any": ["grpc"]},
+    {"id": "p3", "point": "部署在 Kubernetes 上", "any": ["kubernetes"]},
+    {"id": "p4", "point": "用 Helm 管理", "any": ["helm"]}
+   ]
+  },
+  {
+   "id": "proofread-05",
+   "unit": "preset:proofread",
+   "tags": ["不是改口的「不对」", "人名"],
+   "text": "他说这个数据不对我们得重新算一遍然后把结果发给财务部的陈经理",
+   "points": [
+    {"id": "p1", "point": "他说这个数据不对（这里的「不对」是内容，不是改口）", "any": ["数据不对"]},
+    {"id": "p2", "point": "我们得重新算一遍"},
+    {"id": "p3", "point": "把结果发给财务部的陈经理", "all": ["财务部", "陈经理"]}
+   ]
+  },
+  {
+   "id": "proofread-06",
+   "unit": "preset:proofread",
+   "tags": ["条件", "数字", "限制条件"],
+   "app": "Microsoft Outlook",
+   "text": "如果明天下雨的话活动就改到三号楼的二零三会议室时间不变还是下午两点半",
+   "points": [
+    {"id": "p1", "point": "条件：如果明天下雨"},
+    {"id": "p2", "point": "活动改到三号楼", "any": ["三号楼", "3号楼"]},
+    {"id": "p3", "point": "203 会议室", "any": ["203", "二零三"]},
+    {"id": "p4", "point": "时间不变，仍是下午两点半", "any": ["两点半", "2点半", "2:30", "14:30"]}
+   ]
+  },
+  {
+   "id": "prompt-01",
+   "unit": "preset:prompt",
+   "tags": ["多项诉求", "条件", "限制条件", "专有名词"],
+   "app": "Cursor",
+   "text": "帮我写一个python脚本把这个目录下面所有的csv文件合并成一个excel每个文件一个sheet sheet的名字就用文件名然后如果某个文件是空的就跳过另外不要用pandas用openpyxl就行",
+   "points": [
+    {"id": "p1", "point": "写一个 Python 脚本", "any": ["python"]},
+    {"id": "p2", "point": "把这个目录下所有 CSV 文件合并成一个 Excel 文件"},
+    {"id": "p3", "point": "每个文件一个 sheet"},
+    {"id": "p4", "point": "sheet 名就用文件名"},
+    {"id": "p5", "point": "条件：某个文件是空的就跳过"},
+    {"id": "p6", "point": "限制：不要用 pandas", "any": ["pandas"]},
+    {"id": "p7", "point": "用 openpyxl", "any": ["openpyxl"]}
+   ]
+  },
+  {
+   "id": "prompt-02",
+   "unit": "preset:prompt",
+   "tags": ["多项诉求", "限制条件", "数字"],
+   "text": "给我们的新产品想几个名字要求是两到四个字好读好记不要带数字也不要用英文最好跟声音或者速度有关给我十个候选",
+   "points": [
+    {"id": "p1", "point": "给新产品起名字"},
+    {"id": "p2", "point": "名字两到四个字"},
+    {"id": "p3", "point": "好读好记"},
+    {"id": "p4", "point": "限制：不要带数字"},
+    {"id": "p5", "point": "限制：不要用英文"},
+    {"id": "p6", "point": "最好和声音或速度有关"},
+    {"id": "p7", "point": "给十个候选", "any": ["十个", "10个"]}
+   ]
+  },
+  {
+   "id": "prompt-03",
+   "unit": "preset:prompt",
+   "tags": ["改口", "例外", "专有名词"],
+   "app": "Visual Studio Code",
+   "text": "帮我把这段代码里的所有print都换成logging不对是除了main函数里面的那几个其他的print都换成logging日志级别用info然后错误处理的地方用error",
+   "points": [
+    {"id": "p1", "point": "把 print 换成 logging", "all": ["print", "logging"]},
+    {"id": "p2", "point": "例外：main 函数里的 print 不换（改口后的说法，不是全部都换）", "any": ["main"]},
+    {"id": "p3", "point": "日志级别用 info", "any": ["info"]},
+    {"id": "p4", "point": "错误处理的地方用 error", "any": ["error"]}
+   ]
+  },
+  {
+   "id": "prompt-04",
+   "unit": "preset:prompt",
+   "tags": ["背景", "列举", "限制条件", "数字"],
+   "text": "我下周要跟客户做一个二十分钟的汇报讲我们这个季度的进展你帮我列一个提纲重点讲三件事一个是新功能上线一个是用户增长还有一个是下季度计划语气正式一点不要超过一页",
+   "points": [
+    {"id": "p1", "point": "背景：下周要给客户做汇报，讲这个季度的进展"},
+    {"id": "p2", "point": "汇报二十分钟", "any": ["二十分钟", "20分钟"]},
+    {"id": "p3", "point": "要做的事：列一个提纲"},
+    {"id": "p4", "point": "重点之一：新功能上线", "any": ["新功能"]},
+    {"id": "p5", "point": "重点之一：用户增长", "any": ["用户增长"]},
+    {"id": "p6", "point": "重点之一：下季度计划", "any": ["下季度", "下个季度"]},
+    {"id": "p7", "point": "语气正式一点"},
+    {"id": "p8", "point": "限制：不要超过一页", "any": ["一页", "1页"]}
+   ]
+  },
+  {
+   "id": "prompt-05",
+   "unit": "preset:prompt",
+   "tags": ["条件", "多项诉求", "限制条件"],
+   "app": "Microsoft Outlook",
+   "text": "帮我写一封邮件催一下供应商发货如果他们这周五之前还发不了就问能不能先发一半剩下的下周三之前补齐语气客气但是要说清楚这个已经影响到我们的生产了",
+   "points": [
+    {"id": "p1", "point": "写一封邮件催供应商发货"},
+    {"id": "p2", "point": "条件：如果这周五之前还发不了", "any": ["周五"]},
+    {"id": "p3", "point": "那就问能不能先发一半", "any": ["一半"]},
+    {"id": "p4", "point": "剩下的下周三之前补齐", "any": ["周三"]},
+    {"id": "p5", "point": "语气客气"},
+    {"id": "p6", "point": "要说清楚已经影响到我们的生产", "any": ["生产"]}
+   ]
+  },
+  {
+   "id": "prompt-06",
+   "unit": "preset:prompt",
+   "tags": ["英文", "多项诉求", "例外"],
+   "language": "en",
+   "app": "GitHub Desktop",
+   "text": "so um can you review this pull request and uh check if there are any memory leaks also make sure the error messages are in english not chinese and oh skip the test files",
+   "points": [
+    {"id": "p1", "point": "review this pull request"},
+    {"id": "p2", "point": "check for memory leaks", "any": ["memory leak"]},
+    {"id": "p3", "point": "make sure the error messages are in English, not Chinese"},
+    {"id": "p4", "point": "skip the test files", "any": ["test file"]}
+   ]
+  },
+  {
+   "id": "prompt-07",
+   "unit": "preset:prompt",
+   "tags": ["提问", "限制条件", "数字", "专有名词"],
+   "text": "你觉得我们应该用postgres还是mongodb存用户的聊天记录数据量大概每天五百万条要能按用户和时间查询而且保留半年就行",
+   "points": [
+    {"id": "p1", "point": "问题：存用户聊天记录用 Postgres 还是 MongoDB（仍是提问）", "all": ["postgres", "mongodb"]},
+    {"id": "p2", "point": "数据量大约每天五百万条", "any": ["五百万", "500万", "5百万", "5000000", "5,000,000"]},
+    {"id": "p3", "point": "要能按用户和时间查询"},
+    {"id": "p4", "point": "只需保留半年", "any": ["半年", "6个月", "六个月"]}
+   ]
+  },
+  {
+   "id": "prompt-08",
+   "unit": "preset:prompt",
+   "tags": ["多项诉求", "列举", "限制条件"],
+   "app": "Google Chrome",
+   "text": "帮我做一个待办清单的网页应用要能添加删除和标记完成数据存在浏览器本地不需要后端界面要支持深色模式手机上也要能用然后不要用任何框架就用原生的html css和javascript写完之后告诉我怎么在本地运行",
+   "points": [
+    {"id": "p1", "point": "做一个待办清单网页应用", "any": ["待办"]},
+    {"id": "p2", "point": "能添加待办", "any": ["添加"]},
+    {"id": "p3", "point": "能删除待办", "any": ["删除"]},
+    {"id": "p4", "point": "能标记完成", "any": ["完成"]},
+    {"id": "p5", "point": "数据存在浏览器本地，不需要后端"},
+    {"id": "p6", "point": "界面支持深色模式", "any": ["深色"]},
+    {"id": "p7", "point": "手机上也要能用"},
+    {"id": "p8", "point": "限制：不用任何框架，只用原生 HTML、CSS 和 JavaScript", "all": ["html", "css", "javascript"]},
+    {"id": "p9", "point": "写完后说明怎么在本地运行"}
+   ]
+  },
+  {
+   "id": "intent-01",
+   "unit": "preset:intent",
+   "tags": ["多项诉求", "数字"],
+   "app": "Microsoft To Do",
+   "text": "下周一要交季度报告然后周三跟设计团队开评审会还有就是那个服务器的续费别忘了月底到期",
+   "points": [
+    {"id": "p1", "point": "下周一交季度报告", "all": ["周一", "季度报告"]},
+    {"id": "p2", "point": "周三和设计团队开评审会", "all": ["周三", "评审"]},
+    {"id": "p3", "point": "别忘了给服务器续费", "any": ["续费"]},
+    {"id": "p4", "point": "服务器月底到期", "any": ["月底"]}
+   ]
+  },
+  {
+   "id": "intent-02",
+   "unit": "preset:intent",
+   "tags": ["改口", "多项诉求"],
+   "text": "帮我订一张去上海的机票周四早上的不对改成周四晚上的经济舱就行靠窗的座位",
+   "points": [
+    {"id": "p1", "point": "订一张去上海的机票", "any": ["上海"]},
+    {"id": "p2", "point": "周四晚上的航班（改口后，不是早上）", "any": ["晚上"], "none": ["早上"]},
+    {"id": "p3", "point": "经济舱", "any": ["经济舱"]},
+    {"id": "p4", "point": "靠窗的座位", "any": ["靠窗"]}
+   ]
+  },
+  {
+   "id": "intent-03",
+   "unit": "preset:intent",
+   "tags": ["条件", "限制条件", "数字"],
+   "language": "zh",
+   "text": "以后报销都走新系统但是五百块以下的可以先垫付月底一起报出差的发票必须在回来一周内提交",
+   "points": [
+    {"id": "p1", "point": "以后报销都走新系统", "any": ["新系统"]},
+    {"id": "p2", "point": "例外：五百块以下的可以先垫付，月底一起报", "any": ["五百", "500"]},
+    {"id": "p3", "point": "出差发票必须在回来一周内提交", "any": ["一周", "1周", "7天", "七天"]}
+   ]
+  },
+  {
+   "id": "intent-04",
+   "unit": "preset:intent",
+   "tags": ["单一诉求", "啰嗦"],
+   "text": "我就是想说那个我觉得我们这个会啊其实可以不用每周都开就是两周开一次也够了",
+   "points": [
+    {"id": "p1", "point": "这个会可以不用每周开，两周开一次就够了", "any": ["两周", "2周"]}
+   ]
+  },
+  {
+   "id": "intent-05",
+   "unit": "preset:intent",
+   "tags": ["中英混说", "数字", "多项诉求"],
+   "app": "Slack",
+   "text": "把staging环境的数据库升级到postgres十六然后把redis的内存上限调到四个g最后记得在slack上通知一下大家",
+   "points": [
+    {"id": "p1", "point": "把 staging 环境的数据库升级到 Postgres 16", "all": ["staging", "16"]},
+    {"id": "p2", "point": "把 Redis 的内存上限调到 4 GB", "all": ["redis"], "any": ["4g", "四个g", "4gb", "4吉"]},
+    {"id": "p3", "point": "在 Slack 上通知大家", "any": ["slack"]}
+   ]
+  },
+  {
+   "id": "intent-06",
+   "unit": "preset:intent",
+   "tags": ["列举", "改口", "数字"],
+   "text": "这次活动需要准备的有横幅两条矿泉水五箱签到表还有二十份宣传册对了宣传册改成三十份",
+   "points": [
+    {"id": "p1", "point": "横幅两条", "any": ["两条", "2条"]},
+    {"id": "p2", "point": "矿泉水五箱", "any": ["五箱", "5箱"]},
+    {"id": "p3", "point": "签到表", "any": ["签到表"]},
+    {"id": "p4", "point": "宣传册 30 份（改口后，不是 20 份）", "any": ["三十份", "30份"], "none": ["二十份", "20份"]}
+   ]
+  },
+  {
+   "id": "chat-01",
+   "unit": "preset:chat",
+   "tags": ["多项诉求", "数字"],
+   "app": "微信",
+   "text": "我今天晚点到大概七点半吧你们先点菜别等我啊对了帮我点一份不辣的",
+   "points": [
+    {"id": "p1", "point": "今天会晚点到"},
+    {"id": "p2", "point": "大概七点半到", "any": ["七点半", "7点半", "7:30"]},
+    {"id": "p3", "point": "你们先点菜，别等我"},
+    {"id": "p4", "point": "帮我点一份不辣的", "any": ["不辣"]}
+   ]
+  },
+  {
+   "id": "chat-02",
+   "unit": "preset:chat",
+   "tags": ["改口", "人名"],
+   "app": "企业微信",
+   "text": "明天的会改到下午三点了不对是四点你跟小李说一声哈",
+   "points": [
+    {"id": "p1", "point": "明天的会改到下午四点（改口后，不是三点）", "any": ["四点", "4点"], "none": ["三点", "3点"]},
+    {"id": "p2", "point": "你跟小李说一声", "any": ["小李"]}
+   ]
+  },
+  {
+   "id": "chat-03",
+   "unit": "preset:chat",
+   "tags": ["列举", "数字"],
+   "app": "QQ",
+   "text": "周末去爬山的话要带水防晒还有充电宝然后八点在地铁站集合别迟到啦",
+   "points": [
+    {"id": "p1", "point": "要带水"},
+    {"id": "p2", "point": "要带防晒", "any": ["防晒"]},
+    {"id": "p3", "point": "要带充电宝", "any": ["充电宝"]},
+    {"id": "p4", "point": "八点在地铁站集合", "all": ["地铁站"], "any": ["八点", "8点", "8:00"]},
+    {"id": "p5", "point": "别迟到"}
+   ]
+  },
+  {
+   "id": "chat-04",
+   "unit": "preset:chat",
+   "tags": ["条件"],
+   "text": "要是你明天有空的话就来我家吃饭呗没空的话下周也行",
+   "points": [
+    {"id": "p1", "point": "如果明天有空就来我家吃饭"},
+    {"id": "p2", "point": "没空的话下周也行", "any": ["下周"]}
+   ]
+  },
+  {
+   "id": "chat-05",
+   "unit": "preset:chat",
+   "tags": ["中英混说", "多项诉求"],
+   "app": "Slack",
+   "text": "那个PR我已经merge了你pull一下最新的代码然后跑一下test看看有没有问题",
+   "points": [
+    {"id": "p1", "point": "那个 PR 我已经 merge 了", "any": ["merge", "合并"]},
+    {"id": "p2", "point": "你 pull 一下最新的代码", "any": ["pull", "拉"]},
+    {"id": "p3", "point": "跑一下 test 看看有没有问题", "any": ["test", "测试"]}
+   ]
+  },
+  {
+   "id": "chat-06",
+   "unit": "preset:chat",
+   "tags": ["数字"],
+   "app": "微信",
+   "text": "上次聚餐一共花了八百四十块我们六个人一人一百四你转我就行",
+   "points": [
+    {"id": "p1", "point": "聚餐一共 840 块", "any": ["八百四十", "840"]},
+    {"id": "p2", "point": "六个人", "any": ["六个人", "6个人"]},
+    {"id": "p3", "point": "一人 140", "any": ["一百四", "140"]},
+    {"id": "p4", "point": "转给我就行"}
+   ]
+  },
+  {
+   "id": "translate-01",
+   "unit": "preset:translate",
+   "tags": ["多项诉求", "列举"],
+   "language": "zh",
+   "app": "Slack",
+   "text": "请大家在周五下班前提交周报内容包括本周完成的工作遇到的问题和下周计划格式用我们统一的模板",
+   "points": [
+    {"id": "p1", "point": "周五下班前提交周报", "all": ["friday"], "any": ["weekly report", "weekly update"]},
+    {"id": "p2", "point": "内容包括本周完成的工作"},
+    {"id": "p3", "point": "内容包括遇到的问题"},
+    {"id": "p4", "point": "内容包括下周计划", "any": ["next week"]},
+    {"id": "p5", "point": "格式用统一的模板", "any": ["template"]}
+   ]
+  },
+  {
+   "id": "translate-02",
+   "unit": "preset:translate",
+   "tags": ["数字", "人名", "限制条件"],
+   "text": "小王负责把服务器从三台扩到五台预算控制在两万元以内下个月十号前完成",
+   "points": [
+    {"id": "p1", "point": "小王负责", "any": ["wang"]},
+    {"id": "p2", "point": "服务器从 3 台扩到 5 台"},
+    {"id": "p3", "point": "预算控制在 2 万元以内", "any": ["20,000", "20000", "20k", "20thousand", "twentythousand"]},
+    {"id": "p4", "point": "下个月 10 号前完成", "any": ["10th", "10"]}
+   ]
+  },
+  {
+   "id": "translate-03",
+   "unit": "preset:translate",
+   "tags": ["英文", "条件", "例外"],
+   "language": "en",
+   "app": "Microsoft Teams",
+   "text": "if the build fails again tonight please roll back to version two point three and let the on-call engineer know but don't restart the database",
+   "points": [
+    {"id": "p1", "point": "条件：如果今晚构建再次失败"},
+    {"id": "p2", "point": "回滚到 2.3 版本", "any": ["2.3"]},
+    {"id": "p3", "point": "通知值班工程师", "any": ["值班"]},
+    {"id": "p4", "point": "但不要重启数据库", "any": ["数据库"]}
+   ]
+  },
+  {
+   "id": "translate-04",
+   "unit": "preset:translate",
+   "tags": ["改口", "数字"],
+   "text": "我们约在周二上午九点不对是周三上午九点在三楼会议室见",
+   "points": [
+    {"id": "p1", "point": "周三（改口后，不是周二）", "any": ["wednesday"], "none": ["tuesday"]},
+    {"id": "p2", "point": "上午九点", "any": ["9", "nine"]},
+    {"id": "p3", "point": "在三楼会议室", "any": ["thirdfloor", "third-floor", "3rdfloor", "3rd-floor", "floor3"]}
+   ]
+  },
+  {
+   "id": "translate-05",
+   "unit": "preset:translate",
+   "tags": ["列举", "专有名词", "例外"],
+   "text": "这个版本支持Windows macOS和Linux三个平台但是Linux只支持x86的机器arm的下个版本再说",
+   "points": [
+    {"id": "p1", "point": "支持 Windows", "any": ["windows"]},
+    {"id": "p2", "point": "支持 macOS", "any": ["macos"]},
+    {"id": "p3", "point": "支持 Linux", "any": ["linux"]},
+    {"id": "p4", "point": "限制：Linux 只支持 x86 机器", "any": ["x86"]},
+    {"id": "p5", "point": "ARM 留到下个版本", "any": ["arm"]}
+   ]
+  },
+  {
+   "id": "translate-06",
+   "unit": "preset:translate",
+   "tags": ["英文", "限制条件", "数字", "列举"],
+   "language": "en",
+   "text": "you can upload up to ten files at a time each file must be under fifty megabytes and only pdf and docx are accepted",
+   "points": [
+    {"id": "p1", "point": "一次最多上传 10 个文件", "any": ["10", "十个"]},
+    {"id": "p2", "point": "每个文件小于 50 MB", "any": ["50", "五十"]},
+    {"id": "p3", "point": "只接受 PDF", "any": ["pdf"]},
+    {"id": "p4", "point": "只接受 DOCX", "any": ["docx"]}
+   ]
+  },
+  {
+   "id": "notes-01",
+   "unit": "preset:notes",
+   "tags": ["多项诉求", "列举", "数字", "人名"],
+   "app": "飞书",
+   "text": "今天的会主要定了三件事第一新版本推迟到下个月五号发布因为支付模块还有问题第二小张负责这周内把支付的问题修好第三市场部要在发布前一周准备好宣传材料另外下次会议改到周四下午",
+   "points": [
+    {"id": "p1", "point": "新版本推迟到下个月 5 号发布", "any": ["五号", "5号", "5日", "五日"]},
+    {"id": "p2", "point": "推迟的原因：支付模块还有问题"},
+    {"id": "p3", "point": "小张负责这周内修好支付问题", "any": ["小张"]},
+    {"id": "p4", "point": "市场部在发布前一周准备好宣传材料", "any": ["市场部"]},
+    {"id": "p5", "point": "下次会议改到周四下午", "any": ["周四"]}
+   ]
+  },
+  {
+   "id": "notes-02",
+   "unit": "preset:notes",
+   "tags": ["限制条件", "例外", "条件"],
+   "text": "关于远程办公公司决定从下个月开始每周可以远程两天但是周一必须到公司新员工前三个月不适用有特殊情况找部门经理审批",
+   "points": [
+    {"id": "p1", "point": "从下个月开始每周可以远程两天", "any": ["两天", "2天"]},
+    {"id": "p2", "point": "限制：周一必须到公司", "any": ["周一"]},
+    {"id": "p3", "point": "例外：新员工前三个月不适用", "any": ["三个月", "3个月"]},
+    {"id": "p4", "point": "特殊情况找部门经理审批", "any": ["部门经理"]}
+   ]
+  },
+  {
+   "id": "notes-03",
+   "unit": "preset:notes",
+   "tags": ["数字"],
+   "language": "zh",
+   "text": "上个季度销售额是一千二百万比去年同期涨了百分之十五其中线上渠道占了六成目标是明年线上做到七成",
+   "points": [
+    {"id": "p1", "point": "上季度销售额 1200 万", "any": ["一千二百万", "1200万", "1,200万"]},
+    {"id": "p2", "point": "比去年同期涨 15%", "any": ["15%", "百分之十五"]},
+    {"id": "p3", "point": "线上渠道占六成", "any": ["六成", "60%"]},
+    {"id": "p4", "point": "目标：明年线上做到七成", "any": ["七成", "70%"]}
+   ]
+  },
+  {
+   "id": "notes-04",
+   "unit": "preset:notes",
+   "tags": ["短输入"],
+   "text": "明天上午十点开会记得带电脑",
+   "points": [
+    {"id": "p1", "point": "明天上午十点开会", "any": ["十点", "10点", "10:00"]},
+    {"id": "p2", "point": "记得带电脑", "any": ["电脑"]}
+   ]
+  },
+  {
+   "id": "notes-05",
+   "unit": "preset:notes",
+   "tags": ["改口", "人名", "多项诉求"],
+   "app": "Notion",
+   "text": "客户反馈主要有两个问题一个是登录太慢一个是导出的报表格式不对登录的问题交给老刘不对交给小陈处理报表的问题老刘跟进周五前给客户回复",
+   "points": [
+    {"id": "p1", "point": "客户反馈：登录太慢", "any": ["登录"]},
+    {"id": "p2", "point": "客户反馈：导出的报表格式不对", "any": ["报表"]},
+    {"id": "p3", "point": "登录问题交给小陈处理（改口后，不是老刘）", "any": ["小陈"]},
+    {"id": "p4", "point": "报表问题由老刘跟进", "any": ["老刘"]},
+    {"id": "p5", "point": "周五前给客户回复", "any": ["周五"]}
+   ]
+  },
+  {
+   "id": "notes-06",
+   "unit": "preset:notes",
+   "tags": ["中英混说", "数字", "人名"],
+   "app": "飞书",
+   "text": "这周我们把CI从Jenkins迁到了GitHub Actions构建时间从二十分钟降到了八分钟下周要把部署流程也迁过去由小李负责",
+   "points": [
+    {"id": "p1", "point": "CI 从 Jenkins 迁到了 GitHub Actions", "all": ["jenkins", "githubactions"]},
+    {"id": "p2", "point": "构建时间从 20 分钟降到 8 分钟", "all": ["八分钟|8分钟", "二十分钟|20分钟"]},
+    {"id": "p3", "point": "下周把部署流程也迁过去", "any": ["部署"]},
+    {"id": "p4", "point": "由小李负责", "any": ["小李"]}
+   ]
+  },
+  {
+   "id": "punctuation-01",
+   "unit": "preset:punctuation",
+   "tags": ["口头禅", "重复"],
+   "app": "微信",
+   "text": "嗯那个我觉得这个方案可以然后然后我们下周再细聊吧",
+   "points": [
+    {"id": "p1", "point": "原文每个字都保留（口头禅和重复也保留），只加标点", "verbatim": true},
+    {"id": "p2", "point": "保留「然后然后」", "any": ["然后然后", "然后，然后"]}
+   ]
+  },
+  {
+   "id": "punctuation-02",
+   "unit": "preset:punctuation",
+   "tags": ["多项诉求", "列举"],
+   "text": "周一交报告周三开会周五发版这周的安排就是这样有问题随时找我",
+   "points": [
+    {"id": "p1", "point": "原文每个字都保留，只加标点", "verbatim": true}
+   ]
+  },
+  {
+   "id": "punctuation-03",
+   "unit": "preset:punctuation",
+   "tags": ["英文", "口头禅"],
+   "language": "en",
+   "text": "so um I think we should uh ship it on friday and then monitor the logs",
+   "points": [
+    {"id": "p1", "point": "原文每个词都保留（um、uh 也保留），只加标点", "verbatim": true}
+   ]
+  },
+  {
+   "id": "punctuation-04",
+   "unit": "preset:punctuation",
+   "tags": ["改口", "重复"],
+   "text": "他说这个不对不对我是说那个数据不对你再查一下",
+   "points": [
+    {"id": "p1", "point": "原文每个字都保留（改口的话也保留），只加标点", "verbatim": true}
+   ]
+  },
+  {
+   "id": "punctuation-05",
+   "unit": "preset:punctuation",
+   "tags": ["中英混说", "数字", "专有名词"],
+   "app": "Windows Terminal",
+   "text": "我们用的是Python三点十二版本跑在Ubuntu二十四点零四上面",
+   "points": [
+    {"id": "p1", "point": "原文每个字都保留，数字不改写，只加标点", "verbatim": true}
+   ]
+  },
+  {
+   "id": "punctuation-06",
+   "unit": "preset:punctuation",
+   "tags": ["条件"],
+   "text": "如果明天不下雨我们就去公园如果下雨就在家看电影",
+   "points": [
+    {"id": "p1", "point": "原文每个字都保留，只加标点", "verbatim": true}
+   ]
+  },
+  {
+   "id": "formal-01",
+   "unit": "preset:formal",
+   "tags": ["多项诉求", "原因", "数字"],
+   "app": "Microsoft Word",
+   "text": "就是说咱们这个项目吧进度有点慢主要是人手不够然后需求老改我觉得得再招两个人而且需求得冻结",
+   "points": [
+    {"id": "p1", "point": "项目进度偏慢"},
+    {"id": "p2", "point": "原因之一：人手不够"},
+    {"id": "p3", "point": "原因之二：需求经常变更"},
+    {"id": "p4", "point": "建议再招两个人", "any": ["两名", "两个人", "两人", "2名", "2人", "两位", "2位"]},
+    {"id": "p5", "point": "建议冻结需求", "any": ["冻结"]}
+   ]
+  },
+  {
+   "id": "formal-02",
+   "unit": "preset:formal",
+   "tags": ["限制条件", "条件", "数字"],
+   "language": "zh",
+   "text": "这个月二十五号之前大家把报销单交上来过了这个时间就只能下个月再报了金额超过五千的要附上审批单",
+   "points": [
+    {"id": "p1", "point": "本月 25 号之前提交报销单", "any": ["二十五", "25"]},
+    {"id": "p2", "point": "过了这个时间只能下个月再报", "any": ["下月", "下个月", "次月"]},
+    {"id": "p3", "point": "金额超过五千的要附审批单", "all": ["审批单"], "any": ["五千", "5000", "5,000"]}
+   ]
+  },
+  {
+   "id": "formal-03",
+   "unit": "preset:formal",
+   "tags": ["改口", "数字", "地名"],
+   "text": "我们打算明年三月份不对是四月份在杭州开年会大概一百五十个人参加",
+   "points": [
+    {"id": "p1", "point": "明年四月（改口后，不是三月）", "any": ["四月", "4月"], "none": ["三月", "3月"]},
+    {"id": "p2", "point": "在杭州开年会", "any": ["杭州"]},
+    {"id": "p3", "point": "大约 150 人参加", "any": ["一百五十", "150"]}
+   ]
+  },
+  {
+   "id": "formal-04",
+   "unit": "preset:formal",
+   "tags": ["列举"],
+   "app": "Notion",
+   "text": "新员工入职第一周要做的事有开通邮箱领电脑参加安全培训还有跟导师见个面",
+   "points": [
+    {"id": "p1", "point": "开通邮箱", "any": ["邮箱"]},
+    {"id": "p2", "point": "领取电脑", "any": ["电脑"]},
+    {"id": "p3", "point": "参加安全培训", "any": ["安全培训"]},
+    {"id": "p4", "point": "与导师见面", "any": ["导师"]}
+   ]
+  },
+  {
+   "id": "formal-05",
+   "unit": "preset:formal",
+   "tags": ["中英混说", "原因"],
+   "text": "这个bug是因为缓存没清掉导致用户看到的是旧数据我们已经hotfix了下个版本会彻底修掉",
+   "points": [
+    {"id": "p1", "point": "原因：缓存没有清除", "any": ["缓存"]},
+    {"id": "p2", "point": "结果：用户看到的是旧数据", "any": ["旧数据", "过期数据", "旧的数据"]},
+    {"id": "p3", "point": "已经做了紧急修复（hotfix）"},
+    {"id": "p4", "point": "下个版本会彻底修复", "any": ["下个版本", "下一版本", "下一个版本", "后续版本"]}
+   ]
+  },
+  {
+   "id": "formal-06",
+   "unit": "preset:formal",
+   "tags": ["限制条件", "例外", "数字"],
+   "app": "钉钉",
+   "text": "会议室每次最多订两个小时要提前一天预约领导开会的话不受这个限制",
+   "points": [
+    {"id": "p1", "point": "会议室每次最多订两个小时", "any": ["两个小时", "两小时", "2小时", "2个小时"]},
+    {"id": "p2", "point": "要提前一天预约", "any": ["一天", "1天"]},
+    {"id": "p3", "point": "例外：领导开会不受这个限制", "any": ["领导"]}
+   ]
+  },
+  {
+   "id": "coding-01",
+   "unit": "scene:coding",
+   "tags": ["改口", "路径", "命令", "标识符"],
+   "app": "Visual Studio Code",
+   "window_title": "main.rs - server - Visual Studio Code",
+   "text": "把src斜杠main点rs里面的handle request函数的超时从三十秒改成十秒不对改成十五秒然后跑一下cargo test",
+   "points": [
+    {"id": "p1", "point": "文件 src/main.rs", "any": ["src/main.rs"]},
+    {"id": "p2", "point": "handle request 函数", "any": ["handle_request", "handlerequest"]},
+    {"id": "p3", "point": "超时从 30 秒改成 15 秒（改口后，不是 10 秒）", "any": ["十五秒", "15秒", "15s"]},
+    {"id": "p4", "point": "然后跑 cargo test", "any": ["cargotest"]}
+   ]
+  },
+  {
+   "id": "coding-02",
+   "unit": "scene:coding",
+   "tags": ["命令", "多项诉求"],
+   "app": "Windows Terminal",
+   "text": "在终端里跑docker compose up杠d然后看一下web那个容器的日志用docker logs杠f web",
+   "points": [
+    {"id": "p1", "point": "运行 docker compose up -d", "any": ["dockercomposeup-d", "docker-composeup-d"]},
+    {"id": "p2", "point": "用 docker logs -f web 看 web 容器的日志", "any": ["dockerlogs-fweb"]}
+   ]
+  },
+  {
+   "id": "coding-03",
+   "unit": "scene:coding",
+   "tags": ["列举", "命令", "路径"],
+   "app": "Visual Studio Code",
+   "dictionary": ["Voltip"],
+   "text": "写一下readme的安装步骤第一步git clone第二步运行npm install第三步复制点env点example为点env最后npm run dev",
+   "points": [
+    {"id": "p1", "point": "第一步 git clone", "any": ["gitclone"]},
+    {"id": "p2", "point": "第二步运行 npm install", "any": ["npminstall"]},
+    {"id": "p3", "point": "第三步把 .env.example 复制为 .env", "any": [".env.example"]},
+    {"id": "p4", "point": "最后 npm run dev", "any": ["npmrundev"]}
+   ]
+  },
+  {
+   "id": "coding-04",
+   "unit": "scene:coding",
+   "tags": ["多项诉求", "限制条件", "数字", "专有名词"],
+   "app": "Cursor",
+   "text": "这个接口要加上rate limit每个用户每分钟最多六十次超过了返回四二九另外要记录到prometheus里面",
+   "points": [
+    {"id": "p1", "point": "这个接口要加上 rate limit", "any": ["ratelimit", "限流"]},
+    {"id": "p2", "point": "每个用户每分钟最多 60 次", "any": ["六十次", "60次"]},
+    {"id": "p3", "point": "超过了返回 429", "any": ["429", "四二九"]},
+    {"id": "p4", "point": "还要记录到 Prometheus", "any": ["prometheus"]}
+   ]
+  },
+  {
+   "id": "coding-05",
+   "unit": "scene:coding",
+   "tags": ["例外", "标识符", "命令"],
+   "app": "WebStorm",
+   "text": "把所有的any类型都改成具体的类型除了test文件夹里面的那些用tsc杠杠strict检查一遍",
+   "points": [
+    {"id": "p1", "point": "把 any 类型改成具体的类型", "any": ["any"]},
+    {"id": "p2", "point": "例外：test 文件夹里的不改", "any": ["test"]},
+    {"id": "p3", "point": "用 tsc --strict 检查一遍", "any": ["tsc--strict", "tsc—strict", "tsc-strict"]}
+   ]
+  },
+  {
+   "id": "coding-06",
+   "unit": "scene:coding",
+   "tags": ["英文", "标识符", "多项诉求"],
+   "language": "en",
+   "app": "DataGrip",
+   "text": "um can you rename the user id field to account id in the users table and uh add an index on it",
+   "points": [
+    {"id": "p1", "point": "把 user id 字段改名为 account id", "all": ["account"], "any": ["user_id", "userid"]},
+    {"id": "p2", "point": "在 users 表里", "any": ["users"]},
+    {"id": "p3", "point": "给它加一个索引", "any": ["index"]}
+   ]
+  },
+  {
+   "id": "office-01",
+   "unit": "scene:office",
+   "tags": ["多项诉求", "列举", "称呼", "数字"],
+   "language": "zh",
+   "app": "Microsoft Outlook",
+   "window_title": "回复：下周培训安排",
+   "text": "张经理你好关于下周的培训有三件事想跟你确认一下一个是时间能不能改到周三下午二是需要准备投影仪三是参加人数大概二十个人麻烦你回复一下",
+   "points": [
+    {"id": "p1", "point": "称呼张经理", "any": ["张经理"]},
+    {"id": "p2", "point": "确认培训时间能否改到周三下午", "any": ["周三"]},
+    {"id": "p3", "point": "需要准备投影仪", "any": ["投影仪"]},
+    {"id": "p4", "point": "参加人数大约二十人", "any": ["二十", "20"]},
+    {"id": "p5", "point": "请对方回复"}
+   ]
+  },
+  {
+   "id": "office-02",
+   "unit": "scene:office",
+   "tags": ["条件", "限制条件"],
+   "app": "Microsoft Word",
+   "text": "如果下周一之前还收不到对方的合同我们就按原计划推进但是付款要等合同签了之后再说",
+   "points": [
+    {"id": "p1", "point": "条件：下周一之前还收不到对方的合同", "any": ["周一"]},
+    {"id": "p2", "point": "那就按原计划推进"},
+    {"id": "p3", "point": "但付款要等合同签订之后", "any": ["付款"]}
+   ]
+  },
+  {
+   "id": "office-03",
+   "unit": "scene:office",
+   "tags": ["列举", "数字"],
+   "app": "WPS Office",
+   "text": "本次采购清单包括显示器十台键盘十五个鼠标十五个还有两台打印机总预算三万五",
+   "points": [
+    {"id": "p1", "point": "显示器", "any": ["显示器"]},
+    {"id": "p2", "point": "键盘", "any": ["键盘"]},
+    {"id": "p3", "point": "鼠标", "any": ["鼠标"]},
+    {"id": "p4", "point": "打印机", "any": ["打印机"]},
+    {"id": "p5", "point": "数量：显示器 10 台、键盘 15 个、鼠标 15 个、打印机 2 台"},
+    {"id": "p6", "point": "总预算 3.5 万", "any": ["三万五", "3.5万", "35000", "35,000", "3万5"]}
+   ]
+  },
+  {
+   "id": "office-04",
+   "unit": "scene:office",
+   "tags": ["改口", "数字", "地点"],
+   "app": "Microsoft Outlook",
+   "text": "通知一下全体同事年会定在一月十八号不对是一月二十号晚上六点在公司一楼大厅",
+   "points": [
+    {"id": "p1", "point": "年会定在一月二十号（改口后，不是十八号）", "any": ["二十号", "20号", "20日", "二十日"], "none": ["十八号", "18号", "18日", "十八日"]},
+    {"id": "p2", "point": "晚上六点", "any": ["六点", "6点", "18:00", "18点", "18时"]},
+    {"id": "p3", "point": "在公司一楼大厅", "any": ["一楼", "1楼"]}
+   ]
+  },
+  {
+   "id": "office-05",
+   "unit": "scene:office",
+   "tags": ["列举", "限制条件", "数字"],
+   "app": "Microsoft Word",
+   "text": "关于加班费的规定是这样的工作日加班按一点五倍周末按两倍法定节假日按三倍但是每月加班不能超过三十六个小时",
+   "points": [
+    {"id": "p1", "point": "工作日加班按 1.5 倍", "any": ["1.5倍", "一点五倍", "150%"]},
+    {"id": "p2", "point": "周末按 2 倍", "any": ["两倍", "2倍", "200%"]},
+    {"id": "p3", "point": "法定节假日按 3 倍", "any": ["三倍", "3倍", "300%"]},
+    {"id": "p4", "point": "限制：每月加班不超过 36 小时", "any": ["三十六", "36"]}
+   ]
+  },
+  {
+   "id": "office-06",
+   "unit": "scene:office",
+   "tags": ["中英混说", "列举", "数字"],
+   "app": "Notion",
+   "text": "我们Q3的OKR有三个第一DAU提升到五十万第二客户满意度达到九十分以上第三上线新的billing系统",
+   "points": [
+    {"id": "p1", "point": "Q3 的 OKR", "all": ["okr"], "any": ["q3", "第三季度"]},
+    {"id": "p2", "point": "DAU 提升到 50 万", "any": ["五十万", "50万", "500,000", "500000"]},
+    {"id": "p3", "point": "客户满意度达到 90 分以上", "any": ["九十", "90"]},
+    {"id": "p4", "point": "上线新的 billing 系统", "any": ["billing", "计费"]}
+   ]
+  },
+  {
+   "id": "legal-01",
+   "unit": "scene:legal",
+   "tags": ["法条", "列举", "数字"],
+   "app": "WPS Office",
+   "text": "根据民法典第五百七十七条当事人一方不履行合同义务的应当承担继续履行采取补救措施或者赔偿损失等违约责任",
+   "points": [
+    {"id": "p1", "point": "民法典第 577 条", "all": ["民法典"], "any": ["五百七十七", "577"]},
+    {"id": "p2", "point": "继续履行", "any": ["继续履行"]},
+    {"id": "p3", "point": "采取补救措施", "any": ["补救措施"]},
+    {"id": "p4", "point": "赔偿损失", "any": ["赔偿损失"]}
+   ]
+  },
+  {
+   "id": "legal-02",
+   "unit": "scene:legal",
+   "tags": ["案号", "当事人", "数字"],
+   "app": "Microsoft Word",
+   "text": "本案案号是二零二五京零一零五民初一二三四五号原告是北京某某科技有限公司被告是张某",
+   "points": [
+    {"id": "p1", "point": "案号 (2025) 京 0105 民初 12345 号", "all": ["民初"], "any": ["12345", "一二三四五"]},
+    {"id": "p2", "point": "案号的年份 2025 和法院代号京 0105", "all": ["2025|二零二五", "0105|零一零五"]},
+    {"id": "p3", "point": "原告：北京某某科技有限公司", "any": ["北京某某科技有限公司"]},
+    {"id": "p4", "point": "被告：张某", "any": ["张某"]}
+   ]
+  },
+  {
+   "id": "legal-03",
+   "unit": "scene:legal",
+   "tags": ["期限", "条件", "数字", "机构名称"],
+   "language": "zh",
+   "app": "WPS Office",
+   "text": "被告应在判决生效之日起十日内支付原告货款八万六千元逾期未支付的按照全国银行间同业拆借中心公布的贷款市场报价利率计算利息",
+   "points": [
+    {"id": "p1", "point": "判决生效之日起十日内", "any": ["十日", "10日"]},
+    {"id": "p2", "point": "支付原告货款 86000 元", "any": ["八万六千", "86000", "86,000", "8.6万"]},
+    {"id": "p3", "point": "逾期未支付的按贷款市场报价利率计算利息"},
+    {"id": "p4", "point": "全国银行间同业拆借中心", "any": ["全国银行间同业拆借中心"]}
+   ]
+  },
+  {
+   "id": "legal-04",
+   "unit": "scene:legal",
+   "tags": ["改口", "日期", "数字"],
+   "app": "Microsoft Word",
+   "text": "合同签订日期是二零二四年三月五日不对是三月十五日违约金按合同总额的百分之二十计算",
+   "points": [
+    {"id": "p1", "point": "签订日期 2024 年 3 月 15 日（改口后，不是 3 月 5 日）", "any": ["十五日", "15日"], "none": ["三月五日", "3月5日"]},
+    {"id": "p2", "point": "违约金按合同总额的 20% 计算", "any": ["20%", "百分之二十"]}
+   ]
+  },
+  {
+   "id": "legal-05",
+   "unit": "scene:legal",
+   "tags": ["例外", "列举"],
+   "app": "WPS Office",
+   "text": "以下情形不适用本条款一不可抗力二政府行为三双方另有书面约定的",
+   "points": [
+    {"id": "p1", "point": "不适用情形：不可抗力", "any": ["不可抗力"]},
+    {"id": "p2", "point": "不适用情形：政府行为", "any": ["政府行为"]},
+    {"id": "p3", "point": "不适用情形：双方另有书面约定的", "any": ["书面约定"]}
+   ]
+  },
+  {
+   "id": "legal-06",
+   "unit": "scene:legal",
+   "tags": ["中英混说", "当事人", "数字"],
+   "app": "Microsoft Word",
+   "text": "甲方的英文名称是Acme Holdings Limited注册地址在香港某某大厦十二楼联系人是王某",
+   "points": [
+    {"id": "p1", "point": "甲方英文名称 Acme Holdings Limited", "any": ["acmeholdingslimited"]},
+    {"id": "p2", "point": "注册地址在香港某某大厦十二楼", "all": ["香港"], "any": ["十二楼", "12楼"]},
+    {"id": "p3", "point": "联系人王某", "any": ["王某"]}
+   ]
+  },
+  {
+   "id": "medical-01",
+   "unit": "scene:medical",
+   "tags": ["数字", "药名", "剂量"],
+   "app": "Microsoft Word",
+   "text": "患者男性五十八岁主诉胸闷气短三天既往有高血压病史十年口服氨氯地平五毫克每日一次",
+   "points": [
+    {"id": "p1", "point": "男性，58 岁", "any": ["五十八", "58"]},
+    {"id": "p2", "point": "主诉胸闷气短 3 天", "all": ["胸闷"], "any": ["三天", "3天", "3日"]},
+    {"id": "p3", "point": "高血压病史 10 年", "all": ["高血压"], "any": ["十年", "10年"]},
+    {"id": "p4", "point": "口服氨氯地平 5 mg", "all": ["氨氯地平"], "any": ["5mg", "五毫克", "5毫克"]},
+    {"id": "p5", "point": "每日一次", "any": ["每日一次", "每日1次", "qd", "每天一次", "每天1次", "1次/日", "一日一次"]}
+   ]
+  },
+  {
+   "id": "medical-02",
+   "unit": "scene:medical",
+   "tags": ["剂量", "条件", "数字"],
+   "app": "WPS Office",
+   "text": "阿莫西林零点五克每八小时一次口服连用七天如果出现皮疹立即停药",
+   "points": [
+    {"id": "p1", "point": "阿莫西林 0.5 g", "all": ["阿莫西林"], "any": ["0.5g", "零点五克", "0.5克"]},
+    {"id": "p2", "point": "每 8 小时一次", "any": ["八小时", "8小时", "q8h", "8h"]},
+    {"id": "p3", "point": "连用 7 天", "any": ["七天", "7天", "7日"]},
+    {"id": "p4", "point": "条件：出现皮疹立即停药", "any": ["皮疹"]}
+   ]
+  },
+  {
+   "id": "medical-03",
+   "unit": "scene:medical",
+   "tags": ["改口", "剂量"],
+   "language": "zh",
+   "app": "Microsoft Word",
+   "text": "给予胰岛素皮下注射八个单位不对是六个单位餐前三十分钟",
+   "points": [
+    {"id": "p1", "point": "胰岛素皮下注射 6 个单位（改口后，不是 8 个单位）", "any": ["六个单位", "6个单位", "6单位", "6u", "6iu"], "none": ["八个单位", "8个单位", "8单位", "8u", "8iu"]},
+    {"id": "p2", "point": "餐前 30 分钟", "any": ["三十分钟", "30分钟", "30min"]}
+   ]
+  },
+  {
+   "id": "medical-04",
+   "unit": "scene:medical",
+   "tags": ["列举", "检查项目", "条件"],
+   "app": "WPS Office",
+   "text": "完善血常规肝肾功能心电图和胸部CT检查必要时做冠脉造影",
+   "points": [
+    {"id": "p1", "point": "血常规", "any": ["血常规"]},
+    {"id": "p2", "point": "肝肾功能", "all": ["肝功能|肝肾功能", "肾功能|肝肾功能"]},
+    {"id": "p3", "point": "心电图", "any": ["心电图"]},
+    {"id": "p4", "point": "胸部 CT", "any": ["胸部ct"]},
+    {"id": "p5", "point": "必要时做冠脉造影", "any": ["冠脉造影"]}
+   ]
+  },
+  {
+   "id": "medical-05",
+   "unit": "scene:medical",
+   "tags": ["数字", "单位"],
+   "app": "Microsoft Word",
+   "text": "血压一百四十五比九十毫米汞柱心率八十八次每分体温三十七点八度",
+   "points": [
+    {"id": "p1", "point": "血压 145/90 mmHg", "any": ["145/90", "一百四十五比九十", "145比90"]},
+    {"id": "p2", "point": "心率 88 次/分", "any": ["88", "八十八"]},
+    {"id": "p3", "point": "体温 37.8 度", "any": ["37.8", "三十七点八"]}
+   ]
+  },
+  {
+   "id": "medical-06",
+   "unit": "scene:medical",
+   "tags": ["禁忌", "条件", "药名"],
+   "app": "WPS Office",
+   "text": "该患者对青霉素过敏禁用青霉素类药物可以换用阿奇霉素但是肝功能不全的话要减量",
+   "points": [
+    {"id": "p1", "point": "对青霉素过敏，禁用青霉素类药物", "all": ["青霉素", "禁用"]},
+    {"id": "p2", "point": "可以换用阿奇霉素", "any": ["阿奇霉素"]},
+    {"id": "p3", "point": "条件：肝功能不全时要减量", "all": ["肝功能不全", "减量"]}
+   ]
+  },
+  {
+   "id": "finance-01",
+   "unit": "scene:finance",
+   "tags": ["金额", "百分比", "日期"],
+   "app": "Microsoft Excel",
+   "text": "公司二零二五年第三季度营业收入十二点三亿元同比增长百分之八点五净利润一点二亿元",
+   "points": [
+    {"id": "p1", "point": "2025 年第三季度", "any": ["2025", "二零二五"]},
+    {"id": "p2", "point": "营业收入 12.3 亿元", "any": ["12.3亿", "十二点三亿"]},
+    {"id": "p3", "point": "同比增长 8.5%", "any": ["8.5%", "百分之八点五"]},
+    {"id": "p4", "point": "净利润 1.2 亿元", "any": ["1.2亿", "一点二亿"]}
+   ]
+  },
+  {
+   "id": "finance-02",
+   "unit": "scene:finance",
+   "tags": ["证券代码", "金额"],
+   "app": "WPS Office",
+   "text": "建议增持某某股份代码九九九九九九目标价一千八百元止损位一千五百元",
+   "points": [
+    {"id": "p1", "point": "建议增持某某股份", "any": ["增持"]},
+    {"id": "p2", "point": "证券代码 999999", "any": ["999999", "九九九九九九"]},
+    {"id": "p3", "point": "目标价 1800 元", "any": ["1800", "1,800", "一千八百"]},
+    {"id": "p4", "point": "止损位 1500 元", "any": ["1500", "1,500", "一千五百"]}
+   ]
+  },
+  {
+   "id": "finance-03",
+   "unit": "scene:finance",
+   "tags": ["条件", "机构名称", "百分比"],
+   "language": "zh",
+   "app": "Microsoft Word",
+   "text": "如果美联储下个月降息二十五个基点我们就把债券仓位从三成提高到四成否则维持不变",
+   "points": [
+    {"id": "p1", "point": "条件：美联储下个月降息 25 个基点", "all": ["美联储"], "any": ["25个基点", "二十五个基点", "25bp", "25个bp"]},
+    {"id": "p2", "point": "债券仓位从三成提高到四成", "all": ["三成|30%", "四成|40%"]},
+    {"id": "p3", "point": "否则维持不变"}
+   ]
+  },
+  {
+   "id": "finance-04",
+   "unit": "scene:finance",
+   "tags": ["改口", "金额", "百分比"],
+   "app": "Microsoft Excel",
+   "text": "这笔贷款金额是五百万不对是五百五十万年利率百分之三点四五期限三年",
+   "points": [
+    {"id": "p1", "point": "贷款金额 550 万（改口后，不是 500 万）", "any": ["五百五十万", "550万"], "none": ["500万", "五百万"]},
+    {"id": "p2", "point": "年利率 3.45%", "any": ["3.45%", "百分之三点四五"]},
+    {"id": "p3", "point": "期限三年", "any": ["三年", "3年"]}
+   ]
+  },
+  {
+   "id": "finance-05",
+   "unit": "scene:finance",
+   "tags": ["机构名称", "中英混说", "金额"],
+   "app": "Microsoft Word",
+   "text": "这次IPO由华信证券和明德资本担任联席保荐人发行规模约二十亿港元",
+   "points": [
+    {"id": "p1", "point": "IPO", "any": ["ipo"]},
+    {"id": "p2", "point": "华信证券和明德资本担任联席保荐人", "all": ["华信证券", "明德资本"]},
+    {"id": "p3", "point": "发行规模约 20 亿港元", "all": ["港元|港币|hkd"], "any": ["二十亿", "20亿"]}
+   ]
+  },
+  {
+   "id": "finance-06",
+   "unit": "scene:finance",
+   "tags": ["列举", "百分比"],
+   "app": "WPS Office",
+   "text": "本基金的资产配置是股票百分之六十债券百分之三十现金百分之十每季度再平衡一次",
+   "points": [
+    {"id": "p1", "point": "股票 60%", "any": ["60%", "百分之六十"]},
+    {"id": "p2", "point": "债券 30%", "any": ["30%", "百分之三十"]},
+    {"id": "p3", "point": "现金 10%", "any": ["10%", "百分之十"]},
+    {"id": "p4", "point": "每季度再平衡一次", "any": ["每季度", "每个季度"]}
+   ]
+  },
+  {
+   "id": "academic-01",
+   "unit": "scene:academic",
+   "tags": ["专有名词", "百分比", "中英混说"],
+   "app": "Overleaf",
+   "text": "本文提出了一种基于transformer的语音识别方法在aishell一数据集上字错误率降到了百分之四点二",
+   "points": [
+    {"id": "p1", "point": "基于 Transformer 的语音识别方法", "any": ["transformer"]},
+    {"id": "p2", "point": "在 AISHELL-1 数据集上", "any": ["aishell-1", "aishell1", "aishell一"]},
+    {"id": "p3", "point": "字错误率降到 4.2%", "any": ["4.2%", "百分之四点二"]}
+   ]
+  },
+  {
+   "id": "academic-02",
+   "unit": "scene:academic",
+   "tags": ["引用", "数字"],
+   "app": "Microsoft Word",
+   "text": "正如张等人在二零二三年的研究中指出的样本量不足会导致过拟合",
+   "points": [
+    {"id": "p1", "point": "引用：张等人 2023 年的研究", "all": ["张等", "2023|二零二三"]},
+    {"id": "p2", "point": "样本量不足会导致过拟合", "all": ["样本量", "过拟合"]}
+   ]
+  },
+  {
+   "id": "academic-03",
+   "unit": "scene:academic",
+   "tags": ["公式符号", "数字"],
+   "language": "zh",
+   "app": "Overleaf",
+   "text": "损失函数定义为交叉熵加上拉姆达乘以权重的二范数平方其中拉姆达取零点零一",
+   "points": [
+    {"id": "p1", "point": "损失函数 = 交叉熵 + λ × 权重二范数的平方", "all": ["交叉熵"]},
+    {"id": "p2", "point": "符号 λ", "any": ["λ", "拉姆达", "lambda"]},
+    {"id": "p3", "point": "λ 取 0.01", "any": ["0.01", "零点零一"]}
+   ]
+  },
+  {
+   "id": "academic-04",
+   "unit": "scene:academic",
+   "tags": ["改口", "数字"],
+   "app": "Microsoft Word",
+   "text": "实验共招募了一百二十名被试不对是一百二十八名被试随机分为两组",
+   "points": [
+    {"id": "p1", "point": "共招募 128 名被试（改口后，不是 120 名）", "any": ["一百二十八", "128"], "none": ["一百二十名", "120名"]},
+    {"id": "p2", "point": "随机分为两组", "any": ["两组", "2组"]}
+   ]
+  },
+  {
+   "id": "academic-05",
+   "unit": "scene:academic",
+   "tags": ["限制条件", "列举", "数字"],
+   "app": "Overleaf",
+   "text": "本研究的局限在于只覆盖了普通话样本没有包括方言而且被试年龄都在十八到三十五岁之间结论可能不适用于老年人",
+   "points": [
+    {"id": "p1", "point": "局限：只覆盖普通话样本", "any": ["普通话"]},
+    {"id": "p2", "point": "没有包括方言", "any": ["方言"]},
+    {"id": "p3", "point": "被试年龄在 18 到 35 岁之间", "all": ["18|十八", "35|三十五"]},
+    {"id": "p4", "point": "结论可能不适用于老年人", "any": ["老年人"]}
+   ]
+  },
+  {
+   "id": "academic-06",
+   "unit": "scene:academic",
+   "tags": ["专有名词", "列举", "数字"],
+   "app": "Microsoft Word",
+   "text": "我们比较了三种模型分别是BERT RoBERTa和XLNet在F1值上RoBERTa最好是九十一点三",
+   "points": [
+    {"id": "p1", "point": "比较的模型：BERT", "any": ["bert"]},
+    {"id": "p2", "point": "比较的模型：RoBERTa", "any": ["roberta"]},
+    {"id": "p3", "point": "比较的模型：XLNet", "any": ["xlnet"]},
+    {"id": "p4", "point": "F1 值上 RoBERTa 最好，为 91.3", "all": ["f1"], "any": ["91.3", "九十一点三"]}
+   ]
+  }
+ ]
+}

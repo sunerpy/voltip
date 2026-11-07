@@ -90,6 +90,11 @@ desktop-dev: ## Tauri desktop dev server (built-in engine defaults from .env.bui
 acceptance: ## Check the feature → implementation → test acceptance ledger
 	@./scripts/check-acceptance-ledger.sh
 
+.PHONY: refine-eval
+refine-eval: ## Evaluate the AI polish prompts on Amazon Bedrock, update docs/refine-eval (by hand only: calls AWS, never in CI; docs/refine-eval.md)
+	env -u AWS_REGION -u AWS_DEFAULT_REGION -u AWS_PROFILE -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN -u AWS_BEARER_TOKEN_BEDROCK \
+		python3 scripts/refine-eval/refine_eval.py all
+
 .PHONY: verify
 verify: ## Run every gate and write verify-all.log bound to the current commit
 	./scripts/verify-all.sh verify-all.log

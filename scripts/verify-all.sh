@@ -71,6 +71,8 @@ gate web no-prod-hosts   .github/scripts/check-no-production-hosts.sh
 gate web release-helpers python3 -m unittest discover -s scripts/release -p "test_*.py"
 # The measurement corpus builder (scripts/measure/, docs/dictation.md §29).
 gate web measure-helpers python3 -m unittest discover -s scripts/measure -p "test_*.py"
+# The prompt evaluation's runner, offline: checks, judge parsing, report (the evaluation itself is make refine-eval, by hand).
+gate web refine-eval-helpers python3 -m unittest discover -s scripts/refine-eval -p "test_*.py"
 # The self-hosted recognition gateway in its nginx image (deploy/selfhost/); needs Docker, which CI has.
 gate web selfhost-gateway python3 -m unittest discover -s deploy/selfhost -p "test_*.py"
 

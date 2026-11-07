@@ -1,0 +1,27 @@
+[package]
+name = "voltip-refine-eval"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "The AI polish prompt evaluation's requests (docs/refine-eval.md): each sample's clean-up request exactly as the app sends it to the built-in service, and the digest of every built-in preset's and scene's prompts, which a test compares with the one the last evaluation recorded."
+
+[lints]
+workspace = true
+
+[dependencies]
+# The digests of the prompts (docs/refine-eval/prompt-digests.json).
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+# A sample's dictionary entries (`Vocabulary::compile` takes entries with ids).
+uuid.workspace = true
+# The request as the app builds it: the core's hints and presets, the cloud crate's configuration
+# for the built-in service, the refine crate's body.
+voltip-cloud.workspace = true
+voltip-core.workspace = true
+voltip-net.workspace = true
+voltip-protocol.workspace = true
+voltip-refine.workspace = true
