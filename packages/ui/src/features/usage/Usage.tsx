@@ -171,12 +171,13 @@ export function UsageMeter({ usage, onRetry, className, "data-testid": testId }:
     usage.resetAtMs === undefined
       ? undefined
       : `${resetLabel(usage.resetAtMs, now, locale)} · ${resetCountdown(usage.resetAtMs, now, locale)}`;
-  // What is left, from the first minute on; the day's state otherwise.
+  // What is left, from the first minute on; the day's state otherwise. The counting period has
+  // none: the amount used is the whole of it (2026-11-07, the user: no 暂不限量).
   const status =
     usage.tone === "out"
       ? t("usage.usedUpToday")
       : usage.tone === "unlimited"
-        ? t("usage.unlimited")
+        ? undefined
         : usage.tone === "ok" || usage.tone === "near"
           ? usageLeft(usage, locale)
           : usageValue(usage, locale);
@@ -192,26 +193,28 @@ export function UsageMeter({ usage, onRetry, className, "data-testid": testId }:
           className={cx("shrink-0", usage.tone === "out" ? "text-danger" : "text-fg-muted")}
         />
         <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-fg">{title}</span>
-        <span
-          className={cx(
-            "flex shrink-0 items-center gap-1.5 text-[12px] font-medium",
-            USAGE_TEXT_TONE[usage.tone],
-            usage.tone === "ok" && "text-fg",
-          )}
-          data-testid="usage-meter-status">
-          {(usage.tone === "near" || usage.tone === "out") && (
-            <span
-              aria-hidden
-              className={cx(
-                "size-1.5 rounded-full",
-                usage.tone === "out" ? "bg-danger" : "bg-warning-fill",
-              )}
-            />
-          )}
-          {status}
-        </span>
+        {status !== undefined && (
+          <span
+            className={cx(
+              "flex shrink-0 items-center gap-1.5 text-[12px] font-medium",
+              USAGE_TEXT_TONE[usage.tone],
+              usage.tone === "ok" && "text-fg",
+            )}
+            data-testid="usage-meter-status">
+            {(usage.tone === "near" || usage.tone === "out") && (
+              <span
+                aria-hidden
+                className={cx(
+                  "size-1.5 rounded-full",
+                  usage.tone === "out" ? "bg-danger" : "bg-warning-fill",
+                )}
+              />
+            )}
+            {status}
+          </span>
+        )}
       </div>
-      {usage.tone === "unlimited" ? (
+      {status === undefined ? (
         <div className="text-[15px] font-medium text-fg">
           {t("usage.todayUsed", { amount: usageAmount(usage.kind, usage.used, locale) })}
         </div>
@@ -242,11 +245,11 @@ export function UsageMeter({ usage, onRetry, className, "data-testid": testId }:
           </>
         ) : (
           <>
-            <span className="shrink-0 text-fg-muted">
-              {usage.tone === "unlimited"
-                ? t("usage.unlimitedShort")
-                : t("usage.used", { of: usageOf(usage, locale) })}
-            </span>
+            {usage.tone !== "unlimited" && (
+              <span className="shrink-0 text-fg-muted">
+                {t("usage.used", { of: usageOf(usage, locale) })}
+              </span>
+            )}
             {reset !== undefined && (
               <span className="min-w-0 truncate text-right text-fg-subtle" title={reset}>
                 {reset}

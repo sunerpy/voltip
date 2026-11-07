@@ -166,13 +166,52 @@ describe("texts", () => {
       "今日 23 / 60 分钟",
       "今日剩余 8 分钟",
       `今日额度已用完 · ${reset}`,
-      "今日已用 23 分钟 · 暂不限量",
+      "今日已用 23 分钟",
       "用量暂时无法获取",
       "正在获取用量…",
     ]);
     const under = at({ asr: { used_seconds: 3590, limit_seconds: 3600 } });
     expect(usageInline(under, NOW)).toBe("今日剩余不到 1 分钟");
     expect(usageInline(near, NOW, "en")).toBe("8 min left today");
+    expect(usageInline(counting, NOW, "en")).toBe("Used today: 23 min");
+  });
+
+  it("says only what was used while the service counts without a limit", () => {
+    // 2026-11-07, the user: today's usage shows the amount used alone, not 暂不限量 or 统计期间不设上限.
+    const counting = view({ quota: report({ mode: "count" }) });
+    const noLimit = view({ quota: report({ refine: { used: 3, limit: null } }) });
+    const texts = (["zh-CN", "en"] as const).flatMap((locale) => [
+      ...(["asr", "llm"] as const).flatMap((kind) =>
+        [counting, noLimit].flatMap((v) => {
+          const u = serviceUsage(v, kind, NOW);
+          return [usageValue(u, locale), usageInline(u, NOW, locale)];
+        }),
+      ),
+      usageSummary(counting, NOW, locale),
+      usageSummary(noLimit, NOW, locale),
+    ]);
+    expect(texts).toHaveLength(20);
+    for (const text of texts) {
+      expect(text).not.toMatch(/限|no limit|being measured/i);
+    }
+    expect(usageInline(serviceUsage(noLimit, "llm", NOW), NOW)).toBe("今日已用 3 次");
+    expect(usageInline(serviceUsage(counting, "llm", NOW), NOW, "en")).toBe("Used today: 41 uses");
+  });
+
+  it("follows the service from counting to limits and back", () => {
+    const counting = view({ quota: report({ mode: "count" }) });
+    const limited = view();
+    const inline = (v: UsageView) => usageInline(serviceUsage(v, "asr", NOW), NOW);
+    expect([counting, limited, counting].map(inline)).toEqual([
+      "今日已用 23 分钟",
+      "今日 23 / 60 分钟",
+      "今日已用 23 分钟",
+    ]);
+    expect([counting, limited, counting].map((v) => usageSummary(v, NOW))).toEqual([
+      "识别 23 分钟 · 润色 41 次",
+      "识别 23 / 60 分钟 · 润色 41 / 100 次",
+      "识别 23 分钟 · 润色 41 次",
+    ]);
   });
 
   it("says when the day starts again in local time", () => {
@@ -232,7 +271,10 @@ describe("usageSummary", () => {
     });
     expect(usageSummary(near, NOW)).toBe("识别剩余 8 分钟 · 润色已用完");
     expect(usageSummary(view({ quota: report({ mode: "count" }) }), NOW)).toBe(
-      "识别 23 分钟 · 润色 41 次 · 暂不限量",
+      "识别 23 分钟 · 润色 41 次",
+    );
+    expect(usageSummary(view({ quota: report({ mode: "count" }) }), NOW, "en")).toBe(
+      "Speech 23 min · Polish 41 uses",
     );
     expect(usageSummary(view({ unavailable: true }), NOW)).toBe("用量暂时无法获取");
     expect(usageSummary(view({ quota: undefined }), NOW)).toBe("正在获取用量…");

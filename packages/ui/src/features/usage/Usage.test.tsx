@@ -1,6 +1,6 @@
 import { type Backend, type ServiceUsage, defaultEngineSettings } from "@voltip/shared";
 import { MockBackend, sampleUsage } from "@voltip/shared/mock";
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { BackendProvider, useUiState } from "../../backend/BackendProvider";
@@ -47,7 +47,9 @@ function Meter({ kind, onRetry }: { kind: "asr" | "llm"; onRetry?: () => void })
   const u = useServiceUsage(kind);
   const { usage: view } = useUiState();
   if (!view.builtin) return null;
-  return <UsageMeter usage={u} {...(onRetry === undefined ? {} : { onRetry })} />;
+  return (
+    <UsageMeter usage={u} data-testid="meter" {...(onRetry === undefined ? {} : { onRetry })} />
+  );
 }
 
 describe("UsageBar", () => {
@@ -96,7 +98,8 @@ describe("UsageInline", () => {
     expect(within(screen.getByTestId("near")).getByRole("meter")).toBeInTheDocument();
     expect(screen.getByTestId("out")).toHaveTextContent(/^今日额度已用完 · .*重置$/);
     expect(within(screen.getByTestId("out")).queryByRole("meter")).toBeNull();
-    expect(screen.getByTestId("count")).toHaveTextContent("今日已用 23 分钟 · 暂不限量");
+    // In the counting period, what was used alone (2026-11-07, the user: no 暂不限量).
+    expect(screen.getByTestId("count")).toHaveTextContent(/^今日已用 23 分钟$/);
   });
 });
 
@@ -125,9 +128,12 @@ describe("UsageMeter", () => {
     expect(out).toHaveTextContent("内置 AI 润色");
     expect(within(out).getByTestId("usage-meter-status")).toHaveTextContent("今日已用完");
     expect(within(out).getByRole("meter")).toHaveAttribute("aria-valuenow", "100");
-    expect(screen.getByTestId("count")).toHaveTextContent("今日已用 23 分钟");
-    expect(screen.getByTestId("count")).toHaveTextContent("统计期间不设上限");
-    expect(within(screen.getByTestId("count")).queryByRole("meter")).toBeNull();
+    // The counting period: today's amount and the reset, no status and no line about limits.
+    const count = screen.getByTestId("count");
+    expect(within(count).queryByTestId("usage-meter-status")).toBeNull();
+    expect(count).toHaveTextContent(/^内置语音识别今日已用 23 分钟.*重置 · 还有/);
+    expect(count).not.toHaveTextContent(/限/);
+    expect(within(count).queryByRole("meter")).toBeNull();
     expect(screen.getByTestId("unknown")).toHaveTextContent("用量暂时无法获取");
     await userEvent.click(within(screen.getByTestId("unknown")).getByTestId("usage-retry"));
     expect(onRetry).toHaveBeenCalledTimes(1);
@@ -139,6 +145,29 @@ describe("UsageMeter", () => {
     const backend = new MockBackend({ usage: sampleUsage("near") });
     shell(backend, <Meter kind="llm" />);
     expect(await screen.findByTestId("usage-meter-status")).toHaveTextContent("剩余 14 次");
+  });
+
+  it("follows the service's reports from counting to limits and back, in English too", async () => {
+    const backend = new MockBackend({ usage: sampleUsage("count") });
+    const limits = sampleUsage("ok").quota;
+    const counting = sampleUsage("count").quota;
+    shell(backend, <Meter kind="llm" />, "en");
+    const meter = await screen.findByTestId("meter");
+    expect(meter).toHaveTextContent(/^Built-in AI polishUsed today: 41 usesResets /);
+    expect(meter).not.toHaveTextContent(/limit/i);
+    expect(within(meter).queryByTestId("usage-meter-status")).toBeNull();
+    act(() => {
+      backend.simulateUsage({ quota: limits });
+    });
+    expect(within(meter).getByTestId("usage-meter-status")).toHaveTextContent("59 uses left");
+    expect(within(meter).getByRole("meter")).toHaveAttribute("aria-valuenow", "41");
+    expect(meter).toHaveTextContent("41 / 100 uses used");
+    act(() => {
+      backend.simulateUsage({ quota: counting });
+    });
+    expect(within(meter).queryByTestId("usage-meter-status")).toBeNull();
+    expect(within(meter).queryByRole("meter")).toBeNull();
+    expect(meter).toHaveTextContent(/^Built-in AI polishUsed today: 41 usesResets /);
   });
 });
 
@@ -235,6 +264,32 @@ describe("the provider cards", () => {
     expect(within(card).getByTestId("provider-asr-usage")).toHaveTextContent("今日剩余 8 分钟");
     await userEvent.click(within(card).getByRole("button", { name: "内置服务" }));
     expect(await screen.findByTestId("builtin-usage-asr")).toBeInTheDocument();
+  });
+
+  it("say only what was used in the counting period, and the limit once the service sets one", async () => {
+    const backend = new MockBackend({ usage: sampleUsage("count") });
+    function Cards() {
+      const state = useUiState();
+      return (
+        <ProviderCards
+          kind="llm"
+          providers={state.engines.providers.filter((p) => p.llm !== undefined)}
+          label="服务商"
+        />
+      );
+    }
+    shell(backend, <Cards />);
+    const card = await screen.findByTestId("provider-llm-builtin");
+    expect(within(card).getByTestId("provider-llm-usage")).toHaveTextContent(/^今日已用 41 次$/);
+    await userEvent.click(within(card).getByRole("button", { name: "内置服务" }));
+    const drawer = await screen.findByTestId("builtin-usage-llm");
+    expect(drawer).toHaveTextContent("今日已用 41 次");
+    expect(drawer).not.toHaveTextContent(/暂不限量|不设上限/);
+    act(() => {
+      backend.simulateUsage({ quota: sampleUsage("ok").quota });
+    });
+    expect(within(card).getByTestId("provider-llm-usage")).toHaveTextContent(/^今日 41 \/ 100 次$/);
+    expect(drawer).toHaveTextContent("已用 41 / 100 次");
   });
 
   it("show nothing on the card before the first report, and open a drawer at first when asked", async () => {

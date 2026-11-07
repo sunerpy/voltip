@@ -368,9 +368,6 @@ export const zhCN = {
     underOneMinute: "不到 1 分钟",
     usedUp: "已用完",
     usedUpToday: "今日已用完",
-    unlimited: "暂不限量",
-    unlimitedNote: "统计期间不设上限，每天 {time} 重新计数",
-    unlimitedShort: "统计期间不设上限",
     todayUsed: "今日已用 {amount}",
     unavailable: "无法获取",
     unavailableBody: "用量暂时无法获取",
@@ -392,7 +389,6 @@ export const zhCN = {
       left: "今日剩余 {amount}",
       underOne: "今日剩余不到 1 分钟",
       out: "今日额度已用完 · {reset}",
-      unlimited: "今日已用 {amount} · 暂不限量",
     },
     builtinLine: "内置服务 · {usage}",
     /** The sidebar card (board 14). */

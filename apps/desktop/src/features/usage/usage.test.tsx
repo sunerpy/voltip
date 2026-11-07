@@ -74,19 +74,65 @@ describe("usage of the built-in service (docs/dictation.md section 27)", () => {
       );
     });
 
-    it("says 暂不限量 in the counting period and 无法获取 when the service cannot be asked", async () => {
+    it("says only what was used in the counting period and 无法获取 when the service cannot be asked", async () => {
+      // 2026-11-07, the user: today's usage shows the amount used, not 暂不限量 or 统计期间不设上限.
       const { unmount } = withUsage("count");
       const card = await screen.findByTestId("sidebar-usage-card");
-      expect(card).toHaveAttribute("data-mode", "unlimited");
-      expect(card).toHaveTextContent("暂不限量");
-      expect(card).toHaveTextContent("统计期间不设上限");
+      expect(card).toHaveTextContent(/^今日用量\d\d:\d\d 重置识别23 分钟润色41 次$/);
+      expect(card).toHaveAttribute("data-mode", "builtin");
+      expect(card).toHaveAttribute("data-tone", "unlimited");
       expect(within(card).queryAllByRole("meter")).toHaveLength(0);
+      expect(screen.getByTestId("sidebar-usage-compact")).toHaveTextContent(
+        /^今日用量 · 识别 23 分钟$/,
+      );
+      // The icon rail names the amounts and the reset.
+      await userEvent.click(screen.getByTestId("sidebar-collapse"));
+      expect(await screen.findByTestId("sidebar-usage-rail")).toHaveAccessibleName(
+        /^今日用量：识别 23 分钟，润色 41 次 · \d\d:\d\d 重置$/,
+      );
+      // The sidebar's width is kept: open it again for the next window.
+      await userEvent.click(screen.getByTestId("sidebar-collapse"));
+      await screen.findByTestId("sidebar-usage-card");
       unmount();
       withUsage("unknown");
       const unknown = await screen.findByTestId("sidebar-usage-card");
       expect(unknown).toHaveAttribute("data-mode", "unknown");
       expect(unknown).toHaveTextContent("用量暂时无法获取");
       expect(screen.getByTestId("sidebar-usage-compact")).toHaveTextContent("今日用量 · 无法获取");
+    });
+
+    it("follows the service's reports from counting to limits and back, without a restart", async () => {
+      const { backend } = withUsage("count");
+      const card = await screen.findByTestId("sidebar-usage-card");
+      const counting = () => {
+        expect(card).toHaveAttribute("data-tone", "unlimited");
+        expect(within(card).getByTestId("sidebar-usage-asr")).toHaveTextContent(/^识别23 分钟$/);
+        expect(within(card).getByTestId("sidebar-usage-llm")).toHaveTextContent(/^润色41 次$/);
+        expect(within(card).queryAllByRole("meter")).toHaveLength(0);
+        expect(screen.getByTestId("home-engine-usage")).toHaveTextContent(
+          /^内置服务 · 今日已用 23 分钟$/,
+        );
+        expect(screen.getByTestId("home-refine-usage")).toHaveTextContent(/^· 今日已用 41 次$/);
+        expect(screen.getByTestId("page-home")).not.toHaveTextContent(/暂不限量|不设上限/);
+      };
+      counting();
+      // The service sets its limits: the next answer's report (or question) says so.
+      act(() => {
+        backend.simulateUsage({ quota: sampleUsage("ok").quota });
+      });
+      expect(card).toHaveAttribute("data-tone", "ok");
+      expect(within(card).getByTestId("sidebar-usage-asr")).toHaveTextContent("识别23 / 60 分钟");
+      expect(within(card).getByTestId("sidebar-usage-llm")).toHaveTextContent("润色41 / 100 次");
+      expect(within(card).getAllByRole("meter")).toHaveLength(2);
+      expect(screen.getByTestId("home-engine-usage")).toHaveTextContent(
+        "内置服务 · 今日 23 / 60 分钟",
+      );
+      expect(screen.getByTestId("home-refine-usage")).toHaveTextContent("· 今日 41 / 100 次");
+      // And back to counting.
+      act(() => {
+        backend.simulateUsage({ quota: sampleUsage("count").quota });
+      });
+      counting();
     });
 
     it("counts this device's own use while neither service uses the built-in one", async () => {
@@ -153,6 +199,18 @@ describe("usage of the built-in service (docs/dictation.md section 27)", () => {
         ),
         "Groqqwen/qwen3.8-27b润色 312 次剩余额度请在服务商处查看",
       ]);
+    });
+
+    it("says only what was used in the counting period, without a bar or a dashed line", async () => {
+      renderApp({ path: "/usage", mock: { builtIn: BUILT_IN, usage: sampleUsage("count") } });
+      const asr = await screen.findByTestId("usage-card-asr");
+      expect(within(asr).getByTestId("usage-numbers-asr")).toHaveTextContent(/^23分钟$/);
+      expect(within(asr).queryByRole("meter")).toBeNull();
+      expect(within(asr).getByTestId("usage-reset-asr")).toHaveTextContent(/重置 · (还有|不到)/);
+      expect(asr.querySelector(".border-dashed")).toBeNull();
+      const llm = screen.getByTestId("usage-card-llm");
+      expect(within(llm).getByTestId("usage-numbers-llm")).toHaveTextContent(/^41次$/);
+      expect(screen.getByTestId("page-usage")).not.toHaveTextContent(/暂不限量|不设上限/);
     });
 
     it("offers 重试 while the numbers cannot be fetched, and says when a service uses another provider", async () => {
@@ -323,6 +381,19 @@ describe("usage of the built-in service (docs/dictation.md section 27)", () => {
   });
 
   describe("the built-in service's drawer", () => {
+    it("says only what was used in the counting period", async () => {
+      renderApp({ path: "/speech", mock: { builtIn: BUILT_IN, usage: sampleUsage("count") } });
+      const card = await screen.findByTestId("provider-asr-builtin");
+      expect(within(card).getByTestId("provider-asr-usage")).toHaveTextContent(
+        /^今日已用 23 分钟$/,
+      );
+      await userEvent.click(within(card).getByRole("button", { name: "内置服务" }));
+      const drawer = await screen.findByTestId("builtin-usage-asr");
+      expect(drawer).toHaveTextContent("今日已用 23 分钟");
+      expect(drawer).toHaveTextContent(/重置 · (还有|不到)/);
+      expect(drawer).not.toHaveTextContent(/暂不限量|不设上限/);
+    });
+
     it("shows today's use, how it is counted, the week and today's sources", async () => {
       const { backend } = renderApp({
         path: "/speech",

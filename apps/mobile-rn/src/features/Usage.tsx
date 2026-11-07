@@ -328,11 +328,13 @@ export function ServiceUsageCard({ kind }: { kind: ServiceKind }) {
   const color = useToneColor();
   const inUse = usesBuiltin(engines, kind);
   const title = t(`usage.service.${kind}`);
+  // What is left, or the day's state; none in the counting period, whose number is the amount used
+  // alone (2026-11-07, the user: no 暂不限量).
   const status =
     usage.tone === "out"
       ? t("usage.usedUpToday")
       : usage.tone === "unlimited"
-        ? t("usage.unlimited")
+        ? undefined
         : usage.tone === "ok" || usage.tone === "near"
           ? usageLeft(usage, locale)
           : usageValue(usage, locale);
@@ -362,16 +364,18 @@ export function ServiceUsageCard({ kind }: { kind: ServiceKind }) {
         <Text style={[styles.cardTitle, { color: theme.colors.onSurface }]} numberOfLines={1}>
           {title}
         </Text>
-        <Text
-          testID={`usage-status-${kind}`}
-          style={[
-            styles.cardStatus,
-            {
-              color: usage.tone === "ok" ? theme.colors.onSurface : color(usage.tone),
-            },
-          ]}>
-          {status}
-        </Text>
+        {status !== undefined && (
+          <Text
+            testID={`usage-status-${kind}`}
+            style={[
+              styles.cardStatus,
+              {
+                color: usage.tone === "ok" ? theme.colors.onSurface : color(usage.tone),
+              },
+            ]}>
+            {status}
+          </Text>
+        )}
       </View>
       {known ? (
         <>
@@ -379,7 +383,7 @@ export function ServiceUsageCard({ kind }: { kind: ServiceKind }) {
             <Text style={[styles.big, { color: theme.colors.onSurface }]}>{usage.used}</Text>
             <Text style={[styles.of, { color: theme.voltip.subtle }]}>
               {usage.limit === undefined
-                ? ` ${t(`usage.unit.${kind}`)} · ${t("usage.unlimitedShort")}`
+                ? ` ${t(`usage.unit.${kind}`)}`
                 : ` / ${usageAmount(kind, usage.limit, locale)}`}
             </Text>
           </View>
