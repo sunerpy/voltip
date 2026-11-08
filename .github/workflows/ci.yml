@@ -992,15 +992,19 @@ jobs:
       - name: Install web dependencies (frozen lockfile)
         run: pnpm install --frozen-lockfile
 
+      # The xvfb-run steps below (and scripts/focus-check-linux.sh) pass `-noreset`, with xvfb-run's
+      # default screen: by default Xvfb resets when its last client disconnects, and each test
+      # connects anew after the previous one has disconnected, so a test that connected during the
+      # reset failed with `ConnectionReset` (stacking_x11, main run 42503766978 twice).
       # The lone-key trigger's XInput 2 hook on a real X server (docs/dictation.md §13.1), fed with
       # xdotool through XTEST.
       - name: Real X11 hook (cargo test -p voltip-hooks -- --ignored, under Xvfb)
-        run: xvfb-run -a cargo test -p voltip-hooks --lib -- --ignored --test-threads=1 --nocapture
+        run: xvfb-run -a -s "-screen 0 1280x1024x24 -noreset" cargo test -p voltip-hooks --lib -- --ignored --test-threads=1 --nocapture
 
       # The whole clipboard across a paste on a real X server (docs/dictation.md §14.3): an image
       # and HTML xclip copied come back, and the dictation is marked for clipboard managers.
       - name: Real clipboard under Xvfb (cargo test -p voltip-inject --test real_display -- --ignored)
-        run: xvfb-run -a cargo test -p voltip-inject --test real_display real_an_image -- --ignored --test-threads=1 --nocapture
+        run: xvfb-run -a -s "-screen 0 1280x1024x24 -noreset" cargo test -p voltip-inject --test real_display real_an_image -- --ignored --test-threads=1 --nocapture
 
       # The insert check's AT-SPI reader against a GTK 3 window on a real X server, in a private
       # D-Bus session with the accessibility bus switched on (docs/dictation.md §28): a typed text
@@ -1016,7 +1020,7 @@ jobs:
       # over it, and leaves menus (override-redirect windows) over it.
       - name: Real pill stacking under Xvfb (cargo test -p voltip-overlay --test stacking_x11 -- --ignored)
         timeout-minutes: 10
-        run: xvfb-run -a cargo test -p voltip-overlay --test stacking_x11 -- --ignored --test-threads=1 --nocapture
+        run: xvfb-run -a -s "-screen 0 1280x1024x24 -noreset" cargo test -p voltip-overlay --test stacking_x11 -- --ignored --test-threads=1 --nocapture
 
       - name: make smoke-desktop (build, start under Xvfb, hotkey → overlay → outcome, screenshots)
         run: make smoke-desktop

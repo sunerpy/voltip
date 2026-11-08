@@ -88,11 +88,19 @@ function seeded(rules: ReplacementRule[] = []) {
   });
 }
 
+/** Waits for the core's state on the page. The page, its heading and its table render before the
+ *  core answers `core_state`, with no entries (「0 条」), so finding them does not wait for the
+ *  entries. */
+async function entriesShown(count: number) {
+  expect(await screen.findByText(`${count} 条`)).toBeInTheDocument();
+}
+
 describe("Dictionary page", () => {
   it("regression: dictionary is fluid (no fixed-width panels)", async () => {
     const user = userEvent.setup();
     renderApp({ path: "/dictionary", backend: seeded() });
     const page = await screen.findByTestId("page-dictionary");
+    await entriesShown(3);
     expect(page).toHaveClass("mx-auto", "w-full", "max-w-[1440px]", "p-6");
     // Allow-list: none (the search Input keeps a spacing width; the table stretches).
     expect(fixedSizeOffenders(page)).toEqual([]);
@@ -107,7 +115,7 @@ describe("Dictionary page", () => {
   it("regression: the dictionary page renders the core entries with counts and history hits and no sample data or deferred controls", async () => {
     renderApp({ path: "/dictionary", backend: seeded() });
     expect(await screen.findByRole("heading", { name: "个人词典", level: 2 })).toBeInTheDocument();
-    expect(screen.getByText("3 条")).toBeInTheDocument();
+    await entriesShown(3);
     expect(screen.getByText("2 条启用")).toBeInTheDocument();
     expect(screen.getByTestId("dictionary-explain")).toHaveTextContent(
       "最多 500 条 · 每条最多 10 个曾听成",
@@ -124,8 +132,9 @@ describe("Dictionary page", () => {
     ]);
     expect(within(rows[1] ?? table).getByText("来自历史")).toBeInTheDocument();
     expect(within(rows[0] ?? table).getByText("手动")).toBeInTheDocument();
-    // Hits: summed over the retained history rows, strongest first.
-    expect(within(rows[0] ?? table).getByText("3")).toBeInTheDocument();
+    // Hits: summed over the retained history rows, strongest first. They are the core's
+    // `history_hits`, a separate answer from the entries.
+    expect(await within(rows[0] ?? table).findByText("3")).toBeInTheDocument();
     const chips = screen.getByTestId("dictionary-hits");
     expect(chips.textContent).toBe("历史记录里的命中Voltip×3good idea×1");
     expect(
@@ -145,7 +154,7 @@ describe("Dictionary page", () => {
     const user = userEvent.setup();
     const backend = seeded();
     renderApp({ path: "/dictionary", backend });
-    await screen.findByRole("table", { name: "词条表" });
+    await entriesShown(3);
     // Add: the separators split the misheard forms; a duplicate term is caught while typing.
     await user.click(screen.getByRole("button", { name: /新建词条/ }));
     const add = screen.getByTestId("add-row");
@@ -239,8 +248,12 @@ describe("Dictionary page", () => {
       pending: false,
     };
     renderApp({ path: "/dictionary", backend: seeded([rule]) });
-    await screen.findByRole("table", { name: "词条表" });
-    await user.click(screen.getByRole("button", { name: "用最近一次听写" }));
+    // 用最近一次听写 takes the newest history row of the core's state: wait for it to be there.
+    const useLast = screen.getByRole("button", { name: "用最近一次听写" });
+    await waitFor(() => {
+      expect(useLast).toBeEnabled();
+    });
+    await user.click(useLast);
     expect(screen.getByLabelText("识别文本")).toHaveValue("用沃提普写一个谷歌IDR");
     expect(await screen.findByTestId("corrected")).toHaveTextContent("用Voltip写一个good idea");
     expect(screen.getByTestId("dictionary-test-summary")).toHaveTextContent("命中 2 处");
@@ -281,7 +294,7 @@ describe("Dictionary page", () => {
       .spyOn(backend, "vocabularyPreview")
       .mockRejectedValue("rules: 试写文本最多 64 KiB");
     renderApp({ path: "/dictionary", backend });
-    await screen.findByRole("table", { name: "词条表" });
+    await entriesShown(3);
     await user.type(screen.getByLabelText("识别文本"), "x");
     expect(await screen.findByTestId("dictionary-test-error")).toHaveTextContent(
       "试运行失败：试写文本最多 64 KiB",
@@ -302,7 +315,8 @@ describe("Dictionary page · entries an AI tool wrote (docs/dictation.md §25)",
     const user = userEvent.setup();
     const backend = seeded();
     renderApp({ path: "/dictionary", backend });
-    const table = await screen.findByRole("table", { name: "词条表" });
+    await entriesShown(3);
+    const table = screen.getByRole("table", { name: "词条表" });
     // No such entry yet: no such filter.
     expect(screen.queryByRole("radio", { name: "外部工具" })).toBeNull();
     let id = "";
@@ -737,7 +751,8 @@ describe("Dictionary page · learning suggestions (docs/dictation.md §16.10)", 
       backend: learning({ settings: { history: { enabled: false, keep: 2000 } } }),
     });
     await openSuggestions(user, /^学习建议$/);
-    expect(screen.getByText("需要开启历史记录")).toBeInTheDocument();
+    // The tab is there before the core answers `vocabulary_suggestions`.
+    expect(await screen.findByText("需要开启历史记录")).toBeInTheDocument();
     expect(screen.queryByRole("table", { name: "学习建议" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "打开隐私设置" }));
     expect(await screen.findByTestId("settings-content")).toHaveAttribute(
