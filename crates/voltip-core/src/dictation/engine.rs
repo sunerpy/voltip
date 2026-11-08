@@ -1386,12 +1386,11 @@ impl DictationEngine {
     }
 
     /// The terminal states that are result cards (docs/dictation.md §28, D11): 没有写进去, 窗口已切换,
-    /// a failure that kept its text, and a failure without text (but speech) whose recording is kept.
+    /// 未获准远程交互, a failure that kept its text, and a failure without text (but speech) whose
+    /// recording is kept.
     fn is_card(&self, phase: &DictationPhase) -> bool {
         match phase {
-            DictationPhase::Done { check, clipboard_code, .. } => {
-                *check == Some(InsertCheck::NotWritten) || *clipboard_code == Some(ClipboardCode::TargetChanged)
-            }
+            DictationPhase::Done { check, clipboard_code, .. } => *check == Some(InsertCheck::NotWritten) || carded(*clipboard_code),
             DictationPhase::Failed { text: Some(_), .. } => true,
             // No speech is no card (the table of §28), even with its recording kept.
             DictationPhase::Failed { text: None, code, .. } => *code != FailureCode::NoSpeech && self.status.recording.is_some(),
@@ -3764,11 +3763,11 @@ impl DictationEngine {
                     (Via::Clipboard, Some(note)) => Outcome::clipboard(note),
                     (Via::Clipboard, None) => Outcome::Inserted { via: Via::Clipboard, check: None },
                 };
-                // §14.3: the window changed and the text waits on the clipboard; §28: the text did
-                // not reach the field. The pill says so a little longer, like a failure that kept
-                // its text (or until it is closed, `terminal`).
-                let dwell =
-                    if clipboard_code == Some(ClipboardCode::TargetChanged) || check == Some(InsertCheck::NotWritten) { DWELL_WITH_TEXT } else { DWELL };
+                // §14.3: the window changed and the text waits on the clipboard; §14.9: so it does
+                // when the system did not allow the paste; §28: the text did not reach the field.
+                // The pill says so a little longer, like a failure that kept its text (or until it
+                // is closed, `terminal`).
+                let dwell = if carded(clipboard_code) || check == Some(InsertCheck::NotWritten) { DWELL_WITH_TEXT } else { DWELL };
                 let phase = DictationPhase::Done {
                     chars: text.chars().count(),
                     text,
@@ -3894,6 +3893,14 @@ impl Drop for DictationEngine {
             tracing::debug!(error = %e, "capture stop on shutdown failed");
         }
     }
+}
+
+/// A clipboard fallback whose text waits for the user and whose reason is a result card
+/// (docs/dictation.md §28.4): another window came to the front (§14.3), or the system did not allow
+/// the paste or GNOME's remote interaction could not be used for it (§14.9). The other fallbacks
+/// keep the short dwell.
+fn carded(code: Option<ClipboardCode>) -> bool {
+    matches!(code, Some(ClipboardCode::TargetChanged | ClipboardCode::RemoteDenied | ClipboardCode::RemoteUnavailable))
 }
 
 /// What became of a kept recording whose take ended in `phase` without an entry
@@ -9832,13 +9839,19 @@ mod tests {
         assert_eq!(reader.calls(), FocusCalls::default());
     }
 
-    /// The four result cards (docs/dictation.md §28, user decision D11).
+    /// The result cards (docs/dictation.md §28, user decision D11; 未获准远程交互 and 远程交互不可用,
+    /// §14.9).
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     enum Card {
         /// 没有写进去.
         NotWritten,
         /// 窗口已切换.
         WindowChanged,
+        /// 未获准远程交互: the system did not allow the paste, the text waits on the clipboard.
+        RemoteDenied,
+        /// 远程交互不可用: GNOME's portal could not be used for the paste, the text waits on the
+        /// clipboard.
+        RemoteUnavailable,
         /// A failure that kept its text.
         FailedWithText,
         /// A failure without text whose recording is kept.
@@ -9846,7 +9859,7 @@ mod tests {
     }
 
     impl Card {
-        const ALL: [Self; 4] = [Self::NotWritten, Self::WindowChanged, Self::FailedWithText, Self::FailedKept];
+        const ALL: [Self; 6] = [Self::NotWritten, Self::WindowChanged, Self::RemoteDenied, Self::RemoteUnavailable, Self::FailedWithText, Self::FailedKept];
 
         /// How long the card stays when it does not stay: its dwell from before §28.
         fn dwell(self) -> Duration {
@@ -9858,12 +9871,19 @@ mod tests {
             match (self, &status.phase) {
                 (Self::NotWritten, DictationPhase::Done { check: Some(InsertCheck::NotWritten), .. }) => true,
                 (Self::WindowChanged, DictationPhase::Done { clipboard_code: Some(ClipboardCode::TargetChanged), .. }) => true,
+                (Self::RemoteDenied, DictationPhase::Done { via: Via::Clipboard, clipboard_code: Some(ClipboardCode::RemoteDenied), .. }) => true,
+                (Self::RemoteUnavailable, DictationPhase::Done { via: Via::Clipboard, clipboard_code: Some(ClipboardCode::RemoteUnavailable), .. }) => true,
                 (Self::FailedWithText, DictationPhase::Failed { text: Some(_), .. }) => true,
                 (Self::FailedKept, DictationPhase::Failed { text: None, .. }) => status.recording.is_some(),
                 _ => false,
             }
         }
     }
+
+    /// What the GNOME injector reports when the user refused the remote interaction (§14.9).
+    const REFUSED: &str = "remote-desktop-portal: remote interaction not allowed: the user cancelled";
+    /// What it reports when the portal could not be used for the paste (§14.9).
+    const PORTAL_FAILED: &str = "remote-desktop-portal: the portal's keyboard failed: CreateSession answered 2";
 
     /// A rig whose take ended in `card`, with the shell's cards (`result_cards`) as `cards` says and
     /// 识别结果卡片常驻 (`result_cards_stay`) as `stay` says.
@@ -9875,6 +9895,14 @@ mod tests {
                 rig_with(&engines, FakeTranscriber::ok(FAKE_TRANSCRIPT), FakeInjector::paste().with_focus_reader(Arc::new(FakeFocusReader::unchanged("前文"))))
             }
             Card::WindowChanged => rig_probed_with(probe.clone(), FakeTranscriber::ok(FAKE_TRANSCRIPT), None, None, &engines, FakeInjector::paste()),
+            Card::RemoteDenied => {
+                rig_with(&engines, FakeTranscriber::ok(FAKE_TRANSCRIPT), FakeInjector::clipboard_with(InjectNote::new(ClipboardCode::RemoteDenied, REFUSED)))
+            }
+            Card::RemoteUnavailable => rig_with(
+                &engines,
+                FakeTranscriber::ok(FAKE_TRANSCRIPT),
+                FakeInjector::clipboard_with(InjectNote::new(ClipboardCode::RemoteUnavailable, PORTAL_FAILED)),
+            ),
             Card::FailedWithText => rig_with(&engines, FakeTranscriber::ok(FAKE_TRANSCRIPT), FakeInjector::err("denied")),
             Card::FailedKept => rig_with(&engines, FakeTranscriber::err("401 unauthorized"), FakeInjector::paste()),
         };
@@ -9896,7 +9924,7 @@ mod tests {
         r.settle().await;
     }
 
-    /// docs/dictation.md §28 (D8, D11): with result cards and 识别结果卡片常驻 on, the four cards stay
+    /// docs/dictation.md §28 (D8, D11): with result cards and 识别结果卡片常驻 on, the cards stay
     /// past every dwell — until 关闭 (`dismiss`: idle, the recording forgotten) or the next take,
     /// which replaces the card. Dismissing anything that is not a terminal state changes nothing.
     #[tokio::test(start_paused = true)]
@@ -9979,8 +10007,9 @@ mod tests {
         }
     }
 
-    /// The other terminal states are no cards: an ordinary paste, a failure without speech or
-    /// recording, a cancel — all leave after their dwell with the cards on.
+    /// The other terminal states are no cards: an ordinary paste, a clipboard fallback other than
+    /// a refused paste (no paste tool), a failure without speech or recording, a cancel — all leave
+    /// after their dwell with the cards on.
     #[tokio::test(start_paused = true)]
     async fn the_other_terminal_states_keep_their_dwell() {
         let mut r = rig_with(&engines_with(|_| {}), FakeTranscriber::ok(FAKE_TRANSCRIPT), FakeInjector::paste());
@@ -9988,6 +10017,13 @@ mod tests {
         assert!(matches!(phase(&r.take().await), DictationPhase::Done { check: None, clipboard_code: None, .. }));
         tokio::time::advance(DWELL).await;
         assert_eq!(phase(&r.next().await), &DictationPhase::Idle, "a paste");
+
+        let injector = FakeInjector::clipboard_with(InjectNote::new(ClipboardCode::NoTool, "no paste tool"));
+        let mut r = rig_with(&engines_with(|_| {}), FakeTranscriber::ok(FAKE_TRANSCRIPT), injector);
+        r.engine.set_result_cards(true);
+        assert!(matches!(phase(&r.take().await), DictationPhase::Done { via: Via::Clipboard, clipboard_code: Some(ClipboardCode::NoTool), .. }));
+        tokio::time::advance(DWELL).await;
+        assert_eq!(phase(&r.next().await), &DictationPhase::Idle, "no paste tool");
 
         // Nothing is pasted, so this rig needs no probe.
         let mut r = rig(FakeAudio::silence(), FakeTranscriber::ok("x"), None, FakeInjector::paste(), false);

@@ -2,6 +2,8 @@ import {
   defaultEngineSettings,
   joinLiveText,
   livePreviewText,
+  type DictationPhase,
+  type DictationStatus,
   type PasteOutcome,
 } from "@voltip/shared";
 import {
@@ -26,10 +28,12 @@ import userEvent from "@testing-library/user-event";
 import { renderApp } from "../test/render";
 import { clipTail } from "@voltip/ui";
 import {
+  doneLabelKey,
   isOverlayWindowState,
   isPillState,
   pillLiveCaption,
   pillStateFor,
+  resultCardFor,
   stageStart,
 } from "./Overlay";
 import { fakeLevels } from "./OverlaySheet";
@@ -1139,6 +1143,89 @@ describe("Overlay result cards (docs/dictation.md §28)", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("docs/dictation.md section 14.9: a paste the system did not allow is a card that says so, with 粘贴 and 复制", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const backend = new MockBackend({ now: () => Date.now() });
+      renderApp({ path: "/overlay?state=live", backend });
+      await screen.findByTestId("overlay-window");
+      backend.simulatePasteRefused(true);
+      const card = await finishTake(backend);
+      expect(card).toHaveAttribute("data-state", "inserted");
+      expect(card).toHaveTextContent("未获准远程交互，文字已复制");
+      expect(buttons()).toEqual(["粘贴", "复制", "关闭"]);
+      // The card stays past every dwell, until 关闭.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MOCK_DICTATION_FAILED_DWELL_MS * 2);
+      });
+      expect(screen.getByRole("status")).toHaveTextContent("未获准远程交互，文字已复制");
+      // Allowed again: the next take pastes and is no card.
+      backend.simulatePasteRefused(false);
+      const pasted = await finishTake(backend);
+      expect(pasted).toHaveTextContent(`已插入 ${Array.from(MOCK_DICTATION_TEXT).length} 字`);
+      expect(buttons()).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("docs/dictation.md section 14.9: a paste GNOME's remote interaction could not take is a card that says so, with 粘贴 and 复制", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const backend = new MockBackend({ now: () => Date.now() });
+      renderApp({ path: "/overlay?state=live", backend });
+      await screen.findByTestId("overlay-window");
+      backend.simulatePortalUnavailable(true);
+      const card = await finishTake(backend);
+      expect(card).toHaveAttribute("data-state", "inserted");
+      expect(card).toHaveTextContent("远程交互不可用，文字已复制");
+      expect(buttons()).toEqual(["粘贴", "复制", "关闭"]);
+      // The card stays past every dwell, until 关闭.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MOCK_DICTATION_FAILED_DWELL_MS * 2);
+      });
+      expect(screen.getByRole("status")).toHaveTextContent("远程交互不可用，文字已复制");
+      // The portal works again: the next take pastes and is no card.
+      backend.simulatePortalUnavailable(false);
+      const pasted = await finishTake(backend);
+      expect(pasted).toHaveTextContent(`已插入 ${Array.from(MOCK_DICTATION_TEXT).length} 字`);
+      expect(buttons()).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("docs/dictation.md section 14.9: both GNOME clipboard reasons are cards with their own line, for a take and for a rewrite", () => {
+    const done = (
+      clipboard_code: "remote_denied" | "remote_unavailable",
+    ): Extract<DictationPhase, { phase: "done" }> => ({
+      phase: "done",
+      text: "t",
+      raw_text: "t",
+      chars: 1,
+      via: "clipboard",
+      refined: false,
+      duration_ms: 1000,
+      asr_ms: 100,
+      mode: "whole_take",
+      clipboard_code,
+    });
+    const status = (phase: DictationPhase): DictationStatus => ({
+      phase,
+      session: 1,
+      kind: "dictation",
+    });
+    expect(resultCardFor(status(done("remote_denied")))).toBe("remote_denied");
+    expect(resultCardFor(status(done("remote_unavailable")))).toBe("remote_unavailable");
+    expect(doneLabelKey(done("remote_unavailable"), false)).toBe(
+      "overlay.live.doneRemoteUnavailable",
+    );
+    expect(doneLabelKey(done("remote_unavailable"), true)).toBe(
+      "overlay.live.editDoneRemoteUnavailable",
+    );
+    expect(doneLabelKey(done("remote_denied"), true)).toBe("overlay.live.editDoneRemoteDenied");
   });
 
   it("粘贴 pastes and closes the card; when it could only copy, the card stays and says why", async () => {

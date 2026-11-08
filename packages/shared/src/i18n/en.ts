@@ -811,6 +811,12 @@ export const en: Messages = {
       /** docs/dictation.md §14.3: another window came to the front while the take was processed. */
       target_changed:
         "You switched to another window while the text was processed, so it was not pasted. It is on the clipboard; press {keys} to paste it.",
+      /** docs/dictation.md §14.9: GNOME's Remote Desktop window was cancelled or closed. */
+      remote_denied:
+        "Could not paste at the cursor: the system did not allow Voltip's remote interaction (the GNOME Remote Desktop window was cancelled or closed). The text is on the clipboard; press {keys} to paste it. The next paste asks again.",
+      /** docs/dictation.md §14.9: GNOME's remote-desktop portal did not answer or failed. */
+      remote_unavailable:
+        "Could not paste at the cursor: GNOME's remote interaction is not available right now. The text is on the clipboard; press {keys} to paste it. The next paste tries again.",
       other: "Could not paste directly. The text is on the clipboard; press {keys} to paste it.",
       openAccessibility: "Open Accessibility settings",
       details: "Technical details",
@@ -2590,6 +2596,12 @@ export const en: Messages = {
       /** docs/dictation.md §14.3: the window changed while the take was processed. */
       doneTargetChanged: "Window changed · text copied",
       editDoneTargetChanged: "Window changed · rewrite copied",
+      /** docs/dictation.md §14.9: GNOME's Remote Desktop window was cancelled or closed. */
+      doneRemoteDenied: "Remote interaction not allowed · text copied",
+      editDoneRemoteDenied: "Remote interaction not allowed · rewrite copied",
+      /** docs/dictation.md §14.9: GNOME's remote-desktop portal did not answer or failed. */
+      doneRemoteUnavailable: "Remote interaction unavailable · text copied",
+      editDoneRemoteUnavailable: "Remote interaction unavailable · rewrite copied",
     },
     heading:
       "Overlay · eight pill states · one capsule morphs with the state (dynamic-island grammar), the waveform is a dense mirrored bar strip",

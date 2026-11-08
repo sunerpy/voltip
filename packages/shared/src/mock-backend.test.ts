@@ -61,6 +61,8 @@ import {
   MOCK_PUBLIC_KEYS,
   MOCK_REFINE_FAILED,
   MOCK_REFINE_MS,
+  MOCK_REMOTE_DENIED,
+  MOCK_REMOTE_UNAVAILABLE,
   MOCK_WINDOW_CHANGED,
   MOCK_RETAKE_NOT_READY,
   MOCK_NO_SPEECH,
@@ -1074,6 +1076,103 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
     expect(backend.peek().dictation.phase.phase).toBe("failed");
     tick(MOCK_DICTATION_FAILED_DWELL_MS - MOCK_DICTATION_DWELL_MS);
     expect(backend.peek().dictation.phase).toEqual({ phase: "idle" });
+    backend.destroy();
+  });
+
+  it("docs/dictation.md §14.9: a paste the system did not allow copies the text, says why, and stays as long as a failure", async () => {
+    const backend = new MockBackend({
+      now: () => clock,
+      history: [],
+      settings: { engines: { ...defaultEngineSettings(), result_cards_stay: false } },
+    });
+    const take = async () => {
+      await backend.invoke("dictation_start");
+      tick(MOCK_MIC_READY_MS + 3200);
+      await backend.invoke("dictation_stop");
+      tick(MOCK_ASR_MS + MOCK_REFINE_MS);
+      return backend.peek().dictation.phase;
+    };
+    backend.simulatePasteRefused(true);
+    expect(await take()).toMatchObject({
+      phase: "done",
+      text: MOCK_DICTATION_TEXT,
+      via: "clipboard",
+      clipboard_code: "remote_denied",
+    });
+    expect(backend.peek().history_recent[0]?.outcome).toEqual({
+      kind: "clipboard",
+      reason: MOCK_REMOTE_DENIED,
+      code: "remote_denied",
+    });
+    tick(MOCK_DICTATION_DWELL_MS);
+    expect(backend.peek().dictation.phase.phase).toBe("done");
+    tick(MOCK_DICTATION_FAILED_DWELL_MS - MOCK_DICTATION_DWELL_MS);
+    expect(backend.peek().dictation.phase.phase).toBe("idle");
+    // 仅复制到剪贴板 presses no keys: nothing is asked, nothing refused.
+    await backend.invoke("settings_set_engines", {
+      engines: { ...defaultEngineSettings(), inject: "clipboard_only" },
+    });
+    const copied = await take();
+    expect(copied).toMatchObject({ phase: "done", via: "clipboard" });
+    expect(copied).not.toHaveProperty("clipboard_code");
+    tick(MOCK_DICTATION_DWELL_MS);
+    // Allowed again: pasted, as usual.
+    backend.simulatePasteRefused(false);
+    await backend.invoke("settings_set_engines", { engines: defaultEngineSettings() });
+    const pasted = await take();
+    expect(pasted).toMatchObject({ phase: "done", via: "paste" });
+    expect(pasted).not.toHaveProperty("clipboard_code");
+    backend.destroy();
+  });
+
+  it("docs/dictation.md §14.9: a paste GNOME's portal could not take copies the text, says why, and stays as long as a failure", async () => {
+    const backend = new MockBackend({
+      now: () => clock,
+      history: [],
+      settings: { engines: { ...defaultEngineSettings(), result_cards_stay: false } },
+    });
+    const take = async () => {
+      await backend.invoke("dictation_start");
+      tick(MOCK_MIC_READY_MS + 3200);
+      await backend.invoke("dictation_stop");
+      tick(MOCK_ASR_MS + MOCK_REFINE_MS);
+      return backend.peek().dictation.phase;
+    };
+    backend.simulatePortalUnavailable(true);
+    expect(await take()).toMatchObject({
+      phase: "done",
+      text: MOCK_DICTATION_TEXT,
+      via: "clipboard",
+      clipboard_code: "remote_unavailable",
+    });
+    expect(backend.peek().history_recent[0]?.outcome).toEqual({
+      kind: "clipboard",
+      reason: MOCK_REMOTE_UNAVAILABLE,
+      code: "remote_unavailable",
+    });
+    tick(MOCK_DICTATION_DWELL_MS);
+    expect(backend.peek().dictation.phase.phase).toBe("done");
+    tick(MOCK_DICTATION_FAILED_DWELL_MS - MOCK_DICTATION_DWELL_MS);
+    expect(backend.peek().dictation.phase.phase).toBe("idle");
+    // A refusal is the refusal: the user's answer comes first.
+    backend.simulatePasteRefused(true);
+    expect(await take()).toMatchObject({ via: "clipboard", clipboard_code: "remote_denied" });
+    tick(MOCK_DICTATION_FAILED_DWELL_MS);
+    backend.simulatePasteRefused(false);
+    // 仅复制到剪贴板 presses no keys: the portal is not used.
+    await backend.invoke("settings_set_engines", {
+      engines: { ...defaultEngineSettings(), inject: "clipboard_only" },
+    });
+    const copied = await take();
+    expect(copied).toMatchObject({ phase: "done", via: "clipboard" });
+    expect(copied).not.toHaveProperty("clipboard_code");
+    tick(MOCK_DICTATION_DWELL_MS);
+    // The portal works again: pasted, as usual.
+    backend.simulatePortalUnavailable(false);
+    await backend.invoke("settings_set_engines", { engines: defaultEngineSettings() });
+    const pasted = await take();
+    expect(pasted).toMatchObject({ phase: "done", via: "paste" });
+    expect(pasted).not.toHaveProperty("clipboard_code");
     backend.destroy();
   });
 

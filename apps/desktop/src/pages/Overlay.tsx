@@ -4,6 +4,7 @@ import {
   type DictationStatus,
   type LiveText,
   type Locale,
+  type MessageKey,
   type PasteOutcome,
   type TFunction,
   formatElapsed,
@@ -68,22 +69,51 @@ export function isOverlayWindowState(value: string, dev: boolean = import.meta.e
   );
 }
 
-/** The result cards (docs/dictation.md §28, D11): 没有写进去, 窗口已切换, a failure that kept its
- *  text, and a failure without text (but speech) whose recording is kept — the terminal states
- *  the core keeps on screen until 关闭 or the next take. */
-export type ResultCard = "not_written" | "window_changed" | "failed_text" | "failed_kept";
+/** The result cards (docs/dictation.md §28, D11): 没有写进去, 窗口已切换, 未获准远程交互 and
+ *  远程交互不可用 (§14.9), a failure that kept its text, and a failure without text (but speech)
+ *  whose recording is kept — the terminal states the core keeps on screen until 关闭 or the next
+ *  take. */
+export type ResultCard =
+  | "not_written"
+  | "window_changed"
+  | "remote_denied"
+  | "remote_unavailable"
+  | "failed_text"
+  | "failed_kept";
 
 export function resultCardFor(dictation: DictationStatus): ResultCard | undefined {
   const phase = dictation.phase;
   if (phase.phase === "done") {
     if (phase.check === "not_written") return "not_written";
-    return phase.clipboard_code === "target_changed" ? "window_changed" : undefined;
+    if (phase.clipboard_code === "target_changed") return "window_changed";
+    if (phase.clipboard_code === "remote_denied") return "remote_denied";
+    return phase.clipboard_code === "remote_unavailable" ? "remote_unavailable" : undefined;
   }
   if (phase.phase !== "failed") return undefined;
   if (phase.text !== undefined) return "failed_text";
   return dictation.recording !== undefined && phase.code !== "no_speech"
     ? "failed_kept"
     : undefined;
+}
+
+/** The pill's line for a finished take: pasted, or copied — because another window came to the
+ *  front meanwhile (docs/dictation.md §14.3), because the system did not allow the paste or its
+ *  remote interaction could not be used (§14.9), or for any other reason. */
+export function doneLabelKey(
+  phase: Extract<DictationPhase, { phase: "done" }>,
+  edit: boolean,
+): MessageKey {
+  if (phase.via === "paste") return edit ? "overlay.live.editDonePaste" : "overlay.live.donePaste";
+  switch (phase.clipboard_code) {
+    case "target_changed":
+      return edit ? "overlay.live.editDoneTargetChanged" : "overlay.live.doneTargetChanged";
+    case "remote_denied":
+      return edit ? "overlay.live.editDoneRemoteDenied" : "overlay.live.doneRemoteDenied";
+    case "remote_unavailable":
+      return edit ? "overlay.live.editDoneRemoteUnavailable" : "overlay.live.doneRemoteUnavailable";
+    default:
+      return edit ? "overlay.live.editDoneClipboard" : "overlay.live.doneClipboard";
+  }
 }
 
 /** What the card's 粘贴 says when it could not paste (the card stays); the history's words. */
@@ -319,23 +349,7 @@ export function Overlay({ state }: OverlayProps) {
               : card === "failed_kept" && failure !== undefined
                 ? t("insertCheck.failedKept", { reason: failure })
                 : phase.phase === "done"
-                  ? t(
-                      phase.via === "paste"
-                        ? edit
-                          ? "overlay.live.editDonePaste"
-                          : "overlay.live.donePaste"
-                        : // docs/dictation.md §14.3: another window came to the front meanwhile.
-                          phase.clipboard_code === "target_changed"
-                          ? edit
-                            ? "overlay.live.editDoneTargetChanged"
-                            : "overlay.live.doneTargetChanged"
-                          : edit
-                            ? "overlay.live.editDoneClipboard"
-                            : "overlay.live.doneClipboard",
-                      {
-                        n: phase.chars,
-                      },
-                    )
+                  ? t(doneLabelKey(phase, edit), { n: phase.chars })
                   : builtinAsrOut
                     ? t("usage.pill.asrOut")
                     : phase.phase === "failed"

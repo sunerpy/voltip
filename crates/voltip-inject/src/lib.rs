@@ -43,7 +43,9 @@
 //!   otherwise. The paste walks [`toolchain::candidates`] — X11: enigo (XTEST) →
 //!   `xdotool --clearmodifiers`; Wayland: `wtype` → `dotool` → `ydotool` (grammar judged from
 //!   `--help`) → `kwtype` (KDE) → enigo's `zwp_virtual_keyboard_v1`, plus the X11 pair on
-//!   XWayland; GNOME skips the virtual-keyboard tools. Unavailable tools are skipped, a chord tool
+//!   XWayland; GNOME skips the virtual-keyboard tools and asks its remote-desktop portal after
+//!   the uinput tools, once, with a grant it remembers ([`portal`], docs/dictation.md §14.9).
+//!   Unavailable tools are skipped, a chord tool
 //!   that fails hands over to the next one (they fail before sending anything), a typing tool
 //!   (`kwtype`) or a timeout stops the chain ([`linux::classify`]); with nothing available the
 //!   text stays on the clipboard (`Via::Clipboard`, the note names the skipped tools and what to
@@ -74,8 +76,11 @@ mod injector;
 pub mod linux;
 mod os_clip;
 pub mod platform;
+#[cfg(target_os = "linux")]
+pub mod portal;
 #[cfg(unix)]
 pub mod process;
+pub mod restore;
 pub mod selection;
 pub mod session;
 pub mod toolchain;
@@ -88,6 +93,7 @@ pub use injector::{
     PASTE_DELAY_AFTER, PASTE_SETTLE, PasteOptions, check_display, paste_chord, paste_chord_for, puts_back,
 };
 pub use platform::{EnigoBackend, EnigoError, SystemClipboard, SystemKeys, display_available, resolve_backend};
+pub use restore::{MemoryRestoreTokens, RestoreTokens};
 pub use selection::{COPY_POLL, COPY_TIMEOUT, ClipboardSelection, CopyOptions, SelectionSource, copy_chord, copy_chord_for};
 pub use session::{Desktop, Session, SessionKind, X11Grab, remote_command, toggle_command};
 pub use toolchain::{Chord, Key, Modifier, PasteMethod, TypingTool};
@@ -169,28 +175,53 @@ impl<I: Injector + ?Sized> InjectSession for EachPiece<I> {
 }
 
 /// The clipboard-and-paste injector for this process: enigo through [`SystemKeys`] on Windows and
-/// macOS, the Linux tool chain ([`linux::ToolchainKeys`]) on Linux, with `options`.
+/// macOS, the Linux tool chain ([`linux::ToolchainKeys`]) on Linux, with `options`. A grant of
+/// GNOME's remote-desktop portal is remembered for this process only; the shells pass a lasting
+/// store to [`system_paste_injector_with`].
 pub fn system_paste_injector(options: PasteOptions) -> ClipboardPasteInjector {
+    system_paste_injector_with(options, Arc::new(MemoryRestoreTokens::new()))
+}
+
+/// [`system_paste_injector`] keeping the restore token of GNOME's remote-desktop portal in
+/// `tokens` (docs/dictation.md §14.9); unused off Linux.
+pub fn system_paste_injector_with(options: PasteOptions, tokens: Arc<dyn RestoreTokens>) -> ClipboardPasteInjector {
     #[cfg(target_os = "linux")]
     {
-        ClipboardPasteInjector::with_options(std::sync::Arc::new(SystemClipboard::new()), std::sync::Arc::new(linux::system_toolchain_keys()), options)
+        ClipboardPasteInjector::with_options(
+            Arc::new(SystemClipboard::new()),
+            Arc::new(linux::ToolchainKeys::system_with(linux::detected_session(), tokens)),
+            options,
+        )
     }
     #[cfg(not(target_os = "linux"))]
     {
-        ClipboardPasteInjector::with_options(std::sync::Arc::new(SystemClipboard::new()), std::sync::Arc::new(SystemKeys::native()), options)
+        let _ = tokens;
+        ClipboardPasteInjector::with_options(Arc::new(SystemClipboard::new()), Arc::new(SystemKeys::native()), options)
     }
 }
 
 /// The selection copier for this process (docs/dictation.md §19): the same clipboard and keyboard
 /// ports as [`system_paste_injector`], the platform's copy chord, `options`.
 pub fn system_selection(options: CopyOptions) -> ClipboardSelection {
+    system_selection_with(options, Arc::new(MemoryRestoreTokens::new()))
+}
+
+/// [`system_selection`] with the remote-desktop portal's restore token in `tokens`: the store the
+/// paste injector uses, so one grant serves both.
+pub fn system_selection_with(options: CopyOptions, tokens: Arc<dyn RestoreTokens>) -> ClipboardSelection {
     #[cfg(target_os = "linux")]
     {
-        ClipboardSelection::with_ports(std::sync::Arc::new(SystemClipboard::new()), std::sync::Arc::new(linux::system_toolchain_keys()), copy_chord(), options)
+        ClipboardSelection::with_ports(
+            Arc::new(SystemClipboard::new()),
+            Arc::new(linux::ToolchainKeys::system_with(linux::detected_session(), tokens)),
+            copy_chord(),
+            options,
+        )
     }
     #[cfg(not(target_os = "linux"))]
     {
-        ClipboardSelection::with_ports(std::sync::Arc::new(SystemClipboard::new()), std::sync::Arc::new(SystemKeys::native()), copy_chord(), options)
+        let _ = tokens;
+        ClipboardSelection::with_ports(Arc::new(SystemClipboard::new()), Arc::new(SystemKeys::native()), copy_chord(), options)
     }
 }
 
@@ -243,6 +274,13 @@ pub enum FallbackCode {
     SecureInput,
     /// The window in front runs as administrator (Windows).
     ElevatedTarget,
+    /// The user did not allow remote interaction (GNOME's remote-desktop portal, docs/dictation.md
+    /// §14.9); the next paste asks again.
+    RemoteDenied,
+    /// GNOME's remote-desktop portal is there but could not be used for this paste: it did not
+    /// answer, or its session or keyboard failed (docs/dictation.md §14.9); the next paste tries
+    /// again.
+    RemoteUnavailable,
     /// Anything else.
     Other,
 }

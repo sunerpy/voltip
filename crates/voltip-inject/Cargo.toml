@@ -28,6 +28,17 @@ voltip-platform = { path = "../voltip-platform" }
 # clipboard's PNG as RGBA through the `image` crate; Windows and macOS keep raw bytes instead.
 [target.'cfg(target_os = "linux")'.dependencies]
 arboard = { workspace = true, features = ["image-data"] }
+# GNOME's remote-desktop portal as the paste keyboard (src/portal, docs/dictation.md §14.9): its
+# D-Bus calls through zbus's async API under async-io (the zbus 5 and async-io that keyring's Secret
+# Service store and the Tauri plugins already pull; voltip-focus is on zbus 6), the EIS keyboard
+# through reis (MIT, pure Rust, no unsafe code), its keymap through xkbcommon (the version enigo
+# already links), poll and the monotonic clock through rustix.
+async-io = "=2.6.0"
+futures-util.workspace = true
+reis = { version = "=0.7.1", default-features = false }
+rustix = { version = "=1.1.5", default-features = false, features = ["event", "std", "time"] }
+xkbcommon = { version = "=0.9.0", default-features = false }
+zbus = "=5.19.0"
 
 # macOS: the current keyboard layout's input source id, read per keystroke from the HIToolbox
 # preference domain (`mac_layout_id`). NSUserDefaults is thread-safe, unlike the TIS calls behind
@@ -47,3 +58,5 @@ clipboard-win = { version = "=5.4.3", features = ["std"] }
 [dev-dependencies]
 # Fake paste tools on a private PATH directory (src/process.rs, src/linux.rs tests).
 tempfile.workspace = true
+# Also the fake remote-desktop portal and EIS keyboard of tests/support/portal.rs, on a private
+# D-Bus session bus, are built from the Linux dependencies above.

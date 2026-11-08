@@ -527,6 +527,13 @@ export const MOCK_DICTATION_FAILED_DWELL_MS = 6000;
 /** `voltip_core::dictation::engine::WINDOW_CHANGED`: why a take whose window changed was copied
  *  (docs/dictation.md §14.3). */
 export const MOCK_WINDOW_CHANGED = "开始听写时的窗口已不在前台，文字只复制到剪贴板";
+/** What the GNOME injector reports when the person refused the remote interaction a paste asks
+ *  for (docs/dictation.md §14.9). */
+export const MOCK_REMOTE_DENIED =
+  "remote-desktop-portal: remote interaction not allowed: the user cancelled";
+/** What it reports when the portal could not be used for the paste (docs/dictation.md §14.9). */
+export const MOCK_REMOTE_UNAVAILABLE =
+  "remote-desktop-portal: the portal's keyboard failed: CreateSession answered 2";
 /** The streaming modes (docs/dictation.md §12) wait this long for the recogniser's final text
  *  (`finalizing`) instead of the whole-take ASR pass, and `live_inject` pastes its tail in one more
  *  beat of the same length (`inserting`). */
@@ -2037,6 +2044,20 @@ export class MockBackend implements Backend {
     this.windowSwitched = switched;
   }
 
+  /** From now on the system refuses the remote interaction a paste asks for (GNOME's 远程桌面
+   *  window cancelled; `false`: it allows it): the text is copied, and `done`, the history and the
+   *  card say so, as the core does (tests and the dev pages, docs/dictation.md §14.9). */
+  simulatePasteRefused(refused: boolean) {
+    this.pasteRefused = refused;
+  }
+
+  /** From now on GNOME's remote-desktop portal cannot be used for a paste (it does not answer, or
+   *  its session fails; `false`: it works again): the text is copied, and `done`, the history and
+   *  the card say so, as the core does (tests and the dev pages, docs/dictation.md §14.9). */
+  simulatePortalUnavailable(unavailable: boolean) {
+    this.portalUnavailable = unavailable;
+  }
+
   /** The lone key's input hook went away and the shell is bringing it back (`loss`), or it came
    *  back at `atMs` (`null`), as the desktop shell reports it (tests and the dev pages,
    *  docs/dictation.md §29). */
@@ -3353,6 +3374,8 @@ export class MockBackend implements Backend {
   private refineFailure: RefineFailure | undefined;
   private keyStoreFailure: string | undefined;
   private windowSwitched = false;
+  private pasteRefused = false;
+  private portalUnavailable = false;
 
   /** How often 复制令牌 was pressed (tests; the token itself never reaches the interface). */
   serveTokenCopies = 0;
@@ -5752,8 +5775,17 @@ export class MockBackend implements Backend {
         engines.inject === "paste" &&
         this.windowSwitched &&
         this.state.settings.engines.switched_window === "copy_only";
+      // §14.9: the system did not allow the paste, or its portal could not be used for it; the text
+      // waits on the clipboard.
+      const asked = this.role !== "phone" && engines.inject === "paste" && !switched;
+      const refused = asked && this.pasteRefused;
+      const unavailable = asked && !refused && this.portalUnavailable;
       const via =
-        this.role === "phone" || engines.inject === "clipboard_only" || switched
+        this.role === "phone" ||
+        engines.inject === "clipboard_only" ||
+        switched ||
+        refused ||
+        unavailable
           ? "clipboard"
           : "paste";
       // docs/dictation.md §16.3: the dictionary corrects the transcript, the (canned) LLM keeps the
@@ -5816,6 +5848,8 @@ export class MockBackend implements Backend {
           ? {}
           : { refine_failure: refineFailure, refine_error: MOCK_REFINE_FAILED }),
         ...(switched ? { clipboard_code: "target_changed" as const } : {}),
+        ...(refused ? { clipboard_code: "remote_denied" as const } : {}),
+        ...(unavailable ? { clipboard_code: "remote_unavailable" as const } : {}),
         ...checked,
       };
       const entry: HistoryEntry = {
@@ -5838,7 +5872,11 @@ export class MockBackend implements Backend {
         asr_ms: asrMs,
         outcome: switched
           ? { kind: "clipboard", reason: MOCK_WINDOW_CHANGED, code: "target_changed" }
-          : { kind: "inserted", via, ...checked },
+          : refused
+            ? { kind: "clipboard", reason: MOCK_REMOTE_DENIED, code: "remote_denied" }
+            : unavailable
+              ? { kind: "clipboard", reason: MOCK_REMOTE_UNAVAILABLE, code: "remote_unavailable" }
+              : { kind: "inserted", via, ...checked },
         starred: false,
         mode,
         ...extra,
@@ -5852,7 +5890,7 @@ export class MockBackend implements Backend {
       this.settleRecording({ kind: "recognized", entry: entry.id });
       if (this.role === "phone") this.phoneClipboard = text;
       this.emitPhase(done);
-      const card = switched || check === "not_written";
+      const card = switched || refused || unavailable || check === "not_written";
       this.dwellOrPin(
         card ? MOCK_DICTATION_FAILED_DWELL_MS : MOCK_DICTATION_DWELL_MS,
         session,

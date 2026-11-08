@@ -4954,6 +4954,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
+name = "reis"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b967ec6489a42067a20724f11987bb96178ea796873cbe1afd25fb93ee6f85f"
+dependencies = [
+ "enumflags2",
+ "log",
+ "rustix",
+]
+
+[[package]]
 name = "rend"
 version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7931,15 +7942,21 @@ name = "voltip-inject"
 version = "0.0.0"
 dependencies = [
  "arboard",
+ "async-io",
  "clipboard-win",
  "enigo",
+ "futures-util",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
+ "reis",
+ "rustix",
  "tempfile",
  "thiserror 2.0.21",
  "tracing",
  "voltip-platform",
+ "xkbcommon",
+ "zbus 5.19.0",
 ]
 
 [[package]]

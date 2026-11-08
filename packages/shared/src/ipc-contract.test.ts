@@ -886,11 +886,24 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     expect(done.map((p) => p.check)).toEqual([
       "written",
       undefined,
+      undefined,
       "not_written",
       undefined,
       undefined,
       undefined,
+      undefined,
     ]);
+    // §14.3 and §14.9: why a requested paste left the text on the clipboard; an unknown code is
+    // refused.
+    expect(done.flatMap((p) => (p.clipboard_code === undefined ? [] : [p.clipboard_code]))).toEqual(
+      ["target_changed", "remote_denied", "remote_unavailable"],
+    );
+    const refused = events.find((raw) =>
+      JSON.stringify(raw).includes('"clipboard_code":"remote_denied"'),
+    );
+    expect(
+      uiEventSchema.safeParse(mutate(refused, ["phase", "clipboard_code"], "refused")).success,
+    ).toBe(false);
     const notWritten = events.find((raw) => JSON.stringify(raw).includes('"check":"not_written"'));
     expect(uiEventSchema.safeParse(mutate(notWritten, ["phase", "check"], "maybe")).success).toBe(
       false,

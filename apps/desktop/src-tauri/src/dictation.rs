@@ -29,7 +29,8 @@ use voltip_core::dictation::{
     InsertSession, Inserted, LevelFrame, LivePcm, MAX_RECORDING, PcmStream, Recording, Refiner, SelectionTiming, Transcriber, Via,
 };
 use voltip_core::{ClipboardAfter, InjectMode, Modifier, RecordingSource, ResolvedEngines};
-use voltip_inject::{AfterPaste, ClipboardOnlyInjector, CopyOptions, FallbackCode, PasteOptions, PieceOutcome, SelectionSource};
+use voltip_identity::SecretStore;
+use voltip_inject::{AfterPaste, ClipboardOnlyInjector, CopyOptions, FallbackCode, PasteOptions, PieceOutcome, RestoreTokens, SelectionSource};
 use voltip_platform::{HostOs, InjectDecision, InjectPreflight};
 
 /// A level frame as the core broadcasts it, from the audio crate's meter frame (same fields).
@@ -284,6 +285,67 @@ pub fn after_paste(after: ClipboardAfter) -> AfterPaste {
     }
 }
 
+/// The keychain entry that keeps the restore token of GNOME's remote-desktop portal
+/// (docs/dictation.md §14.9).
+pub const REMOTE_DESKTOP_ENTRY: &str = "voltip.paste.remote-desktop";
+
+/// The restore token of GNOME's remote-desktop portal in the system keychain, beside the API keys,
+/// so a restart restores the grant and the portal asks once (docs/dictation.md §14.9). The
+/// keychain is read at the first paste that needs the token, never at start-up, and the token is
+/// kept in memory after that; when the keychain fails, the token lives in memory for this run.
+/// The token never reaches a log.
+pub struct KeychainRestoreTokens {
+    store: Arc<dyn SecretStore>,
+    /// `None` until the keychain was read.
+    cached: Mutex<Option<Option<String>>>,
+}
+
+impl KeychainRestoreTokens {
+    /// The token in `store`.
+    pub fn new(store: Arc<dyn SecretStore>) -> Self {
+        Self { store, cached: Mutex::new(None) }
+    }
+}
+
+impl RestoreTokens for KeychainRestoreTokens {
+    fn load(&self) -> Option<String> {
+        let mut cached = self.cached.lock();
+        if let Some(token) = &*cached {
+            return token.clone();
+        }
+        let token = match self.store.get(REMOTE_DESKTOP_ENTRY) {
+            Ok(Some(bytes)) => match String::from_utf8(bytes.to_vec()) {
+                Ok(token) => Some(token),
+                Err(_) => {
+                    tracing::warn!("the saved remote-desktop grant is not text; the portal will ask again");
+                    None
+                }
+            },
+            Ok(None) => None,
+            Err(e) => {
+                tracing::warn!(error = %e, backend = self.store.backend_name(), "could not read the saved remote-desktop grant; the portal will ask again");
+                None
+            }
+        };
+        *cached = Some(token.clone());
+        token
+    }
+
+    fn save(&self, token: &str) {
+        *self.cached.lock() = Some(Some(token.to_owned()));
+        if let Err(e) = self.store.set(REMOTE_DESKTOP_ENTRY, token.as_bytes()) {
+            tracing::warn!(error = %e, backend = self.store.backend_name(), "could not save the remote-desktop grant; it lasts until Voltip quits");
+        }
+    }
+
+    fn clear(&self) {
+        *self.cached.lock() = Some(None);
+        if let Err(e) = self.store.delete(REMOTE_DESKTOP_ENTRY) {
+            tracing::warn!(error = %e, backend = self.store.backend_name(), "could not remove the saved remote-desktop grant");
+        }
+    }
+}
+
 /// Clipboard + paste (or clipboard only) through `voltip-inject`, switched by the mode the
 /// engine factory last saw and by the foreground preflight ([`inject_route`]) before every piece.
 /// A take is one insert session (docs/dictation.md §14.3): the paste backend's session saves the
@@ -303,14 +365,15 @@ pub struct NativeInjector {
 impl NativeInjector {
     /// The real system clipboard and key synthesis: enigo on Windows / macOS, the Linux tool chain
     /// (docs/dictation.md §14) on Linux, with this platform's paste timings; the selection copy of
-    /// the same ports, copying after the key-up on X11 (§19).
-    pub fn system(prefs: Arc<Mutex<InsertPrefs>>) -> Self {
-        let paste = voltip_inject::system_paste_injector(PasteOptions::for_os(std::env::consts::OS));
+    /// the same ports, copying after the key-up on X11 (§19). Both keep the restore token of
+    /// GNOME's remote-desktop portal in `tokens` (§14.9).
+    pub fn system(prefs: Arc<Mutex<InsertPrefs>>, tokens: Arc<dyn RestoreTokens>) -> Self {
+        let paste = voltip_inject::system_paste_injector_with(PasteOptions::for_os(std::env::consts::OS), tokens.clone());
         let timing = crate::hotkey::selection_timing_for(crate::hotkey::linux_session().map(|s| s.kind));
         tracing::info!(backend = %voltip_inject::backend_summary(), options = ?paste.options(), selection_timing = ?timing, "text injection backend");
         let injector = Self::with(prefs, Arc::new(paste), Arc::new(ClipboardOnlyInjector::new()))
             .with_preflight(crate::platform::inject_preflight)
-            .with_selection(Box::new(voltip_inject::system_selection(CopyOptions::default())), timing);
+            .with_selection(Box::new(voltip_inject::system_selection_with(CopyOptions::default(), tokens)), timing);
         match crate::platform::focus::system_reader() {
             Some(reader) => injector.with_focus_reader(reader),
             None => injector,
@@ -425,6 +488,8 @@ pub fn core_note(note: voltip_inject::InjectNote) -> InjectNote {
         FallbackCode::NoDisplay => ClipboardCode::NoDisplay,
         FallbackCode::SecureInput => ClipboardCode::SecureInput,
         FallbackCode::ElevatedTarget => ClipboardCode::ElevatedTarget,
+        FallbackCode::RemoteDenied => ClipboardCode::RemoteDenied,
+        FallbackCode::RemoteUnavailable => ClipboardCode::RemoteUnavailable,
         FallbackCode::Other => ClipboardCode::Other,
     };
     InjectNote::new(code, note.detail)
@@ -581,9 +646,10 @@ impl ShellPorts {
 /// Production wiring: cpal microphone, HTTP clients, the local model library under
 /// `models_root` (`CoreConfig::models_root`), the streaming preview over the same library,
 /// system clipboard + paste, the platform's foreground probe. The HTTP clients and the model
-/// downloads go through `network` (`CoreConfig::network`, docs/dictation.md §24).
-pub fn production_ports(models_root: PathBuf, network: &Arc<voltip_net::Network>) -> ShellPorts {
-    ports_with_backend(Arc::new(CpalBackend::new()), Arc::new(AudioHub::default()), models_root, network)
+/// downloads go through `network` (`CoreConfig::network`, docs/dictation.md §24); the
+/// remote-desktop portal's grant (§14.9) is kept in `secrets`, the system keychain.
+pub fn production_ports(models_root: PathBuf, network: &Arc<voltip_net::Network>, secrets: Arc<dyn SecretStore>) -> ShellPorts {
+    ports_with(Arc::new(CpalBackend::new()), Arc::new(AudioHub::default()), models_root, network, Arc::new(KeychainRestoreTokens::new(secrets)))
 }
 
 /// Wiring over any audio backend and hub (tests use `voltip_audio::FakeBackend`); the model
@@ -592,13 +658,24 @@ pub fn production_ports(models_root: PathBuf, network: &Arc<voltip_net::Network>
 /// (docs/dictation.md §11, §11.10), and it loads nothing until then. A long take is cut where the Silero VAD hears a pause
 /// (§22); the first long take without the model fetches it.
 pub fn ports_with_backend(backend: Arc<dyn Backend + Send + Sync>, hub: Arc<AudioHub>, models_root: PathBuf, network: &Arc<voltip_net::Network>) -> ShellPorts {
+    ports_with(backend, hub, models_root, network, Arc::new(voltip_inject::MemoryRestoreTokens::new()))
+}
+
+/// [`ports_with_backend`] keeping the remote-desktop portal's grant in `tokens`.
+fn ports_with(
+    backend: Arc<dyn Backend + Send + Sync>,
+    hub: Arc<AudioHub>,
+    models_root: PathBuf,
+    network: &Arc<voltip_net::Network>,
+    tokens: Arc<dyn RestoreTokens>,
+) -> ShellPorts {
     let prefs = InsertPrefs::shared(InjectMode::default());
     let store = ModelStore::new(models_root).with_network(network);
     // One folder for every part of the library: a move switches them all (docs/dictation.md §10.9).
     let root = store.shared_root();
     let dictation = DictationPorts {
         audio: Arc::new(RecorderAudioSource::with_backend(backend, hub.clone())),
-        injector: Arc::new(NativeInjector::system(prefs.clone())),
+        injector: Arc::new(NativeInjector::system(prefs.clone(), tokens)),
         factory: engine_factory(prefs, LocalTranscriber::new(root.clone()), Some(store.clone()), Arc::clone(network)),
         segmenter: Some(Arc::new(VadSegmenterFactory::new(root.clone(), Some(store.clone())))),
         models: Some(Arc::new(store)),
@@ -709,6 +786,96 @@ mod tests {
         }
     }
 
+    /// A keychain over a map that counts its reads and fails every call while `broken` is set.
+    #[derive(Default)]
+    struct CountingStore {
+        items: Mutex<std::collections::HashMap<String, Vec<u8>>>,
+        reads: std::sync::atomic::AtomicUsize,
+        broken: std::sync::atomic::AtomicBool,
+    }
+
+    impl CountingStore {
+        fn reads(&self) -> usize {
+            self.reads.load(std::sync::atomic::Ordering::SeqCst)
+        }
+
+        fn item(&self) -> Option<Vec<u8>> {
+            self.items.lock().get(REMOTE_DESKTOP_ENTRY).cloned()
+        }
+
+        fn check(&self) -> Result<(), voltip_identity::IdentityError> {
+            if self.broken.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(voltip_identity::IdentityError::StoreUnavailable("SS error: prompt dismissed".into()));
+            }
+            Ok(())
+        }
+    }
+
+    impl SecretStore for CountingStore {
+        fn get(&self, entry: &str) -> Result<Option<zeroize::Zeroizing<Vec<u8>>>, voltip_identity::IdentityError> {
+            self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.check()?;
+            Ok(self.items.lock().get(entry).cloned().map(zeroize::Zeroizing::new))
+        }
+        fn set(&self, entry: &str, value: &[u8]) -> Result<(), voltip_identity::IdentityError> {
+            self.check()?;
+            self.items.lock().insert(entry.to_owned(), value.to_vec());
+            Ok(())
+        }
+        fn delete(&self, entry: &str) -> Result<(), voltip_identity::IdentityError> {
+            self.check()?;
+            self.items.lock().remove(entry);
+            Ok(())
+        }
+        fn backend_name(&self) -> &'static str {
+            "secret-service"
+        }
+    }
+
+    /// docs/dictation.md §14.9: the portal's restore token is kept in the keychain entry
+    /// `voltip.paste.remote-desktop`, so the next run restores the grant; a new token replaces
+    /// the saved one, a cleared one is gone from the keychain. The keychain is read at the first
+    /// paste that needs the token, not when the ports are built, and once per run.
+    #[test]
+    fn the_remote_desktop_grant_is_kept_in_the_keychain() {
+        // The name the platform notes tell users to delete in Passwords and Keys (docs/site).
+        assert_eq!(REMOTE_DESKTOP_ENTRY, "voltip.paste.remote-desktop");
+        let store = Arc::new(CountingStore::default());
+        let tokens = KeychainRestoreTokens::new(store.clone());
+        assert_eq!(store.reads(), 0, "nothing is read at start-up");
+        assert_eq!(tokens.load(), None);
+        tokens.save("00000000-0000-4000-8000-000000000001");
+        assert_eq!(store.item().as_deref(), Some(b"00000000-0000-4000-8000-000000000001".as_slice()));
+        tokens.save("00000000-0000-4000-8000-000000000002");
+        assert_eq!(tokens.load().as_deref(), Some("00000000-0000-4000-8000-000000000002"), "a new token replaces the old one");
+        assert_eq!(store.reads(), 1, "read once, then kept in memory");
+
+        let next_run = KeychainRestoreTokens::new(store.clone());
+        assert_eq!(next_run.load().as_deref(), Some("00000000-0000-4000-8000-000000000002"), "a restart restores the grant");
+        next_run.clear();
+        assert_eq!(store.item(), None, "a cleared grant leaves the keychain");
+        assert_eq!(next_run.load(), None);
+        assert_eq!(KeychainRestoreTokens::new(store.clone()).load(), None);
+    }
+
+    /// A keychain that cannot be read or written: the token lasts for this run, and a saved grant
+    /// that is not text reads as none (the portal asks again).
+    #[test]
+    fn a_failing_keychain_keeps_the_grant_for_this_run() {
+        let store = Arc::new(CountingStore::default());
+        store.broken.store(true, std::sync::atomic::Ordering::SeqCst);
+        let tokens = KeychainRestoreTokens::new(store.clone());
+        assert_eq!(tokens.load(), None);
+        tokens.save("00000000-0000-4000-8000-000000000003");
+        assert_eq!(tokens.load().as_deref(), Some("00000000-0000-4000-8000-000000000003"));
+        tokens.clear();
+        assert_eq!(tokens.load(), None);
+
+        let store = Arc::new(CountingStore::default());
+        store.items.lock().insert(REMOTE_DESKTOP_ENTRY.to_owned(), vec![0xff, 0xfe]);
+        assert_eq!(KeychainRestoreTokens::new(store).load(), None);
+    }
+
     /// docs/dictation.md §4.2: every fallback kind of the inject crate reaches the core as the same
     /// kind, with its message.
     #[test]
@@ -719,6 +886,8 @@ mod tests {
             (FallbackCode::NoDisplay, ClipboardCode::NoDisplay),
             (FallbackCode::SecureInput, ClipboardCode::SecureInput),
             (FallbackCode::ElevatedTarget, ClipboardCode::ElevatedTarget),
+            (FallbackCode::RemoteDenied, ClipboardCode::RemoteDenied),
+            (FallbackCode::RemoteUnavailable, ClipboardCode::RemoteUnavailable),
             (FallbackCode::Other, ClipboardCode::Other),
         ];
         for (from, to) in codes {
