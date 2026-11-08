@@ -5,11 +5,11 @@
 #![allow(unsafe_code, dead_code, clippy::unwrap_used, clippy::expect_used)]
 
 use std::fmt::Write as _;
-use std::sync::mpsc;
+use std::sync::{Mutex, mpsc};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use windows_sys::Win32::Foundation::{HWND, LPARAM, POINT, RECT, S_OK};
+use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, S_OK, WPARAM};
 use windows_sys::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
 use windows_sys::Win32::Graphics::Gdi::{CLR_INVALID, CreateSolidBrush, GetDC, GetPixel, ReleaseDC};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -18,10 +18,12 @@ use windows_sys::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, 
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEINPUT, SendInput};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, EnumWindows, GA_ROOT, GUITHREADINFO, GWL_EXSTYLE, GetAncestor, GetClassNameW,
-    GetForegroundWindow, GetGUIThreadInfo, GetMessageW, GetSystemMetrics, GetWindowLongW, GetWindowRect, GetWindowThreadProcessId, HWND_NOTOPMOST,
-    HWND_TOPMOST, IsIconic, IsWindowVisible, MSG, PostThreadMessageW, RegisterClassW, SM_CXSCREEN, SM_CYSCREEN, SPI_GETWORKAREA, SW_HIDE, SW_SHOWNOACTIVATE,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetCursorPos, SetWindowPos, ShowWindow, SystemParametersInfoW, TranslateMessage, WM_QUIT, WNDCLASSW,
-    WS_CLIPSIBLINGS, WS_EX_ACCEPTFILES, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOPMOST, WS_EX_WINDOWEDGE, WS_OVERLAPPEDWINDOW, WS_POPUP, WindowFromPoint,
+    GetForegroundWindow, GetGUIThreadInfo, GetMessageW, GetSystemMetrics, GetWindowLongW, GetWindowRect, GetWindowThreadProcessId, HWND_NOTOPMOST, HWND_TOP,
+    HWND_TOPMOST, IsHungAppWindow, IsIconic, IsWindowVisible, MSG, PostThreadMessageW, RegisterClassW, SM_CXSCREEN, SM_CYSCREEN, SMTO_ABORTIFHUNG, SMTO_BLOCK,
+    SPI_GETWORKAREA, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SendMessageTimeoutW, SetCursorPos, SetWindowPos, ShowWindow,
+    SystemParametersInfoW, TranslateMessage, WM_ACTIVATE, WM_ACTIVATEAPP, WM_CAPTURECHANGED, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE,
+    WM_NCACTIVATE, WM_NCLBUTTONDOWN, WM_NULL, WM_QUIT, WM_SETCURSOR, WM_SETFOCUS, WNDCLASSW, WS_CLIPSIBLINGS, WS_EX_ACCEPTFILES, WS_EX_APPWINDOW,
+    WS_EX_NOACTIVATE, WS_EX_TOPMOST, WS_EX_WINDOWEDGE, WS_OVERLAPPEDWINDOW, WS_POPUP, WindowFromPoint,
 };
 
 /// How long a window may take to come up, to the front or on top.
@@ -40,6 +42,89 @@ pub const PILL_EX_STYLE: u32 = WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_APPWINDO
 /// The pill window's size and its distance from the work area's bottom edge (overlay.rs).
 pub const PILL_SIZE: (i32, i32) = (480, 64);
 const PILL_MARGIN: i32 = 24;
+
+/// A message a window of the test received that tells what a click and an activation did to it,
+/// for a failure message.
+struct Received {
+    at: Instant,
+    hwnd: isize,
+    msg: u32,
+    wparam: usize,
+    lparam: isize,
+    result: isize,
+}
+
+/// What the test's windows received since the last [`TestWindow::activate`] began (at most
+/// [`RECEIVED_KEPT`]).
+static RECEIVED: Mutex<Vec<Received>> = Mutex::new(Vec::new());
+const RECEIVED_KEPT: usize = 4096;
+
+/// The test windows' window procedure: `DefWindowProcW`, with the messages of activation, focus,
+/// capture and the click noted in [`RECEIVED`].
+unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    // SAFETY: the arguments Windows passed this window procedure.
+    let result = unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
+    let click = msg == WM_SETCURSOR && (lparam as usize >> 16) & 0xffff == WM_LBUTTONDOWN as usize;
+    let noted = click
+        || matches!(
+            msg,
+            WM_ACTIVATE
+                | WM_ACTIVATEAPP
+                | WM_NCACTIVATE
+                | WM_MOUSEACTIVATE
+                | WM_SETFOCUS
+                | WM_KILLFOCUS
+                | WM_LBUTTONDOWN
+                | WM_LBUTTONUP
+                | WM_NCLBUTTONDOWN
+                | WM_CAPTURECHANGED
+        );
+    if noted
+        && let Ok(mut received) = RECEIVED.lock()
+        && received.len() < RECEIVED_KEPT
+    {
+        received.push(Received { at: Instant::now(), hwnd: hwnd as isize, msg, wparam, lparam, result });
+    }
+    result
+}
+
+fn message_name(msg: u32) -> &'static str {
+    match msg {
+        WM_ACTIVATE => "WM_ACTIVATE",
+        WM_ACTIVATEAPP => "WM_ACTIVATEAPP",
+        WM_NCACTIVATE => "WM_NCACTIVATE",
+        WM_MOUSEACTIVATE => "WM_MOUSEACTIVATE",
+        WM_SETFOCUS => "WM_SETFOCUS",
+        WM_KILLFOCUS => "WM_KILLFOCUS",
+        WM_LBUTTONDOWN => "WM_LBUTTONDOWN",
+        WM_LBUTTONUP => "WM_LBUTTONUP",
+        WM_NCLBUTTONDOWN => "WM_NCLBUTTONDOWN",
+        WM_CAPTURECHANGED => "WM_CAPTURECHANGED",
+        WM_SETCURSOR => "WM_SETCURSOR(button down)",
+        _ => "?",
+    }
+}
+
+/// What the test's windows received since `since`, `this` first, for a failure message.
+fn received_since(since: Instant, this: isize) -> String {
+    let Ok(received) = RECEIVED.lock() else { return "\n  (the log is poisoned)".to_owned() };
+    let mut text = String::new();
+    for pass in [true, false] {
+        for event in received.iter().filter(|event| event.at >= since && (event.hwnd == this) == pass) {
+            let whose = if event.hwnd == this { "this window".to_owned() } else { format!("{:#x}", event.hwnd) };
+            let _ = write!(
+                text,
+                "\n  +{} ms {whose}: {} wparam {:#x} lparam {:#x} -> {:#x}",
+                event.at.duration_since(since).as_millis(),
+                message_name(event.msg),
+                event.wparam,
+                event.lparam,
+                event.result
+            );
+        }
+    }
+    if text.is_empty() { "\n  nothing".to_owned() } else { text }
+}
 
 fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(Some(0)).collect()
@@ -145,7 +230,7 @@ impl TestWindow {
                 let instance = GetModuleHandleW(std::ptr::null());
                 let class = wide(&format!("VoltipOverlayTest{:06x}", spec.color));
                 let mut wc: WNDCLASSW = std::mem::zeroed();
-                wc.lpfnWndProc = Some(DefWindowProcW);
+                wc.lpfnWndProc = Some(window_proc);
                 wc.hInstance = instance;
                 wc.hbrBackground = CreateSolidBrush(spec.color);
                 wc.lpszClassName = class.as_ptr();
@@ -228,16 +313,51 @@ impl TestWindow {
         let before = foreground();
         let landed = root_at(at);
         let stack = stack_at(self.hwnd, at);
+        if let Ok(mut received) = RECEIVED.lock() {
+            received.clear();
+        }
+        let clicked = Instant::now();
         click(at);
-        assert!(
-            wait_until(WAIT, || foreground() == self.hwnd),
-            "{what} did not come to the front (in front: {}; the foreground thread: {}). The click at {},{} went to {} (in front before it: {}); the windows there, top first:{stack}",
-            describe_for(foreground(), self.hwnd),
-            foreground_thread(),
+        // The window in front after the click, each time it changed.
+        let mut seen: Vec<(Duration, isize)> = Vec::new();
+        let came = wait_until(WAIT, || {
+            let now = foreground();
+            if seen.last().is_none_or(|&(_, last)| last != now) {
+                seen.push((clicked.elapsed(), now));
+            }
+            now == self.hwnd
+        });
+        if came {
+            let took = clicked.elapsed();
+            if took > Duration::from_millis(500) {
+                println!("{what}: in front {} ms after the click (in front before it: {})", took.as_millis(), describe(before));
+            }
+            return;
+        }
+        let mut changes = String::new();
+        for (when, hwnd) in &seen {
+            let _ = write!(changes, "\n  +{} ms {}", when.as_millis(), describe_for(*hwnd, self.hwnd));
+        }
+        let received = received_since(clicked, self.hwnd);
+        let position = |hwnd: isize| z_order().iter().position(|&each| each == hwnd).map_or_else(|| "-".to_owned(), |at| at.to_string());
+        let orders = format!("this window {}, the window in front before {}, of {}", position(self.hwnd), position(before), z_order().len());
+        let threads = format!("this window's thread: {}; the thread of the window in front before: {}", thread_state(self.hwnd), thread_state(before));
+        let answers = format!("this window {}; the window in front before {}", answers(self.hwnd), answers(before));
+        let front = describe_for(foreground(), self.hwnd);
+        let front_thread = foreground_thread();
+        // Whether a raise without activation would have put this window under the click point.
+        // SAFETY: a live window handle of this test.
+        unsafe { SetWindowPos(self.hwnd as HWND, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) };
+        let raised = root_at(at);
+        panic!(
+            "{what} did not come to the front (in front: {}; the foreground thread: {}). The click at {},{} went to {} (in front before it: {}); the windows there, top first:{stack}\n in front after the click:{changes}\n received since the click:{received}\n Z order: {orders}\n {threads}\n {answers}\n raised without activation now, the click point goes to {}",
+            front,
+            front_thread,
             at.x,
             at.y,
             describe_for(landed, self.hwnd),
             describe_for(before, self.hwnd),
+            describe_for(raised, self.hwnd),
         );
     }
 }
@@ -285,6 +405,44 @@ pub fn foreground_thread() -> String {
         describe(info.hwndCapture as isize),
         info.flags
     )
+}
+
+/// What the thread of `hwnd` holds (`GetGUIThreadInfo`), for a failure message.
+pub fn thread_state(hwnd: isize) -> String {
+    if hwnd == 0 {
+        return "no window".to_owned();
+    }
+    // SAFETY: a window handle; a stale one answers thread 0.
+    let thread = unsafe { GetWindowThreadProcessId(hwnd as HWND, std::ptr::null_mut()) };
+    let mut info = GUITHREADINFO { cbSize: u32::try_from(size_of::<GUITHREADINFO>()).unwrap(), ..GUITHREADINFO::default() };
+    // SAFETY: `info` is a GUITHREADINFO with its size set.
+    if thread == 0 || unsafe { GetGUIThreadInfo(thread, &raw mut info) } == 0 {
+        return format!("unknown ({})", std::io::Error::last_os_error());
+    }
+    format!(
+        "active {}, focus {}, capture {}, flags {:#x}",
+        describe(info.hwndActive as isize),
+        describe(info.hwndFocus as isize),
+        describe(info.hwndCapture as isize),
+        info.flags
+    )
+}
+
+/// Whether the thread of `hwnd` answers a message (within a second), and how soon, for a failure
+/// message.
+pub fn answers(hwnd: isize) -> String {
+    if hwnd == 0 {
+        return "is no window".to_owned();
+    }
+    // SAFETY: plain queries on a window handle; `result` outlives the call.
+    let (hung, answered, took) = unsafe {
+        let hung = IsHungAppWindow(hwnd as HWND) != 0;
+        let started = Instant::now();
+        let mut result = 0usize;
+        let answered = SendMessageTimeoutW(hwnd as HWND, WM_NULL, 0, 0, SMTO_ABORTIFHUNG | SMTO_BLOCK, 1000, &raw mut result) != 0;
+        (hung, answered, started.elapsed())
+    };
+    format!("{} in {} ms (hung: {hung})", if answered { "answers" } else { "does not answer" }, took.as_millis())
 }
 
 /// Wait until `done` holds, at most `within`; whether it did.
