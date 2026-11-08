@@ -10,7 +10,8 @@
 # Writes to /repro-out: steps.log (one line per step: pastes, windows answered, what arrived),
 # windows.log (answer.py), portal.log (dbus-monitor), target.txt (what the field holds;
 # target.<n>.txt from an earlier GNOME Shell; target.txt.events with the times), gnome-shell.log,
-# xwayland.txt (the command line of each Xwayland), summary.txt.
+# xwayland.txt (the command line of each Xwayland), versions.txt (the packages that run here),
+# summary.txt.
 # shellcheck disable=SC2016  # `sh -c '…' _ "$x"` expands in the inner shell
 set -eu
 scenario=$1
@@ -22,6 +23,13 @@ export VOLTIP_REPRO_TOKEN_FILE="$state/token"
 echo allow > "$state/answer"
 : > "$out/windows.log"
 : > "$out/xwayland.txt"
+
+# What runs here, by installed package: the versions docs/dictation.md §14.9 quotes.
+{
+  dpkg-query -W -f '${db:Status-Abbrev}${Package} ${Version}\n' gnome-shell 'libmutter-*' mutter-common \
+    xwayland xdg-desktop-portal xdg-desktop-portal-gnome 'liboeffis*' 2>/dev/null | sed -n 's/^ii *//p'
+  gnome-shell --version 2>/dev/null || true
+} > "$out/versions.txt"
 
 pids=""
 cleanup() {
@@ -256,6 +264,7 @@ esac
 
 {
   echo "scenario=$scenario"
+  echo "versions=$(tr '\n' ';' < "$out/versions.txt")"
   echo "xwayland=$(sort -u "$out/xwayland.txt" | tr '\n' ';')"
   echo "windows=$(windows)"
   # Voltip asks to be remembered (the window shows "Remember This Selection"); Xwayland does not.
