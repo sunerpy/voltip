@@ -81,6 +81,10 @@ The first start of an app that is not notarized needs one confirmation; see [Ins
 
 Voltip keeps your keys and this device's identity in the system keychain and does not start without it; it does not fall back to a file. On Linux the keychain is the Secret Service: start GNOME Keyring or KWallet and unlock it. When the keychain asks for its password as Voltip starts, enter it; if that prompt is closed instead, Voltip shows this notice and quits. On a Mac, unlock the keychain and allow Voltip to use it when macOS asks. On Windows, make sure the Credential Manager service is running. Then open Voltip again.
 
+### On Linux, Voltip quits right after it starts
+
+If a terminal shows `Error 71 (Protocol error) dispatching to Wayland display` and the computer has an NVIDIA graphics card, the cause is WebKitGTK's DMA-BUF rendering. From version 0.3.0, Voltip turns it off by itself on Wayland sessions, unless you have set `WEBKIT_DISABLE_DMABUF_RENDERER` yourself. Earlier versions need to be started with `WEBKIT_DISABLE_DMABUF_RENDERER=1 voltip-desktop`. If Voltip still quits, start it with `GDK_BACKEND=x11 voltip-desktop`; see [Platform notes](/reference/platforms#nvidia-graphics-cards-on-wayland).
+
 ### Where are my files, and how do I remove Voltip?
 
 See [Updates, uninstall and your data](/guide/updates).

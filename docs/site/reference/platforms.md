@@ -58,6 +58,13 @@ A Wayland session without X11 support places some limits on all apps:
 
 In a session that runs X11 apps through XWayland, the shortcut works only while an X11 window has the focus.
 
+### NVIDIA graphics cards on Wayland
+
+On a Wayland session, WebKitGTK, which draws Voltip's window, can make Voltip quit right after it starts on computers with an NVIDIA graphics card, with NVIDIA's driver or the open-source nouveau driver alike. A terminal then shows `Error 71 (Protocol error) dispatching to Wayland display`. When Voltip finds an NVIDIA graphics card on a Wayland session, it therefore turns off WebKitGTK's DMA-BUF rendering before it opens its window. X11 sessions and computers without an NVIDIA graphics card are not affected.
+
+- To keep DMA-BUF rendering, start Voltip with `WEBKIT_DISABLE_DMABUF_RENDERER=0`, for example `WEBKIT_DISABLE_DMABUF_RENDERER=0 voltip-desktop`. Voltip does not change a value you set yourself.
+- If Voltip still quits right after it starts, run it through XWayland: `GDK_BACKEND=x11 voltip-desktop`. Voltip then runs as an X11 app, and the shortcut works while an X11 window has the focus.
+
 ## Android
 
 The Android app turns a phone into a microphone and keyboard for the computer; see [the phone page](/phone/). It needs Android 8.0 or later and a 64-bit Arm processor, and installs from the APK on the releases page ([Install](/guide/install#android)). Recognition, AI polish and inserting the text happen on the paired computer.

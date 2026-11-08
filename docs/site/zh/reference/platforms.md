@@ -58,6 +58,13 @@ Voltip 在各个桌面系统上是同一个应用。本页列出各平台之间�
 
 在通过 XWayland 运行 X11 应用的会话中，组合键只在 X11 窗口获得焦点时有效。
 
+### Wayland 与 NVIDIA 显卡
+
+在 Wayland 会话中，如果电脑装有 NVIDIA 显卡，无论使用 NVIDIA 驱动还是开源的 nouveau 驱动，负责绘制 Voltip 窗口的 WebKitGTK 都可能使 Voltip 在启动后随即退出，终端中显示 `Error 71 (Protocol error) dispatching to Wayland display`。因此，Voltip 在 Wayland 会话中发现 NVIDIA 显卡时，会在打开窗口前关闭 WebKitGTK 的 DMA-BUF 渲染。X11 会话和没有 NVIDIA 显卡的电脑不受影响。
+
+- 如需保留 DMA-BUF 渲染，请用 `WEBKIT_DISABLE_DMABUF_RENDERER=0` 启动 Voltip，例如 `WEBKIT_DISABLE_DMABUF_RENDERER=0 voltip-desktop`。你自己设置的值，Voltip 不会更改。
+- 如果 Voltip 仍在启动后随即退出，请改为通过 XWayland 运行：`GDK_BACKEND=x11 voltip-desktop`。此时 Voltip 作为 X11 应用运行，快捷键在 X11 窗口获得焦点时有效。
+
 ## Android
 
 Android 应用把手机当作电脑的麦克风和键盘，见[手机端](/zh/phone/)。应用需要 Android 8.0 或更高版本，以及 64 位 Arm 处理器，通过发布页面的 APK 安装（见[安装](/zh/guide/install#android)）。识别、AI 润色和插入文字都在配对的电脑上完成。

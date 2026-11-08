@@ -20,6 +20,10 @@
 # Writes <out>/desktop-linux-wayland-summary.txt, <out>/desktop-linux-wayland-sway.png (grim; headless
 # weston cannot be captured) and <out>/desktop-linux-wayland-{weston,sway}-app.log.
 # VOLTIP_SMOKE_NO_BUILD=1 reuses target/debug/voltip-desktop instead of rebuilding.
+# VOLTIP_SMOKE_GPU=nouveau|nvidia gives the app the GPUs of issue #228 (card0 on that driver, card1
+# on i915) through the debug build's VOLTIP_DEV_GPU_ROOT, and each phase also checks that the app
+# turned WebKitGTK's DMA-BUF renderer off for them (docs/dictation.md §14.8). Without it the app
+# reads this machine's own GPUs, and nothing is checked about them.
 # shellcheck disable=SC2016,SC2012  # `sh -c '…' _ "$x"` expands in the inner shell; ls lists our own sockets
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -40,6 +44,10 @@ if [ -z "${VOLTIP_SMOKE_NO_BUILD:-}" ]; then
   cargo build -q -p voltip-desktop --features custom-protocol
 fi
 [ -x "$bin" ] || { echo "smoke-wayland-linux: $bin missing"; exit 2; }
+case ${VOLTIP_SMOKE_GPU:-} in
+  "" | nouveau | nvidia) ;;
+  *) echo "smoke-wayland-linux: VOLTIP_SMOKE_GPU must be nouveau or nvidia, not $VOLTIP_SMOKE_GPU"; exit 2 ;;
+esac
 mkdir -p "$out_dir"
 
 work=$(mktemp -d)
@@ -86,6 +94,27 @@ wait_log() { # <log> <regex> <seconds>
     sleep 0.3
   done
 }
+# VOLTIP_SMOKE_GPU: the GPUs of #228 under the directory VOLTIP_DEV_GPU_ROOT names, laid out as
+# the kernel does (only the driver links are read, so they may dangle).
+gpu_env=()
+if [ -n "${VOLTIP_SMOKE_GPU:-}" ]; then
+  gpus=$work/gpus
+  for card in "0:$VOLTIP_SMOKE_GPU" "1:i915"; do
+    mkdir -p "$gpus/sys/class/drm/card${card%%:*}/device"
+    ln -s "../../../bus/pci/drivers/${card#*:}" "$gpus/sys/class/drm/card${card%%:*}/device/driver"
+  done
+  gpu_env=(VOLTIP_DEV_GPU_ROOT="$gpus")
+fi
+# With VOLTIP_SMOKE_GPU, the app's log names what it did with WebKitGTK's DMA-BUF renderer: turned
+# it off, or left the value the caller set.
+check_graphics() { # <log>
+  [ -n "${VOLTIP_SMOKE_GPU:-}" ] || return 0
+  if [ -z "${WEBKIT_DISABLE_DMABUF_RENDERER+set}" ]; then
+    check "the $VOLTIP_SMOKE_GPU GPU turned WebKitGTK's DMA-BUF renderer off (WEBKIT_DISABLE_DMABUF_RENDERER=1 in the log)" log_has "$1" "WEBKIT_DISABLE_DMABUF_RENDERER=1 .*driver=$VOLTIP_SMOKE_GPU"
+  else
+    check "the $VOLTIP_SMOKE_GPU GPU left the WEBKIT_DISABLE_DMABUF_RENDERER the caller set" log_has "$1" "WEBKIT_DISABLE_DMABUF_RENDERER stays as the user set it .*driver=$VOLTIP_SMOKE_GPU"
+  fi
+}
 # A shim directory first on the app's PATH: every wtype call is logged, then the real one runs.
 shim=$work/shim
 mkdir -p "$shim"
@@ -97,7 +126,7 @@ start_app() { # <phase> [extra env…]
   local dir=$work/$phase
   mkdir -p "$dir"
   voltip_smoke_settings "$dir/data/voltip/settings.json" "$VOLTIP_SMOKE_ASR_URL" paste
-  env -u DISPLAY "$@" PATH="$shim:$PATH" XDG_SESSION_TYPE=wayland GDK_BACKEND=wayland VOLTIP_DEV_SECRET_STORE=memory \
+  env -u DISPLAY "$@" "${gpu_env[@]}" PATH="$shim:$PATH" XDG_SESSION_TYPE=wayland GDK_BACKEND=wayland VOLTIP_DEV_SECRET_STORE=memory \
     XDG_DATA_HOME="$dir/data" XDG_CONFIG_HOME="$dir/config" RUST_LOG=voltip=info,voltip_inject=debug \
     "$bin" >"$dir/app.log" 2>&1 &
   app_pid=$!
@@ -137,6 +166,7 @@ note "tools: $(weston --version 2>&1 | head -1); sway $(sway --version | awk '{p
 # below do not depend on the page, the screenshot does.
 if strings -n 8 "$bin" | grep -E '/assets/index-[A-Za-z0-9_-]+\.js' >/dev/null; then frontend=bundled; else frontend="dev server (no custom-protocol: the screenshot shows an error page)"; fi
 note "binary: $(stat -c %s "$bin") bytes, frontend $frontend"
+note "graphics: VOLTIP_SMOKE_GPU=${VOLTIP_SMOKE_GPU:-<unset>}, WEBKIT_DISABLE_DMABUF_RENDERER=${WEBKIT_DISABLE_DMABUF_RENDERER-<unset>}"
 voltip_smoke_tone_wav "$work/tone.wav" 8
 voltip_smoke_mock_asr_start "$work" "$spoken"
 voltip_smoke_pulse_mic_start "$work" "voltip_wayland_$$"
@@ -160,6 +190,7 @@ if wait_log "$log" 'no global hotkey on this session.* purpose="edit"' 90; then
   check "HotkeyStatus.error names the --toggle binding" log_has "$log" 'purpose="dictation" .*error=.*纯 Wayland.*--toggle'
   check "HotkeyStatus.edit_error names the --edit-toggle binding" log_has "$log" 'purpose="edit" .*error=.*纯 Wayland.*--edit-toggle'
   check "injector judged the session (text injection backend backend=Wayland · …)" log_has "$log" 'text injection backend backend=Wayland · '
+  check_graphics "$log"
   note "  info  $(voltip_smoke_plain "$log" | grep -oE 'text injection backend backend=[^=]*options' | sed 's/ options$//' | head -1)"
   # No screenshot here: weston-screenshooter 13 aborts on the headless output
   # (`screenshot_create_shm_buffer: Assertion width > 0`); the sway phase captures with grim.
@@ -196,6 +227,7 @@ if wait_log "$log" 'no global hotkey on this session' 90; then
   check "session judged as Wayland · wlroots" log_has "$log" 'linux session session=Wayland · wlroots'
   check "HotkeyStatus.backend = global-shortcut · Linux · Wayland" log_has "$log" 'no global hotkey on this session.* backend=global-shortcut · Linux · Wayland'
   check "injector picks wtype first (text injection backend … → wtype)" log_has "$log" 'text injection backend backend=Wayland · wlroots → wtype'
+  check_graphics "$log"
   if take sway XDG_CURRENT_DESKTOP=sway; then
     outcome=$(voltip_smoke_last_history "$work/sway/data/voltip/history.sqlite3")
     note "  info  history: ${outcome:-<none>}"

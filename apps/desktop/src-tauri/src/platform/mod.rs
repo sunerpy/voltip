@@ -1,12 +1,15 @@
 //! Platform facts for the shell (docs/dictation.md §15, §18): the three query commands
-//! `permissions_status` / `permissions_request` / `inject_preflight`, the tray, and the
-//! foreground-application probe the core asks when a take starts ([`PlatformProbe`]).
+//! `permissions_status` / `permissions_request` / `inject_preflight`, the tray, the
+//! foreground-application probe the core asks when a take starts ([`PlatformProbe`]), and on Linux
+//! the graphics environment set before the first window (`graphics`, §14.8).
 //!
 //! The decisions live in `voltip-platform` (pure tables, tested on every host); this module only
 //! collects the facts the OS hands out. Each `#[cfg]` branch answers with the same wire types, so
 //! the webview and `tests/ipc.rs` see one contract on Linux, macOS and Windows.
 
 pub mod focus;
+#[cfg(target_os = "linux")]
+pub mod graphics;
 #[cfg(target_os = "linux")]
 pub mod linux;
 #[cfg(target_os = "macos")]

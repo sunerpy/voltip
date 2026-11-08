@@ -1224,6 +1224,48 @@ Wayland 剪贴板：arboard `wayland-data-control`（wl-clipboard-rs；KDE 与 w
 6. **AppImage 中 sherpa-onnx 两份**：可改为打包时给 linuxdeploy 设 `LD_LIBRARY_PATH` 并去掉 `files`，省约 32 MB（未压缩）。
 7. **真机手测**：KWin（`wtype` 失败后回落到 `kwtype`）、Mutter（dotool / ydotool 权限，XWayland XTEST 经 libei portal）、带 ydotoold 的 ydotool 1.x；macOS 的 UCKeyTranslate 反查（目前固定键码 9）。
 
+### 14.8 Wayland 与 NVIDIA：WebKitGTK 的 DMA-BUF 渲染（2026-11-08，issue #228）
+
+**现象**（#228）：0.2.1 的 `.deb`，Ubuntu 26.04、GNOME Shell 50.1 的 Wayland 会话，RTX 3060 用 nouveau（Mesa 26.0.8 的 NVK）、另有 Intel UHD 770（i915），GTK 3.24.52、WebKitGTK 2.52.6。启动约 1 s 退出，退出码 1。`WAYLAND_DEBUG=client` 里 `wl_surface.attach(wl_buffer)`、`commit` 之后是 `wl_display.error(wp_linux_drm_syncobj_surface_v1#57, 2, "Explicit Sync only supported on dmabuf buffers")`，GTK 打印 `Error 71 (Protocol error) dispatching to Wayland display.` 后退出；`GDK_BACKEND=x11` 可以启动。
+
+**原因**：这个 wl_surface 上已经有显式同步对象（`wp_linux_drm_syncobj_surface_v1`，错误码 2 即协议里的 `unsupported_buffer`），又挂上了不是 dmabuf 的缓冲区，mutter 判协议错误并断开连接。Voltip 自己不画 GTK 窗口（没有 `connect_draw`、cairo、`set_app_paintable`），问题在 GTK 3、WebKitGTK 与驱动之间；Tauri 2.12.5、wry 0.57.1、tao 0.37.2 都不处理这件事。同类报告与出处：lwindolf/liferea#1378（报告者确认 `WEBKIT_DISABLE_DMABUF_RENDERER=1` 有效，闭源驱动上 `__NV_DISABLE_EXPLICIT_SYNC=1` 也有效）、mesa#11723（同一个 Error 71，GTK 4 应用、NVIDIA）、tauri-apps/tauri#9394；Tauri 的 Linux 图形问题页（https://v2.tauri.app/develop/debug/linux-graphics/）写明 `WEBKIT_DISABLE_DMABUF_RENDERER=1` 修复 Error 71 崩溃，建议在 `main()` 里、创建 webview 之前设置，并提醒确认应用确实受影响再这样做。WebKitGTK 只把值 `0` 当作「不关闭」，其他任何值（包括空串）都关闭 DMA-BUF 渲染（`Source/WebKit/UIProcess/gtk/AcceleratedBackingStore.cpp` 的 `rendererBufferTransportMode`：`if (disableDMABuf && g_strcmp0(disableDMABuf, "0")) return;`）。
+
+**规则**（`crates/voltip-platform/src/linux.rs` 的 `dmabuf_renderer`，纯函数，各平台都编译和测试；用户决定 2026-11-08：只在 Wayland 会话且机器上有 NVIDIA 显卡时自动设置，用户设过的不覆盖，其他显卡和 X11 不变）：
+
+| 条件（依次判断） | 结果 |
+|---|---|
+| `WAYLAND_DISPLAY` 未设或为空 | 不变（X11 会话或没有会话） |
+| `GDK_BACKEND` 已设，按逗号分开后的第一项不是 `wayland` 或 `*`（如 `x11`、`x11,wayland`、`broadway`、空串） | 不变（GTK 不先试 Wayland；GTK 逐项精确比较，大小写也算） |
+| 没有一张显卡的驱动是 `nvidia` 或 `nouveau` | 不变 |
+| 用户已设 `WEBKIT_DISABLE_DMABUF_RENDERER`（任何值，包括 `0` 和空串） | 不变，日志记下用户的值 |
+| 其余：GTK 会走 Wayland，且有 NVIDIA 显卡 | 设置 `WEBKIT_DISABLE_DMABUF_RENDERER=1` |
+
+`GDK_BACKEND=*` 表示按 GTK 自己的顺序试所有后端，Wayland 排在第一个，所以算作走 Wayland。
+
+**显卡驱动**（`apps/desktop/src-tauri/src/platform/graphics.rs` 的 `gpu_drivers`）：`/sys/class/drm/card<N>/device/driver` 链接目标的最后一段（`nvidia`、`nouveau`、`i915`、`xe`、`amdgpu`…），按卡号排序；连接器（`card0-DP-1`）和渲染节点（`renderD128`）不算卡。`/proc/driver/nvidia` 存在、而没有哪张卡的驱动是 `nvidia` 时（NVIDIA 的内核模块已加载但没有 DRM 设备），补一个 `nvidia`。读不到的一律按没有这张卡处理，不报错，读链接也不会等待设备。
+
+**时机与线程**：`run()` 的第一条语句（`platform::graphics::prepare()`），日志、命令行解析、Tauri、GTK、tokio 都在它之后，无界面的命令行也一样经过这里。Rust 2024 的 `std::env::set_var` 是 unsafe：只有 `/proc/self/task` 只列出一个线程（就是当前这个）时才设置；否则不设置，结果为 `NotAlone`，日志写一条 warn。以后有人把这一步挪到线程启动之后，`tests/cli.rs` 的回归测试会失败。
+
+**日志**：tracing 初始化之后写一行，只含驱动名，不含主机名等信息：
+
+- 设置了：info `WebKitGTK's DMA-BUF renderer off for a Wayland session with an NVIDIA GPU: WEBKIT_DISABLE_DMABUF_RENDERER=1 (#228) driver=nouveau gpus=["nouveau", "i915"]`；
+- 用户设过：info `… WEBKIT_DISABLE_DMABUF_RENDERER stays as the user set it`，带 `value="0"` 之类的原值；
+- 应设置但已有其他线程：warn `… other threads run already: WEBKIT_DISABLE_DMABUF_RENDERER is not set …`，带线程数；
+- 其余：debug `WebKitGTK's DMA-BUF renderer left as it is`，带 `wayland` 与驱动列表。
+
+**只设这一个变量**：`__NV_DISABLE_EXPLICIT_SYNC` 只对闭源驱动有效，对 nouveau 与 NVK 无效；`GDK_BACKEND=x11` 让整个窗口改走 XWayland，热键、注入和场景都随之变化（§14.1、§14.2），只作为文档里的备用办法。关闭 DMA-BUF 渲染的代价：WebKitGTK 改用不经 DMA-BUF 的方式交付画面；Tauri 的页面把 `__NV_DISABLE_EXPLICIT_SYNC=1` 称为没有性能代价的做法，言下之意这一种可能慢一些（未在 Voltip 上测量）。用户可以设 `WEBKIT_DISABLE_DMABUF_RENDERER=0` 换回 DMA-BUF 渲染。
+
+**debug 构建专用**：`VOLTIP_DEV_GPU_ROOT=<目录>` 让 `sys/class/drm` 与 `proc/driver/nvidia` 从这个目录下读，release 构建忽略它（同 `VOLTIP_DEV_DATA_DIR`）。
+
+**测试**：
+
+- 判定表：`crates/voltip-platform/src/linux.rs` 的单测，含报告者的组合（`regression_gnome_wayland_with_nouveau_and_i915_turns_the_dmabuf_renderer_off`）、闭源驱动、只有 Intel / AMD / 虚拟机显卡、X11、`GDK_BACKEND` 各种取值、用户设过（`1`、`0`、空串等）。
+- 读 sysfs：`graphics.rs` 的单测在临时目录里按内核的布局造链接（报告者的 nouveau + i915、只在 `/proc/driver/nvidia` 出现的闭源驱动、连接器与渲染节点、读不到的情况）；在测试进程里（总有别的线程）只走到 `NotAlone`，验证不会改环境变量。
+- 二进制：`apps/desktop/src-tauri/tests/cli.rs` 的 `regression_the_binary_turns_webkit_s_dmabuf_renderer_off_on_wayland_with_nouveau_while_it_is_alone` 用 `VOLTIP_DEV_GPU_ROOT` 指向报告者的两张卡，运行 `voltip-desktop --version`：stderr 有 info 那一行且没有 `other threads`；用户设 `0` 时保留；`GDK_BACKEND=x11` 或只有 Intel 时不提这个变量。
+- 冒烟：`VOLTIP_SMOKE_GPU=nouveau scripts/smoke-wayland-linux.sh`（§14.6 的 weston 与 sway 两段）用 `VOLTIP_DEV_GPU_ROOT` 模拟报告者的两张卡，两段各多检查一项：日志里有设置变量的那一行。默认冒烟不带这个选项，含义不变；冒烟机器本身有 NVIDIA 显卡时自动规则同样生效。
+
+**未验证**：NVIDIA 显卡加支持显式同步的 GNOME 上的真机效果（本机与 CI 都没有这样的环境；headless weston 与 sway 不支持显式同步，复现不了原问题），列入用户验证清单。
+
 ## 15. macOS 与 Windows 原生（2026-09-26）
 
 叶子 crate `crates/voltip-platform`（纯 Rust、`#![forbid(unsafe_code)]`、只依赖 `serde`，不依赖 `voltip-core`）只放决策表：权限判定、轮询计划、激活策略时机、Cmd+V 键码回退、完整性级别比较、麦克风同意存储优先级、托盘字形、系统钥匙串不可用时的说明与它的语言（§34）；在所有主机编译与单测。操作系统查询在 `apps/desktop/src-tauri/src/platform/`（`mod.rs` 跨平台；`macos.rs` / `windows.rs` / `tray.rs` 按 `cfg`），把原始事实喂给这些表。
