@@ -42,7 +42,7 @@
     "react-native-svg": "15.16.0"
   },
   "devDependencies": {
-    "@babel/core": "7.29.13",
+    "@babel/core": "8.1.0",
     "@react-native/jest-preset": "0.88.1",
     "@testing-library/react-native": "14.1.0",
     "@types/jest": "30.0.0",
