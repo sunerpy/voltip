@@ -119,6 +119,11 @@ pub enum Fault {
     /// Reading `version` or `AvailableDeviceTypes` fails with `org.freedesktop.DBus.Error.Failed`:
     /// the portal is there but erring, so whether it offers the keyboard is unknown.
     FailProperties,
+    /// The portal answers the first read of `version` (the chain's probe) and is gone afterwards:
+    /// later reads of both properties answer `org.freedesktop.DBus.Error.UnknownInterface`, as if
+    /// xdg-desktop-portal had restarted without its RemoteDesktop backend between the probe and
+    /// the press.
+    GoneAfterProbe,
     /// `ConnectToEIS` fails.
     RefuseEis,
     /// The EIS server hangs up when the client binds the keyboard: nothing is pressed.
@@ -189,6 +194,8 @@ pub struct Record {
     pub ended_sessions: usize,
     /// What a real EIS implementation would have refused (a key outside an emulation sequence).
     pub protocol_errors: Vec<String>,
+    /// Reads of `version`: each check of the portal reads it first.
+    pub checks: usize,
 }
 
 impl Record {
@@ -543,17 +550,30 @@ impl RemoteDesktopIface {
         if state.fault == Fault::FailProperties {
             return Err(zbus::fdo::Error::Failed("the backend did not answer".into()));
         }
+        if state.fault == Fault::GoneAfterProbe && state.record.checks > 1 {
+            return Err(gone());
+        }
         Ok(state.device_types)
     }
 
     #[zbus(property, name = "version")]
     fn version(&self) -> zbus::fdo::Result<u32> {
-        let state = lock(&self.state);
+        let mut state = lock(&self.state);
+        state.record.checks += 1;
         if state.fault == Fault::FailProperties {
             return Err(zbus::fdo::Error::Failed("the backend did not answer".into()));
         }
+        if state.fault == Fault::GoneAfterProbe && state.record.checks > 1 {
+            return Err(gone());
+        }
         Ok(state.version)
     }
+}
+
+/// The answer of a bus whose portal no longer has the RemoteDesktop interface
+/// ([`Fault::GoneAfterProbe`]).
+fn gone() -> zbus::fdo::Error {
+    zbus::fdo::Error::UnknownInterface("org.freedesktop.portal.RemoteDesktop is gone".into())
 }
 
 /// Another portal at the portal's path, as xdg-desktop-portal exports its other portals.

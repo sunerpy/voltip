@@ -793,11 +793,23 @@ mod tests {
             matches!(&err, DeliveryError::Unavailable(n) if n.code == FallbackCode::NoTool && n.detail.contains("remote-desktop-portal: no remote-desktop portal with a keyboard") && n.detail.contains("xdg-desktop-portal-gnome")),
             "{err:?}"
         );
-        // The bus says the portal went away between the probe and the press: as without one, the
-        // next tool tries.
+        // The portal went away between the probe and the press (the press's own check hears there
+        // is none): the chain has picked it, so the paste stops with the text on the clipboard as
+        // for any other failure of the portal, and XTEST is not tried (goal gate round 2,
+        // docs/dictation.md §14.9).
+        let enigo = FakeEnigo::with(&[EnigoBackend::X11], Ok(()));
         let portal = FakePortalPort::with(true, Err(PortalError::Unavailable("no session bus".into())));
-        let keys = make_keys(&tools, GNOME_XWAYLAND, enigo).with_portal(portal);
-        assert_eq!(keys.deliver(chord, "t").unwrap().tool, "enigo-x11");
+        let keys = make_keys(&tools, GNOME_XWAYLAND, enigo.clone()).with_portal(portal);
+        let err = keys.deliver(chord, "t").unwrap_err();
+        assert!(
+            matches!(&err, DeliveryError::Unavailable(n) if n.code == FallbackCode::RemoteUnavailable && n.detail == "remote-desktop-portal: no remote-desktop portal: no session bus"),
+            "{err:?}"
+        );
+        assert!(enigo.pressed.lock().unwrap().is_empty(), "XTEST is not tried");
+        let portal = FakePortalPort::with(true, Err(PortalError::Unavailable("no session bus".into())));
+        let keys = make_keys(&tools, GNOME_WAYLAND, FakeEnigo::none()).with_portal(portal);
+        let err = keys.press_chord(copy, &[]).unwrap_err();
+        assert!(matches!(&err, DeliveryError::Unavailable(n) if n.code == FallbackCode::RemoteUnavailable), "{err:?}");
     }
 
     /// A refusal leaves the text on the clipboard with its own reason, and nothing later in the

@@ -330,8 +330,9 @@ fn a_portal_that_cannot_be_read_is_tried_not_skipped() {
     assert!(matches!(desktop.press(&ctrl_v()), Err(PortalError::Unavailable(_))));
 }
 
-/// The child's part of [`regression_a_paste_the_portal_cannot_take_stops_with_its_reason`]: one
-/// paste through the chain this session builds, and how it ended.
+/// The child's part of [`regression_a_paste_the_portal_cannot_take_stops_with_its_reason`] and
+/// [`regression_a_portal_gone_after_the_probe_stops_with_its_reason`]: one paste through the chain
+/// this session builds, and how it ended.
 fn child_one_paste() {
     let keys = voltip_inject::linux::system_toolchain_keys();
     match keys.deliver(voltip_inject::paste_chord_for("linux"), "dictated text") {
@@ -358,6 +359,40 @@ fn regression_a_paste_the_portal_cannot_take_stops_with_its_reason() {
     assert_eq!(pastes, vec!["clipboard RemoteUnavailable: remote-desktop-portal: the portal's keyboard failed: CreateSession answered 2".to_string()]);
     let record = portal.record();
     assert_eq!((record.sessions, record.open_sessions(), record.dialogs), (1, 0, 0), "{record:?}");
+}
+
+/// docs/dictation.md §14.9 (goal gate round 2, 2026-11-09): once the chain has picked the portal,
+/// a portal gone by the press (the press's own check hears that the interface is unknown) ends the
+/// paste like any other failure of the portal: the text stays on the clipboard with
+/// `remote_unavailable` (the 远程交互不可用 card). Before, it read as a desktop without the
+/// interface: the chain went on, to XTEST on XWayland or to `no_tool` without a card on pure
+/// Wayland. Only the chain's probe keeps a portal that is not there out of the chain.
+#[test]
+fn regression_a_portal_gone_after_the_probe_stops_with_its_reason() {
+    if std::env::var_os(CHILD).is_some() {
+        child_one_paste();
+        return;
+    }
+    // The portal's own answer: the probe finds it, the press does not, nothing is asked for.
+    let bus = PrivateBus::start();
+    let portal = FakePortal::start(&bus);
+    portal.fault(Fault::GoneAfterProbe);
+    let desktop = client(&bus, &Arc::new(MemoryRestoreTokens::new()));
+    assert_eq!(desktop.available(), Ok(()));
+    let err = desktop.press(&ctrl_v()).unwrap_err();
+    assert!(matches!(&err, PortalError::Unavailable(reason) if reason.contains("org.freedesktop.DBus.Error.UnknownInterface")), "{err:?}");
+    let record = portal.record();
+    assert_eq!((record.checks, record.sessions), (2, 0), "{record:?}");
+
+    // Through the chain the shell builds, on pure Wayland: the probe passes, the press stops.
+    let bus = PrivateBus::start();
+    let portal = FakePortal::start(&bus);
+    portal.fault(Fault::GoneAfterProbe);
+    let pastes = run_child("regression_a_portal_gone_after_the_probe_stops_with_its_reason", &bus);
+    let prefix = "clipboard RemoteUnavailable: remote-desktop-portal: no remote-desktop portal: org.freedesktop.portal.RemoteDesktop: ";
+    assert!(matches!(pastes.as_slice(), [paste] if paste.starts_with(prefix) && paste.contains("UnknownInterface")), "{pastes:?}");
+    let record = portal.record();
+    assert_eq!((record.checks, record.sessions, record.dialogs), (2, 0, 0), "{record:?}");
 }
 
 /// A portal without `ConnectToEIS` (version 1) or without a keyboard, and no portal at all: the
