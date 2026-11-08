@@ -11,7 +11,7 @@ use std::fmt::Write as _;
 use std::sync::{Mutex, OnceLock, mpsc};
 use std::time::{Duration, Instant};
 
-use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows_sys::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CHILDID_SELF, DispatchMessageW, EVENT_OBJECT_CLOAKED, EVENT_OBJECT_FOCUS, EVENT_OBJECT_HIDE, EVENT_OBJECT_SHOW, EVENT_OBJECT_UNCLOAKED,
@@ -96,6 +96,26 @@ pub(super) fn note(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM, result:
     if noted {
         keep(&MESSAGES, Message { at: Instant::now(), hwnd: hwnd as isize, msg, wparam, lparam, result });
     }
+}
+
+/// Whether `hwnd` received a move of the pointer since `since` at one of `client` (client
+/// coordinates, `WM_MOUSEMOVE`) or of `screen` (screen coordinates, `WM_NCMOUSEMOVE` over its
+/// frame).
+pub(super) fn moved_over(hwnd: isize, since: Instant, client: &[POINT], screen: &[POINT]) -> bool {
+    // The coordinates a mouse message carries: two signed 16-bit halves.
+    let at = |lparam: isize| {
+        let x = i32::from((lparam & 0xffff) as u16 as i16);
+        let y = i32::from(((lparam >> 16) & 0xffff) as u16 as i16);
+        POINT { x, y }
+    };
+    let any = |points: &[POINT], lparam: isize| points.iter().any(|&point| super::same_point(point, at(lparam)));
+    MESSAGES.lock().is_ok_and(|messages| {
+        messages.iter().any(|message| {
+            message.at >= since
+                && message.hwnd == hwnd
+                && ((message.msg == WM_MOUSEMOVE && any(client, message.lparam)) || (message.msg == WM_NCMOUSEMOVE && any(screen, message.lparam)))
+        })
+    })
 }
 
 /// Called by the window procedure on [`PROBE_TRACE`]: record the stack of the thread it runs on.

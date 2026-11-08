@@ -11,14 +11,14 @@ use std::time::{Duration, Instant};
 
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, S_OK, WPARAM};
 use windows_sys::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
-use windows_sys::Win32::Graphics::Gdi::{CLR_INVALID, CreateSolidBrush, GetDC, GetPixel, ReleaseDC};
+use windows_sys::Win32::Graphics::Gdi::{CLR_INVALID, ClientToScreen, CreateSolidBrush, GetDC, GetPixel, ReleaseDC, ScreenToClient};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Threading::GetCurrentThreadId;
 use windows_sys::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEINPUT, SendInput};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, EnumWindows, GA_ROOT, GUITHREADINFO, GWL_EXSTYLE, GetAncestor, GetClassNameW,
-    GetCursorPos, GetForegroundWindow, GetGUIThreadInfo, GetMessageW, GetSystemMetrics, GetWindowLongW, GetWindowRect, GetWindowThreadProcessId,
+    GetClientRect, GetCursorPos, GetForegroundWindow, GetGUIThreadInfo, GetMessageW, GetSystemMetrics, GetWindowLongW, GetWindowRect, GetWindowThreadProcessId,
     HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, IsHungAppWindow, IsIconic, IsWindowVisible, MSG, PostThreadMessageW, RegisterClassW, SM_CXSCREEN, SM_CYSCREEN,
     SMTO_ABORTIFHUNG, SMTO_BLOCK, SPI_GETWORKAREA, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SendMessageTimeoutW, SetCursorPos,
     SetWindowPos, ShowWindow, SystemParametersInfoW, TranslateMessage, WM_NULL, WM_QUIT, WNDCLASSW, WS_CLIPSIBLINGS, WS_EX_ACCEPTFILES, WS_EX_APPWINDOW,
@@ -238,69 +238,203 @@ impl TestWindow {
         POINT { x: rect.left + 40, y: rect.top + 40 }
     }
 
-    /// Activate it with a click, as the user would, and wait until it is the window in front.
+    /// A point where a click goes to this window ([`root_at`]): its grip; else, with another window
+    /// over the grip, the grip once this one is raised to the top of its band without being
+    /// activated; else the first point of its client area that nothing covers (a topmost window
+    /// over an ordinary one). `None` when there is none.
+    fn reachable(&self, what: &str) -> Option<POINT> {
+        let grip = self.grip();
+        let over = root_at(grip);
+        if over == self.hwnd {
+            return Some(grip);
+        }
+        // SAFETY: a live window handle of this test.
+        unsafe { SetWindowPos(self.hwnd as HWND, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) };
+        let still = root_at(grip);
+        if still == self.hwnd {
+            println!("{what}: raised without activation over {} at its grip {},{}", describe(over), grip.x, grip.y);
+            return Some(grip);
+        }
+        let open = self.open_point();
+        if let Some(at) = open {
+            println!("{what}: {} stays over its grip {},{} once it is raised; the click goes to {},{}", describe(still), grip.x, grip.y, at.x, at.y);
+        }
+        open
+    }
+
+    /// The first point of its client area, on a 16 px grid 8 px inside the edges and the top row
+    /// first, where a click goes to this window.
+    fn open_point(&self) -> Option<POINT> {
+        let client = client_rect(self.hwnd);
+        (client.top + 8..client.bottom - 8)
+            .step_by(16)
+            .flat_map(|y| (client.left + 8..client.right - 8).step_by(16).map(move |x| POINT { x, y }))
+            .find(|&at| root_at(at) == self.hwnd)
+    }
+
+    /// Move the pointer to `at`, as a user does before a click, and wait until this window receives
+    /// the move there: the system then routes the pointer's input at that point to it. Each 100 ms
+    /// it has not, the pointer moves again, between `at` and the pixel right of it, so that there is
+    /// a new move to route. How long it took and how many moves it took, or `None` when it did not
+    /// within [`WAIT`].
+    fn hover(&self, at: POINT) -> Option<(Duration, u32)> {
+        let started = Instant::now();
+        let aside = POINT { x: at.x + 1, y: at.y };
+        let client = [client_point(self.hwnd, at), client_point(self.hwnd, aside)];
+        // The pointer may be at `at` already, where moving it to `at` reports no move.
+        let mut next = if same_point(cursor(), at) { aside } else { at };
+        let mut moved = started;
+        let mut moves = 1;
+        // SAFETY: plain call.
+        unsafe { SetCursorPos(next.x, next.y) };
+        let reached = wait_until(WAIT, || {
+            if watch::moved_over(self.hwnd, started, &client, &[at, aside]) {
+                return true;
+            }
+            if moved.elapsed() >= Duration::from_millis(100) {
+                next = if same_point(next, at) { aside } else { at };
+                // SAFETY: plain call.
+                unsafe { SetCursorPos(next.x, next.y) };
+                moved = Instant::now();
+                moves += 1;
+            }
+            false
+        });
+        reached.then(|| (started.elapsed(), moves))
+    }
+
+    /// Activate it with a click, as the user would, and wait until it is the window in front. The
+    /// click goes to a point where this window is what a click reaches ([`TestWindow::reachable`]),
+    /// once the pointer's move there has reached it ([`TestWindow::hover`]): seen on windows-2025
+    /// (CI, 2026-11-07/08), a click that went elsewhere left the window under it where it was,
+    /// with the runner's Windows Terminal or no window at all in front.
     pub fn activate(&self, what: &str) {
         watch::watch();
-        let at = self.grip();
+        let before = foreground();
+        let Some(at) = self.reachable(what) else {
+            let grip = self.grip();
+            panic!(
+                "{what}: a click reaches it nowhere (in front: {}); the windows at its grip {},{}, top first:{}",
+                describe(before),
+                grip.x,
+                grip.y,
+                stack_at(self.hwnd, grip)
+            );
+        };
+        let moment = Moment::now(self.hwnd, at);
+        let Some((hovered, moves)) = self.hover(at) else {
+            panic!(
+                "{what}: a move of the pointer to {},{} did not reach it within {} ms (in front: {}; the foreground thread: {}); a click there would go to {}{}",
+                at.x,
+                at.y,
+                WAIT.as_millis(),
+                describe_for(foreground(), self.hwnd),
+                foreground_thread(),
+                describe_for(root_at(at), self.hwnd),
+                self.account(&moment, &[])
+            );
+        };
+        // A move that never reached it is what a click right after it shows meets (the evidence
+        // for the wait: CI's logs list these).
+        if moves > 1 {
+            println!("{what}: the pointer's move to {},{} reached it after {} ms, at move {moves}", at.x, at.y, hovered.as_millis());
+        }
         // Read just before the click: the window in front, the one the click goes to, the Z order
         // and what the foreground thread holds.
-        let before = foreground();
-        let landed = root_at(at);
-        let stack = stack_at(self.hwnd, at);
-        let order = z_order();
-        let before_thread = foreground_thread();
-        let clicked = Instant::now();
+        let moment = Moment::now(self.hwnd, at);
         click(at);
         // The window in front after the click, each time it changed.
         let mut seen: Vec<(Duration, isize)> = Vec::new();
         let came = wait_until(WAIT, || {
             let now = foreground();
             if seen.last().is_none_or(|&(_, last)| last != now) {
-                seen.push((clicked.elapsed(), now));
+                seen.push((moment.when.elapsed(), now));
             }
             now == self.hwnd
         });
         if came {
-            let took = clicked.elapsed();
+            let took = moment.when.elapsed();
             if took > Duration::from_millis(500) {
-                println!("{what}: in front {} ms after the click (in front before it: {})", took.as_millis(), describe(before));
+                println!("{what}: in front {} ms after the click (in front before it: {})", took.as_millis(), describe(moment.front));
             }
             return;
         }
+        panic!(
+            "{what} did not come to the front (in front: {}; the foreground thread: {}). The click at {},{} went to {} (in front before it: {}){}",
+            describe_for(foreground(), self.hwnd),
+            foreground_thread(),
+            at.x,
+            at.y,
+            describe_for(moment.landed, self.hwnd),
+            describe_for(moment.front, self.hwnd),
+            self.account(&moment, &seen)
+        );
+    }
+
+    /// For a failure message: the windows at the moment's point, the Z order and what the threads
+    /// held then and now, whether this window's thread pumps its messages and where it is, and the
+    /// messages and WinEvents from a second before the moment on. `seen` is the window in front
+    /// after it, each time it changed.
+    fn account(&self, moment: &Moment, seen: &[(Duration, isize)]) -> String {
+        let at = moment.at;
         let mut changes = String::new();
-        for (when, hwnd) in &seen {
+        for (when, hwnd) in seen {
             let _ = write!(changes, "\n  +{} ms {}", when.as_millis(), describe_for(*hwnd, self.hwnd));
+        }
+        if changes.is_empty() {
+            changes.push_str("\n  (not watched)");
         }
         let positions = |order: &[isize]| {
             let position = |hwnd: isize| order.iter().position(|&each| each == hwnd).map_or_else(|| "-".to_owned(), |at| at.to_string());
-            format!("this window {}, the window in front before {}, of {}", position(self.hwnd), position(before), order.len())
+            format!("this window {}, the window in front before {}, of {}", position(self.hwnd), position(moment.front), order.len())
         };
-        let order_then = positions(&order);
         let order_now = positions(&z_order());
-        let front = describe_for(foreground(), self.hwnd);
-        let front_thread = foreground_thread();
-        let threads = format!("this window's thread: {}; the thread of the window in front before: {}", thread_state(self.hwnd), thread_state(before));
-        let answers = format!("this window {}; the window in front before {}", answers(self.hwnd), answers(before));
+        let threads = format!("this window's thread: {}; the thread of the window in front before: {}", thread_state(self.hwnd), thread_state(moment.front));
+        let answers = format!("this window {}; the window in front before {}", answers(self.hwnd), answers(moment.front));
         let posted = watch::posted_probe(self.hwnd, Duration::from_secs(1));
         let trace = watch::stack_probe(self.hwnd);
         let cursor = cursor();
-        let since = clicked.checked_sub(Duration::from_secs(1)).unwrap_or(clicked);
-        let received = watch::messages_since(since, clicked, self.hwnd);
-        let events = watch::events_since(since, clicked);
-        // Whether a raise without activation would have put this window under the click point.
-        // SAFETY: a live window handle of this test.
-        unsafe { SetWindowPos(self.hwnd as HWND, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) };
-        let raised = root_at(at);
-        panic!(
-            "{what} did not come to the front (in front: {front}; the foreground thread: {front_thread}). The click at {},{} went to {} (in front before it: {}); the windows there, top first:{stack}\n at the click: Z order {order_then}; the foreground thread: {before_thread}\n in front after the click:{changes}\n now: Z order {order_now}; the cursor at {},{}\n {threads}\n {answers}\n this window's thread {posted}\n this window's thread when a message sent to it arrives:{trace}\n received from 1 s before the click on:{received}\n WinEvents from 1 s before the click on:{events}\n raised without activation now, the click point goes to {}",
+        let since = moment.when.checked_sub(Duration::from_secs(1)).unwrap_or(moment.when);
+        let received = watch::messages_since(since, moment.when, self.hwnd);
+        let events = watch::events_since(since, moment.when);
+        format!(
+            "; the windows at {},{} then, top first:{}\n then: Z order {}; the foreground thread: {}\n in front after:{changes}\n now: Z order {order_now}; the cursor at {},{}\n {threads}\n {answers}\n this window's thread {posted}\n this window's thread when a message sent to it arrives:{trace}\n received from 1 s before on:{received}\n WinEvents from 1 s before on:{events}",
             at.x,
             at.y,
-            describe_for(landed, self.hwnd),
-            describe_for(before, self.hwnd),
+            moment.stack,
+            positions(&moment.order),
+            moment.front_thread,
             cursor.x,
             cursor.y,
-            describe_for(raised, self.hwnd),
-        );
+        )
+    }
+}
+
+/// What the screen and the foreground thread were like at a point, right before a click there,
+/// for a failure message.
+struct Moment {
+    at: POINT,
+    when: Instant,
+    /// The window in front.
+    front: isize,
+    /// The window a click at `at` goes to ([`root_at`]).
+    landed: isize,
+    /// The windows that show at `at`, top first, down to the target ([`stack_at`]).
+    stack: String,
+    /// Every top-level window, in Z order.
+    order: Vec<isize>,
+    /// What the foreground thread held ([`foreground_thread`]).
+    front_thread: String,
+}
+
+impl Moment {
+    fn now(target: isize, at: POINT) -> Self {
+        let front = foreground();
+        let landed = root_at(at);
+        let stack = stack_at(target, at);
+        let order = z_order();
+        let front_thread = foreground_thread();
+        Self { at, when: Instant::now(), front, landed, stack, order, front_thread }
     }
 }
 
@@ -325,6 +459,11 @@ pub fn click(at: POINT) {
         SendInput(2, clicks.as_ptr(), i32::try_from(size_of::<INPUT>()).unwrap())
     };
     assert_eq!(sent, 2, "the click at {},{}", at.x, at.y);
+}
+
+/// Whether two points are the same (`POINT` has no `PartialEq`).
+pub fn same_point(a: POINT, b: POINT) -> bool {
+    a.x == b.x && a.y == b.y
 }
 
 /// Where the cursor is.
@@ -407,6 +546,26 @@ pub fn wait_until(within: Duration, mut done: impl FnMut() -> bool) -> bool {
         }
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+/// The window's client area in screen coordinates.
+pub fn client_rect(hwnd: isize) -> RECT {
+    let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    let mut origin = POINT { x: 0, y: 0 };
+    // SAFETY: a window handle, a RECT and a POINT on the stack; a stale handle leaves them empty.
+    unsafe {
+        GetClientRect(hwnd as HWND, &raw mut rect);
+        ClientToScreen(hwnd as HWND, &raw mut origin);
+    }
+    RECT { left: origin.x, top: origin.y, right: origin.x + rect.right, bottom: origin.y + rect.bottom }
+}
+
+/// A point of the screen in the window's client coordinates.
+pub fn client_point(hwnd: isize, at: POINT) -> POINT {
+    let mut point = at;
+    // SAFETY: a window handle and a POINT on the stack; a stale handle leaves it as it was.
+    unsafe { ScreenToClient(hwnd as HWND, &raw mut point) };
+    point
 }
 
 pub fn rect_of(hwnd: isize) -> RECT {
