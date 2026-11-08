@@ -22,11 +22,13 @@ tracing.workspace = true
 # The check's rules (`insert_check::rules`) and the applications it skips; pure Rust.
 voltip-platform = { path = "../voltip-platform" }
 
-# AT-SPI over D-Bus, blocking API: the version and default features tauri-plugin-opener and the
-# keyring already pull.
+# AT-SPI over D-Bus (src/linux.rs): zbus's async API on its own runtime (`default-rt`), driven by
+# `zbus::block_on` on the reader's worker thread. `unixexec` and `ibus` keep the bus addresses zbus 5
+# accepted without a feature, `tracing` its log events. tauri-plugin-opener, -single-instance and
+# the keyring still pull zbus 5.
 [target.'cfg(target_os = "linux")'.dependencies]
 serde.workspace = true
-zbus = "=5.19.0"
+zbus = { version = "=6.2.1", default-features = false, features = ["default-rt", "ibus", "tracing", "unixexec"] }
 
 # UI Automation: the version tao already compiles, with the features it already enables.
 [target.'cfg(target_os = "windows")'.dependencies]
