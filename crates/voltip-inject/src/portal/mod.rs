@@ -26,10 +26,12 @@
 //! service, interface or property, a version without `ConnectToEIS`, no keyboard): this desktop
 //! does not support it, and Xwayland could not ask through it either. When the portal does not
 //! answer in time or fails, whether it is there is unknown ([`PortalError::Broken`]). Once a paste
-//! has started a session, every failure short of the user's refusal is [`PortalError::Broken`]:
-//! the portal is there but this paste could not use it, and the chain stops with the text on the
-//! clipboard instead of handing the paste to XTEST, which would make Xwayland ask the same portal
-//! again.
+//! has started a session, every failure short of the user's refusal is [`PortalError::Broken`].
+//! The paste chain (`crate::linux`) leaves the portal out only when its probe hears
+//! [`PortalError::Unavailable`]; once it has picked the portal, any failure of the press, an
+//! `Unavailable` from the press's own check (the portal gone since the probe) included, stops the
+//! chain with the text on the clipboard instead of handing the paste to XTEST, which would make
+//! Xwayland ask the same portal again.
 
 mod eis;
 pub mod keymap;
@@ -90,8 +92,9 @@ impl Default for Limits {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PortalError {
     /// The session bus cannot be reached, or it says no remote-desktop portal offers a keyboard
-    /// through `ConnectToEIS`: this desktop does not support the interface, and the next tool may
-    /// try. Nothing was requested.
+    /// through `ConnectToEIS`: this desktop does not support the interface. Nothing was requested.
+    /// At the paste chain's probe the next tool may try; after it (the portal gone by the press)
+    /// the chain stops as for [`Self::Broken`].
     Unavailable(String),
     /// The user did not allow remote interaction (cancelled, no answer in time, or a grant without
     /// the keyboard). Nothing was pressed; the next paste asks again.

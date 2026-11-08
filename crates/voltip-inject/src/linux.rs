@@ -42,7 +42,8 @@ pub trait PortalPort: Send + Sync {
     /// Nothing is requested, so no dialog appears.
     fn available(&self) -> bool;
     /// Press `steps` ([`chord_steps`], [`copy_steps`]), asking the user first when no grant is
-    /// remembered.
+    /// remembered. The chain asks only after [`Self::available`] said yes, so any error here,
+    /// [`PortalError::Unavailable`] included, ends the paste with the text on the clipboard.
     fn press(&self, steps: &[KeyStep]) -> Result<(), PortalError>;
 }
 
@@ -277,14 +278,15 @@ impl ToolchainKeys {
             let name = tool.name();
             return match self.portal.press(&steps) {
                 Ok(()) => Attempt::Done(Delivered { tool: name.to_string(), delivery: Delivery::Chord }),
-                // The bus says, at the press, that no portal offers the interface (it went away
-                // since the probe): as on a desktop without it, the next tool tries — Xwayland
-                // cannot ask through a portal that is not there.
-                Err(e @ PortalError::Unavailable(_)) => Attempt::NotStarted(format!("{name}: {e}")),
                 Err(e @ PortalError::Declined(_)) => Attempt::Clipboard(InjectNote::new(FallbackCode::RemoteDenied, format!("{name}: {e}"))),
-                // The portal is there but this paste could not use it (no answer, its session or
-                // keyboard failed): the chain stops here instead of handing the paste to XTEST.
-                Err(e @ PortalError::Broken(_)) => Attempt::Clipboard(InjectNote::new(FallbackCode::RemoteUnavailable, format!("{name}: {e}"))),
+                // The chain's probe found the portal, or could not tell whether it is there, and
+                // this paste could not use it (no answer, its session or keyboard failed, or it
+                // was gone by the press). The chain stops here instead of handing the paste to
+                // XTEST, which would have Xwayland ask the same portal. Only the probe keeps a
+                // portal that is not there out of the chain (`probe_candidate`).
+                Err(e @ (PortalError::Unavailable(_) | PortalError::Broken(_))) => {
+                    Attempt::Clipboard(InjectNote::new(FallbackCode::RemoteUnavailable, format!("{name}: {e}")))
+                }
                 Err(e @ PortalError::Lost(_)) => Attempt::Stop(format!("{name}: {e}")),
             };
         }
