@@ -60,6 +60,8 @@ At the first paste, GNOME shows the **Remote Desktop** window:
 
 Later pastes, and pastes after you reopen Voltip, do not ask again. If you untick **Remember This Selection**, the next paste asks again. If you click **Cancel**, the text of this dictation stays on the clipboard, the overlay says **Remote interaction not allowed · text copied**, and the next paste asks again.
 
+If GNOME does not answer or reports an error, the text stays on the clipboard too and the overlay says **Remote interaction unavailable · text copied**; the next paste tries again. If it keeps happening, log out and back in.
+
 - **To do without the permission**, set **Insert method** under **Settings → Dictation** to **Copy to clipboard only**. Voltip then presses no paste keys and never asks for the permission; you paste the text yourself.
 - **To revoke the permission**: GNOME's settings have no page for it. Open **Passwords and Keys**, search for `voltip.paste.remote-desktop` and delete the item; the next paste asks again.
 - GNOME tells apps apart by how they were opened: when you open Voltip once from the app grid and once from a terminal, GNOME asks once for each.

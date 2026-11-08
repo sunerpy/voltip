@@ -57,6 +57,7 @@ If Voltip cannot paste, the text stays on the clipboard so that nothing is lost.
 | A password field or the Windows secure desktop has the focus | These refuse typed input from apps by design. |
 | No paste tool on Linux with Wayland | Install a tool for your desktop; see [Platform notes](/reference/platforms#linux). |
 | Remote interaction was not allowed on GNOME (**Cancel** in the **Remote Desktop** window) | The next paste asks again. See [Remote interaction on GNOME](/reference/platforms#remote-interaction-on-gnome). |
+| GNOME's remote interaction is not available right now (GNOME did not answer, or failed) | The next paste tries again. If it keeps happening, log out and back in, or use **Copy to clipboard only**. See [Remote interaction on GNOME](/reference/platforms#remote-interaction-on-gnome). |
 | No connection to the display (Linux) | Voltip was started outside a graphical session. |
 | The text of a long recording is longer than 5,000 characters | A text this long is not pasted; paste it where you want it. See [Recording length](/dictation/shortcuts#recording-length). |
 | You switched to another window while it recognised or polished | Paste it where you want it. See [Switching windows while it processes](#switching-windows-while-it-processes). |
@@ -77,7 +78,7 @@ To turn the check off, switch off **Check that the text was written** under **Se
 
 ## Result cards
 
-When the text was not written, the window changed while it processed, remote interaction was not allowed on GNOME, or recognition failed, the overlay keeps the result as a card instead of letting it disappear:
+When the text was not written, the window changed while it processed, remote interaction was not allowed or not available on GNOME, or recognition failed, the overlay keeps the result as a card instead of letting it disappear:
 
 <ScreenFigure src="/screens/overlay-card-en-light.webp" dark="/screens/overlay-card-en-dark.webp" width="1376" height="150" alt="The overlay's result card: Not written, with the Paste, Copy and Close buttons" />
 
@@ -86,6 +87,7 @@ When the text was not written, the window changed while it processed, remote int
 | The text did not arrive | **Not written** | **Paste**, **Copy** |
 | You switched windows while it processed | **Window changed · text copied** | **Paste**, **Copy** |
 | Remote interaction was not allowed on GNOME | **Remote interaction not allowed · text copied** | **Paste**, **Copy** |
+| GNOME's remote interaction is not available right now | **Remote interaction unavailable · text copied** | **Paste**, **Copy** |
 | A failure after the text was recognised | The reason | **Paste**, **Copy** |
 | A failure before any text, with the recording kept | The reason · **Recording kept** | **Recognise again**, **Open history** |
 
