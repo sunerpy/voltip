@@ -106,12 +106,19 @@ pub enum Answer {
     Ignore,
 }
 
-/// What goes wrong with the keyboard behind `ConnectToEIS`.
+/// What goes wrong in the portal, or with the keyboard behind `ConnectToEIS`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Fault {
     /// Nothing.
     #[default]
     None,
+    /// `CreateSession` answers 2: the portal could not create the session.
+    EndSession,
+    /// `SelectDevices` answers 2.
+    RefuseSelect,
+    /// Reading `version` or `AvailableDeviceTypes` fails with `org.freedesktop.DBus.Error.Failed`:
+    /// the portal is there but erring, so whether it offers the keyboard is unknown.
+    FailProperties,
     /// `ConnectToEIS` fails.
     RefuseEis,
     /// The EIS server hangs up when the client binds the keyboard: nothing is pressed.
@@ -260,6 +267,16 @@ impl FakePortal {
 
     /// A portal of `version` offering `device_types`.
     pub fn with(bus: &PrivateBus, version: u32, device_types: u32) -> Self {
+        Self::serving(bus, version, device_types, true)
+    }
+
+    /// xdg-desktop-portal without a remote-desktop backend: the portal's name on the bus and its
+    /// other portals at its path (here the settings portal), but no RemoteDesktop interface.
+    pub fn without_remote_desktop(bus: &PrivateBus) -> Self {
+        Self::serving(bus, 2, KEYBOARD | POINTER, false)
+    }
+
+    fn serving(bus: &PrivateBus, version: u32, device_types: u32, remote_desktop: bool) -> Self {
         let state = Arc::new(Mutex::new(State {
             version,
             device_types,
@@ -272,11 +289,13 @@ impl FakePortal {
             fault: Fault::None,
             record: Record::default(),
         }));
-        let conn = zbus::blocking::connection::Builder::address(bus.address.as_str())
-            .and_then(|b| b.name("org.freedesktop.portal.Desktop"))
-            .and_then(|b| b.serve_at("/org/freedesktop/portal/desktop", RemoteDesktopIface { state: state.clone() }))
-            .and_then(zbus::blocking::connection::Builder::build)
-            .expect("fake portal on the private bus");
+        let builder = zbus::blocking::connection::Builder::address(bus.address.as_str()).and_then(|b| b.name("org.freedesktop.portal.Desktop"));
+        let builder = if remote_desktop {
+            builder.and_then(|b| b.serve_at("/org/freedesktop/portal/desktop", RemoteDesktopIface { state: state.clone() }))
+        } else {
+            builder.and_then(|b| b.serve_at("/org/freedesktop/portal/desktop", SettingsIface))
+        };
+        let conn = builder.and_then(zbus::blocking::connection::Builder::build).expect("fake portal on the private bus");
         Self { state, _conn: conn }
     }
 
@@ -305,7 +324,7 @@ impl FakePortal {
         lock(&self.state).layout = layout;
     }
 
-    /// What goes wrong with the EIS keyboards from now on.
+    /// What goes wrong in the portal or with the EIS keyboards from now on.
     pub fn fault(&self, fault: Fault) {
         lock(&self.state).fault = fault;
     }
@@ -362,6 +381,20 @@ impl RemoteDesktopIface {
         let request = handle(&header, "request", &options, "handle_token")?;
         let session = handle(&header, "session", &options, "session_handle_token")?;
         server.at(request.as_ref(), RequestIface { state: self.state.clone() }).await?;
+        let ended = {
+            let mut state = lock(&self.state);
+            let ended = state.fault == Fault::EndSession;
+            if ended {
+                // No session comes of it: the portal ended it at once.
+                state.record.sessions += 1;
+                state.record.ended_sessions += 1;
+            }
+            ended
+        };
+        if ended {
+            respond(conn, &header, &request, 2, HashMap::new()).await?;
+            return Ok(request);
+        }
         server.at(session.as_ref(), SessionIface { state: self.state.clone(), path: session.to_string() }).await?;
         {
             let mut state = lock(&self.state);
@@ -405,7 +438,8 @@ impl RemoteDesktopIface {
                 None => false,
             }
         };
-        respond(conn, &header, &request, if known { 0 } else { 2 }, HashMap::new()).await?;
+        let refused = lock(&self.state).fault == Fault::RefuseSelect;
+        respond(conn, &header, &request, if known && !refused { 0 } else { 2 }, HashMap::new()).await?;
         Ok(request)
     }
 
@@ -504,13 +538,32 @@ impl RemoteDesktopIface {
     }
 
     #[zbus(property)]
-    fn available_device_types(&self) -> u32 {
-        lock(&self.state).device_types
+    fn available_device_types(&self) -> zbus::fdo::Result<u32> {
+        let state = lock(&self.state);
+        if state.fault == Fault::FailProperties {
+            return Err(zbus::fdo::Error::Failed("the backend did not answer".into()));
+        }
+        Ok(state.device_types)
     }
 
     #[zbus(property, name = "version")]
+    fn version(&self) -> zbus::fdo::Result<u32> {
+        let state = lock(&self.state);
+        if state.fault == Fault::FailProperties {
+            return Err(zbus::fdo::Error::Failed("the backend did not answer".into()));
+        }
+        Ok(state.version)
+    }
+}
+
+/// Another portal at the portal's path, as xdg-desktop-portal exports its other portals.
+struct SettingsIface;
+
+#[zbus::interface(name = "org.freedesktop.portal.Settings")]
+impl SettingsIface {
+    #[zbus(property, name = "version")]
     fn version(&self) -> u32 {
-        lock(&self.state).version
+        2
     }
 }
 

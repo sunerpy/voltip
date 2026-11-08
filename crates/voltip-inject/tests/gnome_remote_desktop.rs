@@ -20,9 +20,10 @@ use std::time::{Duration, Instant};
 use std::sync::Arc;
 
 use support::portal::{Answer, FakePortal, Fault, KEYBOARD, Layout, POINTER, PrivateBus};
+use voltip_inject::linux::PortalPort;
 use voltip_inject::platform::{KeyStep, chord_steps, copy_steps};
 use voltip_inject::portal::{Limits, PortalError, RemoteDesktop};
-use voltip_inject::{Chord, Key, KeystrokePort as _, MemoryRestoreTokens, Modifier, RestoreTokens as _};
+use voltip_inject::{Chord, DeliveryError, Key, KeystrokePort as _, MemoryRestoreTokens, Modifier, RestoreTokens as _};
 
 /// Set in the child process a test starts.
 const CHILD: &str = "VOLTIP_PORTAL_TEST_CHILD";
@@ -271,6 +272,92 @@ fn an_ended_request_is_a_failure_not_a_refusal() {
     assert_eq!(client(&bus, &tokens).press(&ctrl_v()), Err(PortalError::Broken("Start answered 2".into())));
     let record = portal.record();
     assert_eq!((record.ended_sessions, record.open_sessions(), record.eis_connections), (1, 0, 0), "{record:?}");
+}
+
+/// docs/dictation.md §14.9 (goal gate 2026-11-08): the portal offers the interface, but this paste
+/// cannot use it — `CreateSession` or `SelectDevices` answers 2, also after a saved token was
+/// dropped and the session asked for again without it. That is a failure of this paste, not a
+/// desktop without the interface: broken, so the chain stops with the text on the clipboard
+/// instead of handing the paste to XTEST, which would make Xwayland ask the same portal again
+/// (issue #235). The next paste tries the portal again.
+#[test]
+fn regression_a_portal_failing_after_its_check_is_broken_not_unavailable() {
+    let bus = PrivateBus::start();
+    let portal = FakePortal::start(&bus);
+    let tokens = Arc::new(MemoryRestoreTokens::new());
+    let desktop = client(&bus, &tokens);
+    portal.fault(Fault::EndSession);
+    assert_eq!(desktop.press(&ctrl_v()), Err(PortalError::Broken("CreateSession answered 2".into())));
+    portal.fault(Fault::RefuseSelect);
+    assert_eq!(desktop.press(&ctrl_v()), Err(PortalError::Broken("SelectDevices answered 2".into())));
+    let saved = "00000000-0000-4000-8000-0000000000bb";
+    tokens.save(saved);
+    assert_eq!(desktop.press(&ctrl_v()), Err(PortalError::Broken("SelectDevices answered 2".into())), "the retry without the token fails too");
+    assert_eq!(tokens.load(), None, "the refused token is dropped");
+    assert_eq!(offered(&portal), vec![None, Some(saved.to_string()), None]);
+    portal.fault(Fault::None);
+    desktop.press(&ctrl_v()).unwrap();
+    let record = portal.record();
+    assert_eq!((record.sessions, record.open_sessions(), record.dialogs, record.eis_connections), (5, 0, 1, 1), "{record:?}");
+    assert_eq!(record.keys, vec![CTRL_V.to_vec()]);
+}
+
+/// docs/dictation.md §14.9: a portal that fails when its properties are read may well be there, so
+/// the chain tries it instead of skipping to XTEST; the paste then fails as broken. Only an answer
+/// that there is no such portal (no service, no RemoteDesktop interface, version 1, no keyboard)
+/// keeps it out of the chain.
+#[test]
+fn a_portal_that_cannot_be_read_is_tried_not_skipped() {
+    let bus = PrivateBus::start();
+    let portal = FakePortal::start(&bus);
+    portal.fault(Fault::FailProperties);
+    let desktop = client(&bus, &Arc::new(MemoryRestoreTokens::new()));
+    let err = desktop.available().unwrap_err();
+    assert!(matches!(&err, PortalError::Broken(reason) if reason.contains("org.freedesktop.DBus.Error.Failed")), "{err:?}");
+    assert!(PortalPort::available(&desktop), "whether it is there is unknown: the chain tries it");
+    assert!(matches!(desktop.press(&ctrl_v()), Err(PortalError::Broken(_))));
+    assert_eq!(portal.record().sessions, 0, "nothing is asked of a portal that cannot be read");
+    portal.fault(Fault::None);
+    assert_eq!(desktop.available(), Ok(()));
+    desktop.press(&ctrl_v()).unwrap();
+
+    // xdg-desktop-portal without a remote-desktop backend: not there.
+    let bus = PrivateBus::start();
+    let _portal = FakePortal::without_remote_desktop(&bus);
+    let desktop = client(&bus, &Arc::new(MemoryRestoreTokens::new()));
+    assert!(matches!(desktop.available(), Err(PortalError::Unavailable(_))), "{:?}", desktop.available());
+    assert!(!PortalPort::available(&desktop));
+    assert!(matches!(desktop.press(&ctrl_v()), Err(PortalError::Unavailable(_))));
+}
+
+/// The child's part of [`regression_a_paste_the_portal_cannot_take_stops_with_its_reason`]: one
+/// paste through the chain this session builds, and how it ended.
+fn child_one_paste() {
+    let keys = voltip_inject::linux::system_toolchain_keys();
+    match keys.deliver(voltip_inject::paste_chord_for("linux"), "dictated text") {
+        Ok(delivered) => println!("PASTE delivered by {}", delivered.tool),
+        Err(DeliveryError::Unavailable(note)) => println!("PASTE clipboard {:?}: {}", note.code, note.detail),
+        Err(e) => println!("PASTE failed: {e}"),
+    }
+}
+
+/// docs/dictation.md §14.9 (goal gate 2026-11-08): on GNOME, a paste the portal cannot take ends
+/// with the text on the clipboard and its own reason, `remote_unavailable` (the 远程交互不可用
+/// card), through the chain the shell builds. Before, it read as no portal at all: the chain went
+/// on, to XTEST on XWayland or to `no_tool` without a card on pure Wayland.
+#[test]
+fn regression_a_paste_the_portal_cannot_take_stops_with_its_reason() {
+    if std::env::var_os(CHILD).is_some() {
+        child_one_paste();
+        return;
+    }
+    let bus = PrivateBus::start();
+    let portal = FakePortal::start(&bus);
+    portal.fault(Fault::EndSession);
+    let pastes = run_child("regression_a_paste_the_portal_cannot_take_stops_with_its_reason", &bus);
+    assert_eq!(pastes, vec!["clipboard RemoteUnavailable: remote-desktop-portal: the portal's keyboard failed: CreateSession answered 2".to_string()]);
+    let record = portal.record();
+    assert_eq!((record.sessions, record.open_sessions(), record.dialogs), (1, 0, 0), "{record:?}");
 }
 
 /// A portal without `ConnectToEIS` (version 1) or without a keyboard, and no portal at all: the
