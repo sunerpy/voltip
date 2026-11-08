@@ -56,6 +56,7 @@ If Voltip cannot paste, the text stays on the clipboard so that nothing is lost.
 | The target window runs as administrator (Windows) | Windows does not let an ordinary app type into it. Run the target app normally, or paste by hand. |
 | A password field or the Windows secure desktop has the focus | These refuse typed input from apps by design. |
 | No paste tool on Linux with Wayland | Install a tool for your desktop; see [Platform notes](/reference/platforms#linux). |
+| Remote interaction was not allowed on GNOME (**Cancel** in the **Remote Desktop** window) | The next paste asks again. See [Remote interaction on GNOME](/reference/platforms#remote-interaction-on-gnome). |
 | No connection to the display (Linux) | Voltip was started outside a graphical session. |
 | The text of a long recording is longer than 5,000 characters | A text this long is not pasted; paste it where you want it. See [Recording length](/dictation/shortcuts#recording-length). |
 | You switched to another window while it recognised or polished | Paste it where you want it. See [Switching windows while it processes](#switching-windows-while-it-processes). |
@@ -76,7 +77,7 @@ To turn the check off, switch off **Check that the text was written** under **Se
 
 ## Result cards
 
-When the text was not written, the window changed while it processed, or recognition failed, the overlay keeps the result as a card instead of letting it disappear:
+When the text was not written, the window changed while it processed, remote interaction was not allowed on GNOME, or recognition failed, the overlay keeps the result as a card instead of letting it disappear:
 
 <ScreenFigure src="/screens/overlay-card-en-light.webp" dark="/screens/overlay-card-en-dark.webp" width="1376" height="150" alt="The overlay's result card: Not written, with the Paste, Copy and Close buttons" />
 
@@ -84,6 +85,7 @@ When the text was not written, the window changed while it processed, or recogni
 | --- | --- | --- |
 | The text did not arrive | **Not written** | **Paste**, **Copy** |
 | You switched windows while it processed | **Window changed · text copied** | **Paste**, **Copy** |
+| Remote interaction was not allowed on GNOME | **Remote interaction not allowed · text copied** | **Paste**, **Copy** |
 | A failure after the text was recognised | The reason | **Paste**, **Copy** |
 | A failure before any text, with the recording kept | The reason · **Recording kept** | **Recognise again**, **Open history** |
 
@@ -92,7 +94,7 @@ When the text was not written, the window changed while it processed, or recogni
 - **Recognise again** recognises the kept recording again with the current speech model, and copies the result. **Open history** opens the History page.
 - **×** closes the card. Starting a new dictation replaces it.
 
-A card stays until you close it or start the next dictation. To let cards disappear after their usual time instead (6 seconds, or 2.5 seconds for a failure without text), switch off **Keep result cards on screen** under **Settings → Dictation**; the buttons stay the same. Other results disappear as before: text pasted, text left on the clipboard because pasting was not possible, no speech, and a cancelled dictation.
+A card stays until you close it or start the next dictation. To let cards disappear after their usual time instead (6 seconds, or 2.5 seconds for a failure without text), switch off **Keep result cards on screen** under **Settings → Dictation**; the buttons stay the same. Other results disappear as before: text pasted, text left on the clipboard because pasting was not possible for another reason, no speech, and a cancelled dictation.
 
 ## Copy or paste a result again
 

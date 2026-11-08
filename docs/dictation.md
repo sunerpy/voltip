@@ -572,6 +572,7 @@ pub struct HistoryEntry {
 | `secure_input` | Windows 预检 `secure_desktop` | 密码框或系统安全界面正在接收输入 |
 | `elevated_target` | Windows 预检 `elevated_target` | 目标窗口以管理员身份运行 |
 | `target_changed` | 开始听写时的窗口已不在前台，文字只复制到剪贴板（§14.3，`switched_window = copy_only`，语音编辑总是如此；2026-10-29） | 处理期间切换到了其他窗口，文字没有粘贴，已复制到剪贴板 |
+| `remote_denied` | GNOME 的远程桌面门户未获准：用户取消或关闭了「远程桌面」窗口、60 s 没有回答、允许了但没有键盘（§14.9，issue #235，2026-11-08） | 系统没有允许 Voltip 远程交互，文字已复制到剪贴板；下次粘贴时会再次询问 |
 | `other` | Windows 拒绝了模拟按键（`SendInput` 没有全部发出，enigo 报「blocked by UIPI」：电脑已锁屏，或前台窗口的权限更高而预检读不到；2026-10-13，此前记为插入失败）；其余情况，以及没有 `code` 的旧记录 | 无法直接粘贴 |
 
 链路：`voltip-inject` 的 `DeliveryError::Unavailable(InjectNote { code, detail })` → `Injection.note` → 桌面壳 `core_note` 换成核心的 `ClipboardCode` → `Outcome::clipboard(note)`。界面上，首页表格、历史列表和详情标题栏只显示短标签「已复制到剪贴板」；详情正文下方一张提示卡按 `code` 给出一句说明和本机的粘贴键（macOS ⌘V，其余 Ctrl+V），原文收在可展开的「技术细节」里（等宽、任意位置断行）。
@@ -1129,7 +1130,7 @@ XGrabKey 覆盖面 `SessionKind::x11_grab()`：X11 全局有效；XWayland 仅�
 |---|---|
 | X11（任意桌面） | enigo x11rb（XTEST）→ `xdotool key --clearmodifiers` |
 | Wayland · KDE | `wtype` → `dotool` → `ydotool` → `kwtype` → enigo `zwp_virtual_keyboard_v1` |
-| Wayland · GNOME | `dotool` → `ydotool`（Mutter 没有虚拟键盘协议，跳过 `wtype` 与 enigo Wayland） |
+| Wayland · GNOME | `dotool` → `ydotool` → 远程桌面门户 `remote-desktop-portal`（§14.9；Mutter 没有虚拟键盘协议，跳过 `wtype` 与 enigo Wayland） |
 | Wayland · wlroots / 其他 | `wtype` → `dotool` → `ydotool` → enigo Wayland |
 | XWayland | 对应的 Wayland 一行，末尾再加 enigo x11rb → `xdotool` |
 
@@ -1141,10 +1142,11 @@ XGrabKey 覆盖面 `SessionKind::x11_grab()`：X11 全局有效；XWayland 仅�
 | `ydotool` ≥ 1.0（`--help` 含 `YDOTOOL_SOCKET` / `bakers` / `debug`） | `key 29:1 47:1 47:0 29:0` | `key 29:1 42:1 47:1 47:0 42:0 29:0` | `key 42:1 110:1 110:0 42:0` |
 | `ydotool` 0.x（`--help` 列出 `recorder`） | `key ctrl+v` | `key ctrl+shift+v` | `key shift+Insert` |
 | `kwtype` | 直接键入文本：`kwtype -- <text>`（不能按组合键） | 同左 | 同左 |
+| `remote-desktop-portal`（进程内，GNOME） | 门户会话的 EIS 键盘按 Ctrl+V，键码按 EIS 公布的布局查找（§14.9） | Ctrl+Shift+V | Shift+Insert |
 
-- **探测**：每次粘贴都重新探测（运行中装上 `wtype` 立即生效）。可执行文件在进程内按 `PATH` 查找，语义同 `which(1)`，不依赖系统里有没有 `which`。enigo 两个后端以「能否建立连接」判断可用；`ydotool` 额外运行一次 `--help`（3 s 超时）判断语法。
+- **探测**：每次粘贴都重新探测（运行中装上 `wtype` 立即生效）。可执行文件在进程内按 `PATH` 查找，语义同 `which(1)`，不依赖系统里有没有 `which`。enigo 两个后端以「能否建立连接」判断可用；`ydotool` 额外运行一次 `--help`（3 s 超时）判断语法；远程桌面门户只读 `version` 与 `AvailableDeviceTypes` 两个属性，不发请求、不弹窗（§14.9）。
 - **子进程**：stdin 关闭（`dotool` 写入命令后关闭），stdout 丢弃，stderr 截取末尾 512 字节写入错误信息。组合键超时 5 s；`kwtype` 为 5 s + 每字 25 ms、上限 60 s。超时即强杀。
-- **链式回落**（`linux::classify`）：没能启动（不在 PATH、起不来、探测后连接消失）→ 跳过；组合键工具非零退出 → 交给下一个（缺协议、没有 `ydotoold`、没有 uinput 权限，都发生在发键之前）；打字工具失败或任何工具超时 → 停止（可能已送出部分输入，换工具会重复）。
+- **链式回落**（`linux::classify`）：没能启动（不在 PATH、起不来、探测后连接消失）→ 跳过；组合键工具非零退出 → 交给下一个（缺协议、没有 `ydotoold`、没有 uinput 权限，都发生在发键之前）；打字工具失败或任何工具超时 → 停止（可能已送出部分输入，换工具会重复）。远程桌面门户不可用 → 跳过；未获准或键盘建不起来 → 停止，文字留在剪贴板（后面的 enigo x11rb 经 Xwayland 只会再问同一个门户）；按键途中键盘断开 → 停止（§14.9）。
 - **enigo 单连接**：enigo 同时编译 x11rb 与 wayland 时会同时打开两条连接、每个键发两遍，XWayland 会话里就是粘贴两次。`EnigoBackend::{X11, Wayland}` 每次只开一条；`Native` 在 Linux 上按 `DISPLAY` 二选一。
 - **macOS**（同批接入 §15.2）：`v` 以虚拟键码发送（`voltip_platform::macos::cmd_v_keycode`，默认 9），按住 100 ms 后释放，因为 `Key::Unicode('v')` 在没有 `v` 键的布局下会变成 Cmd+A。`ShiftInsert` 在 macOS 上按 Cmd+V。enigo 设 `open_prompt_to_get_permissions = false`，授权框只由引导页的「请求授权」按钮弹出。
 
@@ -1179,6 +1181,7 @@ XGrabKey 覆盖面 `SessionKind::x11_grab()`：X11 全局有效；XWayland 仅�
 | 粘贴成功 | 最后一次粘贴后 `paste_delay_after` 放回整个原剪贴板（仅当仍是我们写的；`keep` 不放回） | `Via::Paste`；插入确认（§28）把结论写进 `Done.check` | `inserted / paste`（带 `check`） |
 | 链上没有可用工具 | 文字作为普通复制留给用户手动粘贴 | `Via::Clipboard`，note 为「no paste tool on Wayland · KDE (…); install …」 | `clipboard { reason, code }` |
 | 开始时的窗口已不在前台（`copy_only`、语音编辑） | 放回原剪贴板，再把文字作为普通复制写上 | `Via::Clipboard`，`clipboard_code: target_changed` | `clipboard { reason, code: target_changed }` |
+| GNOME 未获准远程交互（§14.9） | 文字作为普通复制留给用户手动粘贴 | `Via::Clipboard`，`clipboard_code: remote_denied` | `clipboard { reason, code: remote_denied }` |
 | 工具运行失败（回落后仍失败）或超时 | 立即放回原剪贴板 | `InjectError::Keystroke` | `failed`（胶囊保留文本可复制） |
 | 剪贴板写入失败（无显示、合成器无 seat） | 不变 | `InjectError::Clipboard` / `NoDisplay` | `failed` |
 | 送出前取消 | 放回原剪贴板；原来为空就清空，读不出时不动 | 无 | 无 |
@@ -1222,7 +1225,7 @@ Wayland 剪贴板：arboard `wayland-data-control`（wl-clipboard-rs；KDE 与 w
 4. **`wl-copy` 命令行回落**：未做，只剩无 XWayland 的 GNOME 没覆盖。
 5. **Linux 托盘**：未开（需要 libayatana-appindicator；GNOME 默认没有托盘）。
 6. **AppImage 中 sherpa-onnx 两份**：可改为打包时给 linuxdeploy 设 `LD_LIBRARY_PATH` 并去掉 `files`，省约 32 MB（未压缩）。
-7. **真机手测**：KWin（`wtype` 失败后回落到 `kwtype`）、Mutter（dotool / ydotool 权限，XWayland XTEST 经 libei portal）、带 ydotoold 的 ydotool 1.x；macOS 的 UCKeyTranslate 反查（目前固定键码 9）。
+7. **真机手测**：KWin（`wtype` 失败后回落到 `kwtype`）、Mutter（dotool / ydotool 权限；远程桌面门户的窗口与按键在 GNOME 50 容器里由 AT-SPI 代人操作，真机列入 §14.9「未验证」）、带 ydotoold 的 ydotool 1.x；macOS 的 UCKeyTranslate 反查（目前固定键码 9）。
 
 ### 14.8 Wayland 与 NVIDIA：WebKitGTK 的 DMA-BUF 渲染（2026-11-08，issue #228）
 
@@ -1265,6 +1268,82 @@ Wayland 剪贴板：arboard `wayland-data-control`（wl-clipboard-rs；KDE 与 w
 - 冒烟：`VOLTIP_SMOKE_GPU=nouveau scripts/smoke-wayland-linux.sh`（§14.6 的 weston 与 sway 两段）用 `VOLTIP_DEV_GPU_ROOT` 模拟报告者的两张卡，两段各多检查一项：日志里有设置变量的那一行。默认冒烟不带这个选项，含义不变；冒烟机器本身有 NVIDIA 显卡时自动规则同样生效。
 
 **未验证**：NVIDIA 显卡加支持显式同步的 GNOME 上的真机效果（本机与 CI 都没有这样的环境；headless weston 与 sway 不支持显式同步，复现不了原问题），列入用户验证清单。
+
+### 14.9 GNOME：经远程桌面门户按粘贴键，授权只问一次（2026-11-08，issue #235）
+
+**现象**（#235）：0.2.1 的 `.deb`，Ubuntu 26.04.1、GNOME Shell 50.1 的 Wayland 会话，Xwayland 24.1.10（运行参数含 `-enable-ei-portal`）、liboeffis 1.5.0、xdg-desktop-portal-gnome 50.0；因 #228 以 `GDK_BACKEND=x11` 运行，日志为 `backend=XWayland · GNOME → enigo-x11`、`tool=enigo-x11`。自动插入时 GNOME 弹出授权窗口（标题「远程桌面」，开关「允许远程交互」），同意后过一段时间又会再弹。
+
+**原因**：Mutter 不给应用虚拟键盘协议（§14.2），XWayland 会话里粘贴键由 enigo x11rb 经 XTEST 发出，每次粘贴新开一条 X11 连接。Mutter 以 `-enable-ei-portal` 启动的 Xwayland 不直接执行 XTEST 输入，而是替每个使用 XTEST 的 X11 客户端经 liboeffis 向 `org.freedesktop.portal.RemoteDesktop` 申请键盘与指针；这个申请不带 `persist_mode`，窗口里没有「记住该选择」，授权只属于这个会话。客户端断开后，Xwayland 把会话留 10 分钟，留给同一命令名（`GetClientCmdName`，即进程的 argv[0]）的下一个客户端复用（Xwayland 24.1.10 的 `hw/xwayland/xwayland-xtest.c`：`xwl_ei_handle_client_gone` 里 `TimerSet(…, 10 * 60 * 1000, disconnect_timer_cb, …)`，`reuse_client` 按命令名比较）。所以下面几种情况之后，下一次粘贴都会再弹窗：两次粘贴相隔超过 10 分钟；Xwayland 重新启动；Voltip 以另一个命令名启动（AppImage 每次启动挂载到新的 `/tmp/.mount_…` 目录）。在容器里逐项测得的结果见下文「复现」。
+
+**做法**（`crates/voltip-inject/src/portal/`）：Voltip 自己向门户申请，只要键盘，并请求记住授权。
+
+1. 一次粘贴（或语音编辑读选区时的一次复制，§19）开一个会话：`CreateSession` → `SelectDevices`（`types` = 1，只要键盘；`persist_mode` = 2，记住到用户撤销为止；保存过 token 时带 `restore_token`）→ `Start` → `ConnectToEIS` → 在 EIS 键盘上按组合键 → `Session.Close`。会话用完即关，不常驻。
+2. `Start`：token 有效时门户直接恢复授权，不弹窗；否则 GNOME 弹一次窗口。GNOME 50 的窗口里「允许远程交互」默认关闭，打开后「分享」才可点；`persist_mode` 为 2 时显示「记住该选择」并默认勾选（xdg-desktop-portal-gnome 50.0 `remotedesktopdialog.c`）。`Start` 返回的 `restore_token` 替换保存的那一个（xdg-desktop-portal 1.20 在 `SelectDevices` 时从权限存储取出所给的 token，`Start` 成功后才写回：恢复时沿用这个 token，新授权时发新的）。没有返回 token（取消了「记住该选择」）、授权里没有键盘、`Start` 被拒绝或没有答复时，删掉保存的 token，下一次粘贴再问。`SelectDevices` 直接拒绝保存的 token（例如格式不是 UUID）时，丢掉它，不带 token 再申请一次。
+3. 启动时不申请，只在粘贴需要时申请。探测（`RemoteDesktop::available`）只读两个属性：`version` ≥ 2（有 `ConnectToEIS`）、`AvailableDeviceTypes` 含键盘；不发请求，不会弹窗。
+
+**顺序**（`toolchain::candidates`）：GNOME 的 Wayland 与 XWayland 会话依次是 `dotool` → `ydotool` → `remote-desktop-portal` →（XWayland）enigo x11rb → `xdotool`。`dotool`、`ydotool` 经 uinput 按键，不弹窗，只有用户自己装好并给了权限才可用，所以仍排在前面；门户第一次问一次，之后恢复授权；经 Xwayland 的 XTEST 会在 Xwayland 自己的授权失效后再次替 Voltip 申请（#235），所以排在门户之后，只在门户不可用时使用（没有 xdg-desktop-portal、门户版本低于 2、不提供键盘）。其他桌面不变：KDE 与 wlroots 有 `wtype`、`kwtype`，链上不加门户。
+
+**键码**（`portal::keymap`）：EIS 键盘收的是 evdev 键码，Mutter 再按用户的键盘布局换成 keysym，所以键码按 EIS 键盘公布的 XKB 布局（`ei_keyboard.keymap`，xkbcommon 解析；evdev 键码 = XKB 键码 − 8）查找，固定的表在 Dvorak 或交换了 Caps Lock 的布局上会按错键：
+
+- 字母：当前布局里第一级就产生这个字母的键；其次是 keymap 里另一个布局产生它的键（俄文布局上 Ctrl+V 按拉丁布局里 `v` 所在的键，应用按这个键匹配快捷键）；都没有时用美式布局的位置；
+- 修饰键：第一级是这个修饰键的 keysym、并且设置这个修饰键的键（`ctrl:swapcaps` 把 Control 移到 Caps Lock 键上）；其次是任何设置它的键；最后是美式布局的位置；
+- Insert：第一级是 `Insert` 的键（不是小键盘的 `KP_Insert`）。
+
+组合键照旧：Ctrl+V、Ctrl+Shift+V、Shift+Insert，以及语音编辑读选区的复制（`chord_steps`、`copy_steps` 与 enigo 共用）。EIS 一侧（`portal::eis`，reis 0.7.1）：绑定 seat 的键盘，等 Mutter 恢复设备并公布布局与当前布局组（Mutter 50.1 `meta-eis-client.c` 先发 resumed 再发 modifiers），在一个 emulation 序列里按完组合键，再用 `ei_connection.sync` 等 Mutter 确认收到每个键，然后断开；会话随即关闭，没读到的键会丢。
+
+**时限**（`portal::Limits`）：每个 D-Bus 调用与不需要窗口的应答 5 s；用户回答窗口 60 s，到时按未获准处理并关闭请求；建立键盘并按完组合键 3 s。同一进程同时只有一个会话（`BUSY`）：粘贴与语音编辑的复制共用一个 token，后到的等前一个（包括它的窗口）结束。
+
+**结果**（`linux.rs`）：
+
+| 门户的结果 | 处理 | 用户看到 |
+|---|---|---|
+| 不可用（`Unavailable`：会话总线连不上、没有门户、版本低于 2、不提供键盘） | 跳过，试链上下一个工具 | 同以前 |
+| 未获准（`Declined`：取消或关闭窗口、60 s 没有回答、允许了但没有键盘） | 什么都没按，不再试后面的工具（经 Xwayland 只会再问同一个门户），文字留在剪贴板 | `Done{via: clipboard, clipboard_code: remote_denied}`；结果卡片「未获准远程交互，文字已复制」（粘贴、复制，§28.4）；历史「无法粘贴到光标处：系统没有允许 Voltip 远程交互（GNOME 的「远程桌面」窗口被取消或关闭）。……下次粘贴时会再次询问。」 |
+| 允许了但键盘建不起来（`Broken`：请求异常结束（`Start` 应答 2）、`ConnectToEIS` 失败、EIS 没有给键盘或 3 s 内没有建好） | 什么都没按，文字留在剪贴板 | `clipboard_code: other` |
+| 按键途中键盘断开（`Lost`） | 可能已送出部分按键，不换工具重试 | 注入失败，同 §14.3 表中「工具运行失败」 |
+
+语音编辑读选区时的复制未获准，与其他复制失败一样报「读取选中文本失败」，不改动选区。
+
+**token 保存在哪里**（`apps/desktop/src-tauri/src/dictation.rs` 的 `KeychainRestoreTokens`）：系统钥匙串，与 API 密钥同一处（服务 `dev.voltip.desktop`，条目 `voltip.paste.remote-desktop`；Linux 的 Secret Service 里标签为 `keyring:<用户名>@dev.voltip.desktop/voltip.paste.remote-desktop`）。第一次需要粘贴时才读，读到后在进程里缓存；每拿到一个 token 就写回，替换旧的。读写失败时这次运行只在内存里记住，写一条 warn，不影响粘贴。token 不进日志，也不进设置文件。
+
+**授权属于谁**：xdg-desktop-portal 按调用方的应用 ID 记录授权（宿主应用的 ID 取自它的 systemd 用户单元名，例如从 GNOME 启动的 `app-gnome-Voltip-<pid>.scope`；从终端启动时为空）。应用 ID 变了，同一个 token 无法恢复，GNOME 再问一次，随后发新的 token。
+
+**撤销**：GNOME 设置 50 没有列出或撤销这项授权的页面。用户可以：
+
+- 把插入方式改为「仅复制到剪贴板」：Voltip 不再按粘贴键，也就不用这项授权；
+- 在「密码和密钥」里搜索 `voltip.paste.remote-desktop` 并删除：下次粘贴时 GNOME 重新询问；
+- GNOME 自己的记录在权限存储（`xdg-permission-store`，`$XDG_DATA_HOME/flatpak/db/remote-desktop`）里，以 token 为 ID；装有 `flatpak` 时 `flatpak permissions remote-desktop` 能列出、`flatpak permission-remove remote-desktop <ID>` 能删除。复现脚本用 `PermissionStore.Delete` 撤销。
+
+**测试**：
+
+- `crates/voltip-inject/tests/gnome_remote_desktop.rs`：私有 D-Bus 会话总线上的假门户与假 EIS 键盘（`tests/support/portal.rs`）。`regression_gnome_pastes_ask_for_remote_interaction_once` 在子进程里模拟没有任何粘贴工具的 GNOME Wayland 会话，经系统工具链粘贴三次：窗口只弹一次，后两次恢复授权，每次一个会话、按完即关，每次按一次 Ctrl+V，每次带上门户上一次发的 token；在基线上三次都没有可用工具，门户一次请求也没收到，所以失败。其余用例覆盖：重启后恢复、token 轮换、撤销后只再问一次、拒绝后下一次再问、没有回答时到时关闭请求、只授权这一次的不留 token、请求异常结束、没有 `ConnectToEIS` 或键盘的门户、格式不对的 token、上一次运行留下的授权、按公布的布局查键、其他组合键与复制、并发的两个组合键共用一次授权、键盘出错的几种情况。
+- `portal/keymap.rs`（美式布局、字母随布局、另一布局里的字母、修饰键随选项、其他组合键、没有 keymap）；`toolchain.rs` 的候选表与 `selection_gnome_remote_desktop`；`linux.rs` 的 `gnome_pastes_through_the_portal`、`a_refused_or_broken_portal_leaves_the_text_on_the_clipboard`。
+- 核心 `engine.rs` 的结果卡片一组加入 `remote_denied`；桌面 `dictation.rs` 的 `the_remote_desktop_grant_is_kept_in_the_keychain`、`a_failing_keychain_keeps_the_grant_for_this_run`；前端 `Overlay.test.tsx`、`mock-backend.test.ts` 与 IPC 契约（`remote_denied`）。
+
+**复现**（`scripts/repro-gnome-remote-desktop.sh`，两侧同时运行，约 12 分钟，不含第一次构建镜像）：
+
+两侧各在一个 `ubuntu:26.04` 容器里运行，不联网，使用自己的 D-Bus 会话总线和系统总线：headless GNOME Shell 50.1 和它启动的 Xwayland 24.1.10（带 `-enable-ei-portal`）、xdg-desktop-portal 1.21.1、xdg-desktop-portal-gnome 50.0，以及接收粘贴的 GTK 4 文本框（`target.py`）。粘贴由 harness（`scripts/repro/gnome-remote-desktop/harness/main.rs`）调用桌面壳的同一条路径 `voltip_inject::system_paste_injector`：base 用基线 B 构建，fix 用修复后的版本构建，token 存在文件里，代替钥匙串。每次粘贴后进程再停 1 s，因为剪贴板的内容由进程提供（Voltip 在两次听写之间也一直运行）。`answer.py` 经 AT-SPI 像用户那样回答 GNOME 的「远程桌面」窗口：打开「允许远程交互」，「记住该选择」保持默认，点「分享」；并记下窗口里有没有「记住该选择」。`dbus-monitor` 记录门户的调用，不记参数（参数里有 token）。最后由 `verdict.sh` 把每一步与下表比较，输出 PASS 或 FAIL。
+
+容器里没有实体键盘和鼠标。`seat.py` 经 Mutter 自己的 `org.gnome.Mutter.RemoteDesktop` 接口建一个常驻的虚拟键盘和鼠标，点一下文本框，让它的窗口获得键盘焦点。这个接口不经过门户，不弹窗，也不计入下表。没有这一步，只有某次粘贴自己的键盘存在时窗口才有焦点，粘贴的前几个键会丢。动画和热角关闭：GTK 的开关在动画结束时才切换，而 Mutter 不给没有画出来的窗口发帧；`seat.py` 移动指针时会经过左上角。「GNOME Shell 重启」模拟下一次登录：GNOME Shell 和 Xwayland 重新启动，门户的进程也结束，之后按需启动（它们的 systemd 单元是 `PartOf=graphical-session.target`），权限存储从磁盘读回。
+
+结果（2026-11-08）：
+
+| 步骤 | 粘贴次数 | base 的窗口 | fix 的窗口 |
+|---|---|---|---|
+| 第一次运行，连续三次粘贴 | 3 | 1 | 1 |
+| Voltip 重启 | 2 | 0 | 0 |
+| 从另一个路径启动（AppImage 每次启动挂载到新目录） | 2 | 1 | 0 |
+| 10.5 分钟后 | 2 | 1 | 0 |
+| GNOME Shell 重启（新的 Xwayland） | 2 | 1 | 0 |
+| 合计 | 11 | 4 | 1 |
+
+fix 侧在 10.5 分钟那一步之后还有三步：在权限存储里撤销授权，再粘贴 2 次，弹 1 次窗口；再次撤销，在窗口里点「取消」，这次粘贴什么都没按，结果为 `remote_denied`，文字留在剪贴板；下一次粘贴（2 次）再弹 1 次窗口，同意后照常粘贴。
+
+两侧每次粘贴的文字都到了文本框（点「取消」的那次除外）。base 的 4 个窗口都没有「记住该选择」，是 Xwayland 经 liboeffis 发出的申请，不带 `persist_mode`；fix 的 4 个窗口都显示「记住该选择」并默认勾选。fix 每次粘贴开一个门户会话，用完即关：16 次粘贴，16 次 `CreateSession`，16 次 `Session.Close`。
+
+**出处**：xdg-desktop-portal 1.20.3（`src/remote-desktop.c`、`src/xdp-session-persistence.c`；复现容器里运行的是 1.21.1）、xdg-desktop-portal-gnome 50.0（`src/remotedesktop.c`、`src/remotedesktopdialog.{c,ui}`、`po/zh_CN.po`）、Xwayland 24.1.10（`hw/xwayland/xwayland-xtest.c`）、Mutter 50.1（`src/backends/meta-eis-client.c`）、门户规范 `org.freedesktop.portal.RemoteDesktop`（version 2 起有 `ConnectToEIS`）、reis 0.7.1。
+
+**未验证**：用户真机上的 GNOME 窗口与按键（容器里由 AT-SPI 代人操作，键盘布局只有美式），列入用户验证清单；Flatpak、Snap 包里的应用 ID（Voltip 不发这两种包）。
 
 ## 15. macOS 与 Windows 原生（2026-09-26）
 
@@ -2718,6 +2797,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 
 - 2026-10-28：确定没写进去时「弹出常驻卡片，不自动重试」，取代原路线图的「换逐字输入重试一次」（Windows、macOS 不新增逐字输入）；卡片「一直停留到关闭或下次听写」；四种情形都常驻：没写进去、窗口已切换、有文字的失败（粘贴、复制、关闭），没文字但录音已保留的失败（重新识别、打开历史、关闭）；无语音、没有录音的失败与剪贴板兜底保持原时长。「复制上一条结果」默认不分配快捷键，按下后放进剪贴板并在悬浮窗提示，托盘同样提供。
 - 2026-10-29：设置里加开关「识别结果卡片常驻」，默认开（上面的行为）；关掉后四种卡片按原来的时长消失。
+- 2026-11-08（issue #235 的 goal：「用户拒绝……时，粘贴按现在的规则退回（剪贴板加结果卡片）」）：GNOME 未获准远程交互与窗口已切换同样常驻（§14.9）。
 
 ### 28.2 判定（`voltip_platform::insert_check::rules`，核心重导出为 `dictation::insert_check`）
 
@@ -2756,7 +2836,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 
 ### 28.4 结果卡片
 
-- **两层条件**，都为真才常驻：壳的能力 `CoreConfig.result_cards`（桌面为真；手机与本机语音服务没有卡片界面，为假）和用户设置 `EngineSettings.result_cards_stay`（默认真）。都为真时下面四种终态不挂 `DwellOver`，停到 `dictation_dismiss` 或下一次听写：`Done{check: not_written}`、`Done{clipboard_code: target_changed}`、`Failed{text: Some}`、`Failed{text: None}` 且录音已保留（`status.recording`）。设置关闭时按原来的时长消失：前三种 `DWELL_WITH_TEXT`（6 s），第四种 `DWELL`（2.5 s），按钮不变。设置改动立即生效：正在常驻的卡片从关闭的那一刻按原时长计时；打开只影响之后的卡片。无语音、没有录音的失败、剪贴板兜底和其他终态时长不变。
+- **两层条件**，都为真才常驻：壳的能力 `CoreConfig.result_cards`（桌面为真；手机与本机语音服务没有卡片界面，为假）和用户设置 `EngineSettings.result_cards_stay`（默认真）。都为真时下面五种终态不挂 `DwellOver`，停到 `dictation_dismiss` 或下一次听写：`Done{check: not_written}`、`Done{clipboard_code: target_changed}`、`Done{clipboard_code: remote_denied}`（§14.9）、`Failed{text: Some}`、`Failed{text: None}` 且录音已保留（`status.recording`）。设置关闭时按原来的时长消失：前四种 `DWELL_WITH_TEXT`（6 s），第五种 `DWELL`（2.5 s），按钮不变。设置改动立即生效：正在常驻的卡片从关闭的那一刻按原时长计时；打开只影响之后的卡片。无语音、没有录音的失败、剪贴板兜底和其他终态时长不变。
 - `CoreCommand::DictationDismiss { session }`（`dictation_dismiss`，带卡片所属听写的 `DictationStatus.session`）：该次听写的终态回 `Idle`（与 `DwellOver` 同一处理，`recording` 清空），其他阶段不动；`session` 不是当前这次时什么都不做，例如上一张卡片的「粘贴」在下一次听写的卡片出现之后才返回。新的一次听写可以从终态直接开始，卡片随之被替换。
 - **卡片内容**（一行：一句话、按钮、关闭 ×；说明过长时省略，完整原因在历史详情）：
 
@@ -2764,6 +2844,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 |---|---|---|
 | 确定没写进去（`check = not_written`；剪贴板已放回原内容） | 没有写进去 | 粘贴、复制 |
 | 窗口已切换（`clipboard_code = target_changed`；文字在剪贴板上） | 窗口已切换，文字已复制 | 粘贴、复制 |
+| GNOME 未获准远程交互（`clipboard_code = remote_denied`；文字在剪贴板上，§14.9） | 未获准远程交互，文字已复制 | 粘贴、复制 |
 | 有文字的失败 | 失败原因 | 粘贴、复制 |
 | 没文字的失败，录音已保留 | 失败原因 · 录音已保留 | 重新识别、打开历史 |
 

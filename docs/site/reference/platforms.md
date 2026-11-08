@@ -43,10 +43,26 @@ On X11, pasting works without further setup; the `.deb` recommends `xdotool` as 
 | Desktop | Tools |
 | --- | --- |
 | KDE Plasma | `wtype`, `dotool`, `ydotool`, `kwtype` |
-| GNOME | `dotool`, `ydotool` |
+| GNOME | `dotool`, `ydotool`; when neither works, GNOME's [remote interaction permission](#remote-interaction-on-gnome) |
 | Sway, Hyprland and other wlroots desktops | `wtype`, `dotool`, `ydotool` |
 
-Install one of them from your distribution. `dotool` and `ydotool` need access to `/dev/uinput`; see their documentation. Without a tool, the text stays on the clipboard.
+Install one of them from your distribution; on GNOME nothing needs to be installed, see the next section. `dotool` and `ydotool` need access to `/dev/uinput`; see their documentation. Without a tool, the text stays on the clipboard.
+
+### Remote interaction on GNOME
+
+GNOME does not let apps press keys directly. On GNOME, including when Voltip runs through XWayland, Voltip asks for GNOME's remote interaction permission to press the paste keys when neither `dotool` nor `ydotool` works. Voltip asks for the keyboard only, not for the screen or the mouse, and only when it first needs to paste, never when it starts.
+
+At the first paste, GNOME shows the **Remote Desktop** window:
+
+1. Turn on **Allow Remote Interaction**.
+2. Leave **Remember This Selection** ticked.
+3. Click **Share**.
+
+Later pastes, and pastes after you reopen Voltip, do not ask again. If you untick **Remember This Selection**, the next paste asks again. If you click **Cancel**, the text of this dictation stays on the clipboard, the overlay says **Remote interaction not allowed · text copied**, and the next paste asks again.
+
+- **To do without the permission**, set **Insert method** under **Settings → Dictation** to **Copy to clipboard only**. Voltip then presses no paste keys and never asks for the permission; you paste the text yourself.
+- **To revoke the permission**: GNOME's settings have no page for it. Open **Passwords and Keys**, search for `voltip.paste.remote-desktop` and delete the item; the next paste asks again.
+- GNOME tells apps apart by how they were opened: when you open Voltip once from the app grid and once from a terminal, GNOME asks once for each.
 
 ### Pure Wayland sessions
 
