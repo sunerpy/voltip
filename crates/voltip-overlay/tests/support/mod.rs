@@ -17,11 +17,11 @@ use windows_sys::Win32::System::Threading::GetCurrentThreadId;
 use windows_sys::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEINPUT, SendInput};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, EnumWindows, GWL_EXSTYLE, GetClassNameW, GetForegroundWindow, GetMessageW,
-    GetSystemMetrics, GetWindowLongW, GetWindowRect, GetWindowThreadProcessId, HWND_NOTOPMOST, HWND_TOPMOST, IsIconic, IsWindowVisible, MSG,
-    PostThreadMessageW, RegisterClassW, SM_CXSCREEN, SM_CYSCREEN, SPI_GETWORKAREA, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-    SetCursorPos, SetWindowPos, ShowWindow, SystemParametersInfoW, TranslateMessage, WM_QUIT, WNDCLASSW, WS_CLIPSIBLINGS, WS_EX_ACCEPTFILES, WS_EX_APPWINDOW,
-    WS_EX_NOACTIVATE, WS_EX_TOPMOST, WS_EX_WINDOWEDGE, WS_OVERLAPPEDWINDOW, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, EnumWindows, GA_ROOT, GUITHREADINFO, GWL_EXSTYLE, GetAncestor, GetClassNameW,
+    GetForegroundWindow, GetGUIThreadInfo, GetMessageW, GetSystemMetrics, GetWindowLongW, GetWindowRect, GetWindowThreadProcessId, HWND_NOTOPMOST,
+    HWND_TOPMOST, IsIconic, IsWindowVisible, MSG, PostThreadMessageW, RegisterClassW, SM_CXSCREEN, SM_CYSCREEN, SPI_GETWORKAREA, SW_HIDE, SW_SHOWNOACTIVATE,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetCursorPos, SetWindowPos, ShowWindow, SystemParametersInfoW, TranslateMessage, WM_QUIT, WNDCLASSW,
+    WS_CLIPSIBLINGS, WS_EX_ACCEPTFILES, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOPMOST, WS_EX_WINDOWEDGE, WS_OVERLAPPEDWINDOW, WS_POPUP, WindowFromPoint,
 };
 
 /// How long a window may take to come up, to the front or on top.
@@ -223,8 +223,22 @@ impl TestWindow {
 
     /// Activate it with a click, as the user would, and wait until it is the window in front.
     pub fn activate(&self, what: &str) {
-        click(self.grip());
-        assert!(wait_until(WAIT, || foreground() == self.hwnd), "{what} did not come to the front (in front: {})", describe(foreground()));
+        let at = self.grip();
+        // Read just before the click: the window in front, and the one the click goes to.
+        let before = foreground();
+        let landed = root_at(at);
+        let stack = stack_at(self.hwnd, at);
+        click(at);
+        assert!(
+            wait_until(WAIT, || foreground() == self.hwnd),
+            "{what} did not come to the front (in front: {}; the foreground thread: {}). The click at {},{} went to {} (in front before it: {}); the windows there, top first:{stack}",
+            describe_for(foreground(), self.hwnd),
+            foreground_thread(),
+            at.x,
+            at.y,
+            describe_for(landed, self.hwnd),
+            describe_for(before, self.hwnd),
+        );
     }
 }
 
@@ -254,6 +268,23 @@ pub fn click(at: POINT) {
 pub fn foreground() -> isize {
     // SAFETY: plain query.
     unsafe { GetForegroundWindow() as isize }
+}
+
+/// What the foreground thread holds, for a failure message: its active, focus and capture windows
+/// and its flags (in a menu, in a move or size loop), which say more when no window is in front.
+pub fn foreground_thread() -> String {
+    let mut info = GUITHREADINFO { cbSize: u32::try_from(size_of::<GUITHREADINFO>()).unwrap(), ..GUITHREADINFO::default() };
+    // SAFETY: `info` is a GUITHREADINFO with its size set; thread 0 is the foreground thread.
+    if unsafe { GetGUIThreadInfo(0, &raw mut info) } == 0 {
+        return format!("unknown ({})", std::io::Error::last_os_error());
+    }
+    format!(
+        "active {}, focus {}, capture {}, flags {:#x}",
+        describe(info.hwndActive as isize),
+        describe(info.hwndFocus as isize),
+        describe(info.hwndCapture as isize),
+        info.flags
+    )
 }
 
 /// Wait until `done` holds, at most `within`; whether it did.
@@ -317,6 +348,31 @@ pub fn top_at(at: POINT) -> isize {
     z_order().into_iter().find(|&hwnd| shows_at(hwnd, at)).unwrap_or(0)
 }
 
+/// The top-level window a click at `at` goes to: the root of the window Windows finds there
+/// (`WindowFromPoint`, which also skips hidden and click-through windows), or 0.
+pub fn root_at(at: POINT) -> isize {
+    // SAFETY: plain queries; a point over no window answers null.
+    unsafe {
+        let hwnd = WindowFromPoint(at);
+        if hwnd.is_null() { 0 } else { GetAncestor(hwnd, GA_ROOT) as isize }
+    }
+}
+
+/// The windows that show at `at` in Z order, the one on top first, down to `target`, for a failure
+/// message (every one there when `target` is not).
+pub fn stack_at(target: isize, at: POINT) -> String {
+    let mut text = String::new();
+    for hwnd in z_order() {
+        if shows_at(hwnd, at) {
+            let _ = write!(text, "\n  {}", describe_for(hwnd, target));
+            if hwnd == target {
+                break;
+            }
+        }
+    }
+    if text.is_empty() { "\n  no window".to_owned() } else { text }
+}
+
 /// The screen's colour at `at` as the desktop composes it (`0x00BBGGRR`).
 pub fn pixel(at: POINT) -> u32 {
     // SAFETY: the screen's device context, released after the one read.
@@ -348,6 +404,11 @@ pub fn describe(hwnd: isize) -> String {
     let class = String::from_utf16_lossy(&class[..usize::try_from(n).unwrap_or(0).min(128)]);
     let rect = rect_of(hwnd);
     format!("{class} (pid {pid}, topmost {}, ex {:#010x}, {},{}-{},{})", is_topmost(hwnd), ex_style(hwnd), rect.left, rect.top, rect.right, rect.bottom)
+}
+
+/// [`describe`], with `this` named as the window being tested.
+pub fn describe_for(hwnd: isize, this: isize) -> String {
+    if hwnd != 0 && hwnd == this { format!("this window, {}", describe(hwnd)) } else { describe(hwnd) }
 }
 
 /// The windows above `target` in Z order that show at `at`, for a failure message.
