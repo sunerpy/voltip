@@ -287,7 +287,7 @@ pub fn after_paste(after: ClipboardAfter) -> AfterPaste {
 
 /// The keychain entry that keeps the restore token of GNOME's remote-desktop portal
 /// (docs/dictation.md §14.9).
-pub const REMOTE_DESKTOP_ENTRY: &str = "voltip.inject.remote-desktop";
+pub const REMOTE_DESKTOP_ENTRY: &str = "voltip.paste.remote-desktop";
 
 /// The restore token of GNOME's remote-desktop portal in the system keychain, beside the API keys,
 /// so a restart restores the grant and the portal asks once (docs/dictation.md §14.9). The
@@ -832,11 +832,13 @@ mod tests {
     }
 
     /// docs/dictation.md §14.9: the portal's restore token is kept in the keychain entry
-    /// `voltip.inject.remote-desktop`, so the next run restores the grant; a new token replaces
+    /// `voltip.paste.remote-desktop`, so the next run restores the grant; a new token replaces
     /// the saved one, a cleared one is gone from the keychain. The keychain is read at the first
     /// paste that needs the token, not when the ports are built, and once per run.
     #[test]
     fn the_remote_desktop_grant_is_kept_in_the_keychain() {
+        // The name the platform notes tell users to delete in Passwords and Keys (docs/site).
+        assert_eq!(REMOTE_DESKTOP_ENTRY, "voltip.paste.remote-desktop");
         let store = Arc::new(CountingStore::default());
         let tokens = KeychainRestoreTokens::new(store.clone());
         assert_eq!(store.reads(), 0, "nothing is read at start-up");
