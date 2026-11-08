@@ -220,6 +220,9 @@ pub enum TypingTool {
     Kwtype,
     /// enigo's Wayland backend (`zwp_virtual_keyboard_v1`), in-process.
     EnigoWayland,
+    /// The remote-desktop portal's keyboard (`org.freedesktop.portal.RemoteDesktop` and libei),
+    /// in-process, GNOME only: asks the user once, then restores the grant (docs/dictation.md §14.9).
+    RemoteDesktop,
 }
 
 /// How a tool delivers the text.
@@ -253,13 +256,14 @@ impl TypingTool {
             Self::Ydotool(_) => "ydotool",
             Self::Kwtype => "kwtype",
             Self::EnigoWayland => "enigo-wayland",
+            Self::RemoteDesktop => "remote-desktop-portal",
         }
     }
 
     /// The executable to look for on `PATH`; `None` for the in-process backends.
     pub fn binary(self) -> Option<&'static str> {
         match self {
-            Self::EnigoX11 | Self::EnigoWayland => None,
+            Self::EnigoX11 | Self::EnigoWayland | Self::RemoteDesktop => None,
             Self::Xdotool => Some("xdotool"),
             Self::Wtype => Some("wtype"),
             Self::Dotool => Some("dotool"),
@@ -277,11 +281,11 @@ impl TypingTool {
     }
 
     /// The command line that delivers `text` (already on the clipboard) with `chord`; `None` for
-    /// the in-process enigo backends.
+    /// the in-process backends (enigo, the remote-desktop portal).
     pub fn command(self, chord: Chord, text: &str) -> Option<CommandLine> {
         let s = |v: &str| v.to_string();
         let line = match self {
-            Self::EnigoX11 | Self::EnigoWayland => return None,
+            Self::EnigoX11 | Self::EnigoWayland | Self::RemoteDesktop => return None,
             Self::Xdotool => CommandLine { program: s("xdotool"), args: vec![s("key"), s("--clearmodifiers"), chord.plus_joined()], stdin: None },
             Self::Wtype => {
                 // Press the modifiers, click the key, release in reverse: `-M ctrl -k v -m ctrl`.
@@ -325,7 +329,11 @@ impl std::fmt::Display for TypingTool {
 /// * Wayland / XWayland: `wtype` → `dotool` → `ydotool` → `kwtype` (KDE) → enigo Wayland; on
 ///   XWayland the X11 pair follows (XTEST through XWayland reaches the focused client on Mutter
 ///   and X11 windows elsewhere). GNOME skips the `zwp_virtual_keyboard_v1` tools (`wtype`, enigo
-///   Wayland): Mutter does not offer the protocol, so they can only fail.
+///   Wayland): Mutter does not offer the protocol, so they can only fail. GNOME puts the
+///   remote-desktop portal after the uinput tools and before the X11 pair (docs/dictation.md
+///   §14.9): `dotool` and `ydotool` need no dialog and are only there when the user set them up;
+///   the portal asks once and then restores its grant; XTEST through Xwayland makes Xwayland ask
+///   the portal again whenever its own, never remembered grant has lapsed (issue #235).
 pub fn candidates(session: Session) -> Vec<TypingTool> {
     let mut out = Vec::new();
     if session.kind.is_wayland() {
@@ -340,6 +348,9 @@ pub fn candidates(session: Session) -> Vec<TypingTool> {
         }
         if virtual_keyboard {
             out.push(TypingTool::EnigoWayland);
+        }
+        if session.desktop == Desktop::Gnome {
+            out.push(TypingTool::RemoteDesktop);
         }
     }
     if session.kind.has_x11() {
@@ -358,6 +369,11 @@ pub trait ToolProbe {
     fn ydotool_help(&self) -> Option<String>;
     /// Whether enigo can open the given in-process connection right now.
     fn enigo_available(&self, tool: TypingTool) -> bool;
+    /// Whether the remote-desktop portal offers a keyboard right now (docs/dictation.md §14.9).
+    /// Nothing is requested, so no dialog appears. The default is a machine without one.
+    fn portal_available(&self) -> bool {
+        false
+    }
 }
 
 /// Why a candidate was passed over.
@@ -386,6 +402,13 @@ pub fn probe_candidate(candidate: TypingTool, probe: &dyn ToolProbe) -> Result<T
                 Ok(candidate)
             } else {
                 Err(Skipped { tool: candidate, reason: "no connection" })
+            }
+        }
+        TypingTool::RemoteDesktop => {
+            if probe.portal_available() {
+                Ok(candidate)
+            } else {
+                Err(Skipped { tool: candidate, reason: "no remote-desktop portal with a keyboard" })
             }
         }
         TypingTool::Ydotool(_) => {
@@ -421,7 +444,9 @@ pub fn select(session: Session, probe: &dyn ToolProbe) -> Selection {
 pub fn install_hint(session: Session) -> &'static str {
     match (session.kind, session.desktop) {
         (SessionKind::X11, _) => "install xdotool",
-        (_, Desktop::Gnome) => "install dotool or ydotool (uinput); GNOME has no virtual-keyboard protocol",
+        (_, Desktop::Gnome) => {
+            "install xdg-desktop-portal-gnome (remote interaction, asked once), dotool or ydotool (uinput); GNOME has no virtual-keyboard protocol"
+        }
         (_, Desktop::Kde) => "install wtype, kwtype, dotool or ydotool",
         _ => "install wtype, dotool or ydotool",
     }
@@ -436,11 +461,12 @@ mod tests {
         on_path: HashSet<&'static str>,
         ydotool_help: Option<&'static str>,
         enigo: HashSet<TypingTool>,
+        portal: bool,
     }
 
     impl TableProbe {
         fn with(on_path: &[&'static str], enigo: &[TypingTool]) -> Self {
-            Self { on_path: on_path.iter().copied().collect(), ydotool_help: None, enigo: enigo.iter().copied().collect() }
+            Self { on_path: on_path.iter().copied().collect(), ydotool_help: None, enigo: enigo.iter().copied().collect(), portal: false }
         }
     }
 
@@ -453,6 +479,9 @@ mod tests {
         }
         fn enigo_available(&self, tool: TypingTool) -> bool {
             self.enigo.contains(&tool)
+        }
+        fn portal_available(&self) -> bool {
+            self.portal
         }
     }
 
@@ -526,6 +555,9 @@ mod tests {
         assert_eq!(TypingTool::Ydotool(YdotoolSyntax::KeyCodes).to_string(), "ydotool (≥1.0)");
         assert_eq!(TypingTool::Ydotool(YdotoolSyntax::KeyNames).to_string(), "ydotool (0.x)");
         assert_eq!(TypingTool::EnigoWayland.to_string(), "enigo-wayland");
+        assert_eq!(TypingTool::RemoteDesktop.to_string(), "remote-desktop-portal");
+        assert_eq!((TypingTool::RemoteDesktop.binary(), TypingTool::RemoteDesktop.command(ctrl_v, "t")), (None, None));
+        assert_eq!(TypingTool::RemoteDesktop.delivery(), Delivery::Chord);
         assert_eq!(TypingTool::Ydotool(YdotoolSyntax::KeyNames).name(), "ydotool");
     }
 
@@ -551,18 +583,18 @@ mod tests {
     fn candidate_table_desktop_by_session() {
         use Desktop::{Gnome, Kde, Other, Wlroots};
         use SessionKind::{Wayland, X11, XWayland};
-        use TypingTool::{Dotool, EnigoWayland, EnigoX11, Kwtype, Wtype, Xdotool};
+        use TypingTool::{Dotool, EnigoWayland, EnigoX11, Kwtype, RemoteDesktop, Wtype, Xdotool};
         let ydotool = TypingTool::Ydotool(YdotoolSyntax::KeyCodes);
         let cases: &[(SessionKind, Desktop, Vec<TypingTool>)] = &[
             (X11, Kde, vec![EnigoX11, Xdotool]),
             (X11, Gnome, vec![EnigoX11, Xdotool]),
             (X11, Other, vec![EnigoX11, Xdotool]),
             (Wayland, Kde, vec![Wtype, Dotool, ydotool, Kwtype, EnigoWayland]),
-            (Wayland, Gnome, vec![Dotool, ydotool]),
+            (Wayland, Gnome, vec![Dotool, ydotool, RemoteDesktop]),
             (Wayland, Wlroots, vec![Wtype, Dotool, ydotool, EnigoWayland]),
             (Wayland, Other, vec![Wtype, Dotool, ydotool, EnigoWayland]),
             (XWayland, Kde, vec![Wtype, Dotool, ydotool, Kwtype, EnigoWayland, EnigoX11, Xdotool]),
-            (XWayland, Gnome, vec![Dotool, ydotool, EnigoX11, Xdotool]),
+            (XWayland, Gnome, vec![Dotool, ydotool, RemoteDesktop, EnigoX11, Xdotool]),
             (XWayland, Wlroots, vec![Wtype, Dotool, ydotool, EnigoWayland, EnigoX11, Xdotool]),
         ];
         for (kind, desktop, expected) in cases {
@@ -630,10 +662,35 @@ mod tests {
         assert_eq!(select(sway, &probe).tool, Some(TypingTool::EnigoX11));
     }
 
+    /// docs/dictation.md §14.9: on GNOME the remote-desktop portal comes after the uinput tools a
+    /// user set up and before XTEST through Xwayland; without a portal the chain is what it was.
+    #[test]
+    fn selection_gnome_remote_desktop() {
+        let wayland = session(SessionKind::Wayland, Desktop::Gnome);
+        let xwayland = session(SessionKind::XWayland, Desktop::Gnome);
+        let mut probe = TableProbe::with(&[], &[TypingTool::EnigoX11]);
+        probe.portal = true;
+        assert_eq!(select(wayland, &probe).tool, Some(TypingTool::RemoteDesktop));
+        assert_eq!(select(xwayland, &probe).tool, Some(TypingTool::RemoteDesktop), "the portal before XTEST through Xwayland");
+        let mut with_dotool = TableProbe::with(&["dotool"], &[TypingTool::EnigoX11]);
+        with_dotool.portal = true;
+        assert_eq!(select(xwayland, &with_dotool).tool, Some(TypingTool::Dotool), "a uinput tool the user installed needs no dialog");
+        let without = TableProbe::with(&[], &[TypingTool::EnigoX11]);
+        let sel = select(xwayland, &without);
+        assert_eq!(sel.tool, Some(TypingTool::EnigoX11), "no portal: XTEST through Xwayland as before");
+        assert_eq!(sel.skipped.last(), Some(&Skipped { tool: TypingTool::RemoteDesktop, reason: "no remote-desktop portal with a keyboard" }));
+        assert_eq!(select(wayland, &without).tool, None);
+        // The portal is a GNOME candidate only: KDE and wlroots keep their own chains.
+        assert!(!candidates(session(SessionKind::Wayland, Desktop::Kde)).contains(&TypingTool::RemoteDesktop));
+        assert!(!candidates(session(SessionKind::XWayland, Desktop::Wlroots)).contains(&TypingTool::RemoteDesktop));
+        assert!(!candidates(session(SessionKind::X11, Desktop::Gnome)).contains(&TypingTool::RemoteDesktop), "X11 GNOME has XTEST");
+    }
+
     #[test]
     fn install_hints() {
         assert_eq!(install_hint(session(SessionKind::X11, Desktop::Kde)), "install xdotool");
         assert!(install_hint(session(SessionKind::Wayland, Desktop::Gnome)).contains("GNOME"));
+        assert!(install_hint(session(SessionKind::Wayland, Desktop::Gnome)).contains("xdg-desktop-portal-gnome"));
         assert!(install_hint(session(SessionKind::XWayland, Desktop::Kde)).contains("kwtype"));
         assert_eq!(install_hint(session(SessionKind::Wayland, Desktop::Wlroots)), "install wtype, dotool or ydotool");
     }

@@ -428,7 +428,11 @@ fn recorder_audio_source_live_tap_streams_16k_and_closes_on_stop() {
 /// constructed headlessly; the factory it carries behaves like [`build_clients`].
 #[tokio::test]
 async fn production_ports_build_headlessly() {
-    let ports = voltip_desktop_lib::dictation::production_ports(std::env::temp_dir().join("voltip-test-models"), &voltip_net::Network::new());
+    let ports = voltip_desktop_lib::dictation::production_ports(
+        std::env::temp_dir().join("voltip-test-models"),
+        &voltip_net::Network::new(),
+        Arc::new(voltip_identity::MemorySecretStore::new()),
+    );
     assert!(ports.dictation.models.is_some(), "the desktop always carries the model library");
     let (t, r) = (ports.dictation.factory)(&resolved(None, None, None, None, InjectMode::ClipboardOnly));
     assert!(r.is_none());

@@ -1141,6 +1141,32 @@ describe("Overlay result cards (docs/dictation.md §28)", () => {
     }
   });
 
+  it("docs/dictation.md section 14.9: a paste the system did not allow is a card that says so, with 粘贴 and 复制", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const backend = new MockBackend({ now: () => Date.now() });
+      renderApp({ path: "/overlay?state=live", backend });
+      await screen.findByTestId("overlay-window");
+      backend.simulatePasteRefused(true);
+      const card = await finishTake(backend);
+      expect(card).toHaveAttribute("data-state", "inserted");
+      expect(card).toHaveTextContent("未获准远程交互，文字已复制");
+      expect(buttons()).toEqual(["粘贴", "复制", "关闭"]);
+      // The card stays past every dwell, until 关闭.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MOCK_DICTATION_FAILED_DWELL_MS * 2);
+      });
+      expect(screen.getByRole("status")).toHaveTextContent("未获准远程交互，文字已复制");
+      // Allowed again: the next take pastes and is no card.
+      backend.simulatePasteRefused(false);
+      const pasted = await finishTake(backend);
+      expect(pasted).toHaveTextContent(`已插入 ${Array.from(MOCK_DICTATION_TEXT).length} 字`);
+      expect(buttons()).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("粘贴 pastes and closes the card; when it could only copy, the card stays and says why", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {

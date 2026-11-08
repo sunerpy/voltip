@@ -1,16 +1,18 @@
 //! The Linux paste chain at run time (docs/dictation.md §14): judge the session, walk
 //! [`crate::toolchain::candidates`] in order, run the first tool that is available, fall through
 //! to the next one when a chord tool fails before anything can have reached the application. The
-//! decisions are the pure functions in [`crate::toolchain`]; this module owns the three effects
-//! (PATH lookup, running a subprocess, opening an enigo connection) behind traits, so the port
-//! itself is tested with fake tools on a private `PATH`.
+//! decisions are the pure functions in [`crate::toolchain`]; this module owns the four effects
+//! (PATH lookup, running a subprocess, opening an enigo connection, GNOME's remote-desktop portal)
+//! behind traits, so the port itself is tested with fake tools on a private `PATH`.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::injector::{Delivered, DeliveryError, KeystrokePort};
-use crate::platform::{EnigoBackend, EnigoError, SystemKeys};
+use crate::platform::{EnigoBackend, EnigoError, KeyStep, SystemKeys, chord_steps, copy_steps};
+use crate::portal::{PortalError, RemoteDesktop};
 use crate::process::{self, CHORD_TIMEOUT, HELP_TIMEOUT, RunError};
+use crate::restore::{MemoryRestoreTokens, RestoreTokens};
 use crate::session::{Desktop, Session, SessionKind};
 use crate::toolchain::{Chord, CommandLine, Delivery, Modifier, Selection, ToolProbe, TypingTool, candidates, install_hint, probe_candidate, select};
 use crate::{FallbackCode, InjectNote};
@@ -30,6 +32,47 @@ pub trait EnigoPort: Send + Sync {
     /// Press the selection copy `chord` through `backend` after releasing `held`
     /// ([`crate::platform::copy_steps`], docs/dictation.md §19).
     fn copy(&self, backend: EnigoBackend, chord: Chord, held: &[Modifier]) -> Result<(), EnigoError>;
+}
+
+/// GNOME's remote-desktop portal as a keyboard (docs/dictation.md §14.9).
+/// [`RemoteDesktop`] is the real one.
+pub trait PortalPort: Send + Sync {
+    /// Whether the session bus has the portal with a keyboard right now. Nothing is requested, so
+    /// no dialog appears.
+    fn available(&self) -> bool;
+    /// Press `steps` ([`chord_steps`], [`copy_steps`]), asking the user first when no grant is
+    /// remembered.
+    fn press(&self, steps: &[KeyStep]) -> Result<(), PortalError>;
+}
+
+impl PortalPort for RemoteDesktop {
+    fn available(&self) -> bool {
+        match RemoteDesktop::available(self) {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::debug!(error = %e, "remote-desktop portal not available");
+                false
+            }
+        }
+    }
+
+    fn press(&self, steps: &[KeyStep]) -> Result<(), PortalError> {
+        RemoteDesktop::press(self, steps)
+    }
+}
+
+/// No portal (the chains built for tests).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoPortal;
+
+impl PortalPort for NoPortal {
+    fn available(&self) -> bool {
+        false
+    }
+
+    fn press(&self, _: &[KeyStep]) -> Result<(), PortalError> {
+        Err(PortalError::Unavailable("no portal".into()))
+    }
 }
 
 /// The real effects: subprocesses and enigo.
@@ -112,6 +155,10 @@ pub enum Attempt {
     /// A failure after which a second tool could double the text: a typing tool (it may have
     /// typed part of it) or a tool killed at its deadline. The chain stops here.
     Stop(String),
+    /// Nothing was pressed and no later tool should try: the user did not allow the portal's
+    /// remote interaction (a tool through Xwayland would only ask the same portal again), or its
+    /// keyboard broke after the grant. The text stays on the clipboard with this note.
+    Clipboard(InjectNote),
 }
 
 /// How a failed run of `tool` continues the chain: [`Attempt::Retry`] for a chord tool's non-zero
@@ -135,18 +182,55 @@ pub struct ToolchainKeys {
     probe: Arc<dyn ToolProbe + Send + Sync>,
     runner: Arc<dyn ToolRunner>,
     enigo: Arc<dyn EnigoPort>,
+    portal: Arc<dyn PortalPort>,
+}
+
+/// The probe as the chain sees it: whether the portal is there comes from the chain's own portal.
+struct ChainProbe<'a> {
+    probe: &'a (dyn ToolProbe + Send + Sync),
+    portal: &'a dyn PortalPort,
+}
+
+impl ToolProbe for ChainProbe<'_> {
+    fn which(&self, binary: &str) -> Option<std::path::PathBuf> {
+        self.probe.which(binary)
+    }
+
+    fn ydotool_help(&self) -> Option<String> {
+        self.probe.ydotool_help()
+    }
+
+    fn enigo_available(&self, tool: TypingTool) -> bool {
+        self.probe.enigo_available(tool)
+    }
+
+    fn portal_available(&self) -> bool {
+        self.portal.available()
+    }
 }
 
 impl ToolchainKeys {
-    /// The real chain for `session`.
+    /// The real chain for `session`; a grant of GNOME's remote-desktop portal is remembered for
+    /// this process only.
     pub fn system(session: Session) -> Self {
-        let runner = Arc::new(SystemRunner);
-        Self::new(session, Arc::new(SystemProbe::system()), runner.clone(), runner)
+        Self::system_with(session, Arc::new(MemoryRestoreTokens::new()))
     }
 
-    /// Explicit effects (tests).
+    /// The real chain for `session`, keeping the remote-desktop portal's restore token in `tokens`.
+    pub fn system_with(session: Session, tokens: Arc<dyn RestoreTokens>) -> Self {
+        let runner = Arc::new(SystemRunner);
+        Self::new(session, Arc::new(SystemProbe::system()), runner.clone(), runner).with_portal(Arc::new(RemoteDesktop::session(tokens)))
+    }
+
+    /// Explicit effects and no portal (tests).
     pub fn new(session: Session, probe: Arc<dyn ToolProbe + Send + Sync>, runner: Arc<dyn ToolRunner>, enigo: Arc<dyn EnigoPort>) -> Self {
-        Self { session, probe, runner, enigo }
+        Self { session, probe, runner, enigo, portal: Arc::new(NoPortal) }
+    }
+
+    /// The same chain with `portal` as the remote-desktop portal.
+    pub fn with_portal(mut self, portal: Arc<dyn PortalPort>) -> Self {
+        self.portal = portal;
+        self
     }
 
     /// The session this chain was built for.
@@ -154,9 +238,14 @@ impl ToolchainKeys {
         self.session
     }
 
-    /// The first tool the chain would try right now (what the shell logs at start-up).
+    fn chain_probe(&self) -> ChainProbe<'_> {
+        ChainProbe { probe: self.probe.as_ref(), portal: self.portal.as_ref() }
+    }
+
+    /// The first tool the chain would try right now (what the shell logs at start-up). On GNOME
+    /// this reads whether the remote-desktop portal is there; nothing is requested.
     pub fn selection(&self) -> Selection {
-        select(self.session, self.probe.as_ref())
+        select(self.session, &self.chain_probe())
     }
 
     /// Try one available tool.
@@ -172,6 +261,20 @@ impl ToolchainKeys {
 
     /// `text` is the paste's text, `None` for a bare chord (the copy).
     fn attempt_with(&self, tool: TypingTool, chord: Chord, text: Option<&str>, held: &[Modifier]) -> Attempt {
+        if tool == TypingTool::RemoteDesktop {
+            let steps = match text {
+                Some(_) => chord_steps(chord, "linux", 0),
+                None => copy_steps(chord, "linux", 0, held),
+            };
+            let name = tool.name();
+            return match self.portal.press(&steps) {
+                Ok(()) => Attempt::Done(Delivered { tool: name.to_string(), delivery: Delivery::Chord }),
+                Err(e @ PortalError::Unavailable(_)) => Attempt::NotStarted(format!("{name}: {e}")),
+                Err(e @ PortalError::Declined(_)) => Attempt::Clipboard(InjectNote::new(FallbackCode::RemoteDenied, format!("{name}: {e}"))),
+                Err(e @ PortalError::Broken(_)) => Attempt::Clipboard(InjectNote::new(FallbackCode::Other, format!("{name}: {e}"))),
+                Err(e @ PortalError::Lost(_)) => Attempt::Stop(format!("{name}: {e}")),
+            };
+        }
         if let Some(backend) = enigo_backend(tool) {
             let outcome = match text {
                 Some(_) => self.enigo.press(backend, chord),
@@ -210,12 +313,13 @@ impl ToolchainKeys {
         let what = if text.is_some() { "paste" } else { "copy" };
         let mut skipped: Vec<String> = Vec::new();
         let mut failures: Vec<String> = Vec::new();
+        let probe = self.chain_probe();
         for candidate in candidates(self.session) {
             if text.is_none() && candidate.delivery() == Delivery::Type {
                 skipped.push(format!("{}: {TYPES_ONLY}", candidate.name()));
                 continue;
             }
-            let tool = match probe_candidate(candidate, self.probe.as_ref()) {
+            let tool = match probe_candidate(candidate, &probe) {
                 Ok(tool) => tool,
                 Err(s) => {
                     skipped.push(format!("{}: {}", s.tool.name(), s.reason));
@@ -237,6 +341,13 @@ impl ToolchainKeys {
                 Attempt::Stop(reason) => {
                     failures.push(reason);
                     return Err(DeliveryError::Failed(failures.join("; ")));
+                }
+                Attempt::Clipboard(mut note) => {
+                    tracing::warn!(session = %self.session, reason = %note.detail, code = ?note.code, "{what} not delivered; the text stays on the clipboard");
+                    if !failures.is_empty() {
+                        note.detail = format!("{}; {}", failures.join("; "), note.detail);
+                    }
+                    return Err(DeliveryError::Unavailable(note));
                 }
             }
         }
@@ -602,6 +713,135 @@ mod tests {
         );
         assert_eq!(crate::SelectionSource::copy_selection(&copier, &[Modifier::Alt]).unwrap(), None, "the fake application copies nothing");
         assert_eq!(clipboard.current().as_deref(), Some("before"));
+    }
+
+    /// A remote-desktop portal that answers as told and records the steps it was given.
+    struct FakePortalPort {
+        available: bool,
+        answer: Result<(), PortalError>,
+        pressed: Mutex<Vec<Vec<KeyStep>>>,
+    }
+
+    impl FakePortalPort {
+        fn with(available: bool, answer: Result<(), PortalError>) -> Arc<Self> {
+            Arc::new(Self { available, answer, pressed: Mutex::new(vec![]) })
+        }
+    }
+
+    impl PortalPort for FakePortalPort {
+        fn available(&self) -> bool {
+            self.available
+        }
+        fn press(&self, steps: &[KeyStep]) -> Result<(), PortalError> {
+            self.pressed.lock().unwrap().push(steps.to_vec());
+            self.answer.clone()
+        }
+    }
+
+    const GNOME_WAYLAND: Session = Session { kind: SessionKind::Wayland, desktop: Desktop::Gnome };
+    const GNOME_XWAYLAND: Session = Session { kind: SessionKind::XWayland, desktop: Desktop::Gnome };
+
+    /// docs/dictation.md §14.9: on GNOME the portal comes after the uinput tools and before XTEST
+    /// through Xwayland; it gets the chord as steps, the copy with the held modifiers.
+    #[test]
+    fn gnome_pastes_through_the_portal() {
+        let _spawn = spawn_lock();
+        let tools = FakeTools::new();
+        let xdotool = recording_tool(&tools, "xdotool", 0);
+        let portal = FakePortalPort::with(true, Ok(()));
+        let enigo = FakeEnigo::with(&[EnigoBackend::X11], Ok(()));
+        let keys = make_keys(&tools, GNOME_XWAYLAND, enigo.clone()).with_portal(portal.clone());
+        assert_eq!(keys.selection().tool, Some(TypingTool::RemoteDesktop));
+        let chord = PasteMethod::CtrlV.chord_for("linux");
+        assert_eq!(keys.deliver(chord, "t").unwrap(), Delivered { tool: "remote-desktop-portal".into(), delivery: Delivery::Chord });
+        let copy = crate::copy_chord_for("linux");
+        assert_eq!(keys.press_chord(copy, &[Modifier::Alt]).unwrap().tool, "remote-desktop-portal");
+        assert_eq!(portal.pressed.lock().unwrap().as_slice(), &[chord_steps(chord, "linux", 0), copy_steps(copy, "linux", 0, &[Modifier::Alt])]);
+        assert!(enigo.pressed.lock().unwrap().is_empty() && enigo.copied.lock().unwrap().is_empty(), "XTEST is not tried");
+        assert!(!xdotool.exists());
+
+        // A uinput tool the user set up goes first: no dialog at all.
+        let tools = FakeTools::new();
+        let log = tools.log("dotool.log");
+        tools.script("dotool", &format!("cat >> '{}'", log.display()));
+        let portal = FakePortalPort::with(true, Ok(()));
+        let keys = make_keys(&tools, GNOME_WAYLAND, FakeEnigo::none()).with_portal(portal.clone());
+        assert_eq!(keys.deliver(chord, "t").unwrap().tool, "dotool");
+        assert!(portal.pressed.lock().unwrap().is_empty());
+
+        // No portal: XWayland falls through to XTEST; pure Wayland has nothing left.
+        let tools = FakeTools::new();
+        let enigo = FakeEnigo::with(&[EnigoBackend::X11], Ok(()));
+        let keys = make_keys(&tools, GNOME_XWAYLAND, enigo.clone()).with_portal(FakePortalPort::with(false, Ok(())));
+        assert_eq!(keys.deliver(chord, "t").unwrap().tool, "enigo-x11");
+        let keys = make_keys(&tools, GNOME_WAYLAND, FakeEnigo::none());
+        let err = keys.deliver(chord, "t").unwrap_err();
+        assert!(
+            matches!(&err, DeliveryError::Unavailable(n) if n.code == FallbackCode::NoTool && n.detail.contains("remote-desktop-portal: no remote-desktop portal with a keyboard") && n.detail.contains("xdg-desktop-portal-gnome")),
+            "{err:?}"
+        );
+        // The portal went away between the probe and the press: the next tool tries.
+        let portal = FakePortalPort::with(true, Err(PortalError::Unavailable("no session bus".into())));
+        let keys = make_keys(&tools, GNOME_XWAYLAND, enigo).with_portal(portal);
+        assert_eq!(keys.deliver(chord, "t").unwrap().tool, "enigo-x11");
+    }
+
+    /// A refusal leaves the text on the clipboard with its own reason, and nothing later in the
+    /// chain is tried: XTEST through Xwayland would only ask the same portal again.
+    #[test]
+    fn a_refused_or_broken_portal_leaves_the_text_on_the_clipboard() {
+        let _spawn = spawn_lock();
+        let tools = FakeTools::new();
+        let xdotool = recording_tool(&tools, "xdotool", 0);
+        let chord = PasteMethod::CtrlV.chord_for("linux");
+        let enigo = FakeEnigo::with(&[EnigoBackend::X11], Ok(()));
+        let portal = FakePortalPort::with(true, Err(PortalError::Declined("the user cancelled".into())));
+        let keys = make_keys(&tools, GNOME_XWAYLAND, enigo.clone()).with_portal(portal);
+        assert_eq!(
+            keys.deliver(chord, "t").unwrap_err(),
+            DeliveryError::Unavailable(InjectNote::new(
+                FallbackCode::RemoteDenied,
+                "remote-desktop-portal: remote interaction not allowed: the user cancelled"
+            ))
+        );
+        assert!(enigo.pressed.lock().unwrap().is_empty());
+        assert!(!xdotool.exists());
+        // Through the injector the text stays on the clipboard for the user.
+        let clipboard = MemoryClipboard::holding("before");
+        let injector = injector_over(&clipboard, keys, PasteMethod::CtrlV);
+        let out = injector.inject("ours").unwrap();
+        assert_eq!((out.via, out.note.map(|n| n.code)), (Via::Clipboard, Some(FallbackCode::RemoteDenied)));
+        std::thread::sleep(Duration::from_millis(60));
+        assert_eq!(clipboard.current().as_deref(), Some("ours"));
+
+        // Granted, but the keyboard broke before a key: the text stays too, as any other failure.
+        let portal = FakePortalPort::with(true, Err(PortalError::Broken("ConnectToEIS: refused".into())));
+        let keys = make_keys(&tools, GNOME_XWAYLAND, enigo.clone()).with_portal(portal);
+        let err = keys.deliver(chord, "t").unwrap_err();
+        assert_eq!(
+            err,
+            DeliveryError::Unavailable(InjectNote::new(FallbackCode::Other, "remote-desktop-portal: the portal's keyboard failed: ConnectToEIS: refused"))
+        );
+        // Keys went out before it broke: a second tool could paste twice — the chain stops.
+        let portal = FakePortalPort::with(true, Err(PortalError::Lost("the compositor closed the keyboard".into())));
+        let keys = make_keys(&tools, GNOME_XWAYLAND, enigo.clone()).with_portal(portal);
+        assert_eq!(
+            keys.deliver(chord, "t").unwrap_err(),
+            DeliveryError::Failed("remote-desktop-portal: the portal's keyboard failed during the chord: the compositor closed the keyboard".into())
+        );
+        assert!(enigo.pressed.lock().unwrap().is_empty());
+        // A chord tool that failed earlier is named with the refusal.
+        let tools = FakeTools::new();
+        tools.script("dotool", "echo 'failed to open /dev/uinput' >&2; exit 1");
+        let portal = FakePortalPort::with(true, Err(PortalError::Declined("the user cancelled".into())));
+        let keys = make_keys(&tools, GNOME_WAYLAND, FakeEnigo::none()).with_portal(portal);
+        let err = keys.press_chord(crate::copy_chord_for("linux"), &[]).unwrap_err();
+        assert!(
+            matches!(&err, DeliveryError::Unavailable(n) if n.code == FallbackCode::RemoteDenied && n.detail.starts_with("dotool: exited with exit status: 1: failed to open /dev/uinput; remote-desktop-portal: ")),
+            "{err:?}"
+        );
+        assert!(!NoPortal.available());
+        assert!(matches!(NoPortal.press(&[]), Err(PortalError::Unavailable(_))));
     }
 
     #[test]

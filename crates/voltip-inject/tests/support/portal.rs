@@ -106,6 +106,20 @@ pub enum Answer {
     Ignore,
 }
 
+/// What goes wrong with the keyboard behind `ConnectToEIS`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Fault {
+    /// Nothing.
+    #[default]
+    None,
+    /// `ConnectToEIS` fails.
+    RefuseEis,
+    /// The EIS server hangs up when the client binds the keyboard: nothing is pressed.
+    CloseAtBind,
+    /// The EIS server hangs up after this many keys.
+    CloseAfterKeys(usize),
+}
+
 /// The keyboard layout the fake EIS keyboard announces: RMLVO names compiled with libxkbcommon,
 /// as Mutter compiles the user's input sources, and the active group (layout index).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -164,11 +178,24 @@ pub struct Record {
     pub keys: Vec<Vec<(u32, bool)>>,
     /// Every restore token handed out, in order.
     pub issued: Vec<String>,
+    /// Sessions the portal closed itself, after a start that did not succeed.
+    pub ended_sessions: usize,
+    /// What a real EIS implementation would have refused (a key outside an emulation sequence).
+    pub protocol_errors: Vec<String>,
+}
+
+impl Record {
+    /// Sessions still open: neither the client nor the portal closed them.
+    pub fn open_sessions(&self) -> usize {
+        self.sessions - self.closed_sessions - self.ended_sessions
+    }
 }
 
 #[derive(Default)]
 struct SessionState {
     select: Option<Select>,
+    /// The restore token `SelectDevices` found in the permission store.
+    restoring: Option<String>,
     started: bool,
 }
 
@@ -176,12 +203,41 @@ struct State {
     version: u32,
     device_types: u32,
     answers: VecDeque<Answer>,
-    /// Restore tokens the permission store still knows; each is good for one `Start`.
+    /// Restore tokens the permission store knows. `SelectDevices` takes a token's entry out, as
+    /// xdg-desktop-portal does; a start that succeeds puts the grant back under the token it
+    /// returns.
     granted: HashSet<String>,
     next_token: u64,
+    /// Hand out a new token for a restored grant too (xdg-desktop-portal 1.20 hands back the same
+    /// one; the specification allows either).
+    rotate: bool,
     sessions: HashMap<String, SessionState>,
     layout: Layout,
+    fault: Fault,
     record: Record,
+}
+
+/// An error of `org.freedesktop.portal.Error`, as xdg-desktop-portal returns them.
+#[derive(Debug, zbus::DBusError)]
+#[zbus(prefix = "org.freedesktop.portal.Error")]
+enum PortalError {
+    #[zbus(error)]
+    ZBus(zbus::Error),
+    InvalidArgument(String),
+    Failed(String),
+}
+
+impl From<zbus::fdo::Error> for PortalError {
+    fn from(e: zbus::fdo::Error) -> Self {
+        Self::Failed(e.to_string())
+    }
+}
+
+/// xdg-desktop-portal's restore tokens are UUIDs (`g_uuid_string_random`); anything else is
+/// refused (`validate_restore_token`).
+fn is_uuid(token: &str) -> bool {
+    let groups: Vec<&str> = token.split('-').collect();
+    groups.iter().map(|g| g.len()).eq([8, 4, 4, 4, 12]) && groups.iter().all(|g| g.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
 type Shared = Arc<Mutex<State>>;
@@ -210,8 +266,10 @@ impl FakePortal {
             answers: VecDeque::new(),
             granted: HashSet::new(),
             next_token: 0,
+            rotate: false,
             sessions: HashMap::new(),
             layout: Layout::us(),
+            fault: Fault::None,
             record: Record::default(),
         }));
         let conn = zbus::blocking::connection::Builder::address(bus.address.as_str())
@@ -232,9 +290,24 @@ impl FakePortal {
         lock(&self.state).granted.clear();
     }
 
+    /// Hand out a new restore token at every start, a restored one too.
+    pub fn rotate_tokens(&self) {
+        lock(&self.state).rotate = true;
+    }
+
+    /// A grant the permission store holds under `token`, as an earlier run of Voltip left it.
+    pub fn grant(&self, token: &str) {
+        lock(&self.state).granted.insert(token.to_owned());
+    }
+
     /// The keyboard layout of the EIS keyboards created from now on.
     pub fn set_layout(&self, layout: Layout) {
         lock(&self.state).layout = layout;
+    }
+
+    /// What goes wrong with the EIS keyboards from now on.
+    pub fn fault(&self, fault: Fault) {
+        lock(&self.state).fault = fault;
     }
 
     /// What it saw so far.
@@ -261,7 +334,13 @@ fn u32_option(options: &HashMap<String, OwnedValue>, key: &str) -> Option<u32> {
 }
 
 /// `org.freedesktop.portal.Request.Response` to the caller.
-async fn respond(conn: &zbus::Connection, header: &zbus::message::Header<'_>, request: &OwnedObjectPath, code: u32, results: HashMap<&str, Value<'_>>) -> zbus::fdo::Result<()> {
+async fn respond(
+    conn: &zbus::Connection,
+    header: &zbus::message::Header<'_>,
+    request: &OwnedObjectPath,
+    code: u32,
+    results: HashMap<&str, Value<'_>>,
+) -> zbus::fdo::Result<()> {
     conn.emit_signal(header.sender().map(|s| s.as_str()), request.as_str(), "org.freedesktop.portal.Request", "Response", &(code, results))
         .await
         .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
@@ -301,20 +380,26 @@ impl RemoteDesktopIface {
         #[zbus(header)] header: zbus::message::Header<'_>,
         #[zbus(connection)] conn: &zbus::Connection,
         #[zbus(object_server)] server: &zbus::ObjectServer,
-    ) -> zbus::fdo::Result<OwnedObjectPath> {
+    ) -> Result<OwnedObjectPath, PortalError> {
         let request = handle(&header, "request", &options, "handle_token")?;
-        server.at(request.as_ref(), RequestIface { state: self.state.clone() }).await?;
         let select = Select {
             types: u32_option(&options, "types").unwrap_or(0),
             persist_mode: u32_option(&options, "persist_mode").unwrap_or(0),
             restore_token: string_option(&options, "restore_token"),
         };
+        lock(&self.state).record.selects.push(select.clone());
+        if select.restore_token.as_deref().is_some_and(|token| !is_uuid(token)) {
+            return Err(PortalError::InvalidArgument("Restore token is not a valid UUID string".into()));
+        }
+        server.at(request.as_ref(), RequestIface { state: self.state.clone() }).await?;
         let known = {
             let mut state = lock(&self.state);
-            state.record.selects.push(select.clone());
+            // The permission store's entry is taken out now; a successful start puts it back.
+            let restoring = select.restore_token.clone().filter(|token| state.granted.remove(token));
             match state.sessions.get_mut(session_handle.as_str()) {
                 Some(session) => {
                     session.select = Some(select);
+                    session.restoring = restoring;
                     true
                 }
                 None => false,
@@ -339,14 +424,11 @@ impl RemoteDesktopIface {
         let code = {
             let mut state = lock(&self.state);
             let device_types = state.device_types;
-            let select = match state.sessions.get(session_handle.as_str()) {
-                Some(session) => session.select.clone().unwrap_or_default(),
+            let (select, restoring) = match state.sessions.get(session_handle.as_str()) {
+                Some(session) => (session.select.clone().unwrap_or_default(), session.restoring.clone()),
                 None => return Err(zbus::fdo::Error::Failed("unknown session".into())),
             };
-            // xdg-desktop-portal takes the permission store's entry for a restore token out
-            // before it starts the session: a token is good for one start.
-            let restored = select.restore_token.as_ref().is_some_and(|token| state.granted.remove(token));
-            let answer = if restored {
+            let answer = if restoring.is_some() {
                 state.record.restored += 1;
                 Answer::Allow
             } else {
@@ -356,8 +438,13 @@ impl RemoteDesktopIface {
             match answer {
                 Answer::Allow | Answer::AllowOnce => {
                     if answer == Answer::Allow && select.persist_mode == 2 {
-                        state.next_token += 1;
-                        let token = format!("restore-{}", state.next_token);
+                        let token = match restoring {
+                            Some(token) if !state.rotate => token,
+                            _ => {
+                                state.next_token += 1;
+                                format!("00000000-0000-4000-8000-{:012x}", state.next_token)
+                            }
+                        };
                         state.granted.insert(token.clone());
                         state.record.issued.push(token.clone());
                         results.insert("restore_token", Value::from(token));
@@ -375,13 +462,23 @@ impl RemoteDesktopIface {
         };
         if let Some(code) = code {
             respond(conn, &header, &request, code, results).await?;
+            if code != 0 {
+                // xdg-desktop-portal closes a session whose start did not succeed.
+                {
+                    let mut state = lock(&self.state);
+                    if state.sessions.remove(session_handle.as_str()).is_some() {
+                        state.record.ended_sessions += 1;
+                    }
+                }
+                let _ = server.remove::<SessionIface, _>(session_handle.as_ref()).await;
+            }
         }
         Ok(request)
     }
 
     #[zbus(name = "ConnectToEIS")]
     async fn connect_to_eis(&self, session_handle: ObjectPath<'_>, _options: HashMap<String, OwnedValue>) -> zbus::fdo::Result<zbus::zvariant::OwnedFd> {
-        let (layout, index) = {
+        let (layout, fault, index) = {
             let mut state = lock(&self.state);
             if state.version < 2 {
                 return Err(zbus::fdo::Error::UnknownMethod("ConnectToEIS needs version 2".into()));
@@ -389,14 +486,17 @@ impl RemoteDesktopIface {
             if !state.sessions.get(session_handle.as_str()).is_some_and(|s| s.started) {
                 return Err(zbus::fdo::Error::Failed("session not started".into()));
             }
+            if state.fault == Fault::RefuseEis {
+                return Err(zbus::fdo::Error::Failed("no EIS for this session".into()));
+            }
             state.record.eis_connections += 1;
             state.record.keys.push(Vec::new());
-            (state.layout.clone(), state.record.keys.len() - 1)
+            (state.layout.clone(), state.fault, state.record.keys.len() - 1)
         };
         let (ours, theirs) = UnixStream::pair().map_err(|e| zbus::fdo::Error::IOError(e.to_string()))?;
         let state = self.state.clone();
         std::thread::spawn(move || {
-            if let Err(e) = serve_eis(ours, &layout, &state, index) {
+            if let Err(e) = serve_eis(ours, &layout, fault, &state, index) {
                 eprintln!("fake EIS keyboard: {e}");
             }
         });
@@ -434,8 +534,9 @@ struct SessionIface {
 impl SessionIface {
     async fn close(&self) {
         let mut state = lock(&self.state);
-        state.record.closed_sessions += 1;
-        state.sessions.remove(&self.path);
+        if state.sessions.remove(&self.path).is_some() {
+            state.record.closed_sessions += 1;
+        }
     }
 
     #[zbus(property, name = "version")]
@@ -447,8 +548,16 @@ impl SessionIface {
 /// `layout` compiled to a keymap and put in a file, NUL-terminated as Mutter sends it.
 fn keymap_file(layout: &Layout) -> Result<(std::fs::File, u32), String> {
     let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
-    let keymap = xkb::Keymap::new_from_names(&context, "evdev", "pc105", layout.layout.as_str(), layout.variant.as_str(), layout.options.clone(), xkb::KEYMAP_COMPILE_NO_FLAGS)
-        .ok_or_else(|| format!("no keymap for {layout:?} (is xkb-data installed?)"))?;
+    let keymap = xkb::Keymap::new_from_names(
+        &context,
+        "evdev",
+        "pc105",
+        layout.layout.as_str(),
+        layout.variant.as_str(),
+        layout.options.clone(),
+        xkb::KEYMAP_COMPILE_NO_FLAGS,
+    )
+    .ok_or_else(|| format!("no keymap for {layout:?} (is xkb-data installed?)"))?;
     let text = keymap.get_as_string(xkb::KEYMAP_FORMAT_TEXT_V1);
     let mut file = tempfile::tempfile().map_err(|e| e.to_string())?;
     file.write_all(text.as_bytes()).and_then(|()| file.write_all(&[0])).map_err(|e| e.to_string())?;
@@ -472,7 +581,7 @@ fn readable(fd: &impl AsFd, deadline: Instant) -> Result<(), String> {
 
 /// One EIS client: the handshake, a seat with a keyboard, the keyboard (keymap, active group,
 /// resumed) once the client binds it, then every key until the client disconnects.
-fn serve_eis(stream: UnixStream, layout: &Layout, state: &Shared, index: usize) -> Result<(), String> {
+fn serve_eis(stream: UnixStream, layout: &Layout, fault: Fault, state: &Shared, index: usize) -> Result<(), String> {
     let context = eis::Context::new(stream).map_err(|e| e.to_string())?;
     let deadline = Instant::now() + EIS_PATIENCE;
     let mut handshaker = reis::handshake::EisHandshaker::new(&context, 1);
@@ -492,6 +601,7 @@ fn serve_eis(stream: UnixStream, layout: &Layout, state: &Shared, index: usize) 
     let _seat = converter.handle().add_seat(Some("seat0"), DeviceCapability::Keyboard.into());
     context.flush().map_err(|e| e.to_string())?;
     let (file, size) = keymap_file(layout)?;
+    let mut emulating = false;
     loop {
         readable(&context, deadline)?;
         match context.read() {
@@ -499,34 +609,49 @@ fn serve_eis(stream: UnixStream, layout: &Layout, state: &Shared, index: usize) 
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(()),
             Err(e) => return Err(e.to_string()),
         }
+        // One message at a time, its effects recorded before the next: a `sync` after the keys is
+        // answered only once they are in the record, as libeis answers it once they are handled.
         while let Some(pending) = context.pending_request() {
             let PendingRequestResult::Request(request) = pending else {
                 return Err(format!("bad message: {pending:?}"));
             };
             converter.handle_request(request).map_err(|e| e.to_string())?;
-        }
-        while let Some(request) = converter.next_request() {
-            match request {
-                EisRequest::Bind(bind) if bind.capabilities.contains(DeviceCapability::Keyboard) => {
-                    let device = bind.seat.add_device(Some("fake keyboard"), eis::device::DeviceType::Virtual, DeviceCapability::Keyboard.into(), |device| {
+            while let Some(request) = converter.next_request() {
+                match request {
+                    EisRequest::Bind(_) if fault == Fault::CloseAtBind => return Ok(()),
+                    EisRequest::Bind(bind) if bind.capabilities.contains(DeviceCapability::Keyboard) => {
+                        let device =
+                            bind.seat.add_device(Some("fake keyboard"), eis::device::DeviceType::Virtual, DeviceCapability::Keyboard.into(), |device| {
+                                if let Some(keyboard) = device.interface::<eis::Keyboard>() {
+                                    keyboard.keymap(eis::keyboard::KeymapType::Xkb, size, file.as_fd());
+                                }
+                            });
+                        // Mutter: the device, its resume, then the modifiers and the active layout.
+                        device.resumed();
                         if let Some(keyboard) = device.interface::<eis::Keyboard>() {
-                            keyboard.keymap(eis::keyboard::KeymapType::Xkb, size, file.as_fd());
+                            converter.handle().with_next_serial(|serial| keyboard.modifiers(serial, 0, 0, 0, layout.group));
                         }
-                    });
-                    if let Some(keyboard) = device.interface::<eis::Keyboard>() {
-                        converter.handle().with_next_serial(|serial| keyboard.modifiers(serial, 0, 0, 0, layout.group));
+                        context.flush().map_err(|e| e.to_string())?;
                     }
-                    device.resumed();
-                    context.flush().map_err(|e| e.to_string())?;
-                }
-                EisRequest::KeyboardKey(key) => {
-                    let pressed = key.state == eis::keyboard::KeyState::Press;
-                    if let Some(keys) = lock(state).record.keys.get_mut(index) {
+                    EisRequest::DeviceStartEmulating(_) => emulating = true,
+                    EisRequest::DeviceStopEmulating(_) => emulating = false,
+                    EisRequest::KeyboardKey(key) => {
+                        let pressed = key.state == eis::keyboard::KeyState::Press;
+                        let mut state = lock(state);
+                        if !emulating {
+                            state.record.protocol_errors.push(format!("key {} outside an emulation sequence", key.key));
+                        }
+                        let Some(keys) = state.record.keys.get_mut(index) else { continue };
                         keys.push((key.key, pressed));
+                        if let Fault::CloseAfterKeys(n) = fault
+                            && keys.len() >= n
+                        {
+                            return Ok(());
+                        }
                     }
+                    EisRequest::Disconnect => return Ok(()),
+                    _ => {}
                 }
-                EisRequest::Disconnect => return Ok(()),
-                _ => {}
             }
         }
     }

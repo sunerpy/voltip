@@ -7942,8 +7942,10 @@ name = "voltip-inject"
 version = "0.0.0"
 dependencies = [
  "arboard",
+ "async-io",
  "clipboard-win",
  "enigo",
+ "futures-util",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",

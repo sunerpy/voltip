@@ -1993,10 +1993,10 @@ pub fn run() {
     config.media_decoder = Some(Arc::new(voltip_media::Decoder));
     // docs/dictation.md §4.6.1: the weekly automatic backup, and the backups' state in the settings.
     config.auto_backup = true;
-    let ports = dictation::production_ports(config.models_root.clone(), &config.network);
+    let secrets = secret_store();
+    let ports = dictation::production_ports(config.models_root.clone(), &config.network, secrets.clone());
     // docs/pairing.md 「设备票据」: an official build shows its relay and the built-in service a
     // ticket for this device.
-    let secrets = secret_store();
     config.tickets = voltip_cloud::access::device_tickets(&config.data_dir, secrets.clone(), &config.network, std::env::consts::OS);
     // docs/dictation.md §33.4: a window running interface code this program does not carry reloads.
     let guard = ui_guard::init(context.assets());

@@ -884,6 +884,10 @@ pub enum ClipboardCode {
     /// Another window came to the front while the take was processed (docs/dictation.md §14.3):
     /// the text was copied, not pasted where the user no longer is.
     TargetChanged,
+    /// The system did not allow Voltip's remote interaction (GNOME asks through its remote-desktop
+    /// portal, docs/dictation.md §14.9): the user refused or closed the dialog. The text waits on
+    /// the clipboard; the next paste asks again.
+    RemoteDenied,
     /// Anything else.
     Other,
 }

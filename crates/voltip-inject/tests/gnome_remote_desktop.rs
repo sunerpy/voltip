@@ -17,8 +17,12 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use support::portal::{FakePortal, KEYBOARD, PrivateBus};
-use voltip_inject::KeystrokePort as _;
+use std::sync::Arc;
+
+use support::portal::{Answer, FakePortal, Fault, KEYBOARD, Layout, POINTER, PrivateBus};
+use voltip_inject::platform::{KeyStep, chord_steps, copy_steps};
+use voltip_inject::portal::{Limits, PortalError, RemoteDesktop};
+use voltip_inject::{Chord, Key, KeystrokePort as _, MemoryRestoreTokens, Modifier, RestoreTokens as _};
 
 /// Set in the child process a test starts.
 const CHILD: &str = "VOLTIP_PORTAL_TEST_CHILD";
@@ -29,7 +33,7 @@ const CHILD_PATIENCE: Duration = Duration::from_secs(120);
 /// Ctrl+V on a US layout: evdev `KEY_LEFTCTRL` and `KEY_V`, down and up.
 const CTRL_V: [(u32, bool); 4] = [(29, true), (47, true), (47, false), (29, false)];
 /// What a coverage or debugging run needs in the child too.
-const PASSED_THROUGH: &[&str] = &["LLVM_PROFILE_FILE", "CARGO_LLVM_COV", "CARGO_LLVM_COV_TARGET_DIR", "RUST_BACKTRACE", "RUST_LOG"];
+const PASSED_THROUGH: &[&str] = &["LLVM_PROFILE_FILE", "CARGO_LLVM_COV", "CARGO_LLVM_COV_TARGET_DIR", "RUST_BACKTRACE", "RUST_LOG", "REIS_DEBUG"];
 
 /// Run `test` of this binary again in a child process: a GNOME Wayland session without XWayland
 /// and without any paste tool on its `PATH`, whose session bus is `bus`. Returns the child's
@@ -125,4 +129,281 @@ fn regression_gnome_pastes_ask_for_remote_interaction_once() {
     let mut expected = vec![None];
     expected.extend(record.issued.iter().take(PASTES - 1).cloned().map(Some));
     assert_eq!(offered, expected, "each paste offers the token the portal handed out last");
+    assert!(record.protocol_errors.is_empty(), "{:?}", record.protocol_errors);
+    assert_eq!(record.open_sessions(), 0);
+}
+
+/// Ctrl+V as the chain presses it.
+fn ctrl_v() -> Vec<KeyStep> {
+    chord_steps(voltip_inject::paste_chord_for("linux"), "linux", 0)
+}
+
+/// A portal client over `tokens`, the store a restart of Voltip finds again (the keychain).
+fn client(bus: &PrivateBus, tokens: &Arc<MemoryRestoreTokens>) -> RemoteDesktop {
+    RemoteDesktop::at(bus.address.clone(), tokens.clone(), Limits::default())
+}
+
+/// The restore token each `SelectDevices` offered, in order.
+fn offered(portal: &FakePortal) -> Vec<Option<String>> {
+    portal.record().selects.into_iter().map(|s| s.restore_token).collect()
+}
+
+/// A restart of Voltip: a new client over the same token store restores the grant.
+#[test]
+fn a_restart_restores_the_saved_grant() {
+    let bus = PrivateBus::start();
+    let portal = FakePortal::start(&bus);
+    let tokens = Arc::new(MemoryRestoreTokens::new());
+    client(&bus, &tokens).press(&ctrl_v()).unwrap();
+    client(&bus, &tokens).press(&ctrl_v()).unwrap();
+    let record = portal.record();
+    assert_eq!((record.dialogs, record.restored), (1, 1), "{record:?}");
+    assert_eq!(tokens.load(), record.issued.last().cloned(), "the token handed out last is the one saved");
+    assert_eq!(record.keys, vec![CTRL_V.to_vec(); 2]);
+    assert_eq!(record.open_sessions(), 0);
+    assert!(record.protocol_errors.is_empty(), "{:?}", record.protocol_errors);
+}
+
+/// A portal that hands out a new token for every start: each one replaces the saved one.
+#[test]
+fn a_new_token_replaces_the_saved_one() {
+    let bus = PrivateBus::start();
+    let portal = FakePortal::start(&bus);
+    portal.rotate_tokens();
+    let tokens = Arc::new(MemoryRestoreTokens::new());
+    let desktop = client(&bus, &tokens);
+    for _ in 0..3 {
+        desktop.press(&ctrl_v()).unwrap();
+    }
+    let record = portal.record();
+    assert_eq!((record.dialogs, record.restored), (1, 2), "{record:?}");
+    let issued = record.issued.clone();
+    assert_eq!(issued.len(), 3);
+    assert!(issued[0] != issued[1] && issued[1] != issued[2], "{issued:?}");
+    assert_eq!(offered(&portal), vec![None, Some(issued[0].clone()), Some(issued[1].clone())]);
+    assert_eq!(tokens.load().as_deref(), Some(issued[2].as_str()));
+}
+
+/// The user removed the permission: the next paste asks once, the ones after it are restored.
+#[test]
+fn a_revoked_grant_asks_once_more() {
+    let bus = PrivateBus::start();
+    let portal = FakePortal::start(&bus);
+    let tokens = Arc::new(MemoryRestoreTokens::new());
+    let desktop = client(&bus, &tokens);
+    desktop.press(&ctrl_v()).unwrap();
+    portal.revoke();
+    desktop.press(&ctrl_v()).unwrap();
+    desktop.press(&ctrl_v()).unwrap();
+    let record = portal.record();
+    assert_eq!((record.dialogs, record.restored), (2, 1), "{record:?}");
+    assert_eq!(record.keys, vec![CTRL_V.to_vec(); 3]);
+    assert_eq!(tokens.load(), record.issued.last().cloned());
+}
+
+/// "Cancel": nothing is pressed, no token is kept, and the next paste asks again.
+#[test]
+fn a_refusal_asks_again_at_the_next_paste() {
+    let bus = PrivateBus::start();
+    let portal = FakePortal::start(&bus);
+    let tokens = Arc::new(MemoryRestoreTokens::new());
+    let desktop = client(&bus, &tokens);
+    portal.answer(&[Answer::Deny]);
+    assert_eq!(desktop.press(&ctrl_v()), Err(PortalError::Declined("the user cancelled".into())));
+    assert_eq!(tokens.load(), None);
+    let record = portal.record();
+    assert_eq!((record.dialogs, record.eis_connections, record.open_sessions()), (1, 0, 0), "{record:?}");
+    desktop.press(&ctrl_v()).unwrap();
+    let record = portal.record();
+    assert_eq!(record.dialogs, 2, "{record:?}");
+    assert_eq!(record.keys, vec![CTRL_V.to_vec()]);
+
+    // A refusal after a revoke forgets the token the portal no longer knows.
+    portal.revoke();
+    portal.answer(&[Answer::Deny]);
+    assert!(matches!(desktop.press(&ctrl_v()), Err(PortalError::Declined(_))));
+    assert_eq!(tokens.load(), None);
+    desktop.press(&ctrl_v()).unwrap();
+    assert_eq!(offered(&portal).last(), Some(&None), "the forgotten token is not offered again");
+    assert_eq!(portal.record().open_sessions(), 0);
+}
+
+/// Nobody answers the dialog: the request is closed at the limit, which closes the dialog.
+#[test]
+fn an_unanswered_dialog_is_closed_at_the_limit() {
+    let bus = PrivateBus::start();
+    let portal = FakePortal::start(&bus);
+    portal.answer(&[Answer::Ignore]);
+    let tokens = Arc::new(MemoryRestoreTokens::new());
+    let limits = Limits { answer: Duration::from_millis(300), ..Limits::default() };
+    let err = RemoteDesktop::at(bus.address.clone(), tokens.clone(), limits).press(&ctrl_v()).unwrap_err();
+    assert!(matches!(&err, PortalError::Declined(reason) if reason.starts_with("no answer within")), "{err:?}");
+    let record = portal.record();
+    assert_eq!((record.closed_requests, record.open_sessions(), record.eis_connections), (1, 0, 0), "{record:?}");
+    assert_eq!(tokens.load(), None);
+}
+
+/// "Share" without "Remember This Selection": this paste goes out, the next one asks again.
+#[test]
+fn a_grant_for_one_paste_keeps_no_token() {
+    let bus = PrivateBus::start();
+    let portal = FakePortal::start(&bus);
+    portal.answer(&[Answer::AllowOnce]);
+    let tokens = Arc::new(MemoryRestoreTokens::new());
+    let desktop = client(&bus, &tokens);
+    desktop.press(&ctrl_v()).unwrap();
+    assert_eq!(tokens.load(), None);
+    desktop.press(&ctrl_v()).unwrap();
+    desktop.press(&ctrl_v()).unwrap();
+    let record = portal.record();
+    assert_eq!((record.dialogs, record.restored), (2, 1), "{record:?}");
+    assert_eq!(record.keys.len(), 3);
+}
+
+/// The request ended some other way (response 2): the portal closed the session, nothing is
+/// pressed, and it is not the user's refusal.
+#[test]
+fn an_ended_request_is_a_failure_not_a_refusal() {
+    let bus = PrivateBus::start();
+    let portal = FakePortal::start(&bus);
+    portal.answer(&[Answer::End]);
+    let tokens = Arc::new(MemoryRestoreTokens::new());
+    assert_eq!(client(&bus, &tokens).press(&ctrl_v()), Err(PortalError::Broken("Start answered 2".into())));
+    let record = portal.record();
+    assert_eq!((record.ended_sessions, record.open_sessions(), record.eis_connections), (1, 0, 0), "{record:?}");
+}
+
+/// A portal without `ConnectToEIS` (version 1) or without a keyboard, and no portal at all: the
+/// next tool of the chain tries, and nothing is requested.
+#[test]
+fn portals_without_eis_or_a_keyboard_are_unavailable() {
+    for (version, types) in [(1, KEYBOARD | POINTER), (2, POINTER)] {
+        let bus = PrivateBus::start();
+        let portal = FakePortal::with(&bus, version, types);
+        let desktop = client(&bus, &Arc::new(MemoryRestoreTokens::new()));
+        assert!(matches!(desktop.available(), Err(PortalError::Unavailable(_))), "version {version}, types {types}");
+        assert!(matches!(desktop.press(&ctrl_v()), Err(PortalError::Unavailable(_))));
+        assert_eq!(portal.record().sessions, 0);
+    }
+    let bus = PrivateBus::start();
+    let desktop = client(&bus, &Arc::new(MemoryRestoreTokens::new()));
+    let err = desktop.available().unwrap_err();
+    assert!(matches!(&err, PortalError::Unavailable(reason) if reason.contains("org.freedesktop.portal.Desktop")), "{err:?}");
+    assert!(client(&bus, &Arc::new(MemoryRestoreTokens::new())).available().is_err());
+    let portal = FakePortal::start(&bus);
+    assert_eq!(desktop.available(), Ok(()));
+    assert_eq!(portal.record().sessions, 0, "availability asks for nothing");
+}
+
+/// A saved token the portal refuses outright (not a UUID): dropped, and the session asked for
+/// once more without it.
+#[test]
+fn a_malformed_saved_token_is_dropped() {
+    let bus = PrivateBus::start();
+    let portal = FakePortal::start(&bus);
+    let tokens = Arc::new(MemoryRestoreTokens::new());
+    tokens.save("not-a-token");
+    client(&bus, &tokens).press(&ctrl_v()).unwrap();
+    let record = portal.record();
+    assert_eq!(offered(&portal), vec![Some("not-a-token".to_string()), None]);
+    assert_eq!((record.dialogs, record.sessions, record.open_sessions()), (1, 2, 0), "{record:?}");
+    assert_eq!(tokens.load(), record.issued.last().cloned());
+}
+
+/// A grant an earlier run left in the permission store needs no dialog.
+#[test]
+fn a_grant_left_by_an_earlier_run_needs_no_dialog() {
+    let bus = PrivateBus::start();
+    let portal = FakePortal::start(&bus);
+    let token = "00000000-0000-4000-8000-0000000000aa";
+    portal.grant(token);
+    let tokens = Arc::new(MemoryRestoreTokens::new());
+    tokens.save(token);
+    client(&bus, &tokens).press(&ctrl_v()).unwrap();
+    let record = portal.record();
+    assert_eq!((record.dialogs, record.restored), (0, 1), "{record:?}");
+    assert_eq!(tokens.load().as_deref(), Some(token), "xdg-desktop-portal hands the same token back");
+}
+
+/// The keys come from the keymap the compositor announced: Dvorak's `v`, Ctrl+V on a Russian
+/// layout, Control on Caps Lock, and the active layout of two.
+#[test]
+fn keys_follow_the_announced_layout() {
+    let cases = [
+        (Layout::names("us", "dvorak", None, 0), vec![(29, true), (52, true), (52, false), (29, false)]),
+        (Layout::names("ru,us", ",", None, 0), CTRL_V.to_vec()),
+        (Layout::names("us", "", Some("ctrl:swapcaps"), 0), vec![(58, true), (47, true), (47, false), (58, false)]),
+        (Layout::names("us,us", "dvorak,", None, 0), vec![(29, true), (52, true), (52, false), (29, false)]),
+        (Layout::names("us,us", "dvorak,", None, 1), CTRL_V.to_vec()),
+    ];
+    for (layout, expected) in cases {
+        let bus = PrivateBus::start();
+        let portal = FakePortal::start(&bus);
+        portal.set_layout(layout.clone());
+        client(&bus, &Arc::new(MemoryRestoreTokens::new())).press(&ctrl_v()).unwrap();
+        assert_eq!(portal.record().keys, vec![expected], "{layout:?}");
+    }
+}
+
+/// Ctrl+Shift+V, Shift+Insert, and the voice-editing copy (Ctrl+Insert) with the hotkey's
+/// modifiers still held: the virtual keyboard does not release keys it never pressed.
+#[test]
+fn other_chords_and_the_copy() {
+    let bus = PrivateBus::start();
+    let portal = FakePortal::start(&bus);
+    let desktop = client(&bus, &Arc::new(MemoryRestoreTokens::new()));
+    let ctrl_shift_v = Chord { control: true, meta: false, shift: true, key: Key::Char('v') };
+    let shift_insert = Chord { control: false, meta: false, shift: true, key: Key::Insert };
+    desktop.press(&chord_steps(ctrl_shift_v, "linux", 0)).unwrap();
+    desktop.press(&chord_steps(shift_insert, "linux", 0)).unwrap();
+    desktop.press(&copy_steps(voltip_inject::copy_chord_for("linux"), "linux", 0, &[Modifier::Control, Modifier::Alt])).unwrap();
+    assert_eq!(
+        portal.record().keys,
+        vec![
+            vec![(29, true), (42, true), (47, true), (47, false), (42, false), (29, false)],
+            vec![(42, true), (110, true), (110, false), (42, false)],
+            vec![(29, true), (110, true), (110, false), (29, false)],
+        ]
+    );
+    assert_eq!(portal.record().dialogs, 1);
+}
+
+/// Two chords at once (a paste and a copy): one waits for the other, and one grant serves both.
+#[test]
+fn concurrent_chords_share_one_grant() {
+    let bus = PrivateBus::start();
+    let portal = FakePortal::start(&bus);
+    let tokens = Arc::new(MemoryRestoreTokens::new());
+    let threads: Vec<_> = (0..2)
+        .map(|_| {
+            let desktop = client(&bus, &tokens);
+            std::thread::spawn(move || desktop.press(&ctrl_v()))
+        })
+        .collect();
+    for thread in threads {
+        thread.join().unwrap().unwrap();
+    }
+    let record = portal.record();
+    assert_eq!((record.dialogs, record.restored, record.open_sessions()), (1, 1, 0), "{record:?}");
+}
+
+/// The keyboard fails after the grant. Before any key: broken, the grant is kept for the next
+/// paste. During the chord: lost, and the chain must not paste again.
+#[test]
+fn keyboards_that_fail() {
+    let bus = PrivateBus::start();
+    let portal = FakePortal::start(&bus);
+    let tokens = Arc::new(MemoryRestoreTokens::new());
+    let desktop = client(&bus, &tokens);
+    portal.fault(Fault::RefuseEis);
+    assert!(matches!(desktop.press(&ctrl_v()), Err(PortalError::Broken(reason)) if reason.starts_with("ConnectToEIS")));
+    portal.fault(Fault::CloseAtBind);
+    assert_eq!(desktop.press(&ctrl_v()), Err(PortalError::Broken("the compositor closed the keyboard".into())));
+    portal.fault(Fault::CloseAfterKeys(2));
+    assert!(matches!(desktop.press(&ctrl_v()), Err(PortalError::Lost(_))));
+    portal.fault(Fault::None);
+    desktop.press(&ctrl_v()).unwrap();
+    let record = portal.record();
+    assert_eq!((record.dialogs, record.restored, record.open_sessions()), (1, 3, 0), "{record:?}");
+    assert_eq!(record.keys.last(), Some(&CTRL_V.to_vec()));
 }
