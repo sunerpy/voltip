@@ -180,9 +180,9 @@ tauri = { version = "=2.12.5", default-features = false, features = ["wry", "tes
 # tests/bundle.rs: the merged per-target tauri.*.conf.json through Tauri's own config schema (the
 # version tauri-build already resolves, so nothing new is compiled).
 tauri-utils = { version = "=2.10.2", default-features = false }
-# tests/bundle.rs: merges a --config overlay the way the Tauri CLI does (the version tauri-utils
-# already uses).
-json-patch = { version = "=4.2.0", default-features = false }
+# tests/bundle.rs: merges a --config overlay the way the Tauri CLI does. 5.0 only moves its JSON
+# Pointer dependency to jsonptr 0.8: `merge` (RFC 7396) is the code of the 4.2 tauri-utils uses.
+json-patch = { version = "=5.0.0", default-features = false }
 tempfile.workspace = true
 # The automatic update's looks hours apart, on a paused clock (src/update.rs).
 tokio = { workspace = true, features = ["test-util"] }

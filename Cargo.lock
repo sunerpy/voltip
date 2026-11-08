@@ -225,7 +225,7 @@ dependencies = [
  "objc2-core-foundation",
  "objc2-core-graphics",
  "objc2-foundation",
- "parking_lot",
+ "parking_lot 0.12.5",
  "percent-encoding",
  "windows-sys 0.61.2",
  "wl-clipboard-rs",
@@ -3280,7 +3280,19 @@ version = "4.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7421438de105a0827e44fadd05377727847d717c80ce29a229f85fd04c427b72"
 dependencies = [
- "jsonptr",
+ "jsonptr 0.7.1",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "json-patch"
+version = "5.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa295c8f71b9bad32d060e0e145f96dcba0cc6c6171e129646140d1c96b05617"
+dependencies = [
+ "jsonptr 0.8.2",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -3291,6 +3303,16 @@ name = "jsonptr"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a5a3cc660ba5d72bce0b3bb295bf20847ccbb40fd423f3f05b61273672e561fe"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "jsonptr"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72c22d99362c7aac7d77efab6b49c2181674b165d7e6e7c755b3432ded64bf51"
 dependencies = [
  "serde",
  "serde_json",
@@ -3436,6 +3458,15 @@ name = "lock_api"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "224399e74b87b5f3557511d98dff8b14089b3dadafcab6bb93eab67d3aace965"
+dependencies = [
+ "scopeguard",
+]
+
+[[package]]
+name = "lock_api"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65d91b22da179613dcf4d6ec8349563f52a363f6849e03b00dd0a185ec4a59af"
 dependencies = [
  "scopeguard",
 ]
@@ -4248,8 +4279,18 @@ version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "93857453250e3077bd71ff98b6a65ea6621a19bb0f559a85248955ac12c45a1a"
 dependencies = [
- "lock_api",
- "parking_lot_core",
+ "lock_api 0.4.14",
+ "parking_lot_core 0.9.12",
+]
+
+[[package]]
+name = "parking_lot"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a9cf937ca4e1d0b7578784559063422fc39ae7c5a00f02471f2614d5486fd226"
+dependencies = [
+ "lock_api 0.5.0",
+ "parking_lot_core 0.10.0",
 ]
 
 [[package]]
@@ -4260,7 +4301,19 @@ checksum = "2621685985a2ebf1c516881c026032ac7deafcda1a2c9b7850dc81e3dfcb64c1"
 dependencies = [
  "cfg-if",
  "libc",
- "redox_syscall",
+ "redox_syscall 0.5.18",
+ "smallvec",
+ "windows-link 0.2.1",
+]
+
+[[package]]
+name = "parking_lot_core"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9cfff060068cc18aa7815010fcaf80c68c7fb9e85fc7f5c0f9bf142c21d19826"
+dependencies = [
+ "libc",
+ "redox_syscall 0.9.5",
  "smallvec",
  "windows-link 0.2.1",
 ]
@@ -4822,6 +4875,15 @@ name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
+dependencies = [
+ "bitflags 2.13.2",
+]
+
+[[package]]
+name = "redox_syscall"
+version = "0.9.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "580c875845b41ecb1564ad1ae4703044cef774145e3d7a94dc2b3fa7c97868fd"
 dependencies = [
  "bitflags 2.13.2",
 ]
@@ -5798,7 +5860,7 @@ dependencies = [
  "objc2-foundation",
  "objc2-quartz-core",
  "raw-window-handle",
- "redox_syscall",
+ "redox_syscall 0.5.18",
  "tracing",
  "wasm-bindgen",
  "web-sys",
@@ -5966,7 +6028,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a18596f8c785a729f2819c0f6a7eae6ebeebdfffbfe4214ae6b087f690e31901"
 dependencies = [
  "new_debug_unreachable",
- "parking_lot",
+ "parking_lot 0.12.5",
  "phf_shared",
  "precomputed-hash",
 ]
@@ -6294,7 +6356,7 @@ dependencies = [
  "objc2-app-kit",
  "objc2-foundation",
  "objc2-ui-kit",
- "parking_lot",
+ "parking_lot 0.12.5",
  "percent-encoding",
  "raw-window-handle",
  "tao-macros",
@@ -6396,7 +6458,7 @@ dependencies = [
  "dirs",
  "glob",
  "heck 0.5.0",
- "json-patch",
+ "json-patch 4.2.0",
  "schemars 0.8.22",
  "semver",
  "serde",
@@ -6417,7 +6479,7 @@ dependencies = [
  "base64 0.23.1",
  "brotli",
  "ico",
- "json-patch",
+ "json-patch 4.2.0",
  "plist",
  "png",
  "proc-macro2",
@@ -6686,7 +6748,7 @@ dependencies = [
  "glob",
  "http",
  "infer",
- "json-patch",
+ "json-patch 4.2.0",
  "log",
  "memchr",
  "phf",
@@ -7574,7 +7636,7 @@ version = "0.0.0"
 dependencies = [
  "hex",
  "hmac 0.13.0",
- "parking_lot",
+ "parking_lot 0.13.0",
  "reqwest",
  "serde",
  "serde_json",
@@ -7624,7 +7686,7 @@ dependencies = [
  "bzip2 0.6.1",
  "fs4",
  "hound",
- "parking_lot",
+ "parking_lot 0.13.0",
  "reqwest",
  "rubato",
  "serde",
@@ -7665,7 +7727,7 @@ dependencies = [
  "async-trait",
  "futures-util",
  "hex",
- "parking_lot",
+ "parking_lot 0.13.0",
  "reqwest",
  "serde",
  "serde_json",
@@ -7700,7 +7762,7 @@ dependencies = [
  "hex",
  "hyper-util",
  "opus-rs",
- "parking_lot",
+ "parking_lot 0.13.0",
  "regex",
  "rusqlite",
  "serde",
@@ -7760,12 +7822,12 @@ dependencies = [
  "directories",
  "flate2",
  "futures-util",
- "json-patch",
+ "json-patch 5.0.0",
  "libc",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
- "parking_lot",
+ "parking_lot 0.13.0",
  "raw-window-handle",
  "security-framework",
  "security-framework-sys",
@@ -7822,7 +7884,7 @@ dependencies = [
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
- "parking_lot",
+ "parking_lot 0.13.0",
  "serde",
  "tracing",
  "voltip-inject",
@@ -7851,7 +7913,7 @@ dependencies = [
  "android-native-keyring-store",
  "keyring",
  "keyring-core",
- "parking_lot",
+ "parking_lot 0.13.0",
  "security-framework",
  "serde",
  "serde_json",
@@ -7885,7 +7947,7 @@ version = "0.0.0"
 dependencies = [
  "async-trait",
  "axum",
- "parking_lot",
+ "parking_lot 0.13.0",
  "reqwest",
  "rmcp",
  "serde_json",
@@ -7973,7 +8035,7 @@ dependencies = [
  "base64 0.23.1",
  "http",
  "hyper-util",
- "parking_lot",
+ "parking_lot 0.13.0",
  "reqwest",
  "thiserror 2.0.21",
  "tokio",
@@ -8077,7 +8139,7 @@ dependencies = [
  "hex",
  "hmac 0.13.0",
  "ipnet",
- "parking_lot",
+ "parking_lot 0.13.0",
  "rand 0.10.3",
  "serde",
  "serde_json",
@@ -8109,7 +8171,7 @@ dependencies = [
  "axum",
  "futures-util",
  "hound",
- "parking_lot",
+ "parking_lot 0.13.0",
  "reqwest",
  "rubato",
  "serde",
@@ -8152,7 +8214,7 @@ dependencies = [
 name = "voltip-tauri-bridge"
 version = "0.0.0"
 dependencies = [
- "parking_lot",
+ "parking_lot 0.13.0",
  "serde",
  "serde_json",
  "tempfile",
@@ -8175,7 +8237,7 @@ version = "0.0.0"
 dependencies = [
  "async-trait",
  "futures-util",
- "parking_lot",
+ "parking_lot 0.13.0",
  "rand 0.10.3",
  "rustls",
  "serde",
