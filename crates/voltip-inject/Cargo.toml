@@ -29,9 +29,10 @@ voltip-platform = { path = "../voltip-platform" }
 [target.'cfg(target_os = "linux")'.dependencies]
 arboard = { workspace = true, features = ["image-data"] }
 # GNOME's remote-desktop portal as the paste keyboard (src/portal, docs/dictation.md §14.9): its
-# D-Bus calls through zbus's async API under async-io (the versions zbus and voltip-focus already
-# pull), the EIS keyboard through reis (MIT, pure Rust, no unsafe code), its keymap through
-# xkbcommon (the version enigo already links), poll and the monotonic clock through rustix.
+# D-Bus calls through zbus's async API under async-io (the zbus 5 and async-io that keyring's Secret
+# Service store and the Tauri plugins already pull; voltip-focus is on zbus 6), the EIS keyboard
+# through reis (MIT, pure Rust, no unsafe code), its keymap through xkbcommon (the version enigo
+# already links), poll and the monotonic clock through rustix.
 async-io = "=2.6.0"
 futures-util.workspace = true
 reis = { version = "=0.7.1", default-features = false }
