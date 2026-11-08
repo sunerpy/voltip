@@ -28,8 +28,10 @@ if [ "$mode" = test ]; then
 else
   cargo build -p voltip-focus --example insert_confirm_probe
 fi
+# `-noreset` with xvfb-run's default screen: Xvfb resets by default when its last client
+# disconnects, and a test that connects during the reset fails (.github/workflows/ci.yml).
 # shellcheck disable=SC2016 # expanded by the inner shell
-exec xvfb-run -a dbus-run-session -- sh -euc '
+exec xvfb-run -a -s "-screen 0 1280x1024x24 -noreset" dbus-run-session -- sh -euc '
   "$1" --launch-immediately &
   launcher=$!
   trap "kill $launcher 2>/dev/null || true" EXIT
