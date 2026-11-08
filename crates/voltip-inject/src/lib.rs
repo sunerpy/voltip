@@ -277,6 +277,10 @@ pub enum FallbackCode {
     /// The user did not allow remote interaction (GNOME's remote-desktop portal, docs/dictation.md
     /// §14.9); the next paste asks again.
     RemoteDenied,
+    /// GNOME's remote-desktop portal is there but could not be used for this paste: it did not
+    /// answer, or its session or keyboard failed (docs/dictation.md §14.9); the next paste tries
+    /// again.
+    RemoteUnavailable,
     /// Anything else.
     Other,
 }

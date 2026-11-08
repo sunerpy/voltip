@@ -7422,6 +7422,23 @@
     "kind": "edit"
   },
   {
+    "type": "dictation",
+    "phase": {
+      "phase": "done",
+      "text": "把 fetchUser 改成 async 然后加上错误处理",
+      "raw_text": "把 fetchUser 改成 async 然后加上错误处理",
+      "chars": 29,
+      "via": "clipboard",
+      "refined": false,
+      "duration_ms": 3200,
+      "asr_ms": 640,
+      "mode": "whole_take",
+      "clipboard_code": "remote_unavailable"
+    },
+    "session": 26,
+    "kind": "dictation"
+  },
+  {
     "type": "scenes",
     "scenes": [
       {

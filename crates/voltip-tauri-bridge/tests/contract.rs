@@ -2396,6 +2396,37 @@ fn all_events() -> Vec<UiEvent> {
             recording: None,
             retake: false,
         }),
+        // docs/dictation.md §14.9: GNOME's remote-desktop portal could not be used for the paste,
+        // so the text was copied — the 远程交互不可用 card.
+        UiEvent::Dictation(DictationStatus {
+            phase: DictationPhase::Done {
+                text: RAW_TEXT.into(),
+                raw_text: RAW_TEXT.into(),
+                chars: RAW_TEXT.chars().count(),
+                via: Via::Clipboard,
+                refined: false,
+                duration_ms: 3200,
+                asr_ms: 640,
+                refine_ms: None,
+                refine_failure: None,
+                refine_error: None,
+                mode: OutputMode::WholeTake,
+                segments: None,
+                live_error: None,
+                clipboard_code: Some(ClipboardCode::RemoteUnavailable),
+                check: None,
+                timing: None,
+            },
+            session: 26,
+            context: None,
+            kind: TakeKind::Dictation,
+            remote: None,
+            preset: None,
+            source: None,
+            segments: None,
+            recording: None,
+            retake: false,
+        }),
         // The scenes (docs/dictation.md §18.6), full and empty.
         scenes_event(scenes()),
         scenes_event(Vec::new()),
@@ -3091,7 +3122,7 @@ fn events_fixture_covers_every_variant_and_matches_serde_output() {
         events.iter().filter_map(|e| if let UiEvent::Dictation(s) = e { Some(serde_json::to_value(s).unwrap()["phase"].clone()) } else { None }).collect();
     assert!(phases.iter().any(|p| p["phase"] == "processing" && p["stage"] == "finalizing"), "{phases:?}");
     let dones: Vec<&Value> = phases.iter().filter(|p| p["phase"] == "done").collect();
-    assert_eq!(dones.len(), 7);
+    assert_eq!(dones.len(), 8);
     assert_eq!(dones[0]["mode"], "whole_take");
     assert!(dones[0].get("segments").is_none() && dones[0].get("live_error").is_none(), "None is omitted: {}", dones[0]);
     // docs/dictation.md §28: the insert check rides on `done`, and an unchecked take omits it.
@@ -3100,6 +3131,7 @@ fn events_fixture_covers_every_variant_and_matches_serde_output() {
     // §14.3 and §14.9: why a requested paste left the text on the clipboard.
     assert_eq!((&dones[1]["via"], &dones[1]["clipboard_code"]), (&json!("clipboard"), &json!("target_changed")));
     assert_eq!((&dones[2]["via"], &dones[2]["clipboard_code"]), (&json!("clipboard"), &json!("remote_denied")));
+    assert_eq!((&dones[7]["via"], &dones[7]["clipboard_code"]), (&json!("clipboard"), &json!("remote_unavailable")));
     assert_eq!(dones[3]["check"], "not_written");
     assert_eq!(dones[4]["mode"], "streaming_final");
     assert_eq!(dones[4]["segments"][1]["text"], "然后加上错误处理");

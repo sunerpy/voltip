@@ -20,6 +20,16 @@
 //! The portal is never asked at start-up, only when a paste or a voice-editing copy needs it. A
 //! token the portal refuses outright (`SelectDevices` fails) is dropped and the session asked for
 //! once more without it.
+//!
+//! [`RemoteDesktop::available`] reads two properties and asks for nothing. It answers
+//! [`PortalError::Unavailable`] only when the bus says no portal offers the interface (no such
+//! service, interface or property, a version without `ConnectToEIS`, no keyboard): this desktop
+//! does not support it, and Xwayland could not ask through it either. When the portal does not
+//! answer in time or fails, whether it is there is unknown ([`PortalError::Broken`]). Once a paste
+//! has started a session, every failure short of the user's refusal is [`PortalError::Broken`]:
+//! the portal is there but this paste could not use it, and the chain stops with the text on the
+//! clipboard instead of handing the paste to XTEST, which would make Xwayland ask the same portal
+//! again.
 
 mod eis;
 pub mod keymap;
@@ -79,12 +89,16 @@ impl Default for Limits {
 /// Why a chord did not go out through the portal.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PortalError {
-    /// No remote-desktop portal with a keyboard on this session bus: the next tool may try.
+    /// The session bus cannot be reached, or it says no remote-desktop portal offers a keyboard
+    /// through `ConnectToEIS`: this desktop does not support the interface, and the next tool may
+    /// try. Nothing was requested.
     Unavailable(String),
     /// The user did not allow remote interaction (cancelled, no answer in time, or a grant without
     /// the keyboard). Nothing was pressed; the next paste asks again.
     Declined(String),
-    /// Allowed, but the keyboard could not be set up. Nothing was pressed.
+    /// The portal could not be used for this chord: it did not answer or failed (its session, the
+    /// device selection, the grant or the keyboard). Nothing was pressed; the next paste tries
+    /// again.
     Broken(String),
     /// The keyboard failed after keys went out: some of the chord may have reached the application.
     Lost(String),
@@ -111,6 +125,47 @@ enum Failure {
 impl From<PortalError> for Failure {
     fn from(e: PortalError) -> Self {
         Self::Portal(e)
+    }
+}
+
+/// D-Bus errors that say the bus has no such portal: no service of that name, no such object,
+/// interface or property. GDBus, which xdg-desktop-portal is built on, answers `InvalidArgs` for a
+/// property of an interface it does not export. Any other error says nothing about it.
+const ABSENT: [&str; 7] = [
+    "org.freedesktop.DBus.Error.ServiceUnknown",
+    "org.freedesktop.DBus.Error.NameHasNoOwner",
+    "org.freedesktop.DBus.Error.UnknownObject",
+    "org.freedesktop.DBus.Error.UnknownInterface",
+    "org.freedesktop.DBus.Error.UnknownProperty",
+    "org.freedesktop.DBus.Error.UnknownMethod",
+    "org.freedesktop.DBus.Error.InvalidArgs",
+];
+
+/// Why a property of the portal could not be read.
+#[derive(Debug)]
+enum Unread {
+    /// The bus answered that there is no such portal, interface or property, or the value is not
+    /// of the type this interface has.
+    Absent(String),
+    /// No answer in time, or another error: the portal may be there.
+    Unknown(String),
+}
+
+impl Unread {
+    fn of(e: &zbus::Error) -> Self {
+        match e {
+            zbus::Error::MethodError(name, _, _) if ABSENT.contains(&name.as_str()) => Self::Absent(e.to_string()),
+            _ => Self::Unknown(e.to_string()),
+        }
+    }
+}
+
+impl From<Unread> for PortalError {
+    fn from(e: Unread) -> Self {
+        match e {
+            Unread::Absent(reason) => Self::Unavailable(format!("{REMOTE_DESKTOP}: {reason}")),
+            Unread::Unknown(reason) => Self::Broken(format!("{REMOTE_DESKTOP}: {reason}")),
+        }
     }
 }
 
@@ -143,7 +198,9 @@ impl RemoteDesktop {
     }
 
     /// Whether the bus has a remote-desktop portal with `ConnectToEIS` and a keyboard. Reads two
-    /// properties: no request, no dialog.
+    /// properties: no request, no dialog. [`PortalError::Unavailable`] when the bus says there is
+    /// none; [`PortalError::Broken`] when the portal did not answer in time or failed, so whether
+    /// it is there is unknown.
     pub fn available(&self) -> Result<(), PortalError> {
         async_io::block_on(async {
             let bus = self.connect().await?;
@@ -152,6 +209,9 @@ impl RemoteDesktop {
     }
 
     /// Press `steps` on the portal's keyboard, asking the user first when no grant is remembered.
+    /// [`PortalError::Unavailable`] only as [`Self::available`] answers it, before a session; once
+    /// one is asked for, a failure is [`PortalError::Broken`], [`PortalError::Declined`] or
+    /// [`PortalError::Lost`].
     pub fn press(&self, steps: &[KeyStep]) -> Result<(), PortalError> {
         let _one = BUSY.lock().unwrap_or_else(PoisonError::into_inner);
         async_io::block_on(async {
@@ -167,7 +227,7 @@ impl RemoteDesktop {
                     self.tokens.clear();
                     self.paste(&bus, steps, None).await.map_err(|failure| match failure {
                         Failure::Portal(e) => e,
-                        Failure::BadToken(reason) => PortalError::Unavailable(reason),
+                        Failure::BadToken(reason) => PortalError::Broken(reason),
                     })
                 }
             }
@@ -189,11 +249,11 @@ impl RemoteDesktop {
 
     /// The portal is there, new enough and offers the keyboard.
     async fn check(&self, bus: &zbus::Connection) -> Result<(), PortalError> {
-        let version: u32 = property(bus, "version").await.map_err(|e| PortalError::Unavailable(format!("{REMOTE_DESKTOP}: {e}")))?;
+        let version: u32 = property(bus, "version").await?;
         if version < EIS_VERSION {
             return Err(PortalError::Unavailable(format!("{REMOTE_DESKTOP} version {version} has no ConnectToEIS")));
         }
-        let types: u32 = property(bus, "AvailableDeviceTypes").await.map_err(|e| PortalError::Unavailable(format!("{REMOTE_DESKTOP}: {e}")))?;
+        let types: u32 = property(bus, "AvailableDeviceTypes").await?;
         if types & KEYBOARD == 0 {
             return Err(PortalError::Unavailable(format!("{REMOTE_DESKTOP} offers no keyboard (device types {types})")));
         }
@@ -215,12 +275,12 @@ impl RemoteDesktop {
     async fn create_session(&self, bus: &zbus::Connection, answers: &mut Answers) -> Result<OwnedObjectPath, PortalError> {
         let handle = handle_token();
         let options = HashMap::from([("handle_token", Value::from(handle.as_str())), ("session_handle_token", Value::from(handle_token()))]);
-        let request = call_request(bus, "CreateSession", &(options,)).await.map_err(PortalError::Unavailable)?;
-        let (code, results) = answers.wait(bus, &handle, &request, self.limits.call).await.map_err(PortalError::Unavailable)?;
+        let request = call_request(bus, "CreateSession", &(options,)).await.map_err(PortalError::Broken)?;
+        let (code, results) = answers.wait(bus, &handle, &request, self.limits.call).await.map_err(PortalError::Broken)?;
         if code != 0 {
-            return Err(PortalError::Unavailable(format!("CreateSession answered {code}")));
+            return Err(PortalError::Broken(format!("CreateSession answered {code}")));
         }
-        session_handle(&results).ok_or_else(|| PortalError::Unavailable("CreateSession answered without a session".into()))
+        session_handle(&results).ok_or_else(|| PortalError::Broken("CreateSession answered without a session".into()))
     }
 
     async fn in_session(
@@ -245,9 +305,9 @@ impl RemoteDesktop {
         match selected {
             Ok((0, _)) => {}
             Ok((code, _)) if token.is_some() => return Err(Failure::BadToken(format!("SelectDevices answered {code}"))),
-            Ok((code, _)) => return Err(PortalError::Unavailable(format!("SelectDevices answered {code}")).into()),
+            Ok((code, _)) => return Err(PortalError::Broken(format!("SelectDevices answered {code}")).into()),
             Err(e) if token.is_some() => return Err(Failure::BadToken(e)),
-            Err(e) => return Err(PortalError::Unavailable(e).into()),
+            Err(e) => return Err(PortalError::Broken(e).into()),
         }
 
         // Start: the dialog, unless the grant is restored. The portal has taken an offered token out
@@ -308,10 +368,10 @@ impl RemoteDesktop {
 const NO_ANSWER: &str = "no answer within";
 
 /// A property of the RemoteDesktop interface.
-async fn property<T: TryFrom<OwnedValue>>(bus: &zbus::Connection, name: &str) -> Result<T, String> {
-    let reply = bus.call_method(Some(PORTAL), PORTAL_PATH, Some(PROPERTIES), "Get", &(REMOTE_DESKTOP, name)).await.map_err(|e| e.to_string())?;
-    let value: OwnedValue = reply.body().deserialize().map_err(|e| e.to_string())?;
-    T::try_from(value).map_err(|_| format!("{name}: unexpected type"))
+async fn property<T: TryFrom<OwnedValue>>(bus: &zbus::Connection, name: &str) -> Result<T, Unread> {
+    let reply = bus.call_method(Some(PORTAL), PORTAL_PATH, Some(PROPERTIES), "Get", &(REMOTE_DESKTOP, name)).await.map_err(|e| Unread::of(&e))?;
+    let value: OwnedValue = reply.body().deserialize().map_err(|e| Unread::Absent(format!("{name}: {e}")))?;
+    T::try_from(value).map_err(|_| Unread::Absent(format!("{name}: unexpected type")))
 }
 
 /// A RemoteDesktop method that returns a request object.
@@ -359,8 +419,8 @@ impl Answers {
             .and_then(|b| b.member("Response"))
             .and_then(|b| b.path_namespace(REQUESTS))
             .map(zbus::match_rule::Builder::build)
-            .map_err(|e| PortalError::Unavailable(format!("match rule: {e}")))?;
-        let stream = MessageStream::for_match_rule(rule, bus, Some(64)).await.map_err(|e| PortalError::Unavailable(format!("AddMatch: {e}")))?;
+            .map_err(|e| PortalError::Broken(format!("match rule: {e}")))?;
+        let stream = MessageStream::for_match_rule(rule, bus, Some(64)).await.map_err(|e| PortalError::Broken(format!("AddMatch: {e}")))?;
         let portal = match zbus::fdo::DBusProxy::new(bus).await {
             Ok(proxy) => match zbus::names::BusName::try_from(PORTAL) {
                 Ok(name) => proxy.get_name_owner(name).await.ok(),

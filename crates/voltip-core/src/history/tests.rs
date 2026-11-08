@@ -223,6 +223,7 @@ fn clipboard_outcomes_carry_their_code_and_legacy_ones_read_without() {
         (ClipboardCode::SecureInput, "secure_input"),
         (ClipboardCode::ElevatedTarget, "elevated_target"),
         (ClipboardCode::RemoteDenied, "remote_denied"),
+        (ClipboardCode::RemoteUnavailable, "remote_unavailable"),
         (ClipboardCode::Other, "other"),
     ];
     for (code, name) in names {

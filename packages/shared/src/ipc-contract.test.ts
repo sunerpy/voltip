@@ -891,11 +891,12 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       undefined,
       undefined,
       undefined,
+      undefined,
     ]);
     // §14.3 and §14.9: why a requested paste left the text on the clipboard; an unknown code is
     // refused.
     expect(done.flatMap((p) => (p.clipboard_code === undefined ? [] : [p.clipboard_code]))).toEqual(
-      ["target_changed", "remote_denied"],
+      ["target_changed", "remote_denied", "remote_unavailable"],
     );
     const refused = events.find((raw) =>
       JSON.stringify(raw).includes('"clipboard_code":"remote_denied"'),

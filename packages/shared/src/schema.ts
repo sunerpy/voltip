@@ -1027,8 +1027,9 @@ export type LiveText = z.infer<typeof liveTextSchema>;
 
 /** `voltip_core::dictation::ClipboardCode`: why a requested paste left the text on the clipboard
  *  (docs/dictation.md §4.2; `target_changed`: another window came to the front, §14.3;
- *  `remote_denied`: the system did not allow the remote interaction GNOME asks for, §14.9). The
- *  history explains each in a sentence. */
+ *  `remote_denied`: the system did not allow the remote interaction GNOME asks for, §14.9;
+ *  `remote_unavailable`: GNOME's remote-desktop portal could not be used for the paste, §14.9).
+ *  The history explains each in a sentence. */
 export const CLIPBOARD_CODES = [
   "no_permission",
   "no_tool",
@@ -1038,6 +1039,7 @@ export const CLIPBOARD_CODES = [
   "too_long",
   "target_changed",
   "remote_denied",
+  "remote_unavailable",
   "other",
 ] as const;
 export const clipboardCodeSchema = z.enum(CLIPBOARD_CODES);

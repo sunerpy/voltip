@@ -839,6 +839,9 @@ export const zhCN = {
       /** docs/dictation.md §14.9: GNOME's 远程桌面 window was cancelled or closed. */
       remote_denied:
         "无法粘贴到光标处：系统没有允许 Voltip 远程交互（GNOME 的「远程桌面」窗口被取消或关闭）。文字已复制到剪贴板，可按 {keys} 粘贴；下次粘贴时会再次询问。",
+      /** docs/dictation.md §14.9: GNOME's remote-desktop portal did not answer or failed. */
+      remote_unavailable:
+        "无法粘贴到光标处：GNOME 的远程交互暂时无法使用。文字已复制到剪贴板，可按 {keys} 粘贴；下次粘贴时会再试一次。",
       other: "无法直接粘贴，文字已复制到剪贴板，可按 {keys} 粘贴。",
       openAccessibility: "打开辅助功能设置",
       details: "技术细节",
@@ -2594,6 +2597,9 @@ export const zhCN = {
       /** docs/dictation.md §14.9: GNOME's 远程桌面 window was cancelled or closed. */
       doneRemoteDenied: "未获准远程交互，文字已复制",
       editDoneRemoteDenied: "未获准远程交互，改写结果已复制",
+      /** docs/dictation.md §14.9: GNOME's remote-desktop portal did not answer or failed. */
+      doneRemoteUnavailable: "远程交互不可用，文字已复制",
+      editDoneRemoteUnavailable: "远程交互不可用，改写结果已复制",
     },
     heading: "悬浮胶囊 · 八态 · 一个胶囊随状态连续变形（灵动岛语法），波形为密集细条镜像",
     captionEngine: "实时 · Zipformer · 本地",

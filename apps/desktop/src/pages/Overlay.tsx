@@ -69,13 +69,15 @@ export function isOverlayWindowState(value: string, dev: boolean = import.meta.e
   );
 }
 
-/** The result cards (docs/dictation.md §28, D11): 没有写进去, 窗口已切换, 未获准远程交互 (§14.9), a
- *  failure that kept its text, and a failure without text (but speech) whose recording is kept —
- *  the terminal states the core keeps on screen until 关闭 or the next take. */
+/** The result cards (docs/dictation.md §28, D11): 没有写进去, 窗口已切换, 未获准远程交互 and
+ *  远程交互不可用 (§14.9), a failure that kept its text, and a failure without text (but speech)
+ *  whose recording is kept — the terminal states the core keeps on screen until 关闭 or the next
+ *  take. */
 export type ResultCard =
   | "not_written"
   | "window_changed"
   | "remote_denied"
+  | "remote_unavailable"
   | "failed_text"
   | "failed_kept";
 
@@ -84,7 +86,8 @@ export function resultCardFor(dictation: DictationStatus): ResultCard | undefine
   if (phase.phase === "done") {
     if (phase.check === "not_written") return "not_written";
     if (phase.clipboard_code === "target_changed") return "window_changed";
-    return phase.clipboard_code === "remote_denied" ? "remote_denied" : undefined;
+    if (phase.clipboard_code === "remote_denied") return "remote_denied";
+    return phase.clipboard_code === "remote_unavailable" ? "remote_unavailable" : undefined;
   }
   if (phase.phase !== "failed") return undefined;
   if (phase.text !== undefined) return "failed_text";
@@ -94,8 +97,8 @@ export function resultCardFor(dictation: DictationStatus): ResultCard | undefine
 }
 
 /** The pill's line for a finished take: pasted, or copied — because another window came to the
- *  front meanwhile (docs/dictation.md §14.3), because the system did not allow the paste (§14.9),
- *  or for any other reason. */
+ *  front meanwhile (docs/dictation.md §14.3), because the system did not allow the paste or its
+ *  remote interaction could not be used (§14.9), or for any other reason. */
 export function doneLabelKey(
   phase: Extract<DictationPhase, { phase: "done" }>,
   edit: boolean,
@@ -106,6 +109,8 @@ export function doneLabelKey(
       return edit ? "overlay.live.editDoneTargetChanged" : "overlay.live.doneTargetChanged";
     case "remote_denied":
       return edit ? "overlay.live.editDoneRemoteDenied" : "overlay.live.doneRemoteDenied";
+    case "remote_unavailable":
+      return edit ? "overlay.live.editDoneRemoteUnavailable" : "overlay.live.doneRemoteUnavailable";
     default:
       return edit ? "overlay.live.editDoneClipboard" : "overlay.live.doneClipboard";
   }

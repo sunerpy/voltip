@@ -489,6 +489,7 @@ pub fn core_note(note: voltip_inject::InjectNote) -> InjectNote {
         FallbackCode::SecureInput => ClipboardCode::SecureInput,
         FallbackCode::ElevatedTarget => ClipboardCode::ElevatedTarget,
         FallbackCode::RemoteDenied => ClipboardCode::RemoteDenied,
+        FallbackCode::RemoteUnavailable => ClipboardCode::RemoteUnavailable,
         FallbackCode::Other => ClipboardCode::Other,
     };
     InjectNote::new(code, note.detail)
@@ -886,6 +887,7 @@ mod tests {
             (FallbackCode::SecureInput, ClipboardCode::SecureInput),
             (FallbackCode::ElevatedTarget, ClipboardCode::ElevatedTarget),
             (FallbackCode::RemoteDenied, ClipboardCode::RemoteDenied),
+            (FallbackCode::RemoteUnavailable, ClipboardCode::RemoteUnavailable),
             (FallbackCode::Other, ClipboardCode::Other),
         ];
         for (from, to) in codes {

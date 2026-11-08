@@ -37,8 +37,9 @@ pub trait EnigoPort: Send + Sync {
 /// GNOME's remote-desktop portal as a keyboard (docs/dictation.md §14.9).
 /// [`RemoteDesktop`] is the real one.
 pub trait PortalPort: Send + Sync {
-    /// Whether the session bus has the portal with a keyboard right now. Nothing is requested, so
-    /// no dialog appears.
+    /// Whether the chain should try the portal: false only when the session bus says no portal
+    /// offers a keyboard through `ConnectToEIS` (this desktop does not support the interface).
+    /// Nothing is requested, so no dialog appears.
     fn available(&self) -> bool;
     /// Press `steps` ([`chord_steps`], [`copy_steps`]), asking the user first when no grant is
     /// remembered.
@@ -49,9 +50,16 @@ impl PortalPort for RemoteDesktop {
     fn available(&self) -> bool {
         match RemoteDesktop::available(self) {
             Ok(()) => true,
-            Err(e) => {
+            Err(e @ PortalError::Unavailable(_)) => {
                 tracing::debug!(error = %e, "remote-desktop portal not available");
                 false
+            }
+            // The portal did not answer in time or failed: it may well be there, and skipping it
+            // would hand the paste to XTEST, which makes Xwayland ask the same portal. The paste
+            // tries it and stops with the text on the clipboard if it cannot be used.
+            Err(e) => {
+                tracing::info!(error = %e, "could not tell whether the remote-desktop portal is there; trying it");
+                true
             }
         }
     }
@@ -156,8 +164,8 @@ pub enum Attempt {
     /// typed part of it) or a tool killed at its deadline. The chain stops here.
     Stop(String),
     /// Nothing was pressed and no later tool should try: the user did not allow the portal's
-    /// remote interaction (a tool through Xwayland would only ask the same portal again), or its
-    /// keyboard broke after the grant. The text stays on the clipboard with this note.
+    /// remote interaction, or the portal could not be used for this paste (a tool through Xwayland
+    /// would only ask the same portal again). The text stays on the clipboard with this note.
     Clipboard(InjectNote),
 }
 
@@ -269,9 +277,14 @@ impl ToolchainKeys {
             let name = tool.name();
             return match self.portal.press(&steps) {
                 Ok(()) => Attempt::Done(Delivered { tool: name.to_string(), delivery: Delivery::Chord }),
+                // The bus says, at the press, that no portal offers the interface (it went away
+                // since the probe): as on a desktop without it, the next tool tries — Xwayland
+                // cannot ask through a portal that is not there.
                 Err(e @ PortalError::Unavailable(_)) => Attempt::NotStarted(format!("{name}: {e}")),
                 Err(e @ PortalError::Declined(_)) => Attempt::Clipboard(InjectNote::new(FallbackCode::RemoteDenied, format!("{name}: {e}"))),
-                Err(e @ PortalError::Broken(_)) => Attempt::Clipboard(InjectNote::new(FallbackCode::Other, format!("{name}: {e}"))),
+                // The portal is there but this paste could not use it (no answer, its session or
+                // keyboard failed): the chain stops here instead of handing the paste to XTEST.
+                Err(e @ PortalError::Broken(_)) => Attempt::Clipboard(InjectNote::new(FallbackCode::RemoteUnavailable, format!("{name}: {e}"))),
                 Err(e @ PortalError::Lost(_)) => Attempt::Stop(format!("{name}: {e}")),
             };
         }
@@ -780,7 +793,8 @@ mod tests {
             matches!(&err, DeliveryError::Unavailable(n) if n.code == FallbackCode::NoTool && n.detail.contains("remote-desktop-portal: no remote-desktop portal with a keyboard") && n.detail.contains("xdg-desktop-portal-gnome")),
             "{err:?}"
         );
-        // The portal went away between the probe and the press: the next tool tries.
+        // The bus says the portal went away between the probe and the press: as without one, the
+        // next tool tries.
         let portal = FakePortalPort::with(true, Err(PortalError::Unavailable("no session bus".into())));
         let keys = make_keys(&tools, GNOME_XWAYLAND, enigo).with_portal(portal);
         assert_eq!(keys.deliver(chord, "t").unwrap().tool, "enigo-x11");
@@ -814,14 +828,22 @@ mod tests {
         std::thread::sleep(Duration::from_millis(60));
         assert_eq!(clipboard.current().as_deref(), Some("ours"));
 
-        // Granted, but the keyboard broke before a key: the text stays too, as any other failure.
+        // The portal could not be used for this paste (here its keyboard broke before a key): the
+        // text stays with its own reason, and XTEST is not tried, on XWayland or pure Wayland.
         let portal = FakePortalPort::with(true, Err(PortalError::Broken("ConnectToEIS: refused".into())));
-        let keys = make_keys(&tools, GNOME_XWAYLAND, enigo.clone()).with_portal(portal);
+        let keys = make_keys(&tools, GNOME_XWAYLAND, enigo.clone()).with_portal(portal.clone());
         let err = keys.deliver(chord, "t").unwrap_err();
         assert_eq!(
             err,
-            DeliveryError::Unavailable(InjectNote::new(FallbackCode::Other, "remote-desktop-portal: the portal's keyboard failed: ConnectToEIS: refused"))
+            DeliveryError::Unavailable(InjectNote::new(
+                FallbackCode::RemoteUnavailable,
+                "remote-desktop-portal: the portal's keyboard failed: ConnectToEIS: refused"
+            ))
         );
+        assert!(enigo.pressed.lock().unwrap().is_empty() && !xdotool.exists(), "XTEST is not tried");
+        let keys = make_keys(&tools, GNOME_WAYLAND, FakeEnigo::none()).with_portal(portal);
+        let err = keys.press_chord(crate::copy_chord_for("linux"), &[]).unwrap_err();
+        assert!(matches!(&err, DeliveryError::Unavailable(n) if n.code == FallbackCode::RemoteUnavailable), "{err:?}");
         // Keys went out before it broke: a second tool could paste twice — the chain stops.
         let portal = FakePortalPort::with(true, Err(PortalError::Lost("the compositor closed the keyboard".into())));
         let keys = make_keys(&tools, GNOME_XWAYLAND, enigo.clone()).with_portal(portal);

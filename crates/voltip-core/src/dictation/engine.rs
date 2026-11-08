@@ -3897,9 +3897,10 @@ impl Drop for DictationEngine {
 
 /// A clipboard fallback whose text waits for the user and whose reason is a result card
 /// (docs/dictation.md §28.4): another window came to the front (§14.3), or the system did not allow
-/// the paste (§14.9). The other fallbacks keep the short dwell.
+/// the paste or GNOME's remote interaction could not be used for it (§14.9). The other fallbacks
+/// keep the short dwell.
 fn carded(code: Option<ClipboardCode>) -> bool {
-    matches!(code, Some(ClipboardCode::TargetChanged | ClipboardCode::RemoteDenied))
+    matches!(code, Some(ClipboardCode::TargetChanged | ClipboardCode::RemoteDenied | ClipboardCode::RemoteUnavailable))
 }
 
 /// What became of a kept recording whose take ended in `phase` without an entry
@@ -9838,7 +9839,8 @@ mod tests {
         assert_eq!(reader.calls(), FocusCalls::default());
     }
 
-    /// The result cards (docs/dictation.md §28, user decision D11; 未获准远程交互, §14.9).
+    /// The result cards (docs/dictation.md §28, user decision D11; 未获准远程交互 and 远程交互不可用,
+    /// §14.9).
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     enum Card {
         /// 没有写进去.
@@ -9847,6 +9849,9 @@ mod tests {
         WindowChanged,
         /// 未获准远程交互: the system did not allow the paste, the text waits on the clipboard.
         RemoteDenied,
+        /// 远程交互不可用: GNOME's portal could not be used for the paste, the text waits on the
+        /// clipboard.
+        RemoteUnavailable,
         /// A failure that kept its text.
         FailedWithText,
         /// A failure without text whose recording is kept.
@@ -9854,7 +9859,7 @@ mod tests {
     }
 
     impl Card {
-        const ALL: [Self; 5] = [Self::NotWritten, Self::WindowChanged, Self::RemoteDenied, Self::FailedWithText, Self::FailedKept];
+        const ALL: [Self; 6] = [Self::NotWritten, Self::WindowChanged, Self::RemoteDenied, Self::RemoteUnavailable, Self::FailedWithText, Self::FailedKept];
 
         /// How long the card stays when it does not stay: its dwell from before §28.
         fn dwell(self) -> Duration {
@@ -9867,6 +9872,7 @@ mod tests {
                 (Self::NotWritten, DictationPhase::Done { check: Some(InsertCheck::NotWritten), .. }) => true,
                 (Self::WindowChanged, DictationPhase::Done { clipboard_code: Some(ClipboardCode::TargetChanged), .. }) => true,
                 (Self::RemoteDenied, DictationPhase::Done { via: Via::Clipboard, clipboard_code: Some(ClipboardCode::RemoteDenied), .. }) => true,
+                (Self::RemoteUnavailable, DictationPhase::Done { via: Via::Clipboard, clipboard_code: Some(ClipboardCode::RemoteUnavailable), .. }) => true,
                 (Self::FailedWithText, DictationPhase::Failed { text: Some(_), .. }) => true,
                 (Self::FailedKept, DictationPhase::Failed { text: None, .. }) => status.recording.is_some(),
                 _ => false,
@@ -9876,6 +9882,8 @@ mod tests {
 
     /// What the GNOME injector reports when the user refused the remote interaction (§14.9).
     const REFUSED: &str = "remote-desktop-portal: remote interaction not allowed: the user cancelled";
+    /// What it reports when the portal could not be used for the paste (§14.9).
+    const PORTAL_FAILED: &str = "remote-desktop-portal: the portal's keyboard failed: CreateSession answered 2";
 
     /// A rig whose take ended in `card`, with the shell's cards (`result_cards`) as `cards` says and
     /// 识别结果卡片常驻 (`result_cards_stay`) as `stay` says.
@@ -9890,6 +9898,11 @@ mod tests {
             Card::RemoteDenied => {
                 rig_with(&engines, FakeTranscriber::ok(FAKE_TRANSCRIPT), FakeInjector::clipboard_with(InjectNote::new(ClipboardCode::RemoteDenied, REFUSED)))
             }
+            Card::RemoteUnavailable => rig_with(
+                &engines,
+                FakeTranscriber::ok(FAKE_TRANSCRIPT),
+                FakeInjector::clipboard_with(InjectNote::new(ClipboardCode::RemoteUnavailable, PORTAL_FAILED)),
+            ),
             Card::FailedWithText => rig_with(&engines, FakeTranscriber::ok(FAKE_TRANSCRIPT), FakeInjector::err("denied")),
             Card::FailedKept => rig_with(&engines, FakeTranscriber::err("401 unauthorized"), FakeInjector::paste()),
         };
@@ -9911,7 +9924,7 @@ mod tests {
         r.settle().await;
     }
 
-    /// docs/dictation.md §28 (D8, D11): with result cards and 识别结果卡片常驻 on, the four cards stay
+    /// docs/dictation.md §28 (D8, D11): with result cards and 识别结果卡片常驻 on, the cards stay
     /// past every dwell — until 关闭 (`dismiss`: idle, the recording forgotten) or the next take,
     /// which replaces the card. Dismissing anything that is not a terminal state changes nothing.
     #[tokio::test(start_paused = true)]
