@@ -13,6 +13,10 @@
 //! windows, tao's `set_always_on_top(true)` does nothing while the window already is, and nothing
 //! raised the pill while it showed.
 //!
+//! The click that brings a window to the front is checked on its own too: it must reach that
+//! window when another window in front covers the point it aims at
+//! (`regression_a_window_under_…_comes_to_the_front_when_activated`).
+//!
 //! It opens windows and clicks them, so it is ignored: CI runs it on the windows-2025 desktop
 //! (`hooks-windows`), never on a computer someone is using:
 //! `cargo test -p voltip-overlay --test stacking_windows -- --ignored --test-threads=1 --nocapture`.
@@ -22,7 +26,7 @@
 
 mod support;
 
-use support::{Spec, TestWindow, assert_pill_on_top, center, dpi_aware, foreground, is_topmost, pill_rect, top_at, wait_until, work_area};
+use support::{Spec, TestWindow, assert_pill_on_top, center, dpi_aware, foreground, is_topmost, pill_rect, root_at, top_at, wait_until, work_area};
 use voltip_overlay::contest::AGAIN_AFTER;
 use voltip_overlay::windows::{Keeper, raise};
 use windows_sys::Win32::Foundation::RECT;
@@ -67,6 +71,13 @@ fn regression_the_pill_shows_above_a_topmost_full_screen_window() {
 fn lower_half() -> RECT {
     let area = work_area();
     RECT { top: (area.top + area.bottom) / 2, ..area }
+}
+
+/// The upper half of the work area, over the point where a click activates a window over the
+/// whole work area ([`TestWindow::grip`]).
+fn upper_half() -> RECT {
+    let area = work_area();
+    RECT { bottom: (area.top + area.bottom) / 2, ..area }
 }
 
 /// The pill shown over `front` (activated first) and kept on top: what a take under way looks like.
@@ -257,4 +268,36 @@ fn a_dropped_keeper_raises_nothing_more() {
     pill.show_like_tao();
     let at = center(&pill.rect());
     assert!(wait_until(support::WAIT, || top_at(at) == cover.hwnd), "the topmost window should be on top while nothing raised the pill");
+}
+
+/// A click brings a window to the front only where that window is what the click reaches. Seen on
+/// windows-2025 (CI, 2026-11-07/08): the runner's Windows Terminal in front over the point the
+/// click aimed at took the click, and the window being activated never came to the front ("… did
+/// not come to the front (in front: CASCADIA_HOSTING_WINDOW_CLASS …)"). Here the window in front is
+/// another ordinary window of the test's own, over the target's click point.
+#[test]
+#[ignore = "opens windows and clicks them: CI's windows-2025 desktop only"]
+fn regression_a_window_under_the_one_in_front_comes_to_the_front_when_activated() {
+    dpi_aware();
+    let target = TestWindow::open(Spec::ordinary());
+    // Brought to the front while topmost, which a click reaches whatever else is in front, then put
+    // back among the ordinary windows: an ordinary window in front, over the target's click point.
+    let front = TestWindow::open(Spec { rect: upper_half(), ..Spec::ordinary().topmost() });
+    front.activate("the other window");
+    front.unpin();
+    assert_eq!(root_at(target.grip()), front.hwnd, "the other window is not what a click at the target's grip reaches");
+    target.activate("the window under the one in front");
+}
+
+/// The same under a topmost window in front, which no raise among the ordinary windows puts the
+/// target over: the click must go to a point of the target that nothing covers.
+#[test]
+#[ignore = "opens windows and clicks them: CI's windows-2025 desktop only"]
+fn regression_a_window_under_a_topmost_one_in_front_comes_to_the_front_when_activated() {
+    dpi_aware();
+    let target = TestWindow::open(Spec::ordinary());
+    let front = TestWindow::open(Spec { rect: upper_half(), ..Spec::ordinary().topmost() });
+    front.activate("the topmost window");
+    assert_eq!(root_at(target.grip()), front.hwnd, "the topmost window is not what a click at the target's grip reaches");
+    target.activate("the window under a topmost one in front");
 }

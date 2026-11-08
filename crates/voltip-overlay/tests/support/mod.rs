@@ -9,20 +9,23 @@ use std::sync::mpsc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use windows_sys::Win32::Foundation::{HWND, LPARAM, POINT, RECT, S_OK};
+use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, S_OK, WPARAM};
 use windows_sys::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
-use windows_sys::Win32::Graphics::Gdi::{CLR_INVALID, CreateSolidBrush, GetDC, GetPixel, ReleaseDC};
+use windows_sys::Win32::Graphics::Gdi::{CLR_INVALID, ClientToScreen, CreateSolidBrush, GetDC, GetPixel, ReleaseDC, ScreenToClient};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Threading::GetCurrentThreadId;
 use windows_sys::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEINPUT, SendInput};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, EnumWindows, GWL_EXSTYLE, GetClassNameW, GetForegroundWindow, GetMessageW,
-    GetSystemMetrics, GetWindowLongW, GetWindowRect, GetWindowThreadProcessId, HWND_NOTOPMOST, HWND_TOPMOST, IsIconic, IsWindowVisible, MSG,
-    PostThreadMessageW, RegisterClassW, SM_CXSCREEN, SM_CYSCREEN, SPI_GETWORKAREA, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-    SetCursorPos, SetWindowPos, ShowWindow, SystemParametersInfoW, TranslateMessage, WM_QUIT, WNDCLASSW, WS_CLIPSIBLINGS, WS_EX_ACCEPTFILES, WS_EX_APPWINDOW,
-    WS_EX_NOACTIVATE, WS_EX_TOPMOST, WS_EX_WINDOWEDGE, WS_OVERLAPPEDWINDOW, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, EnumWindows, GA_ROOT, GUITHREADINFO, GWL_EXSTYLE, GetAncestor, GetClassNameW,
+    GetClientRect, GetCursorPos, GetForegroundWindow, GetGUIThreadInfo, GetMessageW, GetSystemMetrics, GetWindowLongW, GetWindowRect, GetWindowThreadProcessId,
+    HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, IsHungAppWindow, IsIconic, IsWindowVisible, MSG, PostThreadMessageW, RegisterClassW, SM_CXSCREEN, SM_CYSCREEN,
+    SMTO_ABORTIFHUNG, SMTO_BLOCK, SPI_GETWORKAREA, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SendMessageTimeoutW, SetCursorPos,
+    SetWindowPos, ShowWindow, SystemParametersInfoW, TranslateMessage, WM_NULL, WM_QUIT, WNDCLASSW, WS_CLIPSIBLINGS, WS_EX_ACCEPTFILES, WS_EX_APPWINDOW,
+    WS_EX_NOACTIVATE, WS_EX_TOPMOST, WS_EX_WINDOWEDGE, WS_OVERLAPPEDWINDOW, WS_POPUP, WindowFromPoint,
 };
+
+mod watch;
 
 /// How long a window may take to come up, to the front or on top.
 pub const WAIT: Duration = Duration::from_secs(5);
@@ -40,6 +43,20 @@ pub const PILL_EX_STYLE: u32 = WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_APPWINDO
 /// The pill window's size and its distance from the work area's bottom edge (overlay.rs).
 pub const PILL_SIZE: (i32, i32) = (480, 64);
 const PILL_MARGIN: i32 = 24;
+
+/// The test windows' window procedure: `DefWindowProcW`, with what a click, an activation and the
+/// window's message loop did noted for a failure message ([`watch`]).
+unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    if msg == watch::PROBE_TRACE {
+        watch::trace_here();
+        watch::note(hwnd, msg, wparam, lparam, 1);
+        return 1;
+    }
+    // SAFETY: the arguments Windows passed this window procedure.
+    let result = unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
+    watch::note(hwnd, msg, wparam, lparam, result);
+    result
+}
 
 fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(Some(0)).collect()
@@ -145,7 +162,7 @@ impl TestWindow {
                 let instance = GetModuleHandleW(std::ptr::null());
                 let class = wide(&format!("VoltipOverlayTest{:06x}", spec.color));
                 let mut wc: WNDCLASSW = std::mem::zeroed();
-                wc.lpfnWndProc = Some(DefWindowProcW);
+                wc.lpfnWndProc = Some(window_proc);
                 wc.hInstance = instance;
                 wc.hbrBackground = CreateSolidBrush(spec.color);
                 wc.lpszClassName = class.as_ptr();
@@ -221,10 +238,226 @@ impl TestWindow {
         POINT { x: rect.left + 40, y: rect.top + 40 }
     }
 
-    /// Activate it with a click, as the user would, and wait until it is the window in front.
+    /// A point where a click goes to this window ([`root_at`]): its grip; else, with another window
+    /// over the grip, the grip once this one is raised to the top of its band without being
+    /// activated; else the first point of its client area that nothing covers (a topmost window
+    /// over an ordinary one). `None` when there is none.
+    fn reachable(&self, what: &str) -> Option<POINT> {
+        let grip = self.grip();
+        let over = root_at(grip);
+        if over == self.hwnd {
+            return Some(grip);
+        }
+        // SAFETY: a live window handle of this test.
+        unsafe { SetWindowPos(self.hwnd as HWND, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) };
+        let still = root_at(grip);
+        if still == self.hwnd {
+            println!("{what}: raised without activation over {} at its grip {},{}", describe(over), grip.x, grip.y);
+            return Some(grip);
+        }
+        let open = self.open_point();
+        if let Some(at) = open {
+            println!("{what}: {} stays over its grip {},{} once it is raised; the click goes to {},{}", describe(still), grip.x, grip.y, at.x, at.y);
+        }
+        open
+    }
+
+    /// The first point of its client area, on a 16 px grid 8 px inside the edges and the top row
+    /// first, where a click goes to this window.
+    fn open_point(&self) -> Option<POINT> {
+        let client = client_rect(self.hwnd);
+        (client.top + 8..client.bottom - 8)
+            .step_by(16)
+            .flat_map(|y| (client.left + 8..client.right - 8).step_by(16).map(move |x| POINT { x, y }))
+            .find(|&at| root_at(at) == self.hwnd)
+    }
+
+    /// Move the pointer to `at`, as a user does before a click, and wait until this window receives
+    /// that move, at `at` itself: the system then routes the pointer's input at that point to it.
+    /// Each 100 ms it has not, the pointer moves to `at` again (by way of the pixel right of it when
+    /// it is there already, where a move to `at` reports nothing), so that there is a new move to
+    /// route. It returns with the pointer at `at`: how long it took and how many moves to `at`, or
+    /// `None` when none had reached it by `until`.
+    fn hover(&self, at: POINT, until: Instant) -> Option<(Duration, u32)> {
+        let started = Instant::now();
+        let aside = POINT { x: at.x + 1, y: at.y };
+        let client = [client_point(self.hwnd, at)];
+        let mut moves = 0;
+        loop {
+            let moved = Instant::now();
+            // SAFETY: plain calls.
+            unsafe {
+                if same_point(cursor(), at) {
+                    SetCursorPos(aside.x, aside.y);
+                }
+                SetCursorPos(at.x, at.y);
+            }
+            moves += 1;
+            let left = until.saturating_duration_since(Instant::now()).min(Duration::from_millis(100));
+            if wait_until(left, || watch::moved_over(self.hwnd, moved, &client, &[at])) {
+                return Some((started.elapsed(), moves));
+            }
+            if Instant::now() >= until {
+                return None;
+            }
+        }
+    }
+
+    /// Activate it with a click, as the user would, and wait until it is the window in front. The
+    /// click goes to a point where this window is what a click reaches ([`TestWindow::reachable`]),
+    /// once the pointer's move to that point has reached it ([`TestWindow::hover`]), and only when,
+    /// read right before the click, the pointer is still there and a click there still goes to this
+    /// window; a point that no longer is is chosen and hovered again, until [`WAIT`] has passed.
+    /// Seen on windows-2025 (CI, 2026-11-07/08): a click that went elsewhere left the window under
+    /// it where it was, with the runner's Windows Terminal or no window at all in front.
     pub fn activate(&self, what: &str) {
-        click(self.grip());
-        assert!(wait_until(WAIT, || foreground() == self.hwnd), "{what} did not come to the front (in front: {})", describe(foreground()));
+        watch::watch();
+        let before = foreground();
+        // The checks before the click share one deadline: the one for coming to the front starts
+        // with the click.
+        let started = Instant::now();
+        let until = started + WAIT;
+        let (at, moment) = loop {
+            let Some(at) = self.reachable(what) else {
+                let grip = self.grip();
+                panic!(
+                    "{what}: a click reaches it nowhere (in front: {}); the windows at its grip {},{}, top first:{}",
+                    describe(before),
+                    grip.x,
+                    grip.y,
+                    stack_at(self.hwnd, grip)
+                );
+            };
+            let chosen = Moment::now(self.hwnd, at);
+            let Some((hovered, moves)) = self.hover(at, until) else {
+                panic!(
+                    "{what}: a move of the pointer to {},{} did not reach it within {} ms (in front: {}; the foreground thread: {}); a click there would go to {}{}",
+                    at.x,
+                    at.y,
+                    WAIT.as_millis(),
+                    describe_for(foreground(), self.hwnd),
+                    foreground_thread(),
+                    describe_for(root_at(at), self.hwnd),
+                    self.account(&chosen, &[])
+                );
+            };
+            // A move that never reached it is what a click right after it shows meets (the
+            // evidence for the wait: CI's logs list these).
+            if moves > 1 {
+                println!("{what}: the pointer's move to {},{} reached it after {} ms, at move {moves}", at.x, at.y, hovered.as_millis());
+            }
+            // Read just before the click: the window in front, the Z order, what the foreground
+            // thread holds and, last, the window a click at `at` goes to.
+            let moment = Moment::now(self.hwnd, at);
+            let pointer = cursor();
+            if moment.landed == self.hwnd && same_point(pointer, at) {
+                break (at, moment);
+            }
+            let changed = format!(
+                "right before the click at {},{}, a click there goes to {} and the pointer is at {},{}",
+                at.x,
+                at.y,
+                describe_for(moment.landed, self.hwnd),
+                pointer.x,
+                pointer.y
+            );
+            assert!(Instant::now() < until, "{what}: {changed}, {} ms after the first check{}", started.elapsed().as_millis(), self.account(&moment, &[]));
+            println!("{what}: {changed}; the point is chosen again");
+        };
+        press();
+        // The window in front after the click, each time it changed.
+        let mut seen: Vec<(Duration, isize)> = Vec::new();
+        let came = wait_until(WAIT, || {
+            let now = foreground();
+            if seen.last().is_none_or(|&(_, last)| last != now) {
+                seen.push((moment.when.elapsed(), now));
+            }
+            now == self.hwnd
+        });
+        if came {
+            let took = moment.when.elapsed();
+            if took > Duration::from_millis(500) {
+                println!("{what}: in front {} ms after the click (in front before it: {})", took.as_millis(), describe(moment.front));
+            }
+            return;
+        }
+        panic!(
+            "{what} did not come to the front (in front: {}; the foreground thread: {}). The click at {},{} went to {} (in front before it: {}){}",
+            describe_for(foreground(), self.hwnd),
+            foreground_thread(),
+            at.x,
+            at.y,
+            describe_for(moment.landed, self.hwnd),
+            describe_for(moment.front, self.hwnd),
+            self.account(&moment, &seen)
+        );
+    }
+
+    /// For a failure message: the windows at the moment's point, the Z order and what the threads
+    /// held then and now, whether this window's thread pumps its messages and where it is, and the
+    /// messages and WinEvents from a second before the moment on. `seen` is the window in front
+    /// after it, each time it changed.
+    fn account(&self, moment: &Moment, seen: &[(Duration, isize)]) -> String {
+        let at = moment.at;
+        let mut changes = String::new();
+        for (when, hwnd) in seen {
+            let _ = write!(changes, "\n  +{} ms {}", when.as_millis(), describe_for(*hwnd, self.hwnd));
+        }
+        if changes.is_empty() {
+            changes.push_str("\n  (not watched)");
+        }
+        let positions = |order: &[isize]| {
+            let position = |hwnd: isize| order.iter().position(|&each| each == hwnd).map_or_else(|| "-".to_owned(), |at| at.to_string());
+            format!("this window {}, the window in front before {}, of {}", position(self.hwnd), position(moment.front), order.len())
+        };
+        let order_now = positions(&z_order());
+        let threads = format!("this window's thread: {}; the thread of the window in front before: {}", thread_state(self.hwnd), thread_state(moment.front));
+        let answers = format!("this window {}; the window in front before {}", answers(self.hwnd), answers(moment.front));
+        let posted = watch::posted_probe(self.hwnd, Duration::from_secs(1));
+        let trace = watch::stack_probe(self.hwnd);
+        let cursor = cursor();
+        let since = moment.when.checked_sub(Duration::from_secs(1)).unwrap_or(moment.when);
+        let received = watch::messages_since(since, moment.when, self.hwnd);
+        let events = watch::events_since(since, moment.when);
+        format!(
+            "; the windows at {},{} then, top first:{}\n then: Z order {}; the foreground thread: {}\n in front after:{changes}\n now: Z order {order_now}; the cursor at {},{}\n {threads}\n {answers}\n this window's thread {posted}\n this window's thread when a message sent to it arrives:{trace}\n received from 1 s before on:{received}\n WinEvents from 1 s before on:{events}",
+            at.x,
+            at.y,
+            moment.stack,
+            positions(&moment.order),
+            moment.front_thread,
+            cursor.x,
+            cursor.y,
+        )
+    }
+}
+
+/// What the screen and the foreground thread were like at a point, right before a click there,
+/// for a failure message.
+struct Moment {
+    at: POINT,
+    when: Instant,
+    /// The window in front.
+    front: isize,
+    /// The window a click at `at` goes to ([`root_at`]).
+    landed: isize,
+    /// The windows that show at `at`, top first, down to the target ([`stack_at`]).
+    stack: String,
+    /// Every top-level window, in Z order.
+    order: Vec<isize>,
+    /// What the foreground thread held ([`foreground_thread`]).
+    front_thread: String,
+}
+
+impl Moment {
+    /// Read now; the window a click at `at` goes to last, closest to a click after it.
+    fn now(target: isize, at: POINT) -> Self {
+        let front = foreground();
+        let stack = stack_at(target, at);
+        let order = z_order();
+        let front_thread = foreground_thread();
+        let landed = root_at(at);
+        Self { at, when: Instant::now(), front, landed, stack, order, front_thread }
     }
 }
 
@@ -238,22 +471,88 @@ impl Drop for TestWindow {
     }
 }
 
-/// A left click at `at`.
-pub fn click(at: POINT) {
+/// A left click where the pointer is, without moving it.
+pub fn press() {
     let mouse =
         |flags| INPUT { r#type: INPUT_MOUSE, Anonymous: INPUT_0 { mi: MOUSEINPUT { dx: 0, dy: 0, mouseData: 0, dwFlags: flags, time: 0, dwExtraInfo: 0 } } };
     let clicks = [mouse(MOUSEEVENTF_LEFTDOWN), mouse(MOUSEEVENTF_LEFTUP)];
     // SAFETY: an array of INPUTs that outlives the call.
-    let sent = unsafe {
-        SetCursorPos(at.x, at.y);
-        SendInput(2, clicks.as_ptr(), i32::try_from(size_of::<INPUT>()).unwrap())
-    };
+    let sent = unsafe { SendInput(2, clicks.as_ptr(), i32::try_from(size_of::<INPUT>()).unwrap()) };
+    let at = cursor();
     assert_eq!(sent, 2, "the click at {},{}", at.x, at.y);
+}
+
+/// Whether two points are the same (`POINT` has no `PartialEq`).
+pub fn same_point(a: POINT, b: POINT) -> bool {
+    a.x == b.x && a.y == b.y
+}
+
+/// Where the cursor is.
+pub fn cursor() -> POINT {
+    let mut at = POINT { x: 0, y: 0 };
+    // SAFETY: a POINT on the stack.
+    unsafe { GetCursorPos(&raw mut at) };
+    at
 }
 
 pub fn foreground() -> isize {
     // SAFETY: plain query.
     unsafe { GetForegroundWindow() as isize }
+}
+
+/// What the foreground thread holds, for a failure message: its active, focus and capture windows
+/// and its flags (in a menu, in a move or size loop), which say more when no window is in front.
+pub fn foreground_thread() -> String {
+    let mut info = GUITHREADINFO { cbSize: u32::try_from(size_of::<GUITHREADINFO>()).unwrap(), ..GUITHREADINFO::default() };
+    // SAFETY: `info` is a GUITHREADINFO with its size set; thread 0 is the foreground thread.
+    if unsafe { GetGUIThreadInfo(0, &raw mut info) } == 0 {
+        return format!("unknown ({})", std::io::Error::last_os_error());
+    }
+    format!(
+        "active {}, focus {}, capture {}, flags {:#x}",
+        describe(info.hwndActive as isize),
+        describe(info.hwndFocus as isize),
+        describe(info.hwndCapture as isize),
+        info.flags
+    )
+}
+
+/// What the thread of `hwnd` holds (`GetGUIThreadInfo`), for a failure message.
+pub fn thread_state(hwnd: isize) -> String {
+    if hwnd == 0 {
+        return "no window".to_owned();
+    }
+    // SAFETY: a window handle; a stale one answers thread 0.
+    let thread = unsafe { GetWindowThreadProcessId(hwnd as HWND, std::ptr::null_mut()) };
+    let mut info = GUITHREADINFO { cbSize: u32::try_from(size_of::<GUITHREADINFO>()).unwrap(), ..GUITHREADINFO::default() };
+    // SAFETY: `info` is a GUITHREADINFO with its size set.
+    if thread == 0 || unsafe { GetGUIThreadInfo(thread, &raw mut info) } == 0 {
+        return format!("unknown ({})", std::io::Error::last_os_error());
+    }
+    format!(
+        "active {}, focus {}, capture {}, flags {:#x}",
+        describe(info.hwndActive as isize),
+        describe(info.hwndFocus as isize),
+        describe(info.hwndCapture as isize),
+        info.flags
+    )
+}
+
+/// Whether the thread of `hwnd` answers a message (within a second), and how soon, for a failure
+/// message.
+pub fn answers(hwnd: isize) -> String {
+    if hwnd == 0 {
+        return "is no window".to_owned();
+    }
+    // SAFETY: plain queries on a window handle; `result` outlives the call.
+    let (hung, answered, took) = unsafe {
+        let hung = IsHungAppWindow(hwnd as HWND) != 0;
+        let started = Instant::now();
+        let mut result = 0usize;
+        let answered = SendMessageTimeoutW(hwnd as HWND, WM_NULL, 0, 0, SMTO_ABORTIFHUNG | SMTO_BLOCK, 1000, &raw mut result) != 0;
+        (hung, answered, started.elapsed())
+    };
+    format!("{} in {} ms (hung: {hung})", if answered { "answers" } else { "does not answer" }, took.as_millis())
 }
 
 /// Wait until `done` holds, at most `within`; whether it did.
@@ -268,6 +567,26 @@ pub fn wait_until(within: Duration, mut done: impl FnMut() -> bool) -> bool {
         }
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+/// The window's client area in screen coordinates.
+pub fn client_rect(hwnd: isize) -> RECT {
+    let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    let mut origin = POINT { x: 0, y: 0 };
+    // SAFETY: a window handle, a RECT and a POINT on the stack; a stale handle leaves them empty.
+    unsafe {
+        GetClientRect(hwnd as HWND, &raw mut rect);
+        ClientToScreen(hwnd as HWND, &raw mut origin);
+    }
+    RECT { left: origin.x, top: origin.y, right: origin.x + rect.right, bottom: origin.y + rect.bottom }
+}
+
+/// A point of the screen in the window's client coordinates.
+pub fn client_point(hwnd: isize, at: POINT) -> POINT {
+    let mut point = at;
+    // SAFETY: a window handle and a POINT on the stack; a stale handle leaves it as it was.
+    unsafe { ScreenToClient(hwnd as HWND, &raw mut point) };
+    point
 }
 
 pub fn rect_of(hwnd: isize) -> RECT {
@@ -317,6 +636,31 @@ pub fn top_at(at: POINT) -> isize {
     z_order().into_iter().find(|&hwnd| shows_at(hwnd, at)).unwrap_or(0)
 }
 
+/// The top-level window a click at `at` goes to: the root of the window Windows finds there
+/// (`WindowFromPoint`, which also skips hidden and click-through windows), or 0.
+pub fn root_at(at: POINT) -> isize {
+    // SAFETY: plain queries; a point over no window answers null.
+    unsafe {
+        let hwnd = WindowFromPoint(at);
+        if hwnd.is_null() { 0 } else { GetAncestor(hwnd, GA_ROOT) as isize }
+    }
+}
+
+/// The windows that show at `at` in Z order, the one on top first, down to `target`, for a failure
+/// message (every one there when `target` is not).
+pub fn stack_at(target: isize, at: POINT) -> String {
+    let mut text = String::new();
+    for hwnd in z_order() {
+        if shows_at(hwnd, at) {
+            let _ = write!(text, "\n  {}", describe_for(hwnd, target));
+            if hwnd == target {
+                break;
+            }
+        }
+    }
+    if text.is_empty() { "\n  no window".to_owned() } else { text }
+}
+
 /// The screen's colour at `at` as the desktop composes it (`0x00BBGGRR`).
 pub fn pixel(at: POINT) -> u32 {
     // SAFETY: the screen's device context, released after the one read.
@@ -333,7 +677,7 @@ pub fn same_color(a: u32, b: u32) -> bool {
     a != CLR_INVALID && (0..3).all(|shift| ((a >> (shift * 8)) & 0xff).abs_diff((b >> (shift * 8)) & 0xff) <= 8)
 }
 
-/// One window, for a failure message: class, process, top-most, rectangle (never its title).
+/// One window, for a failure message: class, handle, process, top-most, rectangle (never its title).
 pub fn describe(hwnd: isize) -> String {
     if hwnd == 0 {
         return "no window".to_owned();
@@ -347,7 +691,20 @@ pub fn describe(hwnd: isize) -> String {
     };
     let class = String::from_utf16_lossy(&class[..usize::try_from(n).unwrap_or(0).min(128)]);
     let rect = rect_of(hwnd);
-    format!("{class} (pid {pid}, topmost {}, ex {:#010x}, {},{}-{},{})", is_topmost(hwnd), ex_style(hwnd), rect.left, rect.top, rect.right, rect.bottom)
+    format!(
+        "{class} {hwnd:#x} (pid {pid}, topmost {}, ex {:#010x}, {},{}-{},{})",
+        is_topmost(hwnd),
+        ex_style(hwnd),
+        rect.left,
+        rect.top,
+        rect.right,
+        rect.bottom
+    )
+}
+
+/// [`describe`], with `this` named as the window being tested.
+pub fn describe_for(hwnd: isize, this: isize) -> String {
+    if hwnd != 0 && hwnd == this { format!("this window, {}", describe(hwnd)) } else { describe(hwnd) }
 }
 
 /// The windows above `target` in Z order that show at `at`, for a failure message.
