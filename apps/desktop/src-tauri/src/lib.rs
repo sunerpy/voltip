@@ -7,10 +7,11 @@
 
 // `unsafe` is forbidden everywhere except `platform/windows.rs` (Win32 FFI for the injection
 // preflight and the microphone consent store), `solo_key/windows.rs` (the low-level input hooks of
-// the lone-key trigger), `exit.rs` (`_exit` on Linux), `keychain_handoff.rs` (Security.framework
-// calls on macOS) and `platform/tray.rs`'s `press` (the target of the menu bar item's button on
-// macOS): on those platforms the crate-level lint is `deny`, which each of those modules relaxes
-// with `#![allow(unsafe_code)]` and a SAFETY comment on every block.
+// the lone-key trigger), `exit.rs` (`_exit` on Linux), `platform/graphics.rs` (`set_var` on Linux,
+// only while the process runs one thread), `keychain_handoff.rs` (Security.framework calls on
+// macOS) and `platform/tray.rs`'s `press` (the target of the menu bar item's button on macOS): on
+// those platforms the crate-level lint is `deny`, which each of those modules relaxes with
+// `#![allow(unsafe_code)]` and a SAFETY comment on every block.
 #![cfg_attr(not(any(target_os = "windows", target_os = "linux", target_os = "macos")), forbid(unsafe_code))]
 #![cfg_attr(any(target_os = "windows", target_os = "linux", target_os = "macos"), deny(unsafe_code))]
 #![warn(missing_docs)]
@@ -1922,14 +1923,22 @@ pub fn build_app<R: Runtime>(
 /// Build and run the Tauri application with the production data dir and keychain. Parses the
 /// command line first (docs/dictation.md §13): the headless flags run and exit here without a
 /// window, tray, hotkey or microphone; `--toggle` / `--cancel` reach a running instance through
-/// the single-instance plugin (with no instance running they start the GUI and are dropped).
+/// the single-instance plugin (with no instance running they start the GUI and are dropped). On
+/// Linux the graphics environment comes before all of that, while the process still runs one
+/// thread (`platform::graphics`, docs/dictation.md §14.8).
 pub fn run() {
+    // First, before any thread starts: GTK and WebKitGTK read these variables when they open the
+    // first window, and they can only be set safely while this is the only thread (#228).
+    #[cfg(target_os = "linux")]
+    let graphics = platform::graphics::prepare();
     let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,voltip=debug"));
     // Logs go to stderr in every mode: stdout carries only headless command output (`--json` must
     // stay parseable), and a writer on stdout would contend with the CLI's own writes. Colour only
     // on a terminal (and never with NO_COLOR): piped stderr is a log file or a script's capture.
     let ansi = std::io::IsTerminal::is_terminal(&std::io::stderr()) && std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty());
     let _ = tracing_subscriber::fmt().with_env_filter(filter).with_writer(std::io::stderr).with_ansi(ansi).try_init();
+    #[cfg(target_os = "linux")]
+    graphics.log();
     // Before anything else: a macOS update that started this build hands the keychain over here.
     #[cfg(target_os = "macos")]
     keychain_handoff::receive_at_startup();

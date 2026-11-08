@@ -9,11 +9,12 @@ repository.workspace = true
 description = "Voltip desktop shell (Windows, macOS, Linux)."
 build = "build.rs"
 
-# The workspace forbids `unsafe_code`. This crate lowers that to `deny` for two FFI modules, since
-# `forbid` cannot be relaxed per module: the Win32 token / desktop / registry queries behind
-# `inject_preflight` and the microphone consent check (`src/platform/windows.rs`), and `_exit` on
-# Linux (`src/exit.rs`). lib.rs keeps `forbid` on macOS; each module carries `#![allow(unsafe_code)]`
-# with a SAFETY comment on every block. The clippy lints mirror `[workspace.lints.clippy]`.
+# The workspace forbids `unsafe_code`. This crate lowers that to `deny` for the modules lib.rs
+# lists, since `forbid` cannot be relaxed per module: among them the Win32 token / desktop /
+# registry queries behind `inject_preflight` and the microphone consent check
+# (`src/platform/windows.rs`), and on Linux `_exit` (`src/exit.rs`) and `set_var` before the first
+# thread (`src/platform/graphics.rs`). Each module carries `#![allow(unsafe_code)]` with a SAFETY
+# comment on every block. The clippy lints mirror `[workspace.lints.clippy]`.
 [lints.rust]
 unsafe_code = "deny"
 

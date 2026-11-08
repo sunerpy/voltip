@@ -81,6 +81,10 @@ Qwen3-ASR 需要支持 AVX2 的处理器。请改用 SenseVoice Small、Paraform
 
 Voltip 把密钥和设备身份保存在系统钥匙串中，无法打开钥匙串时不会启动，也不会改为保存到文件中。在 Linux 上，钥匙串由 Secret Service 提供：请启动并解锁 GNOME Keyring 或 KWallet。Voltip 启动时如果钥匙串要求输入密码，请输入；关闭密码提示时，Voltip 同样会显示这条说明并退出。在 Mac 上，请解锁钥匙串，并在系统询问时允许 Voltip 访问。在 Windows 上，请确认凭据管理器服务正在运行。然后重新打开 Voltip。
 
+### Linux 上 Voltip 启动后随即退出
+
+如果终端中显示 `Error 71 (Protocol error) dispatching to Wayland display`，并且电脑装有 NVIDIA 显卡，原因是 WebKitGTK 的 DMA-BUF 渲染。从 0.3.0 起，Voltip 在 Wayland 会话中会自动关闭它，除非你已自行设置 `WEBKIT_DISABLE_DMABUF_RENDERER`。更早的版本需要用 `WEBKIT_DISABLE_DMABUF_RENDERER=1 voltip-desktop` 启动。如果 Voltip 仍然退出，请用 `GDK_BACKEND=x11 voltip-desktop` 启动，见[各平台说明](/zh/reference/platforms#wayland-与-nvidia-显卡)。
+
 ### 我的文件在哪里？如何卸载？
 
 见[更新、卸载与数据位置](/zh/guide/updates)。

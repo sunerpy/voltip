@@ -1,6 +1,6 @@
 //! Platform policy for the Voltip shells (docs/dictation.md §15): the **decisions** the desktop
-//! shell makes on macOS and Windows, written as pure functions and tables so they compile and are
-//! unit-tested on every host, including the Linux CI that can neither prompt for a macOS
+//! shell makes on macOS, Windows and Linux, written as pure functions and tables so they compile
+//! and are unit-tested on every host, including the Linux CI that can neither prompt for a macOS
 //! permission nor open a Windows token.
 //!
 //! The crate never talks to the operating system. The shell (`apps/desktop/src-tauri/src/platform/`)
@@ -14,6 +14,8 @@
 //!   keycode fallbacks and the modifier hold.
 //! - [`windows`]: integrity-level comparison for the injection preflight (`inject_preflight`
 //!   wire) and the microphone `ConsentStore` key priority.
+//! - [`linux`]: WebKitGTK's DMA-BUF renderer, turned off before the first window on a Wayland
+//!   session with an NVIDIA GPU (docs/dictation.md §14.8, issue #228).
 //! - [`tray`]: the three-state tray glyph, rendered to RGBA so no icon asset is needed.
 //! - [`foreground`]: the focused application's raw facts (Windows image path, X11 `WM_CLASS`,
 //!   macOS bundle id) → the normalised app id scenes match on (docs/dictation.md §18).
@@ -34,6 +36,7 @@ pub mod foreground;
 pub mod held_key;
 pub mod insert_check;
 pub mod keychain;
+pub mod linux;
 pub mod macos;
 pub mod permissions;
 pub mod solo_key;

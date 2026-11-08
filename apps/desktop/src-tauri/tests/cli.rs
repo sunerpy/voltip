@@ -691,6 +691,58 @@ fn regression_a_headless_run_keeps_its_output_and_its_exit_status() {
     assert!(String::from_utf8_lossy(&unknown.stderr).contains("no-such-model"), "the reason reaches stderr before the exit");
 }
 
+/// Regression (#228): on GNOME Wayland with an RTX 3060 on nouveau next to an Intel GPU on i915,
+/// 0.2.1 quit with `Error 71 (Protocol error) dispatching to Wayland display` a second after it
+/// started: WebKitGTK's DMA-BUF renderer ran. The binary now turns it off as its first step, while
+/// it is still the only thread (otherwise it sets nothing and says so), and logs the line once
+/// tracing is up; `--version` ends the run right after. The GPUs are the reporter's, read from a
+/// tree the debug build is pointed at (`VOLTIP_DEV_GPU_ROOT`). The user's own value stays, and
+/// `GDK_BACKEND=x11` or an Intel GPU alone changes nothing.
+#[cfg(target_os = "linux")]
+#[test]
+fn regression_the_binary_turns_webkit_s_dmabuf_renderer_off_on_wayland_with_nouveau_while_it_is_alone() {
+    use voltip_desktop_lib::platform::graphics::DEV_GPU_ROOT_ENV;
+    /// `card<N>/device/driver` links as the kernel lays them out (dangling: only the link is read).
+    fn gpus(drivers: &[&str]) -> tempfile::TempDir {
+        let root = tempfile::tempdir().unwrap();
+        for (n, driver) in drivers.iter().enumerate() {
+            let device = root.path().join(format!("sys/class/drm/card{n}/device"));
+            std::fs::create_dir_all(&device).unwrap();
+            std::os::unix::fs::symlink(format!("../../../bus/pci/drivers/{driver}"), device.join("driver")).unwrap();
+        }
+        root
+    }
+    let data = tempfile::tempdir().unwrap();
+    let reporter = gpus(&["nouveau", "i915"]);
+    let intel = gpus(&["i915"]);
+    let run = |root: &Path, vars: &[(&str, &str)]| {
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_voltip-desktop"));
+        command.arg("--version").env("RUST_LOG", "info");
+        for name in ["GDK_BACKEND", "WEBKIT_DISABLE_DMABUF_RENDERER", "DISPLAY"] {
+            command.env_remove(name);
+        }
+        command.env("WAYLAND_DISPLAY", "voltip-test-wayland").env("XDG_SESSION_TYPE", "wayland").env(DEV_GPU_ROOT_ENV, root);
+        command.envs(vars.iter().copied());
+        isolated(&mut command, data.path());
+        let output = command.output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        assert!(output.status.success(), "{stderr}");
+        assert!(String::from_utf8_lossy(&output.stdout).contains(voltip_desktop_lib::APP_VERSION), "--version still prints the version");
+        stderr
+    };
+    let set = "WEBKIT_DISABLE_DMABUF_RENDERER=1";
+    let stderr = run(reporter.path(), &[]);
+    assert!(stderr.contains(set) && stderr.contains("driver=nouveau"), "the reporter's machine turns the renderer off:\n{stderr}");
+    assert!(stderr.contains(r#"gpus=["nouveau", "i915"]"#), "the line names the drivers found:\n{stderr}");
+    assert!(!stderr.contains("other threads"), "set while the process is alone:\n{stderr}");
+    let stderr = run(reporter.path(), &[("WEBKIT_DISABLE_DMABUF_RENDERER", "0")]);
+    assert!(!stderr.contains(set) && stderr.contains("stays as the user set it") && stderr.contains(r#"value="0""#), "{stderr}");
+    for (root, vars) in [(reporter.path(), &[("GDK_BACKEND", "x11")][..]), (intel.path(), &[])] {
+        let stderr = run(root, vars);
+        assert!(!stderr.contains("WEBKIT_DISABLE_DMABUF_RENDERER"), "{vars:?}: nothing to change:\n{stderr}");
+    }
+}
+
 /// The shipped binary end to end with a real model and debug logging on: `--transcribe-file
 /// --json` must finish (the deadlock above hung it forever) and print one JSON object.
 /// ```text
