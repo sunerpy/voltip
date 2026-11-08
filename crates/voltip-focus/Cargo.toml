@@ -26,7 +26,7 @@ voltip-platform = { path = "../voltip-platform" }
 # keyring already pull.
 [target.'cfg(target_os = "linux")'.dependencies]
 serde.workspace = true
-zbus = "=5.19.0"
+zbus = "=6.2.1"
 
 # UI Automation: the version tao already compiles, with the features it already enables.
 [target.'cfg(target_os = "windows")'.dependencies]
