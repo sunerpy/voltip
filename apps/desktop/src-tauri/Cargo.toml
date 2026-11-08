@@ -54,22 +54,23 @@ serde_json.workspace = true
 # agree, and it reads only this table). No effect on the other platforms. The app is not meant for
 # the Mac App Store, which rejects private API use.
 tauri = { version = "=2.12.5", default-features = false, features = ["wry", "macos-private-api"] }
-tauri-plugin-opener = "=2.5.5"
-tauri-plugin-global-shortcut = "=2.3.2"
+tauri-plugin-opener = "=2.7.2"
+tauri-plugin-global-shortcut = "=2.4.1"
 # The save dialog of 导出字幕 / 导出文本 (src/export.rs, docs/dictation.md §22); called from Rust
-# only. 2.7.3 takes tauri 2.10 and later; 2.8.4 moves to a new major version of the dialog
-# library it wraps (rfd 0.17), which wants its own check of the save dialog on every platform.
-tauri-plugin-dialog = "=2.7.3"
+# only. 2.8.4 wraps rfd 0.17, whose dialogs work as 0.16's did: the GTK3 backend is unchanged, the
+# macOS panels only gained a file-or-folder picker, and Windows still shows each dialog on a thread
+# of its own after initialising COM.
+tauri-plugin-dialog = "=2.8.4"
 # `voltip --toggle` / `--cancel` reach the running instance (docs/dictation.md §13). No default
 # features: `semver` (version comparison between instances) and `deep-link` are not needed.
-tauri-plugin-single-instance = { version = "=2.4.5", default-features = false }
+tauri-plugin-single-instance = { version = "=2.5.5", default-features = false }
 clap.workspace = true
 # In-app updates (src/update.rs). No default features: TLS comes from the workspace's reqwest
 # `rustls` feature (aws-lc-rs) through feature unification; the plugin's own `rustls-tls` default
 # would add a second rustls provider (ring) and make every `reqwest::Client::builder()` in the
 # process panic until one is installed explicitly. `zip` (Tauri v1 compressed bundles) is not needed:
 # the CLI's v2 artefacts are the raw NSIS installer / `.app.tar.gz` / AppImage.
-tauri-plugin-updater = { version = "=2.12.0", default-features = false }
+tauri-plugin-updater = { version = "=2.14.1", default-features = false }
 parking_lot.workspace = true
 tokio.workspace = true
 tracing.workspace = true

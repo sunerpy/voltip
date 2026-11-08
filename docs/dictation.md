@@ -273,7 +273,7 @@ Kimi（`api.moonshot.cn` / `api.moonshot.ai`）和智谱 GLM（智谱开放平�
   - Paseo 等整段结果的时间是固定的 25 s（§23.8），所以这类请求在 Voltip 返回前 1–3 s 被 Paseo 判为超时；用户在 Paseo 中重试时，`voltip-server` 在 90 s 内复用同一条慢连接（reqwest 连接池的空闲期限），同样失败。
   - 两处都会让听写失败：上传数据量是 Voltip 的问题，固定的 25 s 是 Paseo 的问题。中国大陆的桌面端和手机端访问首尔的内置服务也走同样的跨境线路，实时预览（§11.8）每秒重发一次正在说的句子，受影响更大。
 - **处理**：发往内置服务的识别请求，`file` 改为 Ogg Opus（RFC 7845）：`voltip_cloud::asr_upload` 对 `builtin` 返回 `AudioUpload::OggOpus`，其他服务商仍发 WAV（各家都接受 WAV；没有验证过的格式不发）。编码在 `voltip-asr` 的 `ogg_opus.rs`：与手机录音相同的编码器（`opus-rs`，§20.1），VoIP、20 ms 一帧、24 kbit/s VBR；在阻塞线程池中运行。WAV 不是 16 位单声道，或采样率不是 Opus 支持的 8 / 12 / 16 / 24 / 48 kHz 时照常发 WAV。
-  - `opus-rs` 0.1.34 在 VBR 下按输出缓冲区的大小而不是 `bitrate_bps` 给 SILK 分配码率：给 1276 字节的缓冲区，语音编出来约 75 kbit/s。所以每包缓冲区按码率给 61 字节（60 字节加 TOC），实测语音约 21 kbit/s，约为 WAV 的 1/12。手机录音的 Opus（§20.1）用的是整个缓冲区，实际码率同样高于 24 kbit/s，本次未改。0.1.40（2026-11）按 `bitrate_bps` 分配码率，61 字节仍是每包的上限：一段 58 s 的中文语音编出 20.1 kbit/s（0.1.34 为 20.2）；手机录音用整个缓冲区，按 24 kbit/s 的设置会降到 22.5 kbit/s（0.1.34 为 78.2）；用户选择保持升级前的码率（2026-11-07），手机录音的设置改为 96 kbit/s，编出的包与 0.1.34 逐字节相同（§20.1）。
+  - `opus-rs` 0.1.34 在 VBR 下按输出缓冲区的大小而不是 `bitrate_bps` 给 SILK 分配码率：给 1276 字节的缓冲区，语音编出来约 75 kbit/s。所以每包缓冲区按码率给 61 字节（60 字节加 TOC），实测语音约 21 kbit/s，约为 WAV 的 1/12。手机录音的 Opus（§20.1）用的是整个缓冲区，实际码率同样高于 24 kbit/s，本次未改。0.1.40（2026-11）按 `bitrate_bps` 分配码率，61 字节仍是每包的上限：一段 58 s 的中文语音编出 20.1 kbit/s（0.1.34 为 20.2）；手机录音用整个缓冲区，按 24 kbit/s 的设置会降到 22.5 kbit/s（0.1.34 为 78.2）；用户选择保持升级前的码率（2026-11-07），手机录音的设置改为 96 kbit/s，编出的包与 0.1.34 逐字节相同（§20.1）。0.1.41（2026-11-08）只改了 CELT 帧在放不下分配 trim 时的码率分配；这三处 16 kHz VoIP 编码出的全是 SILK 帧，六段 60 s 的中英文语音（FLEURS）和单音、噪声、脉冲、短促音四段合成信号按 24 kbit/s（61 字节）与 96 kbit/s（整个缓冲区）两种设置编出的包，与 0.1.40 逐字节相同。
   - 内置服务的 vLLM 用 libsndfile 1.2.2 读取音频，支持 Ogg Opus，失败时改用 PyAV。
 - **实测**（2026-10-12）：7 段中文、中英混合和方言样音，每种格式各识别 3 遍，与 WAV 文本相比字符差异 0.5 %，与 32、40、75 kbit/s 相同；编码复杂度降到 5 或 0 时为 1.3 %，所以保留默认的 9。37.7 s 的样音从 1.2 MB 降到约 98 KB；编码在构建主机的一个核上用时约 0.47 s。同一台主机经同一出口、每次新建连接各请求 16 次：WAV 有 3 次超过 20 s（最长 31.8 s，拥塞窗口 6–12 个报文并有重传），Ogg Opus 全部在 1.5–2.5 s；网络正常时 Opus 因为编码多约 0.4 s。Opus 的 16 次里没有出现变慢的连接，约 100 KB 的请求在慢启动阶段就已发完。由同一段样音重复拼成的 3 分钟与 5 分钟录音（7 段与 11 段，§22 的长录音路径）经 `voltip-server` 分别用时 8.7 s 与 13 s。
 - **测试**：`voltip-asr` 的 `ogg_opus` 测试（RFC 7845 页结构与 CRC、各页长度下颗粒位置递增到录音结束、`regression_a_take_stays_at_the_budgets_bitrate_and_decodes_back_to_it`、只编码 Opus 能直接接受的 WAV、扩展格式与多余块）、`an_ogg_opus_upload_sends_the_take_as_opus_and_anything_else_as_the_wav`；`voltip-cloud` 的 `regression_the_built_in_service_gets_ogg_opus_and_every_other_service_the_wav`。同一次排查修正了 `voltip-asr` 与 `voltip-refine` 中四个测试的竞争（`refused_connection_is_a_network_error`、`timeout_and_network`、`a_connection_refused_once_is_tried_again_and_the_{take,polish}_goes_through`）：先释放的端口在客户端重试的 1.3 s 内可能被另一个测试的服务占用，现在改为只绑定、不监听的套接字。
@@ -1066,10 +1066,10 @@ CLI（桌面 `apps/desktop/src-tauri/src/cli.rs`，`clap` 4.6.6；手机端无 C
 
 | 参数 | 行为 | 退出码 |
 |---|---|---|
-| `--toggle` | 经 `tauri-plugin-single-instance` 2.4.3 转发到运行实例 → `HotkeyEdge { pressed: true, source: cli }`；无运行实例时正常启动 GUI（记日志，参数丢弃）。Wayland 无全局热键时绑定到合成器快捷键 | 第二实例由插件退出 |
+| `--toggle` | 经 `tauri-plugin-single-instance` 2.5.5 转发到运行实例 → `HotkeyEdge { pressed: true, source: cli }`；无运行实例时正常启动 GUI（记日志，参数丢弃）。Wayland 无全局热键时绑定到合成器快捷键 | 第二实例由插件退出（0）；运行实例收不下参数时（不响应），Linux 上构建失败、日志记 `tauri failed to build`，退出码 1，Windows 上最多等 10 s 后退出（0） |
 | `--cancel` | 同上 → `DictationCancel` | 同上 |
 | `--start-hidden` | 启动但不显示主窗口（`tauri.conf.json` 的 `main` 声明 `visible: false`，setup 钩子在核心就绪后才 `show()`，无此参数时亦如此，避免闪窗）；无参数的第二次启动把主窗口带到前台 | — |
-| `--quit` | 让运行实例退出（与托盘的「退出 Voltip」相同），与其他参数互斥；应用照常构建，好让插件把参数转给运行实例，构建完仍在说明没有运行实例，直接退出，不起 GUI | 0 |
+| `--quit` | 让运行实例退出（与托盘的「退出 Voltip」相同），与其他参数互斥；应用照常构建，好让插件把参数转给运行实例，构建完仍在说明没有运行实例，直接退出，不起 GUI | 0（运行实例收不下参数时同 `--toggle`） |
 | `--list-devices` | `voltip_audio::list_input_devices()`，每行 `id<TAB>name[<TAB>(default)]` | 0 / 1（枚举失败） |
 | `--list-models` | `ModelStore::scan()`，每行 `id<TAB>state<TAB>name`（`installed` / `not_installed` / …） | 0 |
 | `--transcribe-file <文件> [--model <id>] [--json] [--srt <OUT>]` | headless：不起窗口 / 托盘 / 热键 / 麦克风；文件经导入的解码器（§31.7）转成 16 kHz 单声道，`LocalTranscriber::new(<data_dir>/models).select(model)` 识别（不带 `--srt` 的 WAV 整段识别，其余按 3–15 s 分段）；`--model` 缺省取 `settings.json` 本地模式所选模型，否则目录默认；语言取 `engines.language`。stdout 输出文本，或 `{ "text", "model", "latency_ms" }` 一行 JSON | 0；模型未下载 / 识别失败 1、文件读不到 2，非零时 stdout 为空，原因在 stderr |
@@ -2180,7 +2180,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 
 ### 22.5 导出（`voltip_core::history::export`、桌面 `src/export.rs`）
 
-- `history_export { id, format: "srt" | "txt", fileName }`（查询，桌面）：弹出系统的保存对话框（`tauri-plugin-dialog` =2.7.3，只从 Rust 调用），默认文件名是页面给的 `Voltip YYYY-MM-DD HH.mm`（去掉文件系统不接受的字符，最长 120 字），文件由 Rust 写入。结果 `saved { path }`、`cancelled` 或 `failed { code: gone | empty | write, detail }`。手机没有保存对话框：同一条命令把内容作为文件交给系统分享面板（`SharePlugin.kt` 的 `shareFile`，文件写在应用缓存里，经清单里的 FileProvider 交给目标应用，不受 intent 大小限制），结果 `shared`，面板没能打开时 `failed { code: share, detail }`（§20.7）。
+- `history_export { id, format: "srt" | "txt", fileName }`（查询，桌面）：弹出系统的保存对话框（`tauri-plugin-dialog` =2.8.4，只从 Rust 调用），默认文件名是页面给的 `Voltip YYYY-MM-DD HH.mm`（去掉文件系统不接受的字符，最长 120 字），文件由 Rust 写入。结果 `saved { path }`、`cancelled` 或 `failed { code: gone | empty | write, detail }`。手机没有保存对话框：同一条命令把内容作为文件交给系统分享面板（`SharePlugin.kt` 的 `shareFile`，文件写在应用缓存里，经清单里的 FileProvider 交给目标应用，不受 intent 大小限制），结果 `shared`，面板没能打开时 `failed { code: share, detail }`（§20.7）。
 - **SRT**：按分段生成，每段的文字折成行：每行不超过 20 个汉字或 42 个英文字符（按宽度计：汉字 21、其他 10，上限 420），优先在后半行的标点之后折，其次在最后一个空格处，都没有就在满行处；每行一条字幕，这一段的时间按各行宽度比例切分。编号从 1 开始，CRLF 换行，UTF-8。没有文字的段不出字幕；没有分段的条目不能导出字幕。
 - **TXT**：有处理后文本就用处理后的，否则用条目的文字。
 - 导入的音视频文件（§31）：字幕可以选用逐段润色后的文字（`history_export` 的 `subtitles`，时间码不变），默认文件名是原文件名，见 §31.5。
@@ -3130,7 +3130,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 - 端口 `voltip_core::import::MediaDecoder`（`CoreConfig.media_decoder`）：`extensions()`、`probe(path)`、`decode_to_pcm(path, out, progress, cancel)`。桌面壳接 `voltip_media::Decoder`；手机没有解码器，`UiState.imports.available` 为假，导入命令被拒绝。
 - 输出与长录音的录音文件相同（§22.3）：16 kHz 单声道 16 位小端裸 PCM。先写 `<out>.part`，完成后改名，所以 `out` 只在完整时存在；取消时报 `Cancelled` 并删除 `.part`。
 - 逐包读取、逐块解码，多声道按平均值混成单声道，用本机语音服务的 `StreamResampler`（§23）逐块重采样后写出。内存里只有一个包和一块样本，与文件长度无关。
-- 格式：Symphonia =0.6.1（特性 `aac alac flac id3v2 isomp4 mkv mp3 ogg pcm vorbis wav`，没有默认特性）读容器并解码，Opus 由 `opus-rs` =0.1.40 解码。`id3v2` 让探测跳过 MP3 开头的 ID3v2 标签：带封面的标签常超过 1 MB，而探测只在开头 1 MB 内找第一帧（0.5 版总会读这个标签）。空的 Opus 包不交给 `opus-rs`：它把空包当作丢包，按缓冲区大小补出 120 ms 的声音。
+- 格式：Symphonia =0.6.1（特性 `aac alac flac id3v2 isomp4 mkv mp3 ogg pcm vorbis wav`，没有默认特性）读容器并解码，Opus 由 `opus-rs` =0.1.41 解码。`id3v2` 让探测跳过 MP3 开头的 ID3v2 标签：带封面的标签常超过 1 MB，而探测只在开头 1 MB 内找第一帧（0.5 版总会读这个标签）。空的 Opus 包不交给 `opus-rs`：它把空包当作丢包，按缓冲区大小补出 120 ms 的声音。
 
   | 容器 | 扩展名（`EXTENSIONS`） | 音频编码 |
   |---|---|---|
