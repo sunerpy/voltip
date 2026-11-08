@@ -147,7 +147,7 @@ sha1 = "=0.11.0"
 sherpa-onnx = { version = "=1.13.8", default-features = false, features = ["shared"] }
 # Opus for a phone take's audio (docs/dictation.md §20.1): a pure-Rust port of libopus 1.6, no C
 # toolchain on any target (Android, the Windows cross-build); BSD-3-Clause.
-opus-rs = "=0.1.40"
+opus-rs = "=0.1.41"
 # The same crate's `-sys` half, named only by the desktop shell: see apps/desktop/src-tauri/Cargo.toml.
 sherpa-onnx-sys = { version = "=1.13.8", default-features = false, features = ["shared"] }
 snow = "=0.10.0"
