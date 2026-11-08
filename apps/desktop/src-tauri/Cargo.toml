@@ -180,7 +180,7 @@ tauri = { version = "=2.12.5", default-features = false, features = ["wry", "tes
 tauri-utils = { version = "=2.10.2", default-features = false }
 # tests/bundle.rs: merges a --config overlay the way the Tauri CLI does (the version tauri-utils
 # already uses).
-json-patch = { version = "=4.2.0", default-features = false }
+json-patch = { version = "=5.0.0", default-features = false }
 tempfile.workspace = true
 # The automatic update's looks hours apart, on a paused clock (src/update.rs).
 tokio = { workspace = true, features = ["test-util"] }
