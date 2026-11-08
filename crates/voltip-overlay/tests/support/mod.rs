@@ -273,76 +273,98 @@ impl TestWindow {
     }
 
     /// Move the pointer to `at`, as a user does before a click, and wait until this window receives
-    /// the move there: the system then routes the pointer's input at that point to it. Each 100 ms
-    /// it has not, the pointer moves again, between `at` and the pixel right of it, so that there is
-    /// a new move to route. How long it took and how many moves it took, or `None` when it did not
-    /// within [`WAIT`].
-    fn hover(&self, at: POINT) -> Option<(Duration, u32)> {
+    /// that move, at `at` itself: the system then routes the pointer's input at that point to it.
+    /// Each 100 ms it has not, the pointer moves to `at` again (by way of the pixel right of it when
+    /// it is there already, where a move to `at` reports nothing), so that there is a new move to
+    /// route. It returns with the pointer at `at`: how long it took and how many moves to `at`, or
+    /// `None` when none had reached it by `until`.
+    fn hover(&self, at: POINT, until: Instant) -> Option<(Duration, u32)> {
         let started = Instant::now();
         let aside = POINT { x: at.x + 1, y: at.y };
-        let client = [client_point(self.hwnd, at), client_point(self.hwnd, aside)];
-        // The pointer may be at `at` already, where moving it to `at` reports no move.
-        let mut next = if same_point(cursor(), at) { aside } else { at };
-        let mut moved = started;
-        let mut moves = 1;
-        // SAFETY: plain call.
-        unsafe { SetCursorPos(next.x, next.y) };
-        let reached = wait_until(WAIT, || {
-            if watch::moved_over(self.hwnd, started, &client, &[at, aside]) {
-                return true;
+        let client = [client_point(self.hwnd, at)];
+        let mut moves = 0;
+        loop {
+            let moved = Instant::now();
+            // SAFETY: plain calls.
+            unsafe {
+                if same_point(cursor(), at) {
+                    SetCursorPos(aside.x, aside.y);
+                }
+                SetCursorPos(at.x, at.y);
             }
-            if moved.elapsed() >= Duration::from_millis(100) {
-                next = if same_point(next, at) { aside } else { at };
-                // SAFETY: plain call.
-                unsafe { SetCursorPos(next.x, next.y) };
-                moved = Instant::now();
-                moves += 1;
+            moves += 1;
+            let left = until.saturating_duration_since(Instant::now()).min(Duration::from_millis(100));
+            if wait_until(left, || watch::moved_over(self.hwnd, moved, &client, &[at])) {
+                return Some((started.elapsed(), moves));
             }
-            false
-        });
-        reached.then(|| (started.elapsed(), moves))
+            if Instant::now() >= until {
+                return None;
+            }
+        }
     }
 
     /// Activate it with a click, as the user would, and wait until it is the window in front. The
     /// click goes to a point where this window is what a click reaches ([`TestWindow::reachable`]),
-    /// once the pointer's move there has reached it ([`TestWindow::hover`]): seen on windows-2025
-    /// (CI, 2026-11-07/08), a click that went elsewhere left the window under it where it was,
-    /// with the runner's Windows Terminal or no window at all in front.
+    /// once the pointer's move to that point has reached it ([`TestWindow::hover`]), and only when,
+    /// read right before the click, the pointer is still there and a click there still goes to this
+    /// window; a point that no longer is is chosen and hovered again, until [`WAIT`] has passed.
+    /// Seen on windows-2025 (CI, 2026-11-07/08): a click that went elsewhere left the window under
+    /// it where it was, with the runner's Windows Terminal or no window at all in front.
     pub fn activate(&self, what: &str) {
         watch::watch();
         let before = foreground();
-        let Some(at) = self.reachable(what) else {
-            let grip = self.grip();
-            panic!(
-                "{what}: a click reaches it nowhere (in front: {}); the windows at its grip {},{}, top first:{}",
-                describe(before),
-                grip.x,
-                grip.y,
-                stack_at(self.hwnd, grip)
-            );
-        };
-        let moment = Moment::now(self.hwnd, at);
-        let Some((hovered, moves)) = self.hover(at) else {
-            panic!(
-                "{what}: a move of the pointer to {},{} did not reach it within {} ms (in front: {}; the foreground thread: {}); a click there would go to {}{}",
+        // The checks before the click share one deadline: the one for coming to the front starts
+        // with the click.
+        let started = Instant::now();
+        let until = started + WAIT;
+        let (at, moment) = loop {
+            let Some(at) = self.reachable(what) else {
+                let grip = self.grip();
+                panic!(
+                    "{what}: a click reaches it nowhere (in front: {}); the windows at its grip {},{}, top first:{}",
+                    describe(before),
+                    grip.x,
+                    grip.y,
+                    stack_at(self.hwnd, grip)
+                );
+            };
+            let chosen = Moment::now(self.hwnd, at);
+            let Some((hovered, moves)) = self.hover(at, until) else {
+                panic!(
+                    "{what}: a move of the pointer to {},{} did not reach it within {} ms (in front: {}; the foreground thread: {}); a click there would go to {}{}",
+                    at.x,
+                    at.y,
+                    WAIT.as_millis(),
+                    describe_for(foreground(), self.hwnd),
+                    foreground_thread(),
+                    describe_for(root_at(at), self.hwnd),
+                    self.account(&chosen, &[])
+                );
+            };
+            // A move that never reached it is what a click right after it shows meets (the
+            // evidence for the wait: CI's logs list these).
+            if moves > 1 {
+                println!("{what}: the pointer's move to {},{} reached it after {} ms, at move {moves}", at.x, at.y, hovered.as_millis());
+            }
+            // Read just before the click: the window in front, the Z order, what the foreground
+            // thread holds and, last, the window a click at `at` goes to.
+            let moment = Moment::now(self.hwnd, at);
+            let pointer = cursor();
+            if moment.landed == self.hwnd && same_point(pointer, at) {
+                break (at, moment);
+            }
+            let changed = format!(
+                "right before the click at {},{}, a click there goes to {} and the pointer is at {},{}",
                 at.x,
                 at.y,
-                WAIT.as_millis(),
-                describe_for(foreground(), self.hwnd),
-                foreground_thread(),
-                describe_for(root_at(at), self.hwnd),
-                self.account(&moment, &[])
+                describe_for(moment.landed, self.hwnd),
+                pointer.x,
+                pointer.y
             );
+            assert!(Instant::now() < until, "{what}: {changed}, {} ms after the first check{}", started.elapsed().as_millis(), self.account(&moment, &[]));
+            println!("{what}: {changed}; the point is chosen again");
         };
-        // A move that never reached it is what a click right after it shows meets (the evidence
-        // for the wait: CI's logs list these).
-        if moves > 1 {
-            println!("{what}: the pointer's move to {},{} reached it after {} ms, at move {moves}", at.x, at.y, hovered.as_millis());
-        }
-        // Read just before the click: the window in front, the one the click goes to, the Z order
-        // and what the foreground thread holds.
-        let moment = Moment::now(self.hwnd, at);
-        click(at);
+        press();
         // The window in front after the click, each time it changed.
         let mut seen: Vec<(Duration, isize)> = Vec::new();
         let came = wait_until(WAIT, || {
@@ -428,12 +450,13 @@ struct Moment {
 }
 
 impl Moment {
+    /// Read now; the window a click at `at` goes to last, closest to a click after it.
     fn now(target: isize, at: POINT) -> Self {
         let front = foreground();
-        let landed = root_at(at);
         let stack = stack_at(target, at);
         let order = z_order();
         let front_thread = foreground_thread();
+        let landed = root_at(at);
         Self { at, when: Instant::now(), front, landed, stack, order, front_thread }
     }
 }
@@ -448,16 +471,14 @@ impl Drop for TestWindow {
     }
 }
 
-/// A left click at `at`.
-pub fn click(at: POINT) {
+/// A left click where the pointer is, without moving it.
+pub fn press() {
     let mouse =
         |flags| INPUT { r#type: INPUT_MOUSE, Anonymous: INPUT_0 { mi: MOUSEINPUT { dx: 0, dy: 0, mouseData: 0, dwFlags: flags, time: 0, dwExtraInfo: 0 } } };
     let clicks = [mouse(MOUSEEVENTF_LEFTDOWN), mouse(MOUSEEVENTF_LEFTUP)];
     // SAFETY: an array of INPUTs that outlives the call.
-    let sent = unsafe {
-        SetCursorPos(at.x, at.y);
-        SendInput(2, clicks.as_ptr(), i32::try_from(size_of::<INPUT>()).unwrap())
-    };
+    let sent = unsafe { SendInput(2, clicks.as_ptr(), i32::try_from(size_of::<INPUT>()).unwrap()) };
+    let at = cursor();
     assert_eq!(sent, 2, "the click at {},{}", at.x, at.y);
 }
 
