@@ -32,11 +32,10 @@ fi
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 url="https://github.com/bbqsrc/cargo-ndk/releases/download/v${CARGO_NDK_VERSION}/${asset}"
-# GitHub's release downloads answer 500 now and then for several seconds in a row: retry for about
-# half a minute (install-cargo-tauri.sh).
-curl --fail --silent --show-error --location --retry 6 --retry-delay 5 --output "$tmp/$asset" "$url"
-actual=$(sha256sum "$tmp/$asset" | awk '{print $1}')
-[[ "$actual" == "$CARGO_NDK_SHA256" ]] || { echo "install-cargo-ndk: $asset has SHA-256 $actual, expected $CARGO_NDK_SHA256" >&2; exit 1; }
+# GitHub's release downloads answer 5xx for minutes at a time (2026-11-08, run 42471046202: seven
+# attempts five seconds apart, all 504): fetch-pinned.sh retries for up to ten minutes and keeps
+# the tarball only when its SHA-256 is the pinned one.
+"$(dirname "$0")/fetch-pinned.sh" "$url" "$CARGO_NDK_SHA256" "$tmp/$asset"
 tar -xzf "$tmp/$asset" -C "$tmp"
 mkdir -p "$dest"
 for bin in cargo-ndk cargo-ndk-env cargo-ndk-runner cargo-ndk-test; do

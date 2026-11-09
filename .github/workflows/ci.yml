@@ -203,6 +203,13 @@ jobs:
       - name: Re-run sherpa-onnx-sys's build script
         run: .github/scripts/forget-sherpa-onnx-build.sh
 
+      # sherpa-onnx-sys's build script fetches the prebuilt runtime from GitHub's releases once,
+      # with no retry (status 502, 503 and 504 failed builds on 2026-11-08): the archive comes
+      # through fetch-pinned.sh (bounded retries, pinned SHA-256) and the build reads it from
+      # SHERPA_ONNX_ARCHIVE_DIR.
+      - name: sherpa-onnx runtime archive (pinned SHA-256, retried)
+        run: .github/scripts/fetch-sherpa-onnx-archives.sh "$RUNNER_TEMP/sherpa-onnx-archives" host
+
       # The IPC e2e is a vitest suite (packages/shared) driving two real Rust cores.
       - name: pnpm (packageManager in package.json)
         uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
@@ -440,6 +447,13 @@ jobs:
       - name: Re-run sherpa-onnx-sys's build script
         run: .github/scripts/forget-sherpa-onnx-build.sh
 
+      # sherpa-onnx-sys's build script fetches the prebuilt runtime from GitHub's releases once,
+      # with no retry (status 502, 503 and 504 failed builds on 2026-11-08): the archive comes
+      # through fetch-pinned.sh (bounded retries, pinned SHA-256) and the build reads it from
+      # SHERPA_ONNX_ARCHIVE_DIR.
+      - name: sherpa-onnx runtime archive (pinned SHA-256, retried)
+        run: .github/scripts/fetch-sherpa-onnx-archives.sh "$RUNNER_TEMP/sherpa-onnx-archives" win-x64
+
       # The MSVC CRT + SDK cargo-xwin unpacks (~1 GB from download.visualstudio.microsoft.com) is
       # fetched once per cargo-xwin version and restored afterwards; the download itself is
       # retried because that host resets connections under load.
@@ -554,18 +568,14 @@ jobs:
       # (scripts/windows-upgrade-probe.ps1). First, while the runner has had no Voltip; the script
       # removes what it installed. Voltip reaches no server: a firewall rule blocks its connections
       # off this machine.
+      # The digest is the release's (its SHA256SUMS and GitHub's asset digest agree); fetch-pinned.sh
+      # retries GitHub's 5xx for a bounded time (2026-11-08) and keeps no other bytes.
       - name: Upgrade probe — the 0.2.1 installer from its release
         if: github.event_name == 'workflow_dispatch' && inputs.upgrade_probe
-        env:
-          GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
-          gh release download v0.2.1 --repo $env:GITHUB_REPOSITORY --pattern 'Voltip_0.2.1_x64-setup.exe' --pattern 'SHA256SUMS' --dir old-release
-          $line = Get-Content old-release/SHA256SUMS | Where-Object { $_ -match 'Voltip_0\.2\.1_x64-setup\.exe$' }
-          if (-not $line) { throw 'SHA256SUMS names no Voltip_0.2.1_x64-setup.exe' }
-          $want = ($line -split '\s+')[0].ToLowerInvariant()
-          $have = (Get-FileHash old-release/Voltip_0.2.1_x64-setup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($want -ne $have) { throw "0.2.1 installer digest $have, SHA256SUMS says $want" }
-          "0.2.1 installer $have"
+          .github/scripts/fetch-pinned.sh "https://github.com/$GITHUB_REPOSITORY/releases/download/v0.2.1/Voltip_0.2.1_x64-setup.exe" \
+            f7696753ec358185e7c19328e28a83e61780ff0d3440fcc683a164a8c79c1241 old-release/Voltip_0.2.1_x64-setup.exe
 
       - name: Upgrade probe — Rust toolchain and this build's relay
         if: github.event_name == 'workflow_dispatch' && inputs.upgrade_probe
@@ -978,6 +988,13 @@ jobs:
       - name: Re-run sherpa-onnx-sys's build script
         run: .github/scripts/forget-sherpa-onnx-build.sh
 
+      # sherpa-onnx-sys's build script fetches the prebuilt runtime from GitHub's releases once,
+      # with no retry (status 502, 503 and 504 failed builds on 2026-11-08): the archive comes
+      # through fetch-pinned.sh (bounded retries, pinned SHA-256) and the build reads it from
+      # SHERPA_ONNX_ARCHIVE_DIR.
+      - name: sherpa-onnx runtime archive (pinned SHA-256, retried)
+        run: .github/scripts/fetch-sherpa-onnx-archives.sh "$RUNNER_TEMP/sherpa-onnx-archives" host
+
       - name: pnpm (packageManager in package.json)
         uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
@@ -1133,6 +1150,13 @@ jobs:
 
       - name: Clippy for Android (make android-clippy)
         run: make android-clippy
+
+      # The wrapper's Gradle distribution and some of the build's dependencies come from GitHub's
+      # releases (services.gradle.org and Maven Central redirect there): read timeouts failed this
+      # job three times on 2026-11-08. The distribution comes pinned and retried, and Gradle tries
+      # a repository eight times instead of three (.github/scripts/prepare-gradle.sh says how).
+      - name: Gradle distribution (pinned SHA-256, retried) and repository retries
+        run: .github/scripts/prepare-gradle.sh apps/mobile-rn
 
       # Unsigned: the candidate signs in a step of its own, so the release key never sits in the step
       # that runs the dependencies' build code. React Native's Gradle plugin compiles against the
@@ -1317,6 +1341,13 @@ jobs:
       # keeps its fingerprint: make cargo run it again (the script says why).
       - name: Re-run sherpa-onnx-sys's build script
         run: .github/scripts/forget-sherpa-onnx-build.sh
+
+      # sherpa-onnx-sys's build script fetches the prebuilt runtime from GitHub's releases once,
+      # with no retry (status 502, 503 and 504 failed builds on 2026-11-08): the archive comes
+      # through fetch-pinned.sh (bounded retries, pinned SHA-256) and the build reads it from
+      # SHERPA_ONNX_ARCHIVE_DIR.
+      - name: sherpa-onnx runtime archive (pinned SHA-256, retried)
+        run: .github/scripts/fetch-sherpa-onnx-archives.sh "$RUNNER_TEMP/sherpa-onnx-archives" host
 
       - name: CMake (transcribe.cpp / ggml source build)
         run: command -v cmake || brew install cmake

@@ -42,17 +42,12 @@ fi
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 url="https://github.com/tauri-apps/tauri/releases/download/tauri-cli-v${TAURI_CLI_VERSION}/${asset}"
-# GitHub's release downloads answer 500 now and then for several seconds in a row (CI 2026-09-29,
-# the macOS x64 leg: four attempts within 8 s all failed): retry for about half a minute.
-curl --fail --silent --show-error --location --retry 6 --retry-delay 5 --output "$tmp/$asset" "$url"
-# The digest is compared here rather than with `--check`: macOS 15's BSD sha256sum takes none of
-# GNU's flags, and older macOS has only shasum.
-if command -v shasum >/dev/null 2>&1; then
-	actual=$(shasum -a 256 "$tmp/$asset" | awk '{print $1}')
-else
-	actual=$(sha256sum "$tmp/$asset" | awk '{print $1}')
-fi
-[[ "$actual" == "$TAURI_CLI_SHA256" ]] || { echo "install-cargo-tauri: $asset has SHA-256 $actual, expected $TAURI_CLI_SHA256" >&2; exit 1; }
+# GitHub's release downloads answer 500, 502 and 504 for seconds (CI 2026-09-29, the macOS x64 leg:
+# four attempts within 8 s) or minutes (2026-11-08, run 42471046202: both macOS legs failed here,
+# the Intel one after six retries five seconds apart, the Apple silicon one at once: its curl
+# reported the 504 as error 56, which `--retry` alone does not retry). fetch-pinned.sh retries
+# every error for up to ten minutes and keeps the zip only when its SHA-256 is the pinned one.
+"$(dirname "$0")/fetch-pinned.sh" "$url" "$TAURI_CLI_SHA256" "$tmp/$asset"
 case "$asset" in
 *.zip) unzip -q -o "$tmp/$asset" cargo-tauri -d "$tmp" ;;
 *) tar -xzf "$tmp/$asset" -C "$tmp" cargo-tauri ;;
