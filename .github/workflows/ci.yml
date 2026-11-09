@@ -1362,11 +1362,7 @@ jobs:
             | jq -r 'select(.reason == "compiler-artifact" and .profile.test == true and .target.name == "voltip_hooks") | .executable' | tail -1)
           [ -x "$bin" ] || { echo "::error::no test binary for voltip-hooks"; exit 1; }
           echo "test binary: $bin"
-          db="/Library/Application Support/com.apple.TCC/TCC.db"
-          for service in kTCCServiceAccessibility kTCCServicePostEvent; do
-            sudo sqlite3 "$db" "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, indirect_object_identifier, flags, last_modified) VALUES ('$service', '$bin', 1, 2, 4, 1, 'UNUSED', 0, $(date +%s));"
-          done
-          sudo sqlite3 "$db" "SELECT service, client, auth_value FROM access WHERE client = '$bin';"
+          scripts/tcc-grant-macos.sh "$bin" kTCCServiceAccessibility kTCCServicePostEvent
           "$bin" --ignored --test-threads=1 --nocapture
 
       # The insert check's Accessibility reader (docs/dictation.md §28): a paste into the test's own
@@ -1382,10 +1378,7 @@ jobs:
             | jq -r 'select(.reason == "compiler-artifact" and .target.name == "focus_macos" and .executable != null) | .executable' | tail -1)
           [ -x "$bin" ] || { echo "::error::no test binary for focus_macos"; exit 1; }
           echo "test binary: $bin"
-          db="/Library/Application Support/com.apple.TCC/TCC.db"
-          for service in kTCCServiceAccessibility kTCCServicePostEvent; do
-            sudo sqlite3 "$db" "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, indirect_object_identifier, flags, last_modified) VALUES ('$service', '$bin', 1, 2, 4, 1, 'UNUSED', 0, $(date +%s));"
-          done
+          scripts/tcc-grant-macos.sh "$bin" kTCCServiceAccessibility kTCCServicePostEvent
           "$bin" --ignored
 
       # The pill's stacking (docs/dictation.md §32): a floating window of another application
@@ -1406,10 +1399,7 @@ jobs:
           set -euo pipefail
           cargo build -p voltip-focus --example insert_confirm_probe
           probe="$PWD/target/debug/examples/insert_confirm_probe"
-          db="/Library/Application Support/com.apple.TCC/TCC.db"
-          for service in kTCCServiceAccessibility kTCCServicePostEvent; do
-            sudo sqlite3 "$db" "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, indirect_object_identifier, flags, last_modified) VALUES ('$service', '$probe', 1, 2, 4, 1, 'UNUSED', 0, $(date +%s));"
-          done
+          scripts/tcc-grant-macos.sh "$probe" kTCCServiceAccessibility kTCCServicePostEvent
           mkdir -p insert-probe
           front() { lsappinfo info -only bundleid "$(lsappinfo front)" | sed -n 's/.*"CFBundleIdentifier"="\(.*\)".*/\1/p'; }
           wait_front() {

@@ -71,13 +71,8 @@ settles() {
 
 helper=$out/tray-ax
 swiftc -O -o "$helper" "$here/tray-ax.swift"
-db="/Library/Application Support/com.apple.TCC/TCC.db"
-grant() { # <service> <client path>
-  sudo sqlite3 "$db" "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, indirect_object_identifier, flags, last_modified) VALUES ('$1', '$2', 1, 2, 4, 1, 'UNUSED', 0, $(date +%s));"
-}
-grant kTCCServiceAccessibility "$helper"
-grant kTCCServicePostEvent "$helper"
-grant kTCCServiceScreenCapture /usr/sbin/screencapture
+"$here/tcc-grant-macos.sh" "$helper" kTCCServiceAccessibility kTCCServicePostEvent
+"$here/tcc-grant-macos.sh" /usr/sbin/screencapture kTCCServiceScreenCapture
 ax() { "$helper" "$pid" "$@"; }
 window_shown() { ax windows | grep -qx Voltip; }
 window_hidden() { ! window_shown; }
