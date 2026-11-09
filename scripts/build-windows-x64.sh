@@ -42,6 +42,11 @@ out=${1:-dist/windows-x64}
 # keeps installers from earlier builds; only this version's is shipped.
 version=$(node -p 'require("./package.json").version')
 product=$(node -p 'require("./apps/desktop/src-tauri/tauri.conf.json").productName')
+# The files tauri-bundler checks for NSIS in its tools directory, pinned and retried
+# (scripts/lib/tauri-tools.sh): it would otherwise download nsis_tauri_utils.dll itself, once,
+# before every bundle (run 42567630080 stopped there on a 504).
+. scripts/lib/tauri-tools.sh
+voltip_tauri_nsis_tools || exit 1
 (cd apps/desktop && cargo tauri build --ci --runner cargo-xwin --target x86_64-pc-windows-msvc --bundles nsis --features gpu-vulkan --config src-tauri/tauri.package-windows.conf.json)
 release=target/x86_64-pc-windows-msvc/release
 exe=$release/voltip-desktop.exe

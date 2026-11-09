@@ -6,8 +6,8 @@
 # on a GPU through Vulkan and fall back to the CPU (docs/dictation.md §10.6): scripts/lib/vulkan-sdk.sh
 # fetches the SDK; the deb and rpm depend on the system's loader, the AppImage carries its own.
 # scripts/lib/appimage.sh places the pinned AppRun with mode 0755 before the bundler runs (it would
-# package its own cached copy with mode 0770) and checks that every user can read and run what the
-# AppImage carries.
+# package its own cached copy with mode 0770) and the pinned linuxdeploy (the bundler would download
+# it itself, once), and checks that every user can read and run what the AppImage carries.
 # Packages go to dist/linux-x64 (git-ignored) with SHA256SUMS.txt and the record, build-info.txt.
 # Usage: scripts/build-linux-x64.sh [out-dir] [build-info]
 # VOLTIP_BUILD_NOTE adds one free-text line to the record (e.g. "uncommitted B5 changes on top").
@@ -32,7 +32,8 @@ info=${2:-$out/build-info.txt}
 
 . scripts/lib/appimage.sh
 if [ -z "${VOLTIP_BUILD_REUSE:-}" ]; then
-  # The AppRun the AppImage starts through, pinned and with mode 0755 (scripts/lib/appimage.sh).
+  # The AppRun the AppImage starts through, pinned and with mode 0755, and the pinned linuxdeploy
+  # (scripts/lib/appimage.sh).
   voltip_appimage_apprun || exit 1
   (cd apps/desktop && cargo tauri build --ci --bundles deb,rpm,appimage --features gpu-vulkan)
 fi
