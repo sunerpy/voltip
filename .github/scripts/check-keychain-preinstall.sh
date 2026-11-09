@@ -59,7 +59,13 @@ forget_user "$bad_user"
 fail() { echo "::error title=Keychain pre-install hand-over::$*"; exit 1; }
 cdhash() { codesign -dvvv "$1" 2>&1 | sed -n 's/^CDHash=//p' | head -1; }
 make_tar() { local bundle=$1 out=$2; (cd "$(dirname "$bundle")" && COPYFILE_DISABLE=1 tar -czf "$out" "$(basename "$bundle")"); }
-past() { local log=$1; for _ in $(seq 60); do grep -q 'compute devices' "$log" && return 0; sleep 1; done; return 1; }
+# past <log>: the app got past its keychain read. The core reads the identity before the shell
+# installs the tray (attach_bridge: Bridge::start_subscribed → Runtime::build → load_or_create, then
+# platform::install_tray), so the tray's line comes after it. Not `compute devices`: that line waits
+# for the GPU probe too, which at an install path the runner has not started the app from before
+# took 28–65 s on the Intel Mac (check-keychain-migration.sh's first start, 26 runs, 2026-11) and
+# once outlasted the 60 s here (run 42450537670, macos-x64: installed B had its tray 0.3 s in).
+past() { local log=$1; for _ in $(seq 60); do grep -Eq 'tray icon (not )?installed' "$log" && return 0; sleep 1; done; return 1; }
 stop_app() {
 	[ -z "${app_pid:-}" ] || { kill "$app_pid" 2>/dev/null || true; wait "$app_pid" 2>/dev/null || true; app_pid=; }
 }

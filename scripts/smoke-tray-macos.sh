@@ -26,6 +26,13 @@
 # With VOLTIP_CHECK_UI_GUARD=1 (CI, for the build under test) the log must also show that the
 # interface check (docs/dictation.md §33.4) ran in the main window and in the pill window and found
 # the program's interface in both, with no window replaced; releases without the check fail it.
+# The pill window is prewarmed hidden, and a hidden window may load its page only once it is first
+# shown (apps/desktop/src-tauri/src/overlay.rs, `OverlaySlot`): the pill is shown once (step 5)
+# before its check is read. `--edit-toggle` starts a voice edit take, which a build without an AI
+# polish service (CI's) refuses at once, before the microphone opens; the pill shows the refusal.
+# The take needs a recogniser to start at all, so for the run the profile's settings name a custom
+# one at a loopback port nothing listens on (it is never asked); the profile's own settings are put
+# back when the script ends.
 #
 # Usage: scripts/smoke-tray-macos.sh [app bundle (default /Applications/Voltip.app)] [out dir]
 #        VOLTIP_NO_UPDATER=1 for a build without an update source; VOLTIP_CHECK_CHROME=1 to fail
@@ -69,20 +76,63 @@ settles() {
   done
 }
 
+# gone <pid>: the process has ended, or is a zombie waiting to be reaped (kill -0 still answers
+# for one).
+gone() {
+  local stat
+  stat=$(ps -p "$1" -o stat= 2>/dev/null || true)
+  [ -z "$stat" ] || [[ $stat == Z* ]]
+}
+# stop <pid>: end a process this script started, with SIGKILL when it is still there 10 s later.
+stop() {
+  kill "$1" 2>/dev/null || return 0
+  settles 10 gone "$1" || kill -9 "$1" 2>/dev/null || true
+  wait "$1" 2>/dev/null || true
+}
+
 helper=$out/tray-ax
 swiftc -O -o "$helper" "$here/tray-ax.swift"
-db="/Library/Application Support/com.apple.TCC/TCC.db"
-grant() { # <service> <client path>
-  sudo sqlite3 "$db" "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, indirect_object_identifier, flags, last_modified) VALUES ('$1', '$2', 1, 2, 4, 1, 'UNUSED', 0, $(date +%s));"
-}
-grant kTCCServiceAccessibility "$helper"
-grant kTCCServicePostEvent "$helper"
-grant kTCCServiceScreenCapture /usr/sbin/screencapture
+"$here/tcc-grant-macos.sh" "$helper" kTCCServiceAccessibility kTCCServicePostEvent
+"$here/tcc-grant-macos.sh" /usr/sbin/screencapture kTCCServiceScreenCapture
 ax() { "$helper" "$pid" "$@"; }
 window_shown() { ax windows | grep -qx Voltip; }
 window_hidden() { ! window_shown; }
 
 pkill -x voltip-desktop || true
+pid='' second=''
+if [ "${VOLTIP_CHECK_UI_GUARD:-0}" = 1 ]; then
+  # The settings for step 5 (see the head of this file), on top of the profile's own; a profile
+  # without settings gets the fields a settings file must name at the app's defaults.
+  profile="$HOME/Library/Application Support/dev.voltip.Voltip"
+  kept=$(mktemp -d)
+  had_settings=0
+  if [ -f "$profile/settings.json" ]; then
+    had_settings=1
+    cp -p "$profile/settings.json" "$kept/settings.json"
+  fi
+  # The app saves its settings when they change: it is stopped before the profile's come back.
+  # Once only: a signal while it runs does not start it again.
+  restore_profile() {
+    trap - EXIT INT TERM
+    [ -z "$second" ] || stop "$second"
+    [ -z "$pid" ] || stop "$pid"
+    if [ "$had_settings" = 0 ]; then
+      rm -f "$profile/settings.json"
+      rm -rf "$kept"
+    elif cp -p "$kept/settings.json" "$profile/settings.json"; then
+      rm -rf "$kept"
+    else
+      note "FAIL: could not put back $profile/settings.json; the profile's own copy is in $kept"
+    fi
+  }
+  trap restore_profile EXIT
+  trap 'exit 1' INT TERM
+  mkdir -p "$profile"
+  if [ "$had_settings" = 1 ]; then base=$(cat "$kept/settings.json"); else base='{"schema":1,"theme":"glass","follow_system_theme":false,"relay_enabled":true}'; fi
+  jq '.engines.asr_provider = "custom" | .engines.providers.custom.asr_url = "http://127.0.0.1:9" | .engines.providers.custom.asr_model = "voltip-smoke"' \
+    <<<"$base" >"$profile/settings.json"
+  note "settings for the pill step: a custom recogniser at http://127.0.0.1:9 on top of $([ "$had_settings" = 1 ] && echo "the profile's settings" || echo 'the defaults (the profile had none)')"
+fi
 RUST_LOG=voltip=info NO_COLOR=1 "$bundle/Contents/MacOS/voltip-desktop" 2>"$log" >"$out/app.out" &
 pid=$!
 note "started $bundle/Contents/MacOS/voltip-desktop (pid $pid, $(shasum -a 256 "$bundle/Contents/MacOS/voltip-desktop" | cut -d' ' -f1))"
@@ -252,17 +302,41 @@ note 'double click: main window shown, no menu'
 ax close Voltip
 wait_for 30 'the window to hide' window_hidden
 
-# 4f. Quit.
+# 5. The pill window, shown once before its interface check is read (see the head of this file):
+# a second invocation hands `--edit-toggle` to the running app and exits; the app refuses the edit
+# take for want of an AI polish service and shows the pill with the refusal for 2.5 s.
+if [ "${VOLTIP_CHECK_UI_GUARD:-0}" = 1 ]; then
+  pill_guard="${ui_guard_ok}\"overlay\""
+  if log_has "$pill_guard"; then reported_hidden=1; else reported_hidden=0; fi
+  before=$(log_count 'edit take refused: no LLM is configured')
+  "$bundle/Contents/MacOS/voltip-desktop" --edit-toggle >"$out/edit-toggle.log" 2>&1 &
+  second=$!
+  wait_for 30 'the second invocation to hand --edit-toggle over and exit' gone "$second"
+  handed=0
+  wait "$second" || handed=$?
+  second=
+  [ "$handed" = 0 ] || fail "the --edit-toggle invocation exited with $handed: $(tail -3 "$out/edit-toggle.log")"
+  wait_for 30 'the running app to take --edit-toggle' log_has 'remote control (applied|not accepted).*remote=EditToggle'
+  ! log_has 'remote control not accepted' || fail "$(log_text | grep -F 'remote control not accepted' | head -1)"
+  wait_for 30 'the edit take to be refused (a build without an AI polish service)' \
+    log_count_above 'edit take refused: no LLM is configured' "$before"
+  pill_shown() { ax windows | grep -qx 'Voltip Overlay'; }
+  if settles 2 pill_shown; then seen='on screen'; else seen='not listed by the accessibility API'; fi
+  screencapture -x "$out/pill.png"
+  wait_for 30 "the pill window's interface check, after the pill was shown" log_has "$pill_guard"
+  if [ "$reported_hidden" = 1 ]; then
+    note "pill: shown for the refused edit take ($seen, pill.png); its interface check had reported while it was hidden"
+  else
+    note "pill: shown for the refused edit take ($seen, pill.png); its interface check reported only after that"
+  fi
+fi
+
+# 6. Quit.
 ax press "$quit_label"
-# Gone, or a zombie waiting to be reaped (kill -0 still answers for one).
-process_gone() {
-  local stat
-  stat=$(ps -p "$pid" -o stat= 2>/dev/null || true)
-  [ -z "$stat" ] || [[ $stat == Z* ]]
-}
-wait_for 30 'Quit to end the process' process_gone
+wait_for 30 'Quit to end the process' gone "$pid"
 status=0
 wait "$pid" || status=$?
+pid=
 log_has 'tray menu action=Quit' || fail 'the process ended without the Quit entry in the log'
 note "Quit: process exited with $status"
 [ "$status" = 0 ] || fail "exit code $status"
