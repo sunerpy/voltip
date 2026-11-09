@@ -17,18 +17,34 @@
   imports into a new history.sqlite3 at start-up (docs/dictation.md section 4.3); a database or a
   history.json that is already there is set aside first and put back at the end, and what the run
   wrote is removed. Each step has a timeout and the first
-  failure stops the run. <OutDir> receives summary.txt and app.log.
+  failure stops the run. <OutDir> receives summary.txt and app.log, and uia-tree.txt (the main
+  window's accessibility tree) when the text does not arrive.
+  The button is pressed once, and only when the accessibility tree shows the same button element
+  (its UI Automation runtime id), enabled, for SettleMs; the element pressed is the one the last
+  lookup returned. Twice in some 190 CI runs (2026-11-08, runs 42458882631 and 42495010182) a
+  press on the button of the very first lookup, 162 and 171 ms after the main window's page loaded,
+  reached nothing: no paste request in the log, Voltip left in front. Of the 61 runs whose logs
+  tell, all 58 presses 220 ms or more after the page loaded pasted. Every element id seen, the
+  button's state before and after the press, the windows in front and, when the text does not
+  arrive, the tree and the log's tail are noted.
   Windows PowerShell 5.1 reads a BOM-less script as ANSI, so every non-ASCII string below is built
   from code points.
 
 .PARAMETER Binary
   Path to voltip-desktop.exe.
+.PARAMETER SettleMs
+  How long the button must stay the same element before it is pressed. 0 presses the first button
+  found, as runs before 2026-11-09 did (to reproduce the lost press).
+.PARAMETER PollMs
+  How often the tree is looked up while waiting for the button.
 #>
 param(
   [Parameter(Mandatory = $true)] [string] $Binary,
   [string] $OutDir = 'smoke-windows-paste',
   [int] $WindowTimeoutSec = 120,
-  [int] $StepTimeoutSec = 30
+  [int] $StepTimeoutSec = 30,
+  [int] $SettleMs = 1000,
+  [int] $PollMs = 250
 )
 
 $ErrorActionPreference = 'Stop'
@@ -114,12 +130,12 @@ public static class VoltipPaste {
 }
 '@
 
-function Wait-For([scriptblock] $probe, [int] $seconds, [string] $what) {
+function Wait-For([scriptblock] $probe, [int] $seconds, [string] $what, [int] $pollMs = 250) {
   $deadline = (Get-Date).AddSeconds($seconds)
   while ((Get-Date) -lt $deadline) {
     $value = & $probe
     if ($value) { return $value }
-    Start-Sleep -Milliseconds 250
+    Start-Sleep -Milliseconds $pollMs
   }
   throw "smoke-windows-paste: timed out after ${seconds}s waiting for $what"
 }
@@ -140,6 +156,48 @@ function Window-Text([IntPtr] $window) {
   if ($window -ne [IntPtr]::Zero) { $owner = (Get-Process -Id ([VoltipPaste]::Owner($window)) -ErrorAction SilentlyContinue).ProcessName }
   "0x$($window.ToString('x')) ($owner, $([VoltipPaste]::ClassOf($window)))"
 }
+# A UI Automation element as the notes name it: its runtime id (another id is another element),
+# name, whether it is enabled and off screen, and its rectangle; one that is gone says so.
+function Runtime-Id($element) { try { ($element.GetRuntimeId()) -join '.' } catch { 'gone' } }
+function Element-Text($element) {
+  if ($null -eq $element) { return 'none' }
+  try {
+    $c = $element.Current
+    $r = $c.BoundingRectangle
+    $rect = if ($r.IsEmpty) { 'empty' } else { '{0:0},{1:0} {2:0}x{3:0}' -f $r.X, $r.Y, $r.Width, $r.Height }
+    "'$($c.Name)' id=$(Runtime-Id $element) enabled=$($c.IsEnabled) offscreen=$($c.IsOffscreen) rect=$rect"
+  } catch { "gone ($($_.Exception.GetType().Name))" }
+}
+# The main window's tree in the control view, one element a line, for the run whose text does not
+# arrive: the toast a paste ends with is in it when the press reached the page.
+function Dump-Tree($root, [string] $path, [int] $max = 1500) {
+  $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+  $lines = New-Object System.Collections.Generic.List[string]
+  $stack = New-Object System.Collections.Generic.Stack[object]
+  $stack.Push(@($root, 0))
+  $budget = [System.Diagnostics.Stopwatch]::StartNew()
+  while ($stack.Count -gt 0 -and $lines.Count -lt $max -and $budget.Elapsed.TotalSeconds -lt 20) {
+    $item = $stack.Pop()
+    $type = '?'
+    try { $type = $item[0].Current.ControlType.ProgrammaticName -replace '^ControlType\.', '' } catch { }
+    $lines.Add(('  ' * $item[1]) + "$type $(Element-Text $item[0])")
+    $children = New-Object System.Collections.Generic.List[object]
+    try {
+      $child = $walker.GetFirstChild($item[0])
+      while ($null -ne $child) { $children.Add($child); $child = $walker.GetNextSibling($child) }
+    } catch { }
+    for ($i = $children.Count - 1; $i -ge 0; $i--) { $stack.Push(@($children[$i], ($item[1] + 1))) }
+  }
+  if ($stack.Count -gt 0) { $lines.Add("(stopped after $($lines.Count) elements, $([int]$budget.Elapsed.TotalSeconds) s)") }
+  [System.IO.File]::WriteAllLines($path, $lines, (New-Object System.Text.UTF8Encoding $false))
+  $lines
+}
+# When the main window's page ran the interface check (src-tauri/src/ui_guard.rs), from the log.
+function Main-Loaded {
+  $m = [regex]::Match((Log-Text), '(?m)^(\S+Z)\s+INFO\s+\S*ui_guard\S*:.*window="main"')
+  if (-not $m.Success) { return $null }
+  [DateTime]::ParseExact($m.Groups[1].Value, 'yyyy-MM-ddTHH:mm:ss.FFFFFFFK', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AdjustToUniversal)
+}
 # The window in front, and the top-level window it is part of when it is a child (a web view's
 # render window: CI 2026-10-01).
 function Front-Text {
@@ -155,6 +213,14 @@ $cjk = -join ([char[]](0x7C98, 0x8D34, 0x6D4B, 0x8BD5))
 $text = "Voltip paste smoke $cjk"
 # The button's accessible name in both interface languages (English, and the Chinese of zh-CN.ts).
 $buttonNames = @('Paste into the previous window', (-join ([char[]](0x7C98, 0x8D34, 0x5230, 0x4E0A, 0x4E00, 0x4E2A, 0x7A97, 0x53E3))))
+# The recent table's paste button, looked up afresh in the main window's tree ($window, step 2).
+function Find-Button {
+  foreach ($name in $buttonNames) {
+    $found = $window.FindFirst($TS::Descendants, (New-Object System.Windows.Automation.AndCondition((Cond $A::NameProperty $name), (Cond $A::ControlTypeProperty $CT::Button))))
+    if ($null -ne $found) { return $found }
+  }
+  $null
+}
 
 $dataDir = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'voltip\Voltip\data'
 $history = Join-Path $dataDir 'history.json'
@@ -202,41 +268,75 @@ try {
   Focus $pad 'Notepad'
   Note "notepad window 0x$($pad.ToString('x')) (pid $([VoltipPaste]::Owner($pad)))"
 
+  $started = [System.Diagnostics.Stopwatch]::StartNew()
   $app = Start-Process -FilePath $Binary -PassThru -RedirectStandardError $log -RedirectStandardOutput (Join-Path $OutDir 'app.out')
   $null = $app.Handle
   $script:hwnd = [IntPtr]::Zero
   Wait-For { $script:hwnd = [VoltipPaste]::FindByTitle([uint32]$app.Id, 'Voltip'); $script:hwnd -ne [IntPtr]::Zero -and [VoltipPaste]::IsWindowVisible($script:hwnd) } $WindowTimeoutSec 'the main window' | Out-Null
   $hwnd = $script:hwnd
+  $windowMs = $started.ElapsedMilliseconds
   $window = $A::FromHandle($hwnd)
   Focus $hwnd 'Voltip'
-  Note "voltip window 0x$($hwnd.ToString('x')) (pid $($app.Id)); in front: $(Front-Text)"
+  Note "voltip window 0x$($hwnd.ToString('x')) (pid $($app.Id)) at $windowMs ms; in front: $(Front-Text)"
 
-  # 3. The recent table's paste button, found in the webview's accessibility tree.
-  $button = Wait-For {
-    foreach ($name in $buttonNames) {
-      $found = $window.FindFirst($TS::Descendants, (New-Object System.Windows.Automation.AndCondition((Cond $A::NameProperty $name), (Cond $A::ControlTypeProperty $CT::Button))))
-      if ($null -ne $found) { return $found }
-    }
-  } $StepTimeoutSec 'the paste button in the recent table'
-  Note "button '$($button.Current.Name)'"
+  # 3. The recent table's paste button, found in the webview's accessibility tree and pressed once
+  #    it has been the same element, enabled, for SettleMs (the description says why). Every
+  #    element the lookups return is noted with the time since Voltip started.
+  $script:ids = New-Object System.Collections.Generic.List[string]
+  $script:sameId = ''
+  $script:sameSince = 0
+  try {
+    $button = Wait-For {
+      $found = Find-Button
+      $id = ''
+      $enabled = $false
+      if ($null -ne $found) {
+        $id = Runtime-Id $found
+        try { $enabled = $found.Current.IsEnabled } catch { $id = 'gone' }
+      }
+      if ($id -ne $script:sameId) {
+        $script:sameId = $id
+        $script:sameSince = $started.ElapsedMilliseconds
+        $script:ids.Add("$(if ($id) { $id } else { 'none' }) at $($script:sameSince) ms")
+      }
+      if ($id -and $id -ne 'gone' -and $enabled -and ($started.ElapsedMilliseconds - $script:sameSince) -ge $SettleMs) { $found }
+    } $StepTimeoutSec "the paste button, the same element for $SettleMs ms" $PollMs
+  } catch {
+    Note "button ids seen: $($script:ids -join ' > '); now: $(Element-Text (Find-Button))"
+    throw
+  }
+  $pressedMs = $started.ElapsedMilliseconds
+  Note "button $(Element-Text $button) pressed at $pressedMs ms; in front: $(Front-Text)"
+  $pressedAt = [DateTime]::UtcNow
   $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
   # What is in front while Voltip steps aside, change by change (the diagnosis when the paste does
-  # not land: Voltip minimised or not, and which window Windows activated).
+  # not land: Voltip minimised or not, and which window Windows activated), and the button half a
+  # second after the press: disabled while the paste runs, the same element and enabled when the
+  # press did not reach the page.
   $seen = New-Object System.Collections.Generic.List[string]
+  $buttonAfter = $null
   $until = (Get-Date).AddSeconds(3)
   while ((Get-Date) -lt $until) {
     $now = "$(Front-Text) voltip-minimised=$([VoltipPaste]::IsIconic($hwnd))"
     if ($seen.Count -eq 0 -or $seen[$seen.Count - 1] -ne $now) { $seen.Add($now) }
+    if ($null -eq $buttonAfter -and $started.ElapsedMilliseconds - $pressedMs -ge 500) { $buttonAfter = Element-Text (Find-Button) }
     Start-Sleep -Milliseconds 50
   }
   Note "in front after the click: $($seen -join ' > ')"
+  Note "button ids seen: $($script:ids -join ' > '); 500 ms after the press: $buttonAfter"
+  $loaded = Main-Loaded
+  if ($null -ne $loaded) { Note "pressed $([int]($pressedAt - $loaded).TotalMilliseconds) ms after the main window's page loaded" }
 
   # 4. Notepad receives the text; Voltip stays out of the way.
   try {
     $pasted = Wait-For { $now = [VoltipPaste]::EditText($pad); if ($now -eq $text) { $now } } $StepTimeoutSec 'the text in Notepad'
   } catch {
     Note "in front: $(Front-Text); notepad holds '$([VoltipPaste]::EditText($pad))'"
+    Note "button now: $(Element-Text (Find-Button))"
+    $tree = @(Dump-Tree $window (Join-Path $OutDir 'uia-tree.txt'))
+    Note "uia-tree.txt: $($tree.Count) lines; those that name a paste: $(@($tree | Where-Object { $_ -match 'paste|copied|clipboard' } | ForEach-Object { $_.Trim() } | Select-Object -First 8) -join ' | ')"
     Note "log: $(((Log-Text) -split "`n" | Where-Object { $_ -match 'paste|foreground' } | Select-Object -Last 5) -join ' | ')"
+    Note "log tail: $(((Log-Text) -split "`n" | Where-Object { $_.Trim() } | Select-Object -Last 12) -join ' | ')"
     throw
   }
   Note "notepad holds '$pasted'"
