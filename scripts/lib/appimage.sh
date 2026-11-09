@@ -26,9 +26,11 @@
 #     would hold; when the download fails, linuxdeploy uses the plugin it carries.
 #   - the AppImage runtime, which appimagetool inside either plugin downloads on every AppImage,
 #     once, from AppImage/type2-runtime's `continuous` release ("Downloading runtime file from …",
-#     in linuxdeploy's output, which the bundler shows only with --verbose). The plugin takes a
-#     file instead through LDAI_RUNTIME_FILE in the environment of the bundle step; which runtime
-#     the AppImage carries is not this library's choice.
+#     in linuxdeploy's output, which the bundler shows only with --verbose). When that download
+#     fails, the bundle stops with "failed to bundle project: `failed to run linuxdeploy`" and
+#     nothing more; a new attempt is the remedy. The plugin takes a file instead through
+#     LDAI_RUNTIME_FILE in the environment of the bundle step; which runtime the AppImage carries
+#     is not this library's choice (kept as it is, 2026-11-09).
 
 # shellcheck source=scripts/lib/tauri-tools.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/tauri-tools.sh"
