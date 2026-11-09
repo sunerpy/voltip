@@ -1,7 +1,8 @@
 """Tests for .github/scripts/fetch-pinned.sh, the retried and digest-checked download CI's GitHub
 release downloads go through, against a fake server on 127.0.0.1 (no other host is contacted):
 it retries through 504s and a transfer cut short, gives up after the bounded number of attempts,
-and refuses bytes whose SHA-256 is not the pinned one.
+and refuses bytes whose SHA-256 is not the pinned one. Also the Gradle wrapper's distribution
+directory that prepare-gradle.sh fills, checked against directories the wrapper itself made.
 
 Run: python3 -m unittest discover -s scripts/release -p 'test_*.py'
 """
@@ -21,6 +22,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / ".github/scripts/fetch-pinned.sh"
+PREPARE_GRADLE = ROOT / ".github/scripts/prepare-gradle.sh"
 
 BODY = b"pinned release asset\n" * 4096
 BODY_SHA256 = hashlib.sha256(BODY).hexdigest()
@@ -159,6 +161,27 @@ class FetchPinned(unittest.TestCase):
         run = self.fetch("/body", BODY_SHA256.upper())
         self.assertEqual(run.returncode, 2)
         self.assertEqual(FakeReleases.hits["/body"], 0)
+
+
+class GradleDistributionDirectory(unittest.TestCase):
+    """prepare-gradle.sh puts the distribution where the wrapper looks for it: wrapper/dists/<name>/
+    <base-36 MD5 of the URL>/<zip> (Gradle's PathAssembler). The two names below are directories
+    Gradle 8.14.3's and 9.4.1's wrappers created on a developer machine."""
+
+    def dist_dir(self, url: str) -> str:
+        run = subprocess.run(["bash", str(PREPARE_GRADLE), "--dist-dir", url], capture_output=True, text=True, timeout=60)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        return run.stdout.strip()
+
+    def test_matches_the_wrappers_own_directories(self) -> None:
+        self.assertEqual(
+            self.dist_dir("https://services.gradle.org/distributions/gradle-8.14.3-bin.zip"),
+            "gradle-8.14.3-bin/cv11ve7ro1n3o1j4so8xd9n66",
+        )
+        self.assertEqual(
+            self.dist_dir("https://services.gradle.org/distributions/gradle-9.4.1-bin.zip"),
+            "gradle-9.4.1-bin/arn2x92ynaizyzdaamcbpbhtj",
+        )
 
 
 if __name__ == "__main__":

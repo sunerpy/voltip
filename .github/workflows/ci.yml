@@ -1151,6 +1151,13 @@ jobs:
       - name: Clippy for Android (make android-clippy)
         run: make android-clippy
 
+      # The wrapper's Gradle distribution and some of the build's dependencies come from GitHub's
+      # releases (services.gradle.org and Maven Central redirect there): read timeouts failed this
+      # job three times on 2026-11-08. The distribution comes pinned and retried, and Gradle tries
+      # a repository eight times instead of three (.github/scripts/prepare-gradle.sh says how).
+      - name: Gradle distribution (pinned SHA-256, retried) and repository retries
+        run: .github/scripts/prepare-gradle.sh apps/mobile-rn
+
       # Unsigned: the candidate signs in a step of its own, so the release key never sits in the step
       # that runs the dependencies' build code. React Native's Gradle plugin compiles against the
       # runner's JDK 17.
