@@ -78,8 +78,10 @@ sign() {
 }
 
 # run <label> <bundle> <log>: start the app at one install path, as the updater replaces it;
-# true once it has passed its keychain read at start-up ("compute devices" comes after the core
-# started with the identity).
+# true once it has passed its keychain read at start-up: the tray's line comes after the core
+# started with the identity (attach_bridge reads it before platform::install_tray). Not "compute
+# devices", which waits for the GPU probe too: the first start at this path took 28–65 s for that
+# on the Intel Mac (26 runs, 2026-11) and the starts after it 2–4 s.
 run() {
 	rm -rf "$work/app"
 	mkdir -p "$work/app"
@@ -87,7 +89,7 @@ run() {
 	"$work/app/Voltip.app/Contents/MacOS/voltip-desktop" >"$3" 2>&1 &
 	local pid=$! i
 	for i in $(seq 90); do
-		if grep -q "compute devices" "$3"; then
+		if grep -Eq "tray icon (not )?installed" "$3"; then
 			echo "ok: $1 started past its keychain read in ${i}s"
 			kill "$pid" 2>/dev/null || true
 			wait "$pid" 2>/dev/null || true
