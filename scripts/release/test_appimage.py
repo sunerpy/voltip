@@ -5,6 +5,8 @@ run them.
 
 Nothing here reaches the network: downloads come from a server on 127.0.0.1, every other proxied
 request goes to a closed local port, and HOME and XDG_CACHE_HOME point into a temporary directory.
+Downloads go through fetch-pinned.sh, which retries nothing here (FETCH_PINNED_RETRIES=0); its
+retries have their own tests in test_fetch_pinned.py.
 The permission check builds small squashfs images: it needs squashfs-tools (mksquashfs,
 unsquashfs), which CI's web job installs; elsewhere those tests are skipped without it.
 """
@@ -26,6 +28,10 @@ LIB = os.path.join(ROOT, "scripts", "lib", "appimage.sh")
 # What tauri-bundler 2.9.4 and 2.10.4 download when their tools directory has no AppRun-x86_64.
 PINNED_URL = "https://github.com/tauri-apps/binary-releases/releases/download/apprun-old/AppRun-x86_64"
 PINNED_SHA256 = "f30140a43a0a59e46db21bdefdf749b9e9f2c6946e92afabbacf98b8ae73fb4f"
+# linuxdeploy as tauri-bundler 2.10.4 downloads it, and after the bundler zeroed its bytes 8-10.
+LINUXDEPLOY_URL = "https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy-07333c6/linuxdeploy-x86_64.AppImage"
+LINUXDEPLOY_SHA256 = "36a2d7e274d12e1050d0e9ecfe11d339ed54720b2bec464c286d53f8b07f5c62"
+LINUXDEPLOY_PATCHED_SHA256 = "bd9521cd5ff3ca351fecb78cd9b236a4e37b3621014ac05cac0c2d767ffa0474"
 CONTENT = b"\x7fELF an AppRun for the tests\n"
 OTHER = b"\x7fELF something else\n"
 PROXY_VARIABLES = ("http_proxy", "https_proxy", "all_proxy", "no_proxy", "ftp_proxy")
@@ -47,6 +53,7 @@ def run(script: str, home: str, env: dict[str, str | None] | None = None, cwd: s
     environ = {k: v for k, v in os.environ.items() if k.lower() not in PROXY_VARIABLES and k != "XDG_CACHE_HOME"}
     dead = f"http://127.0.0.1:{closed_port()}"
     environ.update(HOME=home, http_proxy=dead, https_proxy=dead, HTTPS_PROXY=dead, all_proxy=dead, no_proxy="127.0.0.1")
+    environ.update(FETCH_PINNED_RETRIES="0", FETCH_PINNED_MAX_TIME="60")
     for key, value in (env or {}).items():
         if value is None:
             environ.pop(key, None)
@@ -158,15 +165,55 @@ class PlacePinnedExecutable(unittest.TestCase):
         with Server({"AppRun-x86_64": OTHER}) as server:
             result = self.place(server)
         self.assertEqual(result.returncode, 1)
-        self.assertIn("not the pinned", result.stderr)
+        self.assertIn(f"has SHA-256 {sha256(OTHER)} ({len(OTHER)} bytes), pinned {sha256(CONTENT)}", result.stderr)
         self.assertEqual(os.listdir(self.tools), [])
 
     def test_a_failed_download_leaves_nothing_behind(self) -> None:
         with Server({}) as server:
             result = self.place(server)
         self.assertEqual(result.returncode, 1)
-        self.assertIn("download failed", result.stderr)
+        self.assertIn("still failed after the retries above", result.stderr)
         self.assertEqual(os.listdir(self.tools), [])
+
+    def test_regression_a_cached_file_with_the_digest_also_accepted_is_kept_without_a_download(self) -> None:
+        # tauri-bundler zeroes bytes 8-10 of the linuxdeploy it caches after every AppImage
+        # (`dd … count=3 seek=8 conv=notrunc`): from the second build on, the cached file is the
+        # released one with those bytes zeroed, and it is kept as it is.
+        released = b"\x7fELF\x02\x01\x01\x00AI\x02\x00 a linuxdeploy for the tests\n"
+        patched = released[:8] + b"\x00\x00\x00" + released[11:]
+        write(self.file, patched, 0o770)
+        with Server({"AppRun-x86_64": released}) as server:
+            result = run(
+                f"voltip_place_pinned_executable '{server.url('AppRun-x86_64')}' {sha256(released)} '{self.file}' {sha256(patched)} || exit 1", self.home
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(server.requests, [])
+        self.assertEqual(read(self.file), patched)
+        self.assertEqual(mode(self.file), 0o755)
+
+    def test_a_download_has_the_pinned_digest_not_the_one_also_accepted_for_a_cached_file(self) -> None:
+        released = b"\x7fELF\x02\x01\x01\x00AI\x02\x00 a linuxdeploy for the tests\n"
+        patched = released[:8] + b"\x00\x00\x00" + released[11:]
+        with Server({"AppRun-x86_64": patched}) as server:
+            result = run(
+                f"voltip_place_pinned_executable '{server.url('AppRun-x86_64')}' {sha256(released)} '{self.file}' {sha256(patched)} || exit 1", self.home
+            )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(f"pinned {sha256(released)}", result.stderr)
+        self.assertEqual(os.listdir(self.tools), [])
+
+    def test_a_cached_file_with_neither_digest_fails_and_stays_as_it_is(self) -> None:
+        released = b"\x7fELF\x02\x01\x01\x00AI\x02\x00 a linuxdeploy for the tests\n"
+        patched = released[:8] + b"\x00\x00\x00" + released[11:]
+        write(self.file, OTHER, 0o770)
+        with Server({"AppRun-x86_64": released}) as server:
+            result = run(
+                f"voltip_place_pinned_executable '{server.url('AppRun-x86_64')}' {sha256(released)} '{self.file}' {sha256(patched)} || exit 1", self.home
+            )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(f"has SHA-256 {sha256(OTHER)}, not the pinned {sha256(released)} or {sha256(patched)}", result.stderr)
+        self.assertEqual(server.requests, [])
+        self.assertEqual((read(self.file), mode(self.file)), (OTHER, 0o770))
 
     def test_what_is_not_a_regular_file_is_refused(self) -> None:
         target = os.path.join(self.home, "elsewhere")
@@ -212,6 +259,24 @@ class PinnedAppRun(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.splitlines()[:3], [PINNED_URL, PINNED_SHA256, f"{cache}/tauri/AppRun-x86_64"])
+
+    def test_regression_the_pinned_linuxdeploy_goes_into_the_tools_directory_too(self) -> None:
+        # The release candidate's Linux leg (run 42514933736, job 128835826249) bundled the
+        # AppImage after the bundler's own single download of linuxdeploy from GitHub's releases,
+        # the kind of download that failed with a 504 on 2026-11-09 (run 42567630080).
+        cache = os.path.join(self.home, "xdg")
+        result = run(
+            "voltip_place_pinned_executable() { printf '%s|' \"$@\"; echo; }; voltip_appimage_apprun", self.home, {"XDG_CACHE_HOME": cache}
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = [line for line in result.stdout.splitlines() if line.endswith("|")]
+        self.assertEqual(
+            calls,
+            [
+                f"{PINNED_URL}|{PINNED_SHA256}|{cache}/tauri/AppRun-x86_64|",
+                f"{LINUXDEPLOY_URL}|{LINUXDEPLOY_SHA256}|{cache}/tauri/linuxdeploy-07333c6-x86_64.AppImage|{LINUXDEPLOY_PATCHED_SHA256}|",
+            ],
+        )
 
     def test_a_cached_apprun_that_is_not_the_pinned_one_is_refused_and_kept(self) -> None:
         cached = os.path.join(self.home, ".cache", "tauri", "AppRun-x86_64")

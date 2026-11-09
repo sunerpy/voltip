@@ -623,6 +623,31 @@ class LinuxPackageScript(unittest.TestCase):
         self.assertRegex(code, r"(?m)^for tool in [^\n]*\bunsquashfs\b")
 
 
+class WindowsPackageScript(unittest.TestCase):
+    """scripts/build-windows-x64.sh (`make windows-x64`), which ci.yml's windows-cross job and the
+    candidate's Windows leg run, bundles NSIS with the bundler's tools already in place."""
+
+    def test_regression_the_nsis_bundle_finds_its_tools_in_place(self) -> None:
+        # Run 42567630080 (main, 2026-11-09, job 128997576493): the bundler downloaded
+        # nsis_tauri_utils.dll itself, once, and the cross-build stopped on a 504. The pinned
+        # files are in its tools directory before `cargo tauri build`, through fetch-pinned.sh
+        # (scripts/lib/tauri-tools.sh); the candidate's second bundle (`cargo tauri bundle`, the
+        # updater signature) runs in the same job and finds them there too.
+        code = "\n".join(code_lines((ROOT / "scripts/build-windows-x64.sh").read_text(encoding="utf-8")))
+        checked = code.index("for tool in ")
+        sourced = code.index(". scripts/lib/tauri-tools.sh")
+        placed = code.index("voltip_tauri_nsis_tools")
+        built = code.index("cargo tauri build --ci --runner cargo-xwin")
+        self.assertLess(checked, sourced, "unzip is checked before the tools are placed")
+        self.assertLess(sourced, placed)
+        self.assertLess(placed, built)
+        # A statement of its own, as in build-linux-x64.sh: a failure stops the script.
+        self.assertRegex(code, r"(?m)^\s*voltip_tauri_nsis_tools \|\| exit 1$")
+        self.assertRegex(code, r"(?m)^for tool in [^\n]*\bunzip\b")
+        leg = jobs(WORKFLOWS / "release-candidate.yml")["bundle-windows"]
+        self.assertLess(leg.index("run: make windows-x64"), leg.index("cargo tauri bundle --ci --target"), "the second bundle comes after the script")
+
+
 class AptInstalls(unittest.TestCase):
     """2026-10-01: a slow apt mirror held the desktop smoke in its package step for 48 and 35
     minutes, twice in one day, and stalled the release candidates waiting for CI Success."""
