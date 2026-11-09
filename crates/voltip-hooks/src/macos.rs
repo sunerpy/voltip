@@ -56,7 +56,6 @@ unsafe extern "C" {
     fn CGEventTapIsEnabled(tap: CFMachPortRef) -> bool;
     #[cfg(test)]
     fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
-    #[cfg(test)]
     safe fn CGEventSourceFlagsState(state: i32) -> u64;
     safe fn CGEventSourceKeyState(state: i32, key: u16) -> bool;
     safe fn CGEventSourceButtonState(state: i32, button: u32) -> bool;
@@ -303,11 +302,14 @@ fn classify(kind: CGEventType, event: &CGEvent, modifier: Option<(u16, u64)>, bu
     }
 }
 
-/// Whether `key` is physically down (docs/dictation.md §29): the HID system's key and button
-/// state, which no event tap changes (the tap that drops the mouse trigger included).
+/// Whether `key` is physically down (docs/dictation.md §29): the HID system's state, which no
+/// event tap changes (the tap that drops the mouse trigger included). A modifier by its
+/// device-dependent flag in the flags state, as the tap reads its `flagsChanged` events: the
+/// key state of a modifier's keycode stays up while it is held (2026-11-10).
 pub fn is_down(key: &HeldKey) -> Option<bool> {
     Some(match held_key::macos_key(key)? {
         MacosKey::Key(code) => CGEventSourceKeyState(HID_SYSTEM_STATE, code),
+        MacosKey::Flag(flag) => CGEventSourceFlagsState(HID_SYSTEM_STATE) & flag != 0,
         MacosKey::Button(button) => CGEventSourceButtonState(HID_SYSTEM_STATE, button),
     })
 }
@@ -493,9 +495,11 @@ mod tests {
 
     /// docs/dictation.md §29.4: every right-hand modifier, held as the lone key while its tap
     /// runs, reads as down, and as up once released. 0.3.0 read only F13 and the back button
-    /// here, and on macOS 27 a held Right Option read as up, which stopped every take after half
-    /// a second (2026-11-10). Fn is not posted: a lone Fn opens the emoji picker or switches the
-    /// input source on the runner.
+    /// here, and read a modifier through its keycode's key state, which stays up while the key is
+    /// held: on macOS 27 a held Right Option read as up, which stopped every take after half a
+    /// second, and on CI's Mac this test failed the same way for Right Control (key state false,
+    /// flags `0x20042000` with its device flag set; 2026-11-10). Fn is not posted: a lone Fn opens
+    /// the emoji picker or switches the input source on the runner.
     #[test]
     #[ignore = "needs a macOS login session where this test binary has the Accessibility permission"]
     fn real_lone_modifiers_read_as_held() {
