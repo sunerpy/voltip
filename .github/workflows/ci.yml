@@ -1153,6 +1153,14 @@ jobs:
       - name: Clippy for Android (make android-clippy)
         run: make android-clippy
 
+      # Measurement only (draft pull request, never merged): what a cache of the Gradle user home
+      # saves the build below, cold and then warm.
+      - name: Gradle user home cache (measurement)
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          cache-provider: basic
+          cache-read-only: false
+
       # The wrapper's Gradle distribution and some of the build's dependencies come from GitHub's
       # releases (services.gradle.org and Maven Central redirect there): read timeouts failed this
       # job three times on 2026-11-08. The distribution comes pinned and retried, and Gradle tries
