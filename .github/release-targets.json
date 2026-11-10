@@ -39,9 +39,9 @@
     },
     {
       "bundles": ["dmg", "app"],
-      "cross": false,
+      "cross": true,
       "platform": "macos",
-      "runner": "macos-15-intel",
+      "runner": "macos-15",
       "target": "x86_64-apple-darwin",
       "updater_bundle": "app",
       "updater_platform": "darwin-x86_64"

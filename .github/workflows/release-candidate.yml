@@ -854,12 +854,16 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # macOS, built natively for both processors (Tauri names the Intel dmg `x64`):
+  # macOS, both processors on Apple silicon (Tauri names the Intel dmg `x64`):
   # Voltip_<version>_<aarch64|x64>.dmg to install from and, with the updater,
   # Voltip_<version>_<aarch64|x64>.app.tar.gz (+ .sig) for the updater (Tauri writes it as
   # Voltip.app.tar.gz; `collect --rename` gives it the release name). tauri.macos.conf.json signs
   # the bundle ad hoc; the checks below prove the seal, the architecture, the macOS 11 floor and
-  # the dmg's contents. macos-15-intel is GitHub's last x86_64 image (available until 2027-08).
+  # the dmg's contents. The Intel package is cross-built with `--target x86_64-apple-darwin`
+  # (2026-11-10): on macos-15-intel the leg's cold build took 21.2 minutes, the same build 12.0 on
+  # macos-15, and that image, GitHub's last x86_64 one, goes away in 2027-08. The bundle check
+  # runs the app's --version, which here runs the x86_64 binary under Rosetta 2; ci.yml's macos
+  # job and install-scripts.yml still run the Intel build on macos-15-intel.
   bundle-macos:
     name: Bundle ${{ matrix.target }}
     needs: prepare
@@ -871,7 +875,7 @@ jobs:
             runner: macos-15
             arch: aarch64
           - target: x86_64-apple-darwin
-            runner: macos-15-intel
+            runner: macos-15
             arch: x64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
