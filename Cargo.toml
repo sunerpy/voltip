@@ -260,3 +260,11 @@ strip = "symbols"
 # packages (docs/mobile-rn.md §6).
 [profile.release.package.voltip-mobile-rn]
 strip = false
+
+# voltip-server as one codegen unit is one LLVM module, and LLVM spends about 14 minutes optimising
+# it (2026-11-10, -Z time-passes: LLVM_passes 862.7 s, every other pass under a second), plus 5 in
+# the ThinLTO link; the release candidate's Linux leg waited 19–34 minutes for it. In 16 units, at
+# -j4 as on the runner, the library takes 2 s and the binary 26 s. ThinLTO still optimises across
+# the units. Every other package keeps the single unit above.
+[profile.release.package.voltip-server]
+codegen-units = 16
