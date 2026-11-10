@@ -30,18 +30,54 @@
       return raw;
     }
   };
+  // This document's id: every send of its report carries it, so the program logs it once.
+  const id = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
   // What the check found: on the window for whoever inspects it, and to the program's log
-  // (`ui_guard.rs`). The report is best effort; the check does not depend on it.
+  // (`ui_guard.rs`). The check does not depend on the report, but the report is sent until the
+  // program has it: a send the program refuses goes again 250 ms later, doubling up to 5 s, as a
+  // refused listener does (packages/shared/src/tauri-backend.ts); one it has not answered after
+  // `ANSWER_MS` goes again at once; `SENDS` sends at most. Hosted macOS lost the pill window's only
+  // send while the same document's other calls went through (CI 42546063667, 42772486837).
+  const SENDS = 8;
+  const ANSWER_MS = 5000;
   const report = (verdict, running, build) => {
     window.voltipUiCheck = Object.freeze({ verdict, replaced });
-    try {
-      const internals = window.__TAURI_INTERNALS__;
-      const label = internals?.metadata?.currentWebview?.label ?? null;
-      const payload = { window: label, verdict, replaced, scripts: running, build: build ?? null };
-      internals?.invoke("plugin:event|emit", { event: "voltip://ui-guard", payload })?.catch?.(() => {});
-    } catch {
-      // Nothing to report to.
-    }
+    const internals = window.__TAURI_INTERNALS__;
+    // Nothing to report to.
+    if (!internals) return;
+    const label = internals.metadata?.currentWebview?.label ?? null;
+    const payload = { window: label, document: id, verdict, replaced, scripts: running, build: build ?? null };
+    let heard = false;
+    const send = (attempt) => {
+      // An earlier send's answer came while this one waited.
+      if (heard) return;
+      let over = false;
+      // This send got no answer, or a refusal: the next one, after `wait`.
+      const again = (wait) => {
+        if (over || heard) return;
+        over = true;
+        if (attempt + 1 < SENDS) setTimeout(() => send(attempt + 1), wait);
+        else console.warn("voltip: the interface check could not report to the program", { verdict, replaced });
+      };
+      const unanswered = setTimeout(() => again(0), ANSWER_MS);
+      let sent;
+      try {
+        sent = Promise.resolve(internals.invoke("plugin:event|emit", { event: "voltip://ui-guard", payload }));
+      } catch (e) {
+        sent = Promise.reject(e);
+      }
+      sent.then(
+        () => {
+          heard = true;
+          clearTimeout(unanswered);
+        },
+        () => {
+          clearTimeout(unanswered);
+          again(Math.min(5000, 250 * 2 ** attempt));
+        },
+      );
+    };
+    send(0);
   };
   const check = () => {
     const running = Array.from(document.querySelectorAll('script[type="module"][src]'), (s) =>
