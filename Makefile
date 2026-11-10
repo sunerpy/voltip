@@ -51,9 +51,10 @@ frontend-dist-dirs:
 	@mkdir -p apps/desktop/dist apps/mobile/dist
 
 .PHONY: coverage-gate
-coverage-gate: frontend-dist-dirs ## Run the Rust tests once, instrumented, and enforce the line-coverage floor (COVERAGE_MIN)
+coverage-gate: frontend-dist-dirs ## Run the Rust tests once, instrumented (cargo-nextest, .config/nextest.toml), and enforce the line-coverage floor (COVERAGE_MIN)
 	@command -v cargo-llvm-cov >/dev/null 2>&1 || { echo "cargo-llvm-cov not found — cargo install cargo-llvm-cov"; exit 2; }
-	@$(CARGO) llvm-cov --workspace --all-targets --features "$(RUST_FEATURES)" --summary-only \
+	@command -v cargo-nextest >/dev/null 2>&1 || { echo "cargo-nextest not found — cargo install cargo-nextest --locked"; exit 2; }
+	@$(CARGO) llvm-cov nextest --workspace --all-targets --features "$(RUST_FEATURES)" --summary-only \
 	    --ignore-filename-regex '$(COVERAGE_EXCLUDE)' \
 	  | tee -a /dev/stderr \
 	  | awk -v min='$(COVERAGE_MIN)' '\
