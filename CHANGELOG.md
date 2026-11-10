@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/sunerpy/voltip/compare/v0.3.0...v0.3.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **hotkey:** macOS 上按住右 Option 等单键录音不再半秒就停止 ([#243](https://github.com/sunerpy/voltip/issues/243)) ([ac4401a](https://github.com/sunerpy/voltip/commit/ac4401a7549ea907aca51e07095e7f6a4009065f))
+
 ## [0.3.0](https://github.com/sunerpy/voltip/compare/v0.2.1...v0.3.0) (2026-11-08)
 
 
