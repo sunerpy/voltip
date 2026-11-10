@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/sunerpy/voltip/compare/v0.3.1...v0.3.2) (2026-11-10)
+
+
+### Bug Fixes
+
+* **desktop:** 界面检查的结果没送到程序时重新发送，悬浮窗的检查不再漏进日志 ([#250](https://github.com/sunerpy/voltip/issues/250)) ([23253e2](https://github.com/sunerpy/voltip/commit/23253e23b5dd9119e59149feaa5c857b0d4c184e))
+
 ## [0.3.1](https://github.com/sunerpy/voltip/compare/v0.3.0...v0.3.1) (2026-11-10)
 
 
