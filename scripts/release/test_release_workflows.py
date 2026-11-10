@@ -648,6 +648,27 @@ class WindowsPackageScript(unittest.TestCase):
         self.assertLess(leg.index("run: make windows-x64"), leg.index("cargo tauri bundle --ci --target"), "the second bundle comes after the script")
 
 
+class GradleDownloads(unittest.TestCase):
+    """Both Android builds get the pinned Gradle distribution and eight tries per repository
+    (.github/scripts/prepare-gradle.sh) before scripts/build-android-rn.sh runs."""
+
+    def test_regression_the_candidate_s_android_leg_retries_gradle_downloads_as_ci_does(self) -> None:
+        # Run 42733161564 (the 0.3.1 candidate, 2026-11-10, job 129556020370): reading
+        # androidx.window's POM from dl.google.com timed out, Gradle disabled the repository after
+        # its three default tries and the leg failed. ci.yml's android job has had the pinned
+        # distribution and eight tries since #241; the candidate's leg had neither.
+        for name, job, script in (
+            ("ci.yml", "android", "run: .github/scripts/prepare-gradle.sh apps/mobile-rn"),
+            ("release-candidate.yml", "bundle-android", "run: .release-tooling/.github/scripts/prepare-gradle.sh apps/mobile-rn"),
+        ):
+            with self.subTest(workflow=name):
+                body = "\n".join(code_lines(jobs(WORKFLOWS / name)[job]))
+                self.assertIn(script, body)
+                # After pnpm install (it reads Expo's template from node_modules), before the build.
+                self.assertLess(body.index("run: pnpm install --frozen-lockfile"), body.index(script))
+                self.assertLess(body.index(script), body.index("scripts/build-android-rn.sh --unsigned"))
+
+
 class AptInstalls(unittest.TestCase):
     """2026-10-01: a slow apt mirror held the desktop smoke in its package step for 48 and 35
     minutes, twice in one day, and stalled the release candidates waiting for CI Success."""

@@ -1225,6 +1225,12 @@ jobs:
       - name: Install web dependencies (frozen lockfile)
         run: pnpm install --frozen-lockfile
 
+      # As in ci.yml's android job: the wrapper's Gradle distribution pinned and retried, and Gradle
+      # trying a repository eight times instead of three (.github/scripts/prepare-gradle.sh). The
+      # 0.3.1 candidate failed here once on a read timeout from dl.google.com (run 42733161564).
+      - name: Gradle distribution (pinned SHA-256, retried) and repository retries
+        run: .release-tooling/.github/scripts/prepare-gradle.sh apps/mobile-rn
+
       # Phase 1, with the built-in engine values and no signing material: the source's build script
       # (the Rust shell through cargo-ndk, its UniFFI bindings, Expo's Android project, Gradle; the
       # licence texts into the assets), its release build left unsigned by app.config.js. React
