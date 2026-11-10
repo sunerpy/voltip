@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -621,6 +622,21 @@ class LinuxPackageScript(unittest.TestCase):
         # the script under `set -e`, and the build would go on with the bundles of an earlier run.
         self.assertRegex(code, r"(?m)^\s*voltip_appimage_apprun \|\| exit 1$")
         self.assertRegex(code, r"(?m)^for tool in [^\n]*\bunsquashfs\b")
+
+
+class ServerPackageBuild(unittest.TestCase):
+    """The release build of voltip-server (scripts/build-server-linux-x64.sh, the candidate's Linux
+    leg)."""
+
+    def test_regression_voltip_server_builds_in_more_than_one_codegen_unit(self) -> None:
+        # Regression (0.3.1 candidate 42733161564, 2026-11-10): the Linux leg spent 19.3 minutes in
+        # "Build and package voltip-server", 27.7–34.3 in earlier candidates. As one codegen unit
+        # the crate is one LLVM module: `-Z time-passes` measured LLVM_passes 862.717 s for the
+        # library (every other pass under a second) and the ThinLTO link took 302.7 s. With 16
+        # units, at -j4 as on the runner: 2.0 s and 25.6 s. Every other package keeps one unit.
+        profile = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["profile"]["release"]
+        self.assertEqual(profile["codegen-units"], 1)
+        self.assertEqual(profile.get("package", {}).get("voltip-server", {}).get("codegen-units"), 16)
 
 
 class WindowsPackageScript(unittest.TestCase):
