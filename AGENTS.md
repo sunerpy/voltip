@@ -87,8 +87,17 @@ make help                        # everything else
   `voltip-refine-eval`'s record test until the prompt evaluation runs again: `make refine-eval`
   (Amazon Bedrock, by hand only, never in CI; docs/refine-eval.md). Commit its report and record with
   the change.
-- Every fixed bug gets a regression test that fails without the fix (`regression_…` in Rust,
-  `it("regression: …")` in TypeScript).
+- Reproduce a bug with a test before you fix it (user decision 2026-11-10): write the test first
+  (`regression_…` in Rust, `it("regression: …")` in TypeScript), run it, and see it fail the way
+  the report says; only then change the code, and the same test passes. Name the evidence in the
+  test's comment (the log line, the history record, the measured time). A bug that lives in the
+  OS or the hardware is reproduced through the port's fake, made to answer what the real system
+  answered, plus an `#[ignore]`d real test for CI's machines. (0.3.0 stopped every macOS take
+  held with Right Option after 504 ms: the key-state check had real tests for F13 and a mouse
+  button only, never for a modifier.)
+- When a change keeps an existing test from passing, decide whether the test's rule still holds.
+  If it does, the change is wrong. If the rule changed on purpose, update the test's inputs so its
+  stated purpose is still checked, and say so in the pull request.
 - Never weaken, skip or delete a test to get a green run.
 - Tests that need a display, a real model or a GPU are `#[ignore]`d; the head of each such file says
   how to run it.

@@ -534,7 +534,7 @@ pub fn is_down(key: &HeldKey) -> Option<bool> {
 mod tests {
     use std::time::Duration;
 
-    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{INPUT_MOUSE, MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP, MOUSEINPUT};
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{INPUT_MOUSE, KEYEVENTF_EXTENDEDKEY, MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP, MOUSEINPUT};
     use windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW;
 
     use super::*;
@@ -723,6 +723,59 @@ mod tests {
         send(&[key(RIGHT_CTRL, false), key(RIGHT_CTRL, true)]);
         assert_eq!((next(&rx), next(&rx)), (Some(SoloEdge::Press), Some(SoloEdge::Release)));
         backend.stop();
+    }
+
+    /// A right-hand modifier held down the way the keyboard sends it (its scan code, and Right
+    /// Ctrl's extended flag), released when dropped so a failed assertion leaves nothing held.
+    struct Down(INPUT);
+
+    impl Down {
+        fn press(key: SoloKey) -> Self {
+            let (vk, scan, extended) = match key {
+                SoloKey::RightCtrl => (0xA3, 0x1D, true),
+                SoloKey::RightShift => (0xA1, 0x36, false),
+                other => panic!("{other} is not pressed by these tests"),
+            };
+            assert_eq!(windows_vk(key), Some(vk), "{key}");
+            let input = |up: bool| {
+                let flags = if extended { KEYEVENTF_EXTENDEDKEY } else { 0 } | if up { KEYEVENTF_KEYUP } else { 0 };
+                INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: vk, wScan: scan, dwFlags: flags, time: 0, dwExtraInfo: 0 } } }
+            };
+            send(&[input(false)]);
+            Self(input(true))
+        }
+    }
+
+    impl Drop for Down {
+        fn drop(&mut self) {
+            // SAFETY: an initialised INPUT and its exact size.
+            unsafe { SendInput(1, &self.0, std::mem::size_of::<INPUT>() as i32) };
+        }
+    }
+
+    /// docs/dictation.md §29.4: a right-hand modifier, held as the lone key under its running
+    /// hooks, reads as down through the async key state, and as up once released: Right Ctrl as
+    /// the keyboard sends it (extended) and Right Shift (by its scan code). 0.3.0 read only F13 and
+    /// the back button here, and on macOS 27 a held Right Option read as up, which stopped every
+    /// take after half a second (2026-11-10). Right Alt and Right Win passed here too on CI, but the
+    /// next step's Notepad then did not come to the front, twice (2026-11-10), for a reason not
+    /// found, so they are left out.
+    #[test]
+    #[ignore = "needs an interactive Windows desktop"]
+    fn real_lone_modifiers_read_as_held() {
+        let _serial = serial();
+        for key in [SoloKey::RightCtrl, SoloKey::RightShift] {
+            let (tx, rx) = mpsc::channel();
+            let backend = start(key, tx, true).expect("hooks");
+            let held = HeldKey::Solo(key);
+            let down = Down::press(key);
+            assert_eq!(next(&rx), Some(SoloEdge::Press), "{key}");
+            wait_until(&format!("{key} reads as down"), || is_down(&held) == Some(true));
+            drop(down);
+            assert_eq!(next(&rx), Some(SoloEdge::Release), "{key}");
+            wait_until(&format!("{key} reads as up"), || is_down(&held) == Some(false));
+            backend.stop();
+        }
     }
 
     /// docs/dictation.md §29: the physical state a hold-to-talk take is checked against. The side

@@ -559,6 +559,49 @@ fn regression_a_missed_release_stops_a_hold_take() {
     });
 }
 
+/// Regression (0.3.0 on macOS 27, 2026-11-10): the key-state query read Right Option, held as the
+/// lone key, as up, so the shell sent the release itself two readings after the press: every
+/// take stopped 504 ms after the press and went on to recognition and clean-up. A key the query
+/// never finds down keeps its take until the hook's own release.
+#[test]
+fn regression_a_key_that_never_reads_as_down_does_not_stop_a_hold_take() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use voltip_desktop_lib::held::{KeyReader, Source};
+    use voltip_hooks::HeldKey;
+
+    with_running_app(|app, webview, rx| {
+        let st = wait_state(webview, |s| s.identity.is_some());
+        assert_eq!(st.settings.activation, Activation::Hold);
+        let registry = app.state::<Arc<voltip_desktop_lib::hotkey::HotkeyRegistry>>();
+        let reads = Arc::new(AtomicUsize::new(0));
+        let counter = reads.clone();
+        let key = HeldKey::Solo(voltip_core::SoloKey::RightAlt);
+        let expected = key.clone();
+        registry.set_key_reader(KeyReader::new(move |read| {
+            assert_eq!(read, &expected);
+            counter.fetch_add(1, Ordering::SeqCst);
+            Some(false)
+        }));
+        registry.held_pressed(Source::Solo, key, TakeKind::Dictation);
+        assert_eq!(invoke(webview, "hotkey_edge", json!({ "pressed": true, "source": "hotkey" })), Ok(Value::Null));
+        wait_event(rx, "listening", |e| e["type"] == "dictation" && e["phase"]["phase"] == "listening");
+        // Readings that say up come, and the take listens on (the probe stops waiting as soon as
+        // the take leaves listening, so a stopped take fails here at once).
+        let before = reads.load(Ordering::SeqCst);
+        let phase = wait_for(|| {
+            let phase = core_state(webview).dictation.phase;
+            (reads.load(Ordering::SeqCst) >= before + 4 || !matches!(phase, DictationPhase::Listening { .. })).then_some(phase)
+        });
+        assert!(matches!(phase, DictationPhase::Listening { .. }), "the key never read as down, yet its take stopped: {phase:?}");
+        assert!(!registry.held_is_empty(), "the press waits for the hook's release");
+        // The hook's release ends it.
+        registry.held_released(Source::Solo);
+        assert_eq!(invoke(webview, "hotkey_edge", json!({ "pressed": false, "source": "hotkey" })), Ok(Value::Null));
+        wait_event(rx, "processing", |e| e["type"] == "dictation" && e["phase"]["phase"] == "processing");
+    });
+}
+
 /// The settings page suspends the OS registration while it records (otherwise the bound chord is
 /// swallowed by `RegisterHotKey` and never reaches the webview). Headless shells only track the
 /// flag, but the command must exist, accept both edges and reject a missing argument.

@@ -56,6 +56,7 @@ unsafe extern "C" {
     fn CGEventTapIsEnabled(tap: CFMachPortRef) -> bool;
     #[cfg(test)]
     fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
+    safe fn CGEventSourceFlagsState(state: i32) -> u64;
     safe fn CGEventSourceKeyState(state: i32, key: u16) -> bool;
     safe fn CGEventSourceButtonState(state: i32, button: u32) -> bool;
 }
@@ -301,11 +302,14 @@ fn classify(kind: CGEventType, event: &CGEvent, modifier: Option<(u16, u64)>, bu
     }
 }
 
-/// Whether `key` is physically down (docs/dictation.md §29): the HID system's key and button
-/// state, which no event tap changes (the tap that drops the mouse trigger included).
+/// Whether `key` is physically down (docs/dictation.md §29): the HID system's state, which no
+/// event tap changes (the tap that drops the mouse trigger included). A modifier by its
+/// device-dependent flag in the flags state, as the tap reads its `flagsChanged` events: the
+/// key state of a modifier's keycode stays up while it is held (2026-11-10).
 pub fn is_down(key: &HeldKey) -> Option<bool> {
     Some(match held_key::macos_key(key)? {
         MacosKey::Key(code) => CGEventSourceKeyState(HID_SYSTEM_STATE, code),
+        MacosKey::Flag(flag) => CGEventSourceFlagsState(HID_SYSTEM_STATE) & flag != 0,
         MacosKey::Button(button) => CGEventSourceButtonState(HID_SYSTEM_STATE, button),
     })
 }
@@ -336,13 +340,65 @@ mod tests {
         CGEventSource::new(CGEventSourceStateID::HIDSystemState).expect("event source")
     }
 
-    /// Right Control going down or up the way the window server reports a modifier: a
-    /// `flagsChanged` event with the key code and, while it is down, its device-dependent flag.
-    fn right_ctrl(down: bool) {
-        let event = CGEvent::new_keyboard_event(source(), 0x3E, down).expect("event");
+    /// A right-hand modifier going down or up the way the window server reports it: a
+    /// `flagsChanged` event with the key code and, while it is down, the modifier's flag and its
+    /// device-dependent one.
+    fn modifier(key: SoloKey, down: bool) {
+        let (code, device) = macos_modifier(key).expect("a keyboard modifier");
+        let flag = match key {
+            SoloKey::RightCtrl => CGEventFlags::CGEventFlagControl,
+            SoloKey::RightAlt => CGEventFlags::CGEventFlagAlternate,
+            SoloKey::RightShift => CGEventFlags::CGEventFlagShift,
+            SoloKey::RightMeta => CGEventFlags::CGEventFlagCommand,
+            other => panic!("{other} is not posted by these tests"),
+        };
+        let event = CGEvent::new_keyboard_event(source(), code, down).expect("event");
         event.set_type(CGEventType::FlagsChanged);
-        event.set_flags(if down { CGEventFlags::CGEventFlagControl | CGEventFlags::from_bits_retain(0x2000) } else { CGEventFlags::CGEventFlagNull });
+        event.set_flags(if down { flag | CGEventFlags::from_bits_retain(device) } else { CGEventFlags::CGEventFlagNull });
         event.post(CGEventTapLocation::HID);
+    }
+
+    fn right_ctrl(down: bool) {
+        modifier(SoloKey::RightCtrl, down);
+    }
+
+    /// A modifier held down until dropped, so a failed assertion leaves nothing held on the
+    /// runner.
+    struct Down(SoloKey);
+
+    impl Down {
+        fn press(key: SoloKey) -> Self {
+            modifier(key, true);
+            Self(key)
+        }
+    }
+
+    impl Drop for Down {
+        fn drop(&mut self) {
+            modifier(self.0, false);
+        }
+    }
+
+    /// What the HID system says about `key` right now, for a failure message.
+    fn hid_state(key: SoloKey) -> String {
+        let (code, device) = macos_modifier(key).expect("a keyboard modifier");
+        let flags = CGEventSourceFlagsState(HID_SYSTEM_STATE);
+        format!(
+            "CGEventSourceKeyState(0x{code:02X}) = {}, CGEventSourceFlagsState = 0x{flags:X} (device flag 0x{device:X} {})",
+            CGEventSourceKeyState(HID_SYSTEM_STATE, code),
+            if flags & device != 0 { "set" } else { "clear" }
+        )
+    }
+
+    /// Wait (at most 5 s) for `key` to read as `down`; the failure says what the HID system said.
+    fn wait_for_reading(key: SoloKey, down: bool) {
+        let held = HeldKey::Solo(key);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while is_down(&held) != Some(down) {
+            assert!(Instant::now() < deadline, "{key} did not read as {} within 5 s: {}", if down { "down" } else { "up" }, hid_state(key));
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        eprintln!("{key} reads as {}: {}", if down { "down" } else { "up" }, hid_state(key));
     }
 
     /// `kVK_F13`: a key nothing on the runner reacts to (Control + C would interrupt the process
@@ -435,6 +491,30 @@ mod tests {
         backend.refresh();
         assert_eq!(rx.recv_timeout(Duration::from_millis(500)).ok(), None, "an enabled tap is left alone");
         backend.stop();
+    }
+
+    /// docs/dictation.md §29.4: every right-hand modifier, held as the lone key while its tap
+    /// runs, reads as down, and as up once released. 0.3.0 read only F13 and the back button
+    /// here, and read a modifier through its keycode's key state, which stays up while the key is
+    /// held: on macOS 27 a held Right Option read as up, which stopped every take after half a
+    /// second, and on CI's Mac this test failed the same way for Right Control (key state false,
+    /// flags `0x20042000` with its device flag set; 2026-11-10). Fn is not posted: a lone Fn opens
+    /// the emoji picker or switches the input source on the runner.
+    #[test]
+    #[ignore = "needs a macOS login session where this test binary has the Accessibility permission"]
+    fn real_lone_modifiers_read_as_held() {
+        let _serial = serial();
+        for key in [SoloKey::RightCtrl, SoloKey::RightAlt, SoloKey::RightShift, SoloKey::RightMeta] {
+            let (tx, rx) = mpsc::channel();
+            let backend = start(key, tx, true).expect("event tap (Accessibility)");
+            let down = Down::press(key);
+            assert_eq!(next(&rx), Some(SoloEdge::Press), "{key}");
+            wait_for_reading(key, true);
+            drop(down);
+            assert_eq!(next(&rx), Some(SoloEdge::Release), "{key}");
+            wait_for_reading(key, false);
+            backend.stop();
+        }
     }
 
     /// docs/dictation.md §29: the physical state a hold-to-talk take is checked against, read

@@ -96,21 +96,28 @@ fn function_key(name: &str, last: u16) -> Option<u16> {
     digits.parse::<u16>().ok().filter(|n| (1..=last).contains(n))
 }
 
-/// What macOS's `CGEventSourceKeyState` / `CGEventSourceButtonState` take for a key.
+/// What macOS's key-state queries take for a key.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MacosKey {
-    /// A `kVK_*` virtual keycode.
+    /// A `kVK_*` virtual keycode, for `CGEventSourceKeyState`: a chord key.
     Key(u16),
-    /// A `CGMouseButton` number (2 = the wheel, 3 = back, 4 = forward).
+    /// A modifier's device-dependent flag (`NX_DEVICER*KEYMASK`, `kCGEventFlagMaskSecondaryFn`),
+    /// set in `CGEventSourceFlagsState` while the key is down. The HID system keeps no key state
+    /// for a modifier's keycode: `CGEventSourceKeyState` read a held Right Option as up on
+    /// macOS 27, and a held Right Control on CI's Mac (flags `0x20042000`, 2026-11-10).
+    Flag(u64),
+    /// A `CGMouseButton` number (2 = the wheel, 3 = back, 4 = forward), for
+    /// `CGEventSourceButtonState`.
     Button(u32),
 }
 
-/// `key` for macOS's key-state queries.
+/// `key` for macOS's key-state queries: a solo modifier by its flag, a mouse button by its
+/// number, a chord key by its keycode.
 pub fn macos_key(key: &HeldKey) -> Option<MacosKey> {
     match key {
-        HeldKey::Solo(solo) => {
-            macos_modifier(*solo).map(|(code, _)| MacosKey::Key(code)).or_else(|| macos_button(*solo).and_then(|b| u32::try_from(b).ok()).map(MacosKey::Button))
-        }
+        HeldKey::Solo(solo) => macos_modifier(*solo)
+            .map(|(_, flag)| MacosKey::Flag(flag))
+            .or_else(|| macos_button(*solo).and_then(|b| u32::try_from(b).ok()).map(MacosKey::Button)),
         HeldKey::Chord(name) => chord_macos_code(name).map(MacosKey::Key),
     }
 }
@@ -335,8 +342,13 @@ mod tests {
         for none in ["ScrollLock", "Pause", "PrintScreen", "F21", "F24", "Numpad1"] {
             assert_eq!(macos_key(&chord(none)), None, "{none}");
         }
-        assert_eq!(macos_key(&HeldKey::Solo(SoloKey::RightCtrl)), Some(MacosKey::Key(0x3E)));
-        assert_eq!(macos_key(&HeldKey::Solo(SoloKey::Fn)), Some(MacosKey::Key(0x3F)));
+        // Regression (2026-11-10): a solo modifier is read by its device-dependent flag, never by
+        // its keycode, whose key state the HID system does not keep.
+        assert_eq!(macos_key(&HeldKey::Solo(SoloKey::RightCtrl)), Some(MacosKey::Flag(0x2000)));
+        assert_eq!(macos_key(&HeldKey::Solo(SoloKey::RightAlt)), Some(MacosKey::Flag(0x40)));
+        assert_eq!(macos_key(&HeldKey::Solo(SoloKey::RightShift)), Some(MacosKey::Flag(0x04)));
+        assert_eq!(macos_key(&HeldKey::Solo(SoloKey::RightMeta)), Some(MacosKey::Flag(0x10)));
+        assert_eq!(macos_key(&HeldKey::Solo(SoloKey::Fn)), Some(MacosKey::Flag(0x0080_0000)));
         assert_eq!(macos_key(&HeldKey::Solo(SoloKey::MouseBack)), Some(MacosKey::Button(3)));
         let mut codes: Vec<u16> = chord_keys()
             .iter()

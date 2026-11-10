@@ -462,6 +462,46 @@ mod tests {
         backend.stop();
     }
 
+    /// A key xdotool holds down until dropped, so a failed assertion leaves nothing held.
+    struct Down(&'static str);
+
+    impl Down {
+        fn press(keysym: &'static str) -> Self {
+            xdotool(&["keydown", keysym]);
+            Self(keysym)
+        }
+    }
+
+    impl Drop for Down {
+        fn drop(&mut self) {
+            let _ = std::process::Command::new("xdotool").args(["keyup", self.0]).status();
+        }
+    }
+
+    /// docs/dictation.md §29.4: every right-hand modifier, held as the lone key while its watch
+    /// runs, reads as down, and as up once released. 0.3.0 read only Right Control here, and on
+    /// macOS 27 a held Right Option read as up, which stopped every take after half a second
+    /// (2026-11-10).
+    #[test]
+    #[ignore = "needs an X server (DISPLAY) and xdotool"]
+    fn real_lone_modifiers_read_as_held() {
+        let _keep = x11rb::connect(None).expect("DISPLAY");
+        for (key, keysym) in
+            [(SoloKey::RightCtrl, "Control_R"), (SoloKey::RightAlt, "Alt_R"), (SoloKey::RightShift, "Shift_R"), (SoloKey::RightMeta, "Super_R")]
+        {
+            let (tx, rx) = mpsc::channel();
+            let backend = start(key, tx, true).expect("watch");
+            let held = HeldKey::Solo(key);
+            let down = Down::press(keysym);
+            assert_eq!(next(&rx), Some(SoloEdge::Press), "{key}");
+            wait_until(&format!("{key} reads as down"), || is_down(&held) == Some(true));
+            drop(down);
+            assert_eq!(next(&rx), Some(SoloEdge::Release), "{key}");
+            wait_until(&format!("{key} reads as up"), || is_down(&held) == Some(false));
+            backend.stop();
+        }
+    }
+
     /// docs/dictation.md §29: the physical state a hold-to-talk take is checked against: a solo
     /// modifier by keycode, a chord key by keysym, and the grabbed back button through XI 2.
     #[test]
