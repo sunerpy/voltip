@@ -129,9 +129,10 @@ runs landed in a row on 2026-09-30, and one of them stalled a release for an hou
 - The `macos` jobs do not run on pull requests. After a merge, check that `main`'s run is green on
   both Macs; a red `macos` job is fixed like any other, and until it is, `CI Success` on `main` is
   red and no release candidate passes its source gate.
-- A CI job that runs twice its usual time is a hung test. The Rust gates step stops at 25 minutes
-  by itself; cancel the run to learn sooner. Either way the gate logs still upload, and the hung
-  test is the one "running for over 60 seconds".
+- A CI job that runs twice its usual time is a hung test. The coverage gate runs the tests with
+  cargo-nextest (`.config/nextest.toml`), which names a test as `SLOW` after 60 seconds and stops
+  it as `TIMEOUT` after ten minutes; the Rust gates step stops at 25 minutes by itself. Cancel the
+  run to learn sooner. Either way the gate logs still upload and name the hung test.
 - Ubuntu packages in `ci.yml`, `release-candidate.yml` and `release.yml` go through
   `.github/scripts/apt-install.sh`, never a bare `apt-get`: each download attempt has a deadline,
   and a later attempt fetches from archive.ubuntu.com instead of the Azure mirror (2026-10-01: that

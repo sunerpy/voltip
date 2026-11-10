@@ -1,0 +1,11 @@
+# cargo-nextest, which `make coverage-gate` runs the Rust tests with (cargo llvm-cov nextest).
+# Each test runs in a process of its own and the tests of all binaries share the workers, where
+# `cargo test` ran the binaries one after another (2026-11-10: 101 binaries, 426 s of their own
+# time on the runner, voltip-core's tests/long.rs alone 209 s).
+[profile.default]
+# Every failure of the run is reported, not only the first.
+fail-fast = false
+# A test still running after 60 s is reported as SLOW; after ten such periods it is stopped and
+# fails as TIMEOUT, so a hung test fails the gate and is named in its log long before the CI
+# step's own 25-minute limit.
+slow-timeout = { period = "60s", terminate-after = 10 }
