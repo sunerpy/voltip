@@ -234,6 +234,24 @@ class CandidateBuild(unittest.TestCase):
         self.assertEqual(config["bundle"]["macOS"]["signingIdentity"], "-")
         self.assertFalse(config["bundle"]["macOS"]["hardenedRuntime"])
 
+    def test_the_intel_package_builds_on_apple_silicon(self) -> None:
+        # 2026-11-10: the Intel leg was the longest after the Linux one, 26.8 minutes in the 0.3.1
+        # candidate (42733161564), 21.2 of them a cold build on macos-15-intel; the same build took
+        # 12.0 on macos-15. macos-15-intel, GitHub's last x86_64 image, goes away in 2027-08. The leg
+        # cross-builds with an explicit --target; the bundle check runs the app's --version, which on
+        # Apple silicon runs the x86_64 binary under Rosetta 2, and requires this release's version.
+        body = self.jobs["bundle-macos"]
+        runners = dict(re.findall(r"(?m)^\s+- target: (\S+)\n\s+runner: (\S+)$", body))
+        self.assertEqual(runners, {"aarch64-apple-darwin": "macos-15", "x86_64-apple-darwin": "macos-15"})
+        targets = json.loads((ROOT / ".github/release-targets.json").read_text(encoding="utf-8"))["targets"]
+        intel = next(entry for entry in targets if entry["target"] == "x86_64-apple-darwin")
+        self.assertEqual((intel["runner"], intel["cross"]), ("macos-15", True))
+        self.assertIn('cargo tauri build --ci --target "$MACOS_TARGET"', body)
+        self.assertIn(".release-tooling/.github/scripts/check-macos-bundle.sh", body)
+        check = (ROOT / ".github/scripts/check-macos-bundle.sh").read_text(encoding="utf-8")
+        self.assertIn('reported=$("$app/Contents/MacOS/voltip-desktop" --version)', check)
+        self.assertIn('[ "$reported" = "voltip $version" ]', check)
+
     def test_every_leg_is_sealed_and_gated(self) -> None:
         for job in ("aggregate", "gate"):
             match = re.search(r"(?m)^    needs: \[([^\]]*)\]$", self.jobs[job])
