@@ -1,9 +1,9 @@
 ---
 layout: home
 markdownStyles: false
-title: Voltip — dictation for Windows, macOS, Linux and Android
+title: Voltip — open-source voice typing and dictation for Windows, macOS, Linux and Android
 titleTemplate: false
-description: Hold a shortcut, speak, and the text appears at your cursor in any app. Recognition on your computer or with a cloud service you choose, with optional AI polish.
+description: Speech to text at your cursor in any app. Hold a shortcut, speak and release; recognition runs offline on your computer with a local model, or with a cloud service you choose, with optional AI polish.
 
 hero:
   text: Hold to speak,<br>release to type

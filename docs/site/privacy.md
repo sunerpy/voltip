@@ -48,6 +48,10 @@ From the official Voltip packages on, the app also tells the built-in service's 
 
 The [try page](/guide/try) on this website sends what you record or upload to the built-in service for recognition, and the text you polish to the built-in service for AI polish. The built-in service keeps the same record of these requests as of the app's, with your IP address, and does not keep the recording or the text. To keep the page's limits, the website counts your requests under a one-way hash of your IP address; the counts are removed after the hour they cover. Before you start, Cloudflare Turnstile checks that a person is using the page, under Cloudflare's privacy policy. After the check, your browser keeps a cookie for 30 minutes so that the check is not repeated; the page keeps nothing else.
 
+## This website
+
+This website counts visits with Cloudflare Web Analytics, under Cloudflare's privacy policy. It sets no cookies and keeps nothing in your browser, and it does not identify individual visitors: it collects aggregate counts, such as page views, the sites visitors come from and how fast pages load. The Voltip app does not use it.
+
 ## The microphone and computer audio
 
 The microphone is open only while you record, or for the 15 seconds of a microphone test. Computer audio is recorded only during a dictation with it chosen as the source. Voltip does not listen in the background.

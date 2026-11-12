@@ -49,3 +49,4 @@ Your keyboard and input method keep working as before, because Voltip inserts te
 
 - [Install Voltip](/guide/install)
 - [Quick start](/guide/quick-start)
+- [How Voltip compares with other voice typing apps](/guide/compare)

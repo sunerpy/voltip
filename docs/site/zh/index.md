@@ -1,9 +1,9 @@
 ---
 layout: home
 markdownStyles: false
-title: Voltip：Windows、macOS、Linux 和 Android 上的语音输入
+title: Voltip：开源的语音输入与听写工具，支持 Windows、macOS、Linux 和 Android
 titleTemplate: false
-description: 按住快捷键说话，松开后文字出现在任意应用的光标处。可以在本机识别，也可以使用你选择的云端服务，并可选 AI 润色。
+description: 在任意应用的光标处语音转文字。按住快捷键说话，松开即输入；可以用本地模型在电脑上离线识别，也可以使用你选择的云端服务，并可选 AI 润色。
 
 hero:
   text: 按住说话，<br>松开即输入

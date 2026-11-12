@@ -49,3 +49,4 @@ Voltip 只把语音转成文字，不做其他处理：没有唤醒词，也不�
 
 - [安装 Voltip](/zh/guide/install)
 - [快速开始](/zh/guide/quick-start)
+- [Voltip 与其他语音输入工具的对比](/zh/guide/compare)
