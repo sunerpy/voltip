@@ -129,14 +129,14 @@ rtrb = "=0.4.1"
 rubato = "=5.0.1"
 # The history database (docs/dictation.md §4): `bundled` compiles SQLite itself from C for every
 # target (the Windows cross-build, Android), so no system library is needed anywhere.
-rusqlite = { version = "=0.41.1", features = ["bundled"] }
+rusqlite = { version = "=0.42.0", features = ["bundled"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_bytes = "=0.11.19"
 serde_json = "=1.0.154"
 # Echo cancellation for mixed recording (docs/dictation.md §22.6): a pure-Rust port of WebRTC's audio
 # processing (AEC3), so no C toolchain and the same code on every target. Chosen over `aec3` on
 # measured cancellation and dependencies (docs/acceptance/audio/echo-cancel-2026-10-01.md).
-sonora = { version = "=0.2.0", default-features = false }
+sonora = { version = "=0.3.0", default-features = false }
 sha2 = "=0.11.1"
 # Tencent Cloud's and iFlytek's HMAC-SHA1 request signatures (crates/voltip-asr, docs/dictation.md
 # §3.15); already in the graph, with the same `digest` as `sha2`.
