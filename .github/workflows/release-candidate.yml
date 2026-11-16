@@ -457,13 +457,13 @@ jobs:
           rustc --version && cargo --version
 
       - name: cargo-xwin (prebuilt, pinned)
-        uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-xwin@${{ env.CARGO_XWIN_VERSION }}
 
       # THIRD-PARTY-NOTICES.txt (scripts/release/third-party-notices.py) for the package.
       - name: cargo-about (prebuilt, pinned)
-        uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-about@${{ env.CARGO_ABOUT_VERSION }}
 
@@ -685,7 +685,7 @@ jobs:
         run: .release-tooling/.github/scripts/install-cargo-tauri.sh
 
       - name: cargo-about (prebuilt, pinned)
-        uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-about@${{ env.CARGO_ABOUT_VERSION }}
 
@@ -1203,7 +1203,7 @@ jobs:
         run: .release-tooling/.github/scripts/install-cargo-ndk.sh
 
       - name: cargo-about (prebuilt, pinned)
-        uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-about@${{ env.CARGO_ABOUT_VERSION }}
 
