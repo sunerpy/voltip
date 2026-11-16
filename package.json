@@ -17,9 +17,9 @@
     "format:check": "pnpm -r run format:check"
   },
   "devDependencies": {
-    "oxfmt": "0.76.0",
-    "oxlint": "1.92.0",
-    "oxlint-tsgolint": "7.0.2005",
+    "oxfmt": "0.78.0",
+    "oxlint": "1.93.0",
+    "oxlint-tsgolint": "7.0.2006",
     "typescript": "7.0.2"
   },
   "engines": {
