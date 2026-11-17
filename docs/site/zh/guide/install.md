@@ -22,6 +22,8 @@ curl -fsSL https://raw.githubusercontent.com/sunerpy/voltip/main/scripts/install
 
 脚本会为这台电脑选择合适的安装包，并连同发布附带的 `SHA256SUMS` 一起下载。校验不通过时不会安装任何内容。
 
+下载失败时，脚本会显示下载地址和收到的错误。请检查这台电脑或所用代理能否打开[发布页](https://github.com/sunerpy/voltip/releases)。
+
 - **Windows**：静默运行按用户安装的安装器，不需要管理员授权，安装完成后自动启动 Voltip。
 - **Linux**：有 apt 的系统通过 apt 安装 `.deb`，会要求输入密码；否则把 AppImage 放到 `~/.local/bin`，并添加到应用菜单。
 - **macOS**：自动识别处理器类型（在 Rosetta 终端中同样适用），下载对应的 dmg，把应用放进 `/Applications`；没有写入权限时放进 `~/Applications`。用这种方式安装的应用，打开时不会被 Gatekeeper 拦下。

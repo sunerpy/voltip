@@ -7,10 +7,17 @@ Run: python3 -m unittest discover -s scripts/release -p 'test_*.py'
 from __future__ import annotations
 
 import hashlib
+import http.server
+import json
 import os
+import shutil
+import signal
 import stat
 import subprocess
+import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -32,7 +39,7 @@ while [ $# -gt 0 ]; do
 done
 src="$FIXTURES/${url##*/}"
 [ -f "$src" ] || exit 22
-if [ -n "$out" ]; then cp "$src" "$out"; else cat "$src"; fi
+if [ -n "$out" ] && [ "$out" != - ]; then cp "$src" "$out"; else cat "$src"; fi
 """,
     "apt-get": """#!/bin/sh
 echo "$*" >>"$APT_LOG"
@@ -42,7 +49,10 @@ if [ "$1" = update ]; then exit "${FAKE_APT_UPDATE_EXIT:-0}"; fi
 }
 
 
-class DebInstall(unittest.TestCase):
+class FakeRelease(unittest.TestCase):
+    """A release with the .deb, served by fake `curl` (or by a real tool in Downloads), installed
+    by fake `apt-get` and `sudo`."""
+
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
@@ -66,7 +76,7 @@ class DebInstall(unittest.TestCase):
         )
 
     def install(self, **env: str) -> tuple[int, list[str], str]:
-        done = subprocess.run(
+        with subprocess.Popen(
             ["sh", str(SCRIPT)],
             env={
                 **os.environ,
@@ -77,12 +87,22 @@ class DebInstall(unittest.TestCase):
                 "VOLTIP_PACKAGE": "deb",
                 **env,
             },
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-        )
+            start_new_session=True,
+        ) as process:
+            try:
+                _, stderr = process.communicate(timeout=20)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.communicate()
+                raise
         calls = self.log.read_text(encoding="utf-8").splitlines() if self.log.exists() else []
-        return done.returncode, calls, done.stderr
+        return process.returncode, calls, stderr
 
+
+class DebInstall(FakeRelease):
     def test_the_package_lists_are_refreshed_before_the_install(self) -> None:
         # Regression (install-scripts.yml, 0.0.4): with lists older than the mirror, apt asked for
         # dependency versions the mirror no longer had and failed with 404.
@@ -104,6 +124,173 @@ class DebInstall(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("checksum mismatch", stderr)
         self.assertEqual(calls, [])
+
+
+class Downloads:
+    """Exercise the real download tool against an owned, local fake release: only the tool's
+    destination URL is replaced, its own timeouts, retries and error messages stay real. The
+    installed package and apt stay fake, as in DebInstall. CurlDownloads and WgetDownloads run it."""
+
+    tool: str
+
+    def serve(self, asset: str = "", status: int = 0, failures: int = 99) -> list[str]:
+        """Serve the release, failing `asset` with `status` the first `failures` times."""
+        executable = shutil.which(self.tool)
+        if executable is None:
+            self.skipTest(f"{self.tool} is not installed")
+        requests: list[str] = []
+        fixtures = self.fixtures
+
+        class Release(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                name = self.path.rsplit("/", 1)[-1]
+                requests.append(name)
+                if name == asset and requests.count(name) <= failures:
+                    self.send_error(status)
+                    return
+                body = b'{"tag_name":"v0.0.4"}' if name == "latest" else (fixtures / name).read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args: object) -> None:
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Release)
+        server.timeout = 0.1
+        stopped = threading.Event()
+
+        def run() -> None:
+            deadline = time.monotonic() + 15
+            while not stopped.is_set() and time.monotonic() < deadline:
+                server.handle_request()
+
+        worker = threading.Thread(target=run, daemon=True)
+        worker.start()
+
+        def stop() -> None:
+            stopped.set()
+            worker.join(timeout=2)
+            server.server_close()
+
+        self.addCleanup(stop)
+        # The tool's arguments, one JSON list per run, before the URL is replaced.
+        self.runs_log = self.root / "runs.log"
+        (self.bin / self.tool).write_text(
+            f"#!{sys.executable}\nimport json, os, sys\n"
+            f"with open({str(self.runs_log)!r}, 'a', encoding='utf-8') as log:\n"
+            "    log.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+            f"args = ['http://127.0.0.1:{server.server_port}/' + arg.rsplit('/', 1)[-1] "
+            "if arg.startswith('https://') else arg for arg in sys.argv[1:]]\n"
+            "os.environ['no_proxy'] = os.environ['NO_PROXY'] = '127.0.0.1'\n"
+            f"os.execv({executable!r}, [{executable!r}, *args])\n",
+            encoding="utf-8",
+        )
+        (self.bin / self.tool).chmod(0o755)
+        if self.tool == "wget":
+            (self.bin / "curl").unlink()
+            # No system PATH directory: each contains curl on the developer and CI hosts.
+            # Only the commands this fake .deb installation needs are made available.
+            for command in ("sh", "sed", "head", "grep", "mktemp", "rm", "awk", "chmod", "id"):
+                path = shutil.which(command)
+                assert path is not None, command
+                (self.bin / command).symlink_to(path)
+            for command in ("sha256sum", "shasum"):
+                if path := shutil.which(command):
+                    (self.bin / command).symlink_to(path)
+        return requests
+
+    def download(self, **env: str) -> tuple[int, list[str], str]:
+        return self.install(**({"PATH": str(self.bin)} if self.tool == "wget" else {}), **env)
+
+    def runs(self) -> list[list[str]]:
+        return [json.loads(line) for line in self.runs_log.read_text(encoding="utf-8").splitlines()]
+
+    def test_regression_checksum_download_errors_keep_the_url_and_http_status(self) -> None:
+        # User report 2026-11-17: v0.3.1 said "has no SHA256SUMS" even though the release
+        # carried it. install.sh had the same blanket error as the Windows installer.
+        requests = self.serve("SHA256SUMS", 403)
+        code, calls, stderr = self.download()
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("https://github.com/sunerpy/voltip/releases/download/v0.0.4/SHA256SUMS", stderr)
+        self.assertIn("403", stderr)
+        self.assertNotIn("has no SHA256SUMS", stderr)
+        self.assertEqual(requests, ["SHA256SUMS"], "permanent errors are not retried")
+        self.assertEqual(calls, [])
+
+    def test_regression_missing_checksums_keep_the_404_response(self) -> None:
+        requests = self.serve("SHA256SUMS", 404)
+        code, calls, stderr = self.download()
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("404", stderr)
+        self.assertIn("/v0.0.4/SHA256SUMS", stderr)
+        self.assertEqual(requests, ["SHA256SUMS"])
+        self.assertEqual(calls, [])
+
+    def test_regression_latest_lookup_does_not_hide_a_download_failure(self) -> None:
+        requests = self.serve("latest", 403)
+        code, calls, stderr = self.download(VOLTIP_VERSION="")
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("https://api.github.com/repos/sunerpy/voltip/releases/latest", stderr)
+        self.assertIn("403", stderr)
+        self.assertEqual(requests, ["latest"])
+        self.assertEqual(calls, [])
+
+    def test_regression_package_download_errors_name_the_failed_url(self) -> None:
+        self.serve(DEB, 404)
+        code, calls, stderr = self.download()
+        self.assertEqual(code, 1, stderr)
+        self.assertIn(f"https://github.com/sunerpy/voltip/releases/download/v0.0.4/{DEB}", stderr)
+        self.assertIn("404", stderr)
+        self.assertEqual(calls, [])
+
+    def test_regression_transient_downloads_retry_and_still_require_the_checksum(self) -> None:
+        requests = self.serve("SHA256SUMS", 503, failures=1)
+        self.write_sums("f" * 64)
+        code, calls, stderr = self.download()
+        self.assertEqual(code, 1, stderr)
+        self.assertEqual(requests, ["SHA256SUMS", "SHA256SUMS", DEB])
+        self.assertIn("checksum mismatch", stderr)
+        self.assertEqual(calls, [])
+
+    def test_regression_transient_downloads_stop_after_three_attempts(self) -> None:
+        requests = self.serve("SHA256SUMS", 503)
+        code, calls, stderr = self.download()
+        self.assertEqual(code, 1, stderr)
+        self.assertEqual(requests, ["SHA256SUMS"] * 3)
+        self.assertIn("503", stderr)
+        self.assertIn("/v0.0.4/SHA256SUMS", stderr)
+        self.assertEqual(calls, [])
+
+    def test_regression_a_slow_download_is_never_cut_off(self) -> None:
+        # Review 2026-11-17: curl's `--max-time 600` ended every attempt at a package download
+        # slower than about 200 KB/s for the 117 MiB AppImage (80 KB/s for the 47 MiB deb), and
+        # each retry started over; with curl 8.5, 1 MB at 100 KB/s under `--max-time 5` stopped
+        # three times at 500 000 bytes. Only a stall may end a download. Checked by the tool's
+        # arguments: a real slow download would take ten minutes.
+        self.serve()
+        code, calls, stderr = self.download(VOLTIP_VERSION="")
+        self.assertEqual(code, 0, stderr)
+        runs = self.runs()
+        urls = [next(arg for arg in run if arg.startswith("https://")) for run in runs]
+        self.assertEqual([url.rsplit("/", 1)[-1] for url in urls], ["latest", "SHA256SUMS", DEB])
+        for run in runs:
+            with self.subTest(run=run):
+                if self.tool == "curl":
+                    self.assertEqual([a for a in run if a in ("-m", "--max-time") or a.startswith("--max-time=")], [])
+                    self.assertEqual(run[run.index("--speed-time") + 1], "30")
+                    self.assertEqual(run[run.index("--speed-limit") + 1], "1")
+                else:
+                    self.assertIn("--timeout=30", run)
+
+
+class CurlDownloads(Downloads, FakeRelease):
+    tool = "curl"
+
+
+class WgetDownloads(Downloads, FakeRelease):
+    tool = "wget"
 
 
 DMG = "Voltip_0.0.4_aarch64.dmg"

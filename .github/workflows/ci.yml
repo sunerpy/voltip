@@ -772,6 +772,18 @@ jobs:
         with:
           persist-credentials: false
 
+      # scripts/install.ps1 against fake web and process cmdlets, in both PowerShell editions. It
+      # needs no toolchain and no package, so it runs first here and does not wait for windows-cross.
+      - name: Install script regressions (Windows PowerShell 5.1)
+        timeout-minutes: 2
+        shell: powershell
+        run: ./scripts/release/test_install_windows.ps1
+
+      - name: Install script regressions (PowerShell 7)
+        timeout-minutes: 2
+        shell: pwsh
+        run: ./scripts/release/test_install_windows.ps1
+
       - name: Rust toolchain (rust-toolchain.toml)
         shell: bash
         run: |
