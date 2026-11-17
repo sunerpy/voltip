@@ -22,6 +22,8 @@ curl -fsSL https://raw.githubusercontent.com/sunerpy/voltip/main/scripts/install
 
 The script picks the package for the computer and downloads it together with the release's `SHA256SUMS`. Nothing is installed unless the checksum matches.
 
+If a download fails, the script shows the address and the error it received. Check that this computer, or its proxy, can open the [releases page](https://github.com/sunerpy/voltip/releases).
+
 - **Windows**: the per-user installer runs silently, without an administrator prompt, and starts Voltip when it is done.
 - **Linux**: the `.deb` is installed through apt where apt is available, which asks for your password; otherwise the AppImage goes to `~/.local/bin` with an entry in the applications menu.
 - **macOS**: the dmg for the Mac's processor is chosen automatically, also from a Rosetta terminal. The app goes to `/Applications`, or to `~/Applications` when that folder is not writable. Installed this way, it opens without the Gatekeeper prompt.

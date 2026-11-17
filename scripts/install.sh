@@ -47,12 +47,16 @@ for arg in "$@"; do
 	esac
 done
 
+# download <url> <file, or - for stdout>. A slow download is never cut off: it ends only when it
+# cannot connect or its data stops arriving for 30 s. Timeouts and HTTP 408, 429, 500, 502, 503
+# and 504 are tried up to three times (wget also retries a dropped connection); other errors such
+# as a 404 stop at once. The tool's own message, TLS and proxy failures included, stays on stderr.
 if command -v curl >/dev/null 2>&1; then
-	download() { curl -fsSL --retry 3 "$1" -o "$2"; }
-	fetch() { curl -fsSL --retry 3 "$1"; }
+	download() { curl -fsSL --connect-timeout 15 --speed-limit 1 --speed-time 30 --retry 2 --retry-delay 1 "$1" -o "$2"; }
 elif command -v wget >/dev/null 2>&1; then
-	download() { wget -qO "$2" "$1"; }
-	fetch() { wget -qO - "$1"; }
+	# --timeout bounds a stalled DNS lookup, connection or read, not the whole download. Keep its
+	# diagnostics: -q hides failures, and -nv hides the status of retried HTTP errors.
+	download() { wget --timeout=30 --tries=3 --waitretry=1 --retry-on-http-error=408,429,500,502,503,504 -O "$2" "$1"; }
 else
 	err "curl or wget is required"
 fi
@@ -93,7 +97,9 @@ if [ -n "${VOLTIP_VERSION:-}" ]; then
 	version=$(printf '%s' "$VOLTIP_VERSION" | sed 's/^v//')
 else
 	info "finding the latest release"
-	tag=$(fetch "https://api.github.com/repos/${REPO}/releases/latest" |
+	latest_url="https://api.github.com/repos/${REPO}/releases/latest"
+	metadata=$(download "$latest_url" -) || err "could not download $latest_url"
+	tag=$(printf '%s\n' "$metadata" |
 		sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
 	[ -n "$tag" ] || err "could not find the latest release"
 	version=$(printf '%s' "$tag" | sed 's/^v//')
@@ -117,16 +123,17 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-info "downloading ${asset} (Voltip ${version})"
+info "downloading ${CHECKSUM_FILE} (Voltip ${version})"
 download "${base_url}/${CHECKSUM_FILE}" "$tmp/$CHECKSUM_FILE" ||
-	err "release v${version} has no ${CHECKSUM_FILE} (is ${version} a Voltip release?)"
+	err "could not download ${base_url}/${CHECKSUM_FILE}"
 expected=$(awk -v name="$asset" '{
 	file = $2
 	sub(/^\*/, "", file)
 	if (file == name) { print $1; exit }
 }' "$tmp/$CHECKSUM_FILE")
-[ -n "$expected" ] || err "release v${version} has no ${asset}"
-download "${base_url}/${asset}" "$tmp/$asset" || err "could not download ${asset}"
+[ -n "$expected" ] || err "${CHECKSUM_FILE} has no checksum for ${asset}"
+info "downloading ${asset} (Voltip ${version})"
+download "${base_url}/${asset}" "$tmp/$asset" || err "could not download ${base_url}/${asset}"
 
 if command -v sha256sum >/dev/null 2>&1; then
 	actual=$(sha256sum "$tmp/$asset" | awk '{print $1}')
