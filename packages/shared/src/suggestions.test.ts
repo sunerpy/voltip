@@ -103,8 +103,9 @@ describe("learning suggestions (docs/dictation.md §16.10)", () => {
   it("counts the clean-up's pairs, most frequent first and then the newest", () => {
     const out = suggestVocabulary([], [], TAKES, []);
     expect([out.scanned, out.refined, out.skipped, out.total]).toEqual([5, 4, 0, 3]);
+    // 非 → 飞 is counted with its unchanged neighbour (§16.10).
     expect(heardOf([])).toEqual([
-      ["非", "飞", 2],
+      ["非书", "飞书", 2],
       ["维他命", "Voltip", 1],
       ["库伯内特斯", "Kubernetes", 1],
     ]);
@@ -128,6 +129,7 @@ describe("learning suggestions (docs/dictation.md §16.10)", () => {
       3,
       [["维他命", 2]],
     ]);
+    // Ignored before it was widened: still ignored.
     const ignored = [{ heard: "非", polished: "飞", at_ms: 1 }];
     expect(suggestVocabulary([], [], more, ignored)).toMatchObject({ total: 2, repeated: 2 });
     expect(suggestVocabulary([], [], [], []).repeated).toBe(0);
@@ -137,10 +139,49 @@ describe("learning suggestions (docs/dictation.md §16.10)", () => {
     const dictionary = [entry("Voltip", ["维他命"]), entry("飞书", ["非"], { enabled: false })];
     const ignored = [{ heard: "库伯内特斯", polished: "Kubernetes", at_ms: 1 }];
     expect(suggestVocabulary(dictionary, [], TAKES, ignored).pairs.map((p) => p.heard)).toEqual([
-      "非",
+      "非书",
     ]);
     const otherCase = [{ heard: "库伯内特斯", polished: "kubernetes", at_ms: 1 }];
     expect(suggestVocabulary([], [], TAKES, otherCase).total).toBe(3);
+  });
+
+  it("§35: the user's corrections are counted with the clean-up's pairs, shown once corrected", () => {
+    const corrected = (text: string, fixed: string, at: number): HistoryEntry => ({
+      ...take(text, text, at, false),
+      corrected: { text: fixed, at_ms: at + 1, via: "selection" },
+    });
+    const takes = [
+      corrected("我在用 Quinn for max 做测试", "我在用 Qwen 4 max 做测试", 50),
+      corrected("发到非书群", "发到飞书群", 40),
+      take("又是非书", "又是飞书。", 30),
+      take("库伯内特斯部署", "Kubernetes 部署", 20),
+    ];
+    const out = suggestVocabulary([], [], takes, []);
+    expect(out.pairs.map((p) => [p.heard, p.polished, p.count, p.from_edits])).toEqual([
+      ["非书", "飞书", 2, 1],
+      ["Quinn for", "Qwen 4", 1, 1],
+      ["库伯内特斯", "Kubernetes", 1, 0],
+    ]);
+    expect([out.scanned, out.refined, out.edited, out.total, out.repeated]).toEqual([
+      4, 2, 2, 3, 2,
+    ]);
+    expect(out.pairs[1]?.examples[0]).toEqual({
+      history_id: takes[0]?.id,
+      snippet: "我在用 Quinn for max 做测试",
+    });
+  });
+
+  it("§16.10: a single character is widened to the spelling the takes use, and stays alone without a neighbour", () => {
+    const takes = [
+      take("钉丁开会", "钉钉开会。", 50),
+      take("打开钉钉", "打开钉钉。", 40),
+      take("钉钉群里说", "钉钉群里说。", 30),
+      take("用a非。", "用a飞。", 20),
+    ];
+    expect(suggestVocabulary([], [], takes, []).pairs.map((p) => [p.heard, p.polished])).toEqual([
+      ["钉丁", "钉钉"],
+      ["非", "飞"],
+    ]);
   });
 
   it("counts a take too long to compare as skipped", () => {
@@ -160,7 +201,7 @@ describe("learning suggestions (docs/dictation.md §16.10)", () => {
     expect([out.scanned, out.refined, out.total]).toEqual([3, 2, 2]);
     expect(out.pairs.map((p) => [p.heard, p.count])).toEqual([
       ["维他命", 1],
-      ["非", 1],
+      ["非书", 1],
     ]);
     expect(suggestVocabulary([], [], takes, []).scanned).toBe(4);
   });

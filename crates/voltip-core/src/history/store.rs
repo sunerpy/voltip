@@ -23,7 +23,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use super::revs::{self, ChangeBatch, Outbox, RECEIVED_KEEP_MS};
-use super::{HISTORY_DB_FILE_NAME, HISTORY_FILE_NAME, HISTORY_SCHEMA, HistoryEntry, MAX_ENTRIES, ProcessedText, derived};
+use super::{CorrectedText, HISTORY_DB_FILE_NAME, HISTORY_FILE_NAME, HISTORY_SCHEMA, HistoryEntry, MAX_ENTRIES, ProcessedText, derived};
 use crate::CoreError;
 
 /// A database the import is still writing (step 2); deleted when found at start (step 1).
@@ -313,6 +313,22 @@ impl HistoryStore {
         let json: Option<String> = conn.query_row("SELECT json FROM entries WHERE id = ?1", [&key], |row| row.get(0)).optional().map_err(err)?;
         let Some(mut entry) = json.as_deref().and_then(decode) else { return Ok(false) };
         entry.processed = Some(Box::new(processed));
+        let json = serde_json::to_string(&entry).map_err(err)?;
+        let tx = conn.transaction().map_err(err)?;
+        tx.execute("UPDATE entries SET search = ?2, json = ?3 WHERE id = ?1", params![key, derived::search_text(&entry), json]).map_err(err)?;
+        revs::record(&tx, &key, false).map_err(err)?;
+        tx.commit().map_err(err)?;
+        Ok(true)
+    }
+
+    /// Keep the user's correction of entry `id` (docs/dictation.md §35), replacing an earlier one,
+    /// or clear it (`None`); the search finds its text too. `Ok(false)` when the id is unknown.
+    pub fn set_corrected(&mut self, id: Uuid, corrected: Option<CorrectedText>) -> Result<bool, CoreError> {
+        let conn = self.conn_mut()?;
+        let key = id.to_string();
+        let json: Option<String> = conn.query_row("SELECT json FROM entries WHERE id = ?1", [&key], |row| row.get(0)).optional().map_err(err)?;
+        let Some(mut entry) = json.as_deref().and_then(decode) else { return Ok(false) };
+        entry.corrected = corrected.map(Box::new);
         let json = serde_json::to_string(&entry).map_err(err)?;
         let tx = conn.transaction().map_err(err)?;
         tx.execute("UPDATE entries SET search = ?2, json = ?3 WHERE id = ?1", params![key, derived::search_text(&entry), json]).map_err(err)?;

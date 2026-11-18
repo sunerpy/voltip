@@ -261,6 +261,10 @@ pub struct Settings {
     /// files written before it) assigns none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub copy_last_hotkey: Option<String>,
+    /// The 从选中文字学习 hotkey (docs/dictation.md §35) in display form; `None` (the default, and
+    /// files written before it) assigns none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub learn_hotkey: Option<String>,
     /// The lone-key trigger (docs/dictation.md §13.1): a right-hand modifier, Fn or a mouse button
     /// that drives a take on its own, next to [`Settings::hotkey`]; `None` (the default, and files
     /// written before it) = off.
@@ -508,6 +512,7 @@ impl Default for Settings {
             context_sharing: ContextSharing::default(),
             edit_hotkey: default_edit_hotkey(),
             copy_last_hotkey: None,
+            learn_hotkey: None,
             solo_key: None,
             pairing_always_on: false,
             pinned_scene: None,
@@ -607,7 +612,12 @@ mod tests {
             let text = std::fs::read_to_string(root.join(script)).unwrap();
             let start = text.find("{\n  \"schema\": 1").unwrap_or_else(|| panic!("{script}: no settings heredoc"));
             let len = text[start..].find("\n}\n").unwrap() + 2;
-            let json = text[start..start + len].replace("$2", "http://127.0.0.1:9").replace("${4:-false}", "false").replace("${3:-paste}", "paste");
+            // `${learn}`: smoke-dictation.sh's optional 从选中文字学习 shortcut (docs/dictation.md §35).
+            let json = text[start..start + len]
+                .replace("$2", "http://127.0.0.1:9")
+                .replace("${4:-false}", "false")
+                .replace("${3:-paste}", "paste")
+                .replace("${learn}", r#""learn_hotkey": "Ctrl+Alt+L","#);
             let written: serde_json::Value = serde_json::from_str(&json).unwrap_or_else(|e| panic!("{script}: {e}"));
             let settings: Settings = serde_json::from_value(written.clone()).unwrap();
             assert_eq!(settings.engines.asr_provider, provider, "{script}");

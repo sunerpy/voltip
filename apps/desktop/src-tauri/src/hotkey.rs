@@ -15,7 +15,10 @@
 //!
 //! 复制上一条结果 (`Settings.copy_last_hotkey`, docs/dictation.md §28) is a third, optional chord
 //! that answers its press only: it puts the newest result on the clipboard ([`crate::copy_last`]);
-//! on pure Wayland the compositor runs `--copy-last` instead.
+//! on pure Wayland the compositor runs `--copy-last` instead. 从选中文字学习
+//! (`Settings.learn_hotkey`, §35) is a fourth: one transition each, the press where the copy chord
+//! can reach the application then, the release under the X11 key grab ([`selection_timing_for`]);
+//! the compositor runs `--learn-selection` on pure Wayland.
 //!
 //! The lone-key trigger (`Settings.solo_key`, docs/dictation.md §13.1) is watched by
 //! [`crate::solo_key`] next to the chords, with the same lifecycle: installed by [`apply`],
@@ -55,7 +58,8 @@ pub fn edge_command(pressed: bool, source: EdgeSource, purpose: TakeKind) -> UiC
 }
 
 /// What the shell registers: the dictation hotkey, the voice-edit hotkey (`None` = off), the
-/// lone-key trigger (`None` = off) and the 复制上一条结果 chord (`None` = none).
+/// lone-key trigger (`None` = off), the 复制上一条结果 chord and the 从选中文字学习 chord (`None` =
+/// none).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Chords {
     /// `Settings.hotkey`.
@@ -66,6 +70,8 @@ pub struct Chords {
     pub solo_key: Option<SoloKey>,
     /// `Settings.copy_last_hotkey`.
     pub copy_last_hotkey: Option<String>,
+    /// `Settings.learn_hotkey`.
+    pub learn_hotkey: Option<String>,
 }
 
 impl From<&Settings> for Chords {
@@ -75,6 +81,7 @@ impl From<&Settings> for Chords {
             edit_hotkey: settings.edit_hotkey.clone(),
             solo_key: settings.solo_key,
             copy_last_hotkey: settings.copy_last_hotkey.clone(),
+            learn_hotkey: settings.learn_hotkey.clone(),
         }
     }
 }
@@ -160,6 +167,11 @@ pub fn edit_toggle_command() -> String {
 /// The same for 复制上一条结果 (docs/dictation.md §28): `voltip-desktop --copy-last`.
 pub fn copy_last_command() -> String {
     remote_command("--copy-last")
+}
+
+/// The same for 从选中文字学习 (docs/dictation.md §35): `voltip-desktop --learn-selection`.
+pub fn learn_command() -> String {
+    remote_command("--learn-selection")
 }
 
 fn remote_command(flag: &str) -> String {
@@ -475,6 +487,18 @@ pub fn apply<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge, registry: &Arc<Hot
             }
         }
     }
+    if let Some(learn) = &chords.learn_hotkey {
+        // The core refuses to save one of the other three chords; a hand-edited file may hold it.
+        let taken = std::iter::once(&chords.hotkey).chain(chords.edit_hotkey.as_ref()).chain(chords.copy_last_hotkey.as_ref());
+        if taken.into_iter().any(|other| Hotkey::same_chord(learn, other)) {
+            status.learn_error = Some(format!("{learn} 与另一个快捷键相同，未生效"));
+        } else {
+            match register_learn(app, learn, session) {
+                Ok(label) => status.learn_registered = Some(label),
+                Err(e) => status.learn_error = Some(e),
+            }
+        }
+    }
     let kept = sync_solo(bridge, registry, chords.solo_key, session, &mut status);
     registry.store_applied(&|event| bridge.publish(event), status, kept);
     // A take running across a settings change keeps its cancel key.
@@ -746,6 +770,46 @@ fn register_copy_last<R: Runtime>(app: &AppHandle<R>, text: &str, session: Optio
     }
 }
 
+/// The transition of the 从选中文字学习 chord that starts it (docs/dictation.md §35): the press, or
+/// the release where the X11 key grab holds the keyboard until the key is up.
+pub fn learn_fires_on(timing: SelectionTiming) -> ShortcutState {
+    match timing {
+        SelectionTiming::AtPress => ShortcutState::Pressed,
+        SelectionTiming::AfterKeyUp => ShortcutState::Released,
+    }
+}
+
+/// Register the 从选中文字学习 chord (docs/dictation.md §35); the display label, or why not.
+fn register_learn<R: Runtime>(app: &AppHandle<R>, text: &str, session: Option<SessionKind>) -> Result<String, String> {
+    let hotkey = Hotkey::parse(text).map_err(|e| format!("{text}: {e}"))?;
+    let label = hotkey.display();
+    let remote = learn_command();
+    if let Some(blocked) = session_block(session, &label, &remote) {
+        tracing::warn!(hotkey = %label, backend = %backend_name(), error = %blocked, "no global hotkey on this session; the compositor must run {remote}");
+        return Err(blocked);
+    }
+    let shortcut = hotkey.to_tauri_shortcut();
+    let fires = learn_fires_on(selection_timing_for(session));
+    let result = app.global_shortcut().on_shortcut(shortcut.as_str(), move |app, _shortcut, event| {
+        if event.state() == fires {
+            crate::learn_selection(app, voltip_core::EdgeSource::Hotkey);
+        }
+    });
+    match result {
+        Ok(()) => {
+            tracing::info!(hotkey = %label, shortcut = %shortcut, fires = ?fires, "learn hotkey registered");
+            if let Some(caveat) = session_caveat(session, &remote) {
+                tracing::warn!(hotkey = %label, "{caveat}");
+            }
+            Ok(label)
+        }
+        Err(e) => {
+            tracing::warn!(hotkey = %label, error = %e, "learn hotkey registration failed");
+            Err(format!("{label} 未能生效：{e}"))
+        }
+    }
+}
+
 /// Watch the bridge for settings changes and keep the OS registration in sync.
 pub fn follow_settings<R: Runtime>(app: AppHandle<R>, bridge: Bridge, registry: Arc<HotkeyRegistry>) {
     if let Some(session) = linux_session() {
@@ -976,19 +1040,23 @@ mod tests {
         assert!(!cancel_key_wanted(&DictationPhase::Cancelled { injected_chars: 0 }));
 
         // Bare, and under each chord's modifiers: a `hold` take is cancelled with the chord down.
-        let chords = Chords { hotkey: "Ctrl+Alt+Space".into(), edit_hotkey: Some("Ctrl+Alt+E".into()), solo_key: None, copy_last_hotkey: None };
+        let chords =
+            Chords { hotkey: "Ctrl+Alt+Space".into(), edit_hotkey: Some("Ctrl+Alt+E".into()), solo_key: None, copy_last_hotkey: None, learn_hotkey: None };
         assert_eq!(cancel_shortcuts(&chords), ["Escape", "Control+Alt+Escape"]);
-        let chords = Chords { hotkey: "Alt+Shift+Z".into(), edit_hotkey: Some("Meta+E".into()), solo_key: None, copy_last_hotkey: None };
+        let chords = Chords { hotkey: "Alt+Shift+Z".into(), edit_hotkey: Some("Meta+E".into()), solo_key: None, copy_last_hotkey: None, learn_hotkey: None };
         assert_eq!(cancel_shortcuts(&chords), ["Escape", "Alt+Shift+Escape", "Super+Escape"]);
-        let chords = Chords { hotkey: "not a chord".into(), edit_hotkey: None, solo_key: None, copy_last_hotkey: None };
+        let chords = Chords { hotkey: "not a chord".into(), edit_hotkey: None, solo_key: None, copy_last_hotkey: None, learn_hotkey: None };
         assert_eq!(cancel_shortcuts(&chords), ["Escape"]);
         // Task Manager and Force Quit stay the system's.
-        let chords = Chords { hotkey: "Shift+Ctrl+D".into(), edit_hotkey: Some("Alt+Meta+E".into()), solo_key: None, copy_last_hotkey: None };
+        let chords =
+            Chords { hotkey: "Shift+Ctrl+D".into(), edit_hotkey: Some("Alt+Meta+E".into()), solo_key: None, copy_last_hotkey: None, learn_hotkey: None };
         assert_eq!(cancel_shortcuts(&chords), ["Escape"]);
         // docs/dictation.md §13.1: a lone modifier held in `hold` adds its own; a mouse button none.
-        let chords = Chords { hotkey: "Ctrl+Alt+Space".into(), edit_hotkey: None, solo_key: Some(SoloKey::RightShift), copy_last_hotkey: None };
+        let chords =
+            Chords { hotkey: "Ctrl+Alt+Space".into(), edit_hotkey: None, solo_key: Some(SoloKey::RightShift), copy_last_hotkey: None, learn_hotkey: None };
         assert_eq!(cancel_shortcuts(&chords), ["Escape", "Control+Alt+Escape", "Shift+Escape"]);
-        let chords = Chords { hotkey: "Ctrl+Alt+Space".into(), edit_hotkey: None, solo_key: Some(SoloKey::MouseBack), copy_last_hotkey: None };
+        let chords =
+            Chords { hotkey: "Ctrl+Alt+Space".into(), edit_hotkey: None, solo_key: Some(SoloKey::MouseBack), copy_last_hotkey: None, learn_hotkey: None };
         assert_eq!(cancel_shortcuts(&chords), ["Escape", "Control+Alt+Escape"]);
         assert_eq!(SoloKey::ALL.into_iter().filter_map(solo_modifier).count(), 4, "the four right-hand modifiers");
 
@@ -1085,6 +1153,14 @@ mod tests {
     /// docs/dictation.md §19: X11 grabs the keyboard while the hotkey is down — the copy waits for
     /// the key-up there (XWayland too); elsewhere it goes out at the press.
     #[test]
+    fn the_learn_chord_fires_when_the_copy_can_reach_the_application() {
+        assert_eq!(learn_fires_on(SelectionTiming::AtPress), ShortcutState::Pressed);
+        assert_eq!(learn_fires_on(SelectionTiming::AfterKeyUp), ShortcutState::Released, "the X11 grab ends at the key-up");
+        assert_eq!(learn_fires_on(selection_timing_for(Some(SessionKind::X11))), ShortcutState::Released);
+        assert_eq!(learn_fires_on(selection_timing_for(None)), ShortcutState::Pressed);
+    }
+
+    #[test]
     fn selection_timing_follows_the_x11_grab() {
         assert_eq!(selection_timing_for(Some(SessionKind::X11)), SelectionTiming::AfterKeyUp);
         assert_eq!(selection_timing_for(Some(SessionKind::XWayland)), SelectionTiming::AfterKeyUp);
@@ -1093,7 +1169,7 @@ mod tests {
         let settings = Settings { hotkey: "Ctrl+Alt+Space".into(), edit_hotkey: None, solo_key: Some(SoloKey::RightCtrl), ..Settings::default() };
         assert_eq!(
             Chords::from(&settings),
-            Chords { hotkey: "Ctrl+Alt+Space".into(), edit_hotkey: None, solo_key: Some(SoloKey::RightCtrl), copy_last_hotkey: None }
+            Chords { hotkey: "Ctrl+Alt+Space".into(), edit_hotkey: None, solo_key: Some(SoloKey::RightCtrl), copy_last_hotkey: None, learn_hotkey: None }
         );
         assert!(matches!(
             chorded_command(),

@@ -1,5 +1,5 @@
 ---
-description: The dictation shortcut, the three recording modes, starting with a single key or a mouse button, the overlay, cancelling with Esc, the shortcut that copies the last result, and what and how long a dictation records.
+description: The dictation shortcut, the three recording modes, starting with a single key or a mouse button, the overlay, cancelling with Esc, the shortcuts that copy the last result and learn from a selection, and what and how long a dictation records.
 ---
 
 # Shortcuts and recording modes
@@ -77,7 +77,11 @@ On a pure Wayland session, bind a system shortcut to `voltip-desktop --cancel` i
 
 ## Copy the last result
 
-Under **Settings → Shortcuts**, **Copy last result** takes a shortcut of its own, none by default. Pressing it puts the latest result on the clipboard without opening Voltip, and the overlay says **Copied the last result**. It must differ from the dictation and voice edit shortcuts. The tray menu on Windows and macOS has the same command, see [Copy or paste a result again](/dictation/output#copy-or-paste-a-result-again).
+Under **Settings → Shortcuts**, **Copy last result** takes a shortcut of its own, none by default. Pressing it puts the latest result on the clipboard without opening Voltip, and the overlay says **Copied the last result**. It must differ from the dictation, voice edit and Learn from selection shortcuts. The tray menu on Windows and macOS has the same command, see [Copy or paste a result again](/dictation/output#copy-or-paste-a-result-again).
+
+## Learn from selection
+
+Under **Settings → Shortcuts**, **Learn from selection** takes a shortcut of its own, none by default. After you correct a dictation in another app, select the corrected text and press it: Voltip notes the change for the dictionary's suggestions, and the overlay shows the change it noted. It must differ from the dictation, voice edit and Copy last result shortcuts. See [Learn from selection](/recognition/dictionary#learn-from-selection) for how to use it.
 
 ## Recording source
 
@@ -115,5 +119,6 @@ A pure Wayland session does not let apps register global shortcuts or watch sing
 | `voltip-desktop --edit-toggle` | Starts or finishes a [voice edit](/dictation/voice-edit) |
 | `voltip-desktop --cancel` | Cancels the current dictation |
 | `voltip-desktop --copy-last` | Puts the latest result on the clipboard |
+| `voltip-desktop --learn-selection` | [Learns from the selected text](/recognition/dictionary#learn-from-selection) |
 
 When Voltip runs as an AppImage, use the AppImage's path instead of `voltip-desktop`; Settings → Shortcuts shows the exact command. In a session that runs X11 apps through XWayland, the shortcut works only while an X11 window has the focus, so a system shortcut is the reliable choice there as well.

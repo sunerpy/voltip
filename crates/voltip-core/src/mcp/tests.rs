@@ -51,7 +51,7 @@ fn rule(name: &str, source: EntrySource, pending: bool) -> ReplacementRule {
 }
 
 fn take(raw: &str, text: &str, at_ms: u64) -> HistoryText {
-    HistoryText { id: Uuid::new_v4(), at_ms, raw_text: raw.into(), text: text.into(), refined: true, vocabulary: VocabularyHits::default() }
+    HistoryText { id: Uuid::new_v4(), at_ms, raw_text: raw.into(), text: text.into(), refined: true, vocabulary: VocabularyHits::default(), corrected: None }
 }
 
 #[test]
@@ -306,8 +306,9 @@ fn replacements_are_trimmed_pairs_without_punctuation_only_changes() {
 #[test]
 fn candidates_are_counted_known_and_sorted() {
     let dictionary = vec![entry("Voltip", &["维他命"])];
-    // The diff works on single CJK characters, as the history page's: 非书 → 飞书 is 非 → 飞, and
-    // the snippets show the word around it.
+    // The diff works on single CJK characters, as the history page's; a pair of single characters
+    // is counted with its unchanged neighbour (docs/dictation.md §16.10): 非书 → 飞书, not 非 → 飞.
+    // The snippets show the word around it.
     let history = vec![
         take("我们用维他命开会", "我们用 Voltip 开会。", 50),
         take("发到非书群", "发到飞书群。", 40),
@@ -318,7 +319,7 @@ fn candidates_are_counted_known_and_sorted() {
     let out = candidates(&dictionary, &[], &history, None, 10);
     assert_eq!((out.scanned, out.skipped), (5, 0));
     let top: Vec<(&str, &str, u32, bool, u64)> = out.pairs.iter().map(|p| (p.heard.as_str(), p.polished.as_str(), p.count, p.known, p.last_at_ms)).collect();
-    assert_eq!(top, [("非", "飞", 4, false, 40), ("维他命", "Voltip", 2, true, 50)], "every occurrence counts");
+    assert_eq!(top, [("非书", "飞书", 4, false, 40), ("维他命", "Voltip", 2, true, 50)], "every occurrence counts");
     let examples = &out.pairs[0].examples;
     assert_eq!(examples.iter().map(|e| e.history_id).collect::<Vec<_>>(), [history[1].id, history[2].id, history[4].id], "one per take, newest first");
     assert_eq!(examples[0].snippet, "发到非书群");

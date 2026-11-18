@@ -267,6 +267,14 @@ export function Shell({
         navigate({ name: "history" });
         return;
       }
+      if (request === "suggestions") {
+        navigate({ name: "dictionary", view: "suggestions" });
+        return;
+      }
+      if (request === "privacy") {
+        navigate({ name: "settings", section: "privacy" });
+        return;
+      }
       shell.setUpdateOpen(true);
       if (updateState === "idle" || updateState === "up_to_date" || updateState === "failed")
         void backend.invoke("update_check");

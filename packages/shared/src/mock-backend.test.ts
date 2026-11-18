@@ -99,6 +99,7 @@ import {
   type DictionaryDraft,
   type EngineSettings,
   type HistoryEntry,
+  type LearnNotice,
   type ProviderId,
   type ServiceKind,
   MAX_BACKTEST_LIMIT,
@@ -4023,6 +4024,103 @@ describe("MockBackend voice edit (section 19)", () => {
   });
 });
 
+describe("MockBackend 从选中文字学习 (docs/dictation.md section 35)", () => {
+  const T = 1_758_700_000_000;
+  const take: HistoryEntry = {
+    id: "00000000-0000-4000-8000-000000000035",
+    at_ms: T,
+    raw_text: "我在用 Quinn for max 做测试",
+    text: "我在用 Quinn for max 做测试",
+    refined: false,
+    asr_model: "m",
+    duration_ms: 1000,
+    asr_ms: 100,
+    outcome: { kind: "inserted", via: "paste" },
+    starred: false,
+    mode: "whole_take",
+    kind: "dictation",
+    corrected: { text: "我在用 Qwen 4 max 做测试", at_ms: T + 1, via: "selection" },
+  };
+  const notice = (safe: boolean): LearnNotice => ({
+    id: 7,
+    outcome: {
+      kind: "learned",
+      pairs: [{ heard: "Quinn for", polished: "Qwen 4", history_id: take.id }],
+      safe,
+    },
+    shown: true,
+  });
+
+  it("the learn hotkey is one of four distinct chords, none by default", async () => {
+    const backend = new MockBackend({ now: () => T, history: [] });
+    const events = collect(backend);
+    const errors = () => events.flatMap((e) => (e.type === "error" ? [e.message] : []));
+    expect(backend.peek().settings.learn_hotkey).toBeUndefined();
+    await backend.invoke("settings_set_copy_last_hotkey", { hotkey: "Ctrl+Shift+V" });
+    await backend.invoke("settings_set_learn_hotkey", { hotkey: "Ctrl+Alt+L" });
+    expect(backend.peek().settings.learn_hotkey).toBe("Ctrl+Alt+L");
+    expect(backend.peek().hotkey.learn_registered).toBe("Ctrl+Alt+L");
+    await backend.invoke("settings_set_learn_hotkey", { hotkey: "alt+ctrl+space" });
+    await backend.invoke("settings_set_learn_hotkey", { hotkey: "ctrl+alt+e" });
+    await backend.invoke("settings_set_learn_hotkey", { hotkey: "shift+ctrl+v" });
+    await backend.invoke("settings_set_hotkey", { hotkey: "ctrl+alt+l" });
+    await backend.invoke("settings_set_edit_hotkey", { hotkey: "ctrl+alt+l" });
+    await backend.invoke("settings_set_copy_last_hotkey", { hotkey: "ctrl+alt+l" });
+    expect(errors()).toEqual([
+      "learn_hotkey: alt+ctrl+space 已用作听写快捷键",
+      "learn_hotkey: ctrl+alt+e 已用作「编辑选中文本」的快捷键",
+      "learn_hotkey: shift+ctrl+v 已用作「复制上一条结果」的快捷键",
+      "hotkey: ctrl+alt+l 已用作「从选中文字学习」的快捷键",
+      "edit_hotkey: ctrl+alt+l 已用作「从选中文字学习」的快捷键",
+      "copy_last_hotkey: ctrl+alt+l 已用作「从选中文字学习」的快捷键",
+    ]);
+    await backend.invoke("settings_set_learn_hotkey", { hotkey: null });
+    expect(backend.peek().settings).not.toHaveProperty("learn_hotkey");
+    expect(backend.peek().hotkey.learn_registered).toBeUndefined();
+    backend.destroy();
+  });
+
+  it("the notice's 加入词典, 撤销 and × go through the batch of the learning suggestions", async () => {
+    const backend = new MockBackend({ now: () => T, history: [take] });
+    backend.showLearnNotice(notice(true));
+    await backend.invoke("learn_notice_accept", { id: 6 });
+    expect(backend.peek().learn_notice?.accepted).toBeUndefined();
+    await backend.invoke("learn_notice_accept", { id: 7 });
+    await vi.waitFor(() => {
+      expect(backend.peek().learn_notice?.accepted).toMatchObject({ added: 1, refused: 0 });
+    });
+    expect(backend.peek().dictionary).toMatchObject([{ term: "Qwen 4", heard_as: ["Quinn for"] }]);
+    await backend.invoke("learn_notice_undo", { id: 7 });
+    await vi.waitFor(() => {
+      expect(backend.peek().learn_notice?.undone).toEqual({ kind: "undone" });
+    });
+    expect(backend.peek().dictionary).toEqual([]);
+    await backend.invoke("learn_notice_dismiss", { id: 7 });
+    expect(backend.peek().learn_notice).toBeNull();
+    // A short spelling is not added from the pill.
+    backend.showLearnNotice(notice(false));
+    await backend.invoke("learn_notice_accept", { id: 7 });
+    expect(backend.peek().learn_notice?.accepted).toBeUndefined();
+    await backend.openSuggestions();
+    expect(backend.suggestionsOpens).toBe(1);
+    backend.destroy();
+  });
+
+  it("移除 forgets the correction and its suggestion, the inserted text stays", async () => {
+    const backend = new MockBackend({ now: () => T, history: [take] });
+    const pairs = async () => {
+      const answer = await backend.vocabularySuggestions();
+      return answer.status === "ready" ? answer.pairs.map((p) => [p.heard, p.from_edits]) : [];
+    };
+    expect(await pairs()).toEqual([["Quinn for", 1]]);
+    await backend.invoke("history_clear_corrected", { id: take.id });
+    expect(backend.peek().history_recent[0]?.corrected).toBeUndefined();
+    expect(backend.peek().history_recent[0]?.text).toBe(take.text);
+    expect(await pairs()).toEqual([]);
+    backend.destroy();
+  });
+});
+
 describe("MockBackend LAN pairing, always-on pairing and the phone's commands", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -4354,7 +4452,7 @@ describe("MockBackend learning suggestions (docs/dictation.md section 16.10)", (
 
   it("suggests the clean-up's pairs; 加入词典 and 撤销 change the dictionary and the answer", async () => {
     const backend = new MockBackend({ now: () => T, history: rows });
-    expect(await heard(backend)).toEqual(["非", "维他命"]);
+    expect(await heard(backend)).toEqual(["非书", "维他命"]);
     const one = await backend.vocabularySuggestions(1);
     expect(one).toMatchObject({ status: "ready", total: 2, refined: 3 });
     for (const limit of [0, 201, 1.5]) {
@@ -4373,7 +4471,7 @@ describe("MockBackend learning suggestions (docs/dictation.md section 16.10)", (
         source: { kind: "history", history_id: pair.historyId },
       },
     ]);
-    expect(await heard(backend)).toEqual(["非"]);
+    expect(await heard(backend)).toEqual(["非书"]);
     expect(await backend.vocabularySuggestionAccept(pair)).toMatchObject({
       kind: "refused",
       refusal: { kind: "entry", clash: "heard_taken", term: "Voltip" },
@@ -4429,7 +4527,7 @@ describe("MockBackend learning suggestions (docs/dictation.md section 16.10)", (
     expect(backend.peek().vocabulary_ignored).toHaveLength(1);
     await backend.invoke("vocabulary_suggestion_unignore", { heard: "非", polished: "飞" });
     expect(backend.peek().vocabulary_ignored).toEqual([]);
-    expect(await heard(backend)).toEqual(["非", "维他命"]);
+    expect(await heard(backend)).toEqual(["非书", "维他命"]);
     await expect(
       backend.invoke("vocabulary_suggestion_ignore", { heard: "同", polished: "同" }),
     ).rejects.toThrow(/前后相同/);
@@ -4518,7 +4616,7 @@ describe("MockBackend learning suggestions (docs/dictation.md section 16.10)", (
     backend.destroy();
   });
 
-  it("the sample takes for screenshots give suggestions seen twice or more and some seen once", async () => {
+  it("the sample takes for screenshots give suggestions seen twice or more, some seen once, and the user's corrections", async () => {
     const takes = [...sampleHistory(T), ...sampleSuggestionTakes(T)];
     const times = takes.map((t) => t.at_ms);
     // Newest first, as the history store keeps them.
@@ -4527,13 +4625,21 @@ describe("MockBackend learning suggestions (docs/dictation.md section 16.10)", (
     const backend = new MockBackend({ now: () => T, history: takes });
     const answer = await backend.vocabularySuggestions();
     if (answer.status !== "ready") throw new Error(answer.status);
-    expect(answer.pairs.map((p) => [p.heard, p.polished, p.count]).slice(0, 4)).toEqual([
-      ["维他命", "Voltip", 4],
-      ["库伯内提斯", "Kubernetes", 3],
-      ["瑞迪斯", "Redis", 2],
-      ["泰普斯克瑞普特", "TypeScript", 2],
+    expect(
+      answer.pairs.map((p) => [p.heard, p.polished, p.count, p.from_edits]).slice(0, 4),
+    ).toEqual([
+      ["维他命", "Voltip", 5, 1],
+      ["库伯内提斯", "Kubernetes", 3, 0],
+      ["瑞迪斯", "Redis", 2, 0],
+      ["泰普斯克瑞普特", "TypeScript", 2, 0],
     ]);
-    expect([answer.repeated, answer.total]).toEqual([4, 8]);
+    // docs/dictation.md §35: a correction seen once is suggested too.
+    expect(answer.pairs.find((p) => p.heard === "Quinn for")).toMatchObject({
+      polished: "Qwen 4",
+      count: 1,
+      from_edits: 1,
+    });
+    expect([answer.repeated, answer.total, answer.edited]).toEqual([5, 9, 2]);
     backend.destroy();
   });
 
@@ -4556,7 +4662,7 @@ describe("MockBackend learning suggestions (docs/dictation.md section 16.10)", (
     expect(await heard(backend)).toEqual([]);
     expect(await backend.vocabularySuggestionsUndo(outcome.undo)).toEqual({ kind: "undone" });
     expect(backend.peek().vocabulary_ignored).toEqual([earlier]);
-    expect(await heard(backend)).toEqual(["非", "维他命"]);
+    expect(await heard(backend)).toEqual(["非书", "维他命"]);
     expect(await backend.vocabularySuggestionsUndo(outcome.undo)).toEqual({ kind: "expired" });
     await expect(backend.vocabularySuggestionsIgnore([])).rejects.toThrow(
       "vocabulary_suggestions_ignore: pairs 1–200",

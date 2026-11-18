@@ -110,6 +110,9 @@ pub struct HistoryText {
     pub refined: bool,
     /// The corrections and rules that fired (`HistoryEntry.vocabulary`; empty when none did).
     pub vocabulary: VocabularyHits,
+    /// The whole take as the user corrected it in the application it went to
+    /// (`HistoryEntry.corrected`, docs/dictation.md §35); `None` when they did not teach it.
+    pub corrected: Option<String>,
 }
 
 /// [`HistoryReader::search`]: which entries, and where the page starts (docs/dictation.md §25).
@@ -293,7 +296,7 @@ impl HistoryReader {
         let texts = self.read(|conn| {
             let mut stmt = conn.prepare(&format!(
                 "SELECT id, at_ms, json_extract(json, '$.raw_text'), json_extract(json, '$.text'), json_extract(json, '$.refined'), \
-                 json_extract(json, '$.vocabulary') FROM entries \
+                 json_extract(json, '$.vocabulary'), json_extract(json, '$.corrected.text') FROM entries \
                  WHERE kind = 'dictation' AND COALESCE(json_extract(json, '$.origin.kind'), '') NOT IN ('typed', 'clipboard') \
                  AND json_extract(json, '$.file') IS NULL {NEWEST_FIRST} LIMIT ?1"
             ))?;
@@ -305,11 +308,12 @@ impl HistoryReader {
                     row.get::<_, Option<String>>(3)?,
                     row.get::<_, Option<i64>>(4)?,
                     row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
                 ))
             })?;
             let mut out = Vec::new();
             for row in rows {
-                let (id, at_ms, raw_text, text, refined, vocabulary) = row?;
+                let (id, at_ms, raw_text, text, refined, vocabulary, corrected) = row?;
                 let Ok(id) = id.parse::<Uuid>() else { continue };
                 out.push(HistoryText {
                     id,
@@ -318,6 +322,7 @@ impl HistoryReader {
                     text: text.unwrap_or_default(),
                     refined: refined == Some(1),
                     vocabulary: vocabulary.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default(),
+                    corrected,
                 });
             }
             Ok(out)

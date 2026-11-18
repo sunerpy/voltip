@@ -1,6 +1,8 @@
 //! The insert check's Accessibility reader against real macOS controls (docs/dictation.md §28): a
 //! paste into the test's own window, whose text view can be selected but not edited, leaves it
-//! `not_written`; a paste into a TextEdit document is `written`. AppKit wants the main thread, so
+//! `not_written`; a paste into a TextEdit document is `written`. Then the copy that reads the
+//! selection (§19, 从选中文字学习 §35): TextEdit's selection comes back with Cmd+C, and the
+//! pasteboard holds what it held before. AppKit wants the main thread, so
 //! this test has its own `main` (`harness = false`): the main thread runs the application, the
 //! checks run on another thread. It pastes the way Voltip does (the pasteboard and Cmd+V) into
 //! windows it brings to the front, and needs the Accessibility permission for the test binary, so
@@ -23,7 +25,7 @@ mod mac {
     };
     use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
     use voltip_focus::{Expected, Reader, Settled, Watch, macos as ax};
-    use voltip_inject::{Injector as _, PasteOptions};
+    use voltip_inject::{ClipboardPort as _, CopyOptions, Injector as _, Modifier, PasteOptions, SelectionSource as _, SystemClipboard, system_selection};
     use voltip_platform::HostOs;
     use voltip_platform::insert_check::rules::InsertCheck;
 
@@ -40,6 +42,36 @@ mod mac {
     #[link(name = "ApplicationServices", kind = "framework")]
     unsafe extern "C" {
         fn AXIsProcessTrusted() -> u8;
+    }
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGEventCreateKeyboardEvent(source: *const std::ffi::c_void, keycode: u16, down: bool) -> *mut std::ffi::c_void;
+        fn CGEventSetFlags(event: *mut std::ffi::c_void, flags: u64);
+        fn CGEventPost(tap: u32, event: *mut std::ffi::c_void);
+    }
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    unsafe extern "C" {
+        fn CFRelease(cf: *const std::ffi::c_void);
+    }
+
+    /// Cmd+A in the application in front (`kVK_ANSI_A` with `kCGEventFlagMaskCommand`, posted at
+    /// `kCGHIDEventTap`): TextEdit selects the whole document.
+    fn select_all() {
+        const KVK_ANSI_A: u16 = 0x00;
+        const COMMAND: u64 = 0x0010_0000;
+        const HID_EVENT_TAP: u32 = 0;
+        for down in [true, false] {
+            // SAFETY: a keyboard event from the default source, flagged, posted and released.
+            unsafe {
+                let event = CGEventCreateKeyboardEvent(std::ptr::null(), KVK_ANSI_A, down);
+                assert!(!event.is_null(), "CGEventCreateKeyboardEvent");
+                CGEventSetFlags(event, COMMAND);
+                CGEventPost(HID_EVENT_TAP, event);
+                CFRelease(event);
+            }
+        }
     }
 
     /// The frontmost application: its process id and bundle identifier.
@@ -121,6 +153,18 @@ mod mac {
         paste();
         assert_eq!(watch.settle(WATCH), Settled::sure(InsertCheck::Written), "TextEdit");
         println!("focus_macos: TextEdit: written");
+
+        // docs/dictation.md §35 (the copy of §19): 从选中文字学习 reads TextEdit's selection with
+        // Cmd+C — the shortcut's modifiers do not mix in, enigo posts its own flags — and puts back
+        // what the pasteboard held.
+        select_all();
+        let pasteboard = SystemClipboard::new();
+        pasteboard.write_text("SENTINEL").expect("the pasteboard");
+        let copier = system_selection(CopyOptions { timeout: Duration::from_secs(1), ..CopyOptions::default() });
+        let copied = copier.copy_selection(&[Modifier::Control, Modifier::Alt]).expect("the copy went out");
+        assert_eq!(copied.as_deref(), Some(TYPED), "TextEdit's selection");
+        assert_eq!(pasteboard.read_text().expect("the pasteboard").as_deref(), Some("SENTINEL"), "the previous pasteboard is back");
+        println!("focus_macos: TextEdit's selection: copied, the pasteboard put back");
         drop(document);
     }
 

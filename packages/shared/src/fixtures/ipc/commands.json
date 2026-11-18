@@ -91,6 +91,12 @@
   },
   {
     "args": {
+      "hotkey": "Ctrl+Alt+L"
+    },
+    "name": "settings_set_learn_hotkey"
+  },
+  {
+    "args": {
       "key": "mouse_back"
     },
     "name": "settings_set_solo_key"
@@ -253,6 +259,24 @@
   },
   {
     "args": {
+      "id": 4
+    },
+    "name": "learn_notice_accept"
+  },
+  {
+    "args": {
+      "id": 4
+    },
+    "name": "learn_notice_undo"
+  },
+  {
+    "args": {
+      "id": 4
+    },
+    "name": "learn_notice_dismiss"
+  },
+  {
+    "args": {
       "atMs": 1758700600000,
       "pressed": true,
       "purpose": "edit",
@@ -384,6 +408,12 @@
       "starred": true
     },
     "name": "history_star"
+  },
+  {
+    "args": {
+      "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+    },
+    "name": "history_clear_corrected"
   },
   {
     "args": {

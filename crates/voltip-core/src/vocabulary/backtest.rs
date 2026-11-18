@@ -191,7 +191,15 @@ mod tests {
     use crate::vocabulary::{RuleKind, VocabularyHits};
 
     fn take(raw: &str, text: &str, at_ms: u64) -> HistoryText {
-        HistoryText { id: Uuid::new_v4(), at_ms, raw_text: raw.into(), text: text.into(), refined: true, vocabulary: VocabularyHits::default() }
+        HistoryText {
+            id: Uuid::new_v4(),
+            at_ms,
+            raw_text: raw.into(),
+            text: text.into(),
+            refined: true,
+            vocabulary: VocabularyHits::default(),
+            corrected: None,
+        }
     }
 
     fn entry(term: &str, heard: &[&str]) -> DictionaryEntry {

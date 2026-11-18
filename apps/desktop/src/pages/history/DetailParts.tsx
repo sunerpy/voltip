@@ -1,5 +1,6 @@
 // Parts of the history detail moved out of `History.tsx` unchanged: a voice edit's detail, the
-// dictionary corrections and rules that fired, and the timing bar.
+// dictionary corrections and rules that fired, and the timing bar; and the user's correction of a
+// take (docs/dictation.md §35).
 import {
   type EditRecord,
   type HistoryEntry,
@@ -7,9 +8,10 @@ import {
   type TFunction,
   type VocabularyHit,
   formatCount,
+  formatDateTime,
   isImported,
 } from "@voltip/shared";
-import { Lamp, type LampTone, useUiState } from "@voltip/ui";
+import { Button, Lamp, type LampTone, useBackend, useI18n, useUiState } from "@voltip/ui";
 import { textChars } from "../../features/history/stats";
 
 /** A voice edit's detail (docs/dictation.md §19.5): the instruction as sent to the LLM, the
@@ -236,6 +238,45 @@ export function TimingBar({ entry, t }: { entry: HistoryEntry; t: TFunction }) {
           {t("history.timing.total", { n: formatCount(total) })}
         </span>
       </div>
+    </div>
+  );
+}
+
+/** What the user corrected the take to in the application it went to (docs/dictation.md §35): the
+ *  corrected text, when and how it was read, and 移除, which forgets it (the learning suggestions
+ *  then leave its pairs out). The take's own text stays what was inserted. */
+export function CorrectedDetail({ entry }: { entry: HistoryEntry }) {
+  const { backend } = useBackend();
+  const { t, locale } = useI18n();
+  const corrected = entry.corrected;
+  if (corrected === undefined) return null;
+  return (
+    <div
+      className="flex flex-wrap items-start gap-x-3 gap-y-2 rounded-10 hairline px-3 py-2"
+      data-testid="history-corrected">
+      <div className="min-w-0 flex-1">
+        <p className="text-[11px] text-fg-subtle">{t("learn.history.corrected")}</p>
+        <p data-user-text className="whitespace-pre-wrap text-[13px] leading-5 text-fg">
+          {corrected.text}
+        </p>
+        <p className="mt-1 text-[11px] text-fg-subtle">
+          {t("learn.history.via", {
+            time: formatDateTime(locale, corrected.at_ms, {
+              dateStyle: "medium",
+              timeStyle: "short",
+            }),
+          })}
+        </p>
+      </div>
+      <Button
+        size="sm"
+        variant="ghost"
+        aria-label={t("learn.history.removeLabel")}
+        onClick={() => {
+          void backend.invoke("history_clear_corrected", { id: entry.id });
+        }}>
+        {t("learn.history.remove")}
+      </Button>
     </div>
   );
 }
