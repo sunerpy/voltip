@@ -291,6 +291,37 @@ fn align(take: &[Tok<'_>], selection: &[Tok<'_>]) -> Option<Alignment> {
     (size > 0).then(|| Alignment { take: (take_start, take_end), selection: (selection_start, selection_end), similarity: matched as f64 / size as f64 })
 }
 
+/// `base` with `range` replaced by `picked`. A selection that ends just before the take's next word
+/// leaves out the space the take had there: the replaced part's trailing white space stays.
+fn splice(base: &[Tok<'_>], range: (usize, usize), picked: &[Tok<'_>]) -> String {
+    fn trailing<'a>(toks: &[Tok<'a>]) -> &'a str {
+        toks.last().map_or("", |t| &t.text[t.key.len()..])
+    }
+    let join = |toks: &[Tok<'_>]| toks.iter().map(|t| t.text).collect::<String>();
+    let (a, b) = range;
+    let kept = if trailing(picked).is_empty() { trailing(&base[a..b]) } else { "" };
+    format!("{}{}{kept}{}", join(&base[..a]), join(picked), join(&base[b..]))
+}
+
+/// The tokens of `corrected` that stand for `range` of `inserted` (the take's text and its earlier
+/// correction): from the token `range.0` became, or right after the last one kept before it, to the
+/// token `range.1 - 1` became, or up to the next one kept after it. A replacement the earlier
+/// correction made across an end of `range` is inside; one wholly outside stays as corrected.
+/// `None` past [`MAX_DIFF_CELLS`].
+fn map_range(inserted: &[Tok<'_>], corrected: &[Tok<'_>], range: (usize, usize)) -> Option<(usize, usize)> {
+    let pairs = lcs_pairs(inserted, corrected)?;
+    let (a, b) = range;
+    let start = match pairs.iter().find(|(i, _)| *i == a) {
+        Some(&(_, j)) => j,
+        None => pairs.iter().rev().find(|(i, _)| *i < a).map_or(0, |&(_, j)| j + 1),
+    };
+    let end = match pairs.iter().find(|(i, _)| *i + 1 == b) {
+        Some(&(_, j)) => j + 1,
+        None => pairs.iter().find(|(i, _)| *i >= b).map_or(corrected.len(), |&(_, j)| j),
+    };
+    Some((start, end.max(start)))
+}
+
 /// A take the selection corrects: which (an index into the takes given), its whole corrected text,
 /// and how alike they were.
 #[derive(Clone, Debug, PartialEq)]
@@ -345,10 +376,17 @@ pub fn match_selection(selection: &str, takes: &[HistoryText]) -> Vec<Matched> {
         cells += cost;
         let on_corrected = corrected.as_deref().and_then(|t| align(t, &sel));
         let on_inserted = inserted.as_deref().and_then(|t| align(t, &sel));
-        let similarity = on_corrected.iter().chain(on_inserted.iter()).map(|a| a.similarity).fold(f64::NAN, f64::max);
-        let Some((alignment, from_inserted)) = on_corrected.map(|a| (a, false)).or(on_inserted.map(|a| (a, true))) else { continue };
-        if similarity >= MATCH_MIN {
-            candidates.push(Candidate { index, alignment, on_inserted: from_inserted, similarity });
+        // The alignment that wins decides the rebuild: the more alike, then the one covering more
+        // of the selection; the corrected text on a full tie.
+        let covered = |a: &Alignment| chars_of(&sel[a.selection.0..a.selection.1]);
+        let (alignment, from_inserted) = match (on_corrected, on_inserted) {
+            (Some(c), Some(i)) if i.similarity > c.similarity + 1e-9 || ((i.similarity - c.similarity).abs() <= 1e-9 && covered(&i) > covered(&c)) => (i, true),
+            (Some(c), _) => (c, false),
+            (None, Some(i)) => (i, true),
+            (None, None) => continue,
+        };
+        if alignment.similarity >= MATCH_MIN {
+            candidates.push(Candidate { index, alignment, on_inserted: from_inserted, similarity: alignment.similarity });
         }
     }
     let mut chosen: Vec<Candidate> = Vec::new();
@@ -373,11 +411,21 @@ pub fn match_selection(selection: &str, takes: &[HistoryText]) -> Vec<Matched> {
         .into_iter()
         .map(|c| {
             let take = &takes[c.index];
-            let base = toks(if c.on_inserted { &take.text } else { take.corrected.as_deref().unwrap_or(&take.text) });
-            let join = |toks: &[Tok<'_>]| toks.iter().map(|t| t.text).collect::<String>();
-            let (a, b) = c.alignment.take;
-            let (s, e) = c.alignment.selection;
-            let corrected = format!("{}{}{}", join(&base[..a]), join(&sel[s..e]), join(&base[b..]));
+            let picked = &sel[c.alignment.selection.0..c.alignment.selection.1];
+            let corrected = match (c.on_inserted, take.corrected.as_deref()) {
+                // On the inserted text, of a take corrected before: the selection replaces the part of
+                // the corrected text that stands for the aligned part, the rest keeps its correction.
+                (true, Some(earlier)) => {
+                    let inserted = toks(&take.text);
+                    let earlier = toks(earlier);
+                    match map_range(&inserted, &earlier, c.alignment.take) {
+                        Some(range) => splice(&earlier, range, picked),
+                        None => splice(&inserted, c.alignment.take, picked),
+                    }
+                }
+                (true | false, None) => splice(&toks(&take.text), c.alignment.take, picked),
+                (false, Some(earlier)) => splice(&toks(earlier), c.alignment.take, picked),
+            };
             Matched { index: c.index, corrected, similarity: c.similarity }
         })
         .collect()
@@ -485,6 +533,31 @@ mod tests {
         // Sharing a word with the corrected text, the correction stays the base (§35.4).
         let take = HistoryText { corrected: Some("我在用 Qwen 4 max 做测试".into()), ..plain("我在用 Quinn for max 做测试", 10) };
         assert_eq!(one("用 Qwen 4 max 做实验", std::slice::from_ref(&take)).corrected, "我在用 Qwen 4 max 做实验");
+    }
+
+    /// Regression (goal review of PR #260, round 2): both texts of a corrected take align, the
+    /// inserted one better — the original wording selected again — and the corrected text was
+    /// rebuilt on the corrected alignment all the same: 「red apple」 matched the corrected text's
+    /// first 「red」 only, 「apple」 counted as selected besides the take, and the earlier
+    /// 「grape」 stayed. The winning alignment decides now, mapped onto the corrected text, so an
+    /// earlier correction outside the selection (「plum」) stays too.
+    #[test]
+    fn regression_the_alignment_that_wins_rebuilds_the_take() {
+        let take = HistoryText { corrected: Some("red grape red pear".into()), ..plain("red apple red pear", 10) };
+        assert_eq!(one("red apple", std::slice::from_ref(&take)).corrected, "red apple red pear", "taken back");
+        let take = HistoryText { corrected: Some("red grape red plum".into()), ..plain("red apple red pear", 10) };
+        assert_eq!(one("red apple", std::slice::from_ref(&take)).corrected, "red apple red plum", "the other correction stays");
+        let take = HistoryText { corrected: Some("我们下午四点在飞书开会".into()), ..plain("我们下午三点在飞书开会", 10) };
+        assert_eq!(one("下午五点在飞书", std::slice::from_ref(&take)).corrected, "我们下午五点在飞书开会");
+    }
+
+    /// Regression (found while fixing the round-2 item, 2026-11-18): a selection that stops right
+    /// before the take's next word has no trailing space, and the take's space there was lost with
+    /// the replaced words (「Qwen 4 maxis great」).
+    #[test]
+    fn regression_a_selection_that_stops_before_the_next_word_keeps_the_space() {
+        let take = plain("Quinn for max is great", 10);
+        assert_eq!(one("Qwen 4 max", std::slice::from_ref(&take)).corrected, "Qwen 4 max is great");
     }
 
     #[test]
