@@ -816,6 +816,8 @@ export const settingsSchema = z.object({
   /** 复制上一条结果 (docs/dictation.md §28, user decision D12): a chord that puts the newest result
    *  on the clipboard; absent = none (Rust omits it). */
   copy_last_hotkey: z.string().nullable().optional(),
+  /** 从选中文字学习 (docs/dictation.md §35): its chord, or none (absent, the default). */
+  learn_hotkey: z.string().nullable().optional(),
   /** Keep a pairing open on this desktop until turned off (docs/pairing.md 「常开配对」); off by
    *  default and in an older `settings.json`. */
   pairing_always_on: z.boolean().default(false),
@@ -1721,14 +1723,17 @@ export const pairExampleSchema = z.object({
 });
 export type PairExample = z.infer<typeof pairExampleSchema>;
 
-/** One suggestion (`Suggestion`): what the recogniser wrote, what the polished text has instead,
- *  how often, the newest take, and up to three snippets, newest first. */
+/** One suggestion (`Suggestion`): what the recogniser wrote, what the polished text has instead
+ *  or what the user corrected it to, how often, the newest take, up to three snippets, newest
+ *  first, and how many of the times the user's own correction made it (docs/dictation.md §35;
+ *  absent when none). */
 export const suggestionSchema = z.object({
   heard: z.string(),
   polished: z.string(),
   count: z.number().int().nonnegative(),
   last_at_ms: z.number().nonnegative(),
   examples: z.array(pairExampleSchema),
+  from_edits: z.number().int().nonnegative().default(0),
 });
 export type Suggestion = z.infer<typeof suggestionSchema>;
 
@@ -1744,7 +1749,11 @@ export const suggestionsAnswerSchema = z.discriminatedUnion("status", [
     refined: z.number().int().nonnegative(),
     skipped: z.number().int().nonnegative(),
     total: z.number().int().nonnegative(),
+    /** The suggestions counted `SUGGESTION_REPEATED_MIN` times or more, and those the user
+     *  corrected themselves (`from_edits`): the page's 推荐. */
     repeated: z.number().int().nonnegative(),
+    /** The takes looked at that the user corrected (docs/dictation.md §35). */
+    edited: z.number().int().nonnegative().default(0),
     pairs: z.array(suggestionSchema),
   }),
 ]);
@@ -1809,7 +1818,12 @@ export type UndoOutcome = z.infer<typeof undoOutcomeSchema>;
 
 /** One suggestion picked for a batch 加入词典 (`SuggestionPick`): the pair and the take of its
  *  first example, the new entry's source. */
-export type SuggestionPick = { heard: string; polished: string; history_id: string };
+export const suggestionPickSchema = z.object({
+  heard: z.string(),
+  polished: z.string(),
+  history_id: z.string(),
+});
+export type SuggestionPick = z.infer<typeof suggestionPickSchema>;
 /** One suggestion picked for a batch 忽略 (`SuggestionPair`). */
 export type SuggestionPair = { heard: string; polished: string };
 
@@ -1853,6 +1867,40 @@ export const batchUndoOutcomeSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("failed"), message: z.string() }),
 ]);
 export type BatchUndoOutcome = z.infer<typeof batchUndoOutcomeSchema>;
+
+/** What came of a 从选中文字学习 (`LearnOutcome`, docs/dictation.md §35): the pairs the corrected
+ *  takes give (`safe`: none is short enough to change other words, so 加入词典 is offered at
+ *  once), or why there is nothing to learn. */
+export const learnOutcomeSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("learned"), pairs: z.array(suggestionPickSchema), safe: z.boolean() }),
+  z.object({ kind: z.literal("no_pairs") }),
+  z.object({ kind: z.literal("unchanged") }),
+  z.object({ kind: z.literal("no_match") }),
+  z.object({ kind: z.literal("no_selection") }),
+  z.object({ kind: z.literal("too_long"), max: z.number().int().positive() }),
+  z.object({ kind: z.literal("terminal") }),
+  z.object({ kind: z.literal("history_off") }),
+  z.object({ kind: z.literal("failed"), message: z.string() }),
+]);
+export type LearnOutcome = z.infer<typeof learnOutcomeSchema>;
+
+/** The pill's notice after a 从选中文字学习 (`LearnNotice`, `UiState.learn_notice`): which, what
+ *  came of it, whether it is on the pill yet (it waits behind a take's result), and what its
+ *  加入词典 and 撤销 did. */
+export const learnNoticeSchema = z.object({
+  id: z.number().int().nonnegative(),
+  outcome: learnOutcomeSchema,
+  shown: z.boolean(),
+  accepted: z
+    .object({
+      added: z.number().int().nonnegative(),
+      refused: z.number().int().nonnegative(),
+      undo: z.string().optional(),
+    })
+    .optional(),
+  undone: batchUndoOutcomeSchema.optional(),
+});
+export type LearnNotice = z.infer<typeof learnNoticeSchema>;
 
 /** A hint the rules page shows beside a rule (`RuleWarning`, `rules_warnings`): another rule finds
  *  the same, another turns its replacement back, or it turns an entry's right spelling into one
@@ -1911,6 +1959,18 @@ export const processedTextSchema = z.object({
   at_ms: z.number().nonnegative(),
 });
 export type ProcessedText = z.infer<typeof processedTextSchema>;
+
+/** `voltip_core::history::CorrectedText`: what the user corrected a take to in the application
+ *  it went to, as 从选中文字学习 read it (docs/dictation.md §35); the entry's `text` stays what was
+ *  inserted. */
+export const correctedTextSchema = z.object({
+  text: z.string(),
+  at_ms: z.number().nonnegative(),
+  /** `follow`: read in the text field after the paste, the experimental tracking of a later
+   *  version (docs/dictation.md §35); this version writes `selection` only. */
+  via: z.enum(["selection", "follow"]),
+});
+export type CorrectedText = z.infer<typeof correctedTextSchema>;
 
 /** `voltip_core::history::process::ProcessState`: where one `history_process` request is. */
 export const processStateSchema = z.discriminatedUnion("state", [
@@ -1983,6 +2043,8 @@ export const historyEntrySchema = z.object({
   origin: entryOriginSchema.optional(),
   /** 用 AI 预设处理's result (docs/dictation.md §22); absent until it ran. */
   processed: processedTextSchema.optional(),
+  /** The user's correction of the take (docs/dictation.md §35); absent until they taught it. */
+  corrected: correctedTextSchema.optional(),
   /** The audio or video file it was transcribed from (docs/dictation.md §31); absent for takes. */
   file: importedFileSchema.optional(),
   /** How long each step of the take took (docs/dictation.md §30.1); absent for imports, phone
@@ -2905,6 +2967,10 @@ export const hotkeyStatusSchema = z.object({
    *  none is set. */
   copy_last_registered: z.string().optional(),
   copy_last_error: z.string().optional(),
+  /** The 从选中文字学习 chord (docs/dictation.md §35): registered, or why not; both absent while
+   *  none is set. */
+  learn_registered: z.string().optional(),
+  learn_error: z.string().optional(),
   /** When the lone key's input hook last came back by itself after the system took it away
    *  (docs/dictation.md §29), in ms since the epoch; absent until it has. */
   solo_recovered_at: z.number().int().nonnegative().optional(),
@@ -3341,6 +3407,8 @@ export const uiStateSchema = z.object({
   /** The pairs the learning suggestions leave out (§16.10); `[]` until one is ignored, and on the
    *  phone. */
   vocabulary_ignored: z.array(ignoredPairSchema).default(() => []),
+  /** The pill's notice after a 从选中文字学习 (§35); absent while there is none, and on the phone. */
+  learn_notice: learnNoticeSchema.nullable().optional(),
   /** The scenes (§18), in matching order; `[]` on the phone. */
   scenes: z.array(sceneSchema).default(() => []),
   /** The custom presets (§21), in the order they were made; `[]` on the phone. The built-in
@@ -3421,6 +3489,8 @@ export const uiEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("rules"), rules: z.array(replacementRuleSchema) }),
   /** The pairs the learning suggestions leave out, whole, after every change (§16.10). */
   z.object({ type: z.literal("vocabulary_ignored"), pairs: z.array(ignoredPairSchema) }),
+  /** The pill's notice after a 从选中文字学习, whole, or `null` when it went (§35). */
+  z.object({ type: z.literal("learn_notice"), notice: learnNoticeSchema.nullable() }),
   /** The whole scene list after every change (§18). */
   z.object({ type: z.literal("scenes"), scenes: z.array(sceneSchema) }),
   /** The custom presets, whole (§21). */
@@ -3644,6 +3714,15 @@ export interface CommandArgs {
   settings_set_edit_hotkey: { hotkey: string | null };
   /** 复制上一条结果 (docs/dictation.md §28): its chord, or `null` for none. */
   settings_set_copy_last_hotkey: { hotkey: string | null };
+  /** 从选中文字学习 (docs/dictation.md §35): its chord, or `null` for none. */
+  settings_set_learn_hotkey: { hotkey: string | null };
+  /** The learn notice's 加入词典 / 撤销 / × (§35), for its `id`; the core re-emits `learn_notice`. */
+  learn_notice_accept: { id: number };
+  learn_notice_undo: { id: number };
+  learn_notice_dismiss: { id: number };
+  learn_notice_keep: { id: number };
+  /** The history detail's 移除 (§35): forget the user's correction of the entry. */
+  history_clear_corrected: { id: string };
   /** The lone-key trigger (docs/dictation.md §13.1), or `null` to switch it off. */
   settings_set_solo_key: { key: SoloKey | null };
   /** The microphone takes record from (an `audio_devices` id), or `null` for the system default. */
@@ -3960,6 +4039,12 @@ export interface CommandArgs {
   overlay_paste: { text: string };
   /** The result card's 打开历史 (`Backend.openHistory`): the main window opens on the history page. */
   open_history: undefined;
+  /** The learn notice's 查看 (`Backend.openSuggestions`, §35): the main window opens on the
+   *  dictionary's learning suggestions. */
+  open_suggestions: undefined;
+  /** The learn notice's 打开设置 while the history is off (`Backend.openPrivacy`, §35): the main
+   *  window opens on 设置 › 隐私. */
+  open_privacy: undefined;
 }
 export type CommandName = keyof CommandArgs;
 /** Queries and streams: called through dedicated `Backend` methods, never through `invoke`. */
@@ -3996,6 +4081,8 @@ export type QueryCommand =
   | "overlay_copy"
   | "overlay_paste"
   | "open_history"
+  | "open_suggestions"
+  | "open_privacy"
   | "backup_export"
   | "backup_open"
   | "backup_import"
@@ -4196,6 +4283,8 @@ export function applyEvent(state: UiState, event: UiEvent): UiState {
       return { ...state, rules: event.rules };
     case "vocabulary_ignored":
       return { ...state, vocabulary_ignored: event.pairs };
+    case "learn_notice":
+      return { ...state, learn_notice: event.notice };
     case "scenes":
       return { ...state, scenes: event.scenes };
     case "presets":

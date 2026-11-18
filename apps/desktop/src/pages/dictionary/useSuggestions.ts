@@ -110,9 +110,10 @@ const INITIAL: State = {
   busy: false,
 };
 
-/** Whether a row passes `filter`. */
+/** Whether a row passes `filter`: 推荐 takes the pairs seen twice or more and those the user
+ *  corrected themselves (docs/dictation.md §35). */
 export function passes(row: Suggestion, filter: SuggestionsFilter): boolean {
-  return filter === "all" || row.count >= SUGGESTION_REPEATED_MIN;
+  return filter === "all" || row.count >= SUGGESTION_REPEATED_MIN || row.from_edits > 0;
 }
 
 /** Whether a row with `action` is still to decide: never acted on, or the action did nothing. */

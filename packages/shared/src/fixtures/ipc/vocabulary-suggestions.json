@@ -81,6 +81,7 @@
     "status": "history_off"
   },
   "nothing": {
+    "edited": 0,
     "pairs": [],
     "refined": 0,
     "repeated": 0,
@@ -90,6 +91,7 @@
     "total": 0
   },
   "ready": {
+    "edited": 2,
     "pairs": [
       {
         "count": 12,
@@ -118,10 +120,23 @@
         "heard": "提成",
         "last_at_ms": 1758614200000,
         "polished": "集成"
+      },
+      {
+        "count": 1,
+        "examples": [
+          {
+            "history_id": "1c2d3e4f-5a6b-4c8e-9f7a-0f3f1a1e8d4b",
+            "snippet": "我在用 Quinn for max 做测试"
+          }
+        ],
+        "from_edits": 1,
+        "heard": "Quinn for",
+        "last_at_ms": 1758697000000,
+        "polished": "Qwen 4"
       }
     ],
     "refined": 1480,
-    "repeated": 9,
+    "repeated": 10,
     "scanned": 2000,
     "skipped": 3,
     "status": "ready",

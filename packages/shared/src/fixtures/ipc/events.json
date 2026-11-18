@@ -780,6 +780,7 @@
     "backend": "global-shortcut · Linux · XWayland",
     "edit_error": "Ctrl+Alt+E 注册失败：already registered",
     "copy_last_error": "Ctrl+Shift+V 注册失败：already registered",
+    "learn_error": "Ctrl+Alt+L 与另一个快捷键相同，未生效",
     "capabilities": {
       "global": true,
       "everywhere": false,
@@ -1579,6 +1580,79 @@
             "name": "要点纪要"
           },
           "at_ms": 1758700660000
+        },
+        "timing": {
+          "pressed_at": 1758700593000,
+          "device_open_ms": 38,
+          "first_audio_ms": 212,
+          "first_text_ms": 640,
+          "released_ms": 3412,
+          "tail_ms": 150,
+          "asr_ms": 655,
+          "refine_ms": 2410,
+          "insert_ms": 96,
+          "done_ms": 6731
+        },
+        "glossary_sent": true
+      }
+    ],
+    "total": 1
+  },
+  {
+    "type": "history",
+    "recent": [
+      {
+        "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+        "at_ms": 1758700600000,
+        "raw_text": "把 fetchUser 改成 async 然后加上错误处理",
+        "text": "把 fetchUser 改成 async，然后加上错误处理。",
+        "refined": true,
+        "asr_model": "Qwen/Qwen3-ASR-1.7B",
+        "asr_note": "gpu_failed_ran_on_cpu",
+        "asr_provider": "builtin",
+        "refine_model": "qwen/qwen3.8-27b",
+        "refine_provider": "groq",
+        "duration_ms": 3200,
+        "asr_ms": 640,
+        "refine_ms": 2400,
+        "outcome": {
+          "kind": "inserted",
+          "via": "paste",
+          "check": "unconfirmed"
+        },
+        "starred": true,
+        "mode": "whole_take",
+        "vocabulary": {
+          "corrections": [
+            {
+              "id": "3b241101-e2bb-4255-8caf-4136c566a962",
+              "count": 1
+            }
+          ],
+          "rules": [
+            {
+              "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+              "count": 2
+            }
+          ]
+        },
+        "kind": "dictation",
+        "app": {
+          "id": "code",
+          "name": "Code"
+        },
+        "scene": {
+          "id": "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f",
+          "name": "代码评审"
+        },
+        "preset": {
+          "id": "formal",
+          "name": "书面语"
+        },
+        "corrected": {
+          "text": "我在用 Qwen 4 max 做测试",
+          "at_ms": 1758700660000,
+          "via": "selection"
         },
         "timing": {
           "pressed_at": 1758700593000,
@@ -7192,6 +7266,154 @@
   {
     "type": "vocabulary_ignored",
     "pairs": []
+  },
+  {
+    "type": "learn_notice",
+    "notice": {
+      "id": 4,
+      "outcome": {
+        "kind": "learned",
+        "pairs": [
+          {
+            "heard": "Quinn for",
+            "polished": "Qwen 4",
+            "history_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+          }
+        ],
+        "safe": true
+      },
+      "shown": false
+    }
+  },
+  {
+    "type": "learn_notice",
+    "notice": {
+      "id": 4,
+      "outcome": {
+        "kind": "learned",
+        "pairs": [
+          {
+            "heard": "非书",
+            "polished": "飞书",
+            "history_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+          }
+        ],
+        "safe": true
+      },
+      "shown": true,
+      "accepted": {
+        "added": 1,
+        "refused": 0,
+        "undo": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+      },
+      "undone": {
+        "kind": "undone"
+      }
+    }
+  },
+  {
+    "type": "learn_notice",
+    "notice": {
+      "id": 5,
+      "outcome": {
+        "kind": "learned",
+        "pairs": [
+          {
+            "heard": "非",
+            "polished": "飞",
+            "history_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+          }
+        ],
+        "safe": false
+      },
+      "shown": true
+    }
+  },
+  {
+    "type": "learn_notice",
+    "notice": {
+      "id": 5,
+      "outcome": {
+        "kind": "no_pairs"
+      },
+      "shown": true
+    }
+  },
+  {
+    "type": "learn_notice",
+    "notice": {
+      "id": 5,
+      "outcome": {
+        "kind": "unchanged"
+      },
+      "shown": true
+    }
+  },
+  {
+    "type": "learn_notice",
+    "notice": {
+      "id": 5,
+      "outcome": {
+        "kind": "no_match"
+      },
+      "shown": true
+    }
+  },
+  {
+    "type": "learn_notice",
+    "notice": {
+      "id": 5,
+      "outcome": {
+        "kind": "no_selection"
+      },
+      "shown": true
+    }
+  },
+  {
+    "type": "learn_notice",
+    "notice": {
+      "id": 5,
+      "outcome": {
+        "kind": "too_long",
+        "max": 8000
+      },
+      "shown": true
+    }
+  },
+  {
+    "type": "learn_notice",
+    "notice": {
+      "id": 5,
+      "outcome": {
+        "kind": "terminal"
+      },
+      "shown": true
+    }
+  },
+  {
+    "type": "learn_notice",
+    "notice": {
+      "id": 5,
+      "outcome": {
+        "kind": "history_off"
+      },
+      "shown": true
+    }
+  },
+  {
+    "type": "learn_notice",
+    "notice": {
+      "id": 5,
+      "outcome": {
+        "kind": "failed",
+        "message": "clipboard: 无法读取剪贴板"
+      },
+      "shown": true
+    }
+  },
+  {
+    "type": "learn_notice",
+    "notice": null
   },
   {
     "type": "settings",

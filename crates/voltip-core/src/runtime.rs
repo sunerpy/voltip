@@ -49,6 +49,8 @@ pub use auto_backup::AUTO_WEEKLY_DELAY;
 mod backup;
 mod check;
 mod import;
+mod learn;
+pub use learn::{LEARN_NOTICE_DWELL, LearnNotice, LearnOutcome, NoticeAccepted};
 mod listing;
 mod mcp;
 mod models_move;
@@ -130,6 +132,9 @@ pub struct CoreConfig {
     /// 窗口已切换 and the failures on screen until they are closed. Off (the default; the phone,
     /// the local speech service), every terminal state goes after its dwell.
     pub result_cards: bool,
+    /// How long the pill's notice after a 从选中文字学习 stays once it shows, and again after each
+    /// of its buttons (docs/dictation.md §35): [`LEARN_NOTICE_DWELL`]; tests shorten it.
+    pub learn_notice_dwell: Duration,
     /// Make the weekly automatic backup and show the automatic backups (docs/dictation.md
     /// §4.6.1): the desktop yes, the phone and the local speech service no. The backups before an
     /// update and before a replacing import are made wherever they are asked for.
@@ -247,6 +252,7 @@ impl CoreConfig {
             accepts_phone_takes: true,
             keeps_audio: true,
             result_cards: false,
+            learn_notice_dwell: LEARN_NOTICE_DWELL,
             auto_backup: false,
             shows_live_preview: true,
             builtin_scenes: true,
@@ -321,6 +327,9 @@ pub enum CoreCommand {
     /// Choose (`Some`) or clear (`None`) the 复制上一条结果 hotkey (docs/dictation.md §28); validated
     /// like the dictation hotkey and refused when it is the dictation's or the voice edit's chord.
     SetCopyLastHotkey(Option<String>),
+    /// 从选中文字学习 hotkey (docs/dictation.md §35): a chord, or `None` for none (the default);
+    /// never one of the other three chords.
+    SetLearnHotkey(Option<String>),
     /// Choose (`Some`) or switch off (`None`) the lone-key trigger (docs/dictation.md §13.1);
     /// persisted, the desktop shell (un)installs its input hook on `Settings`.
     SetSoloKey(Option<crate::SoloKey>),
@@ -412,6 +421,36 @@ pub enum CoreCommand {
     /// 复制上一条结果 (docs/dictation.md §28): the newest result's text onto the clipboard, on a
     /// blocking thread; `reply` gets what happened.
     CopyLastResult(crate::last_result::CopyLastReply),
+    /// 从选中文字学习 (docs/dictation.md §35): copy the selection of the application in front and
+    /// learn from the takes it corrects; what came of it shows as `UiState.learn_notice`. Ignored
+    /// while a take is under way. `source` decides which modifiers the user may still hold.
+    LearnSelection {
+        /// The shortcut, or `voltip --learn-selection`.
+        source: EdgeSource,
+    },
+    /// The learn notice's 加入词典 (docs/dictation.md §35), for notice `id`.
+    LearnNoticeAccept {
+        /// `LearnNotice::id`.
+        id: u64,
+    },
+    /// The learn notice's 撤销.
+    LearnNoticeUndo {
+        /// `LearnNotice::id`.
+        id: u64,
+    },
+    /// The learn notice's ×.
+    LearnNoticeDismiss {
+        /// `LearnNotice::id`.
+        id: u64,
+    },
+    /// The learn notice's 查看 or 打开设置 (a page of the main window): the notice stays its
+    /// whole time again, as after its other buttons.
+    LearnNoticeKeep {
+        /// `LearnNotice::id`.
+        id: u64,
+    },
+    /// Forget the user's correction of a history entry (its detail's 移除, docs/dictation.md §35).
+    HistoryClearCorrected(Uuid),
     /// A hotkey / CLI key transition (docs/dictation.md §13): the activation machine turns it into
     /// start / stop / cancel / lock according to `Settings.activation`.
     HotkeyEdge {
@@ -774,6 +813,7 @@ struct Inbox {
     usage_rx: mpsc::Receiver<usage::UsageInbound>,
     import_rx: mpsc::Receiver<import::ImportInbound>,
     auto_rx: mpsc::Receiver<auto_backup::AutoInbound>,
+    learn_rx: mpsc::Receiver<learn::LearnInbound>,
 }
 
 /// Events to the UI.
@@ -870,6 +910,8 @@ pub enum CoreEvent {
     /// The pairs the learning suggestions leave out (docs/dictation.md §16.10), oldest first; on
     /// `Ready` and after every change.
     VocabularyIgnored(Vec<crate::vocabulary::IgnoredPair>),
+    /// The pill's notice after a 从选中文字学习 changed or went (docs/dictation.md §35).
+    LearnNotice(Option<LearnNotice>),
     /// Scenes in matching order (full replacement); on `Ready` and after every change.
     Scenes(Vec<Scene>),
     /// Custom presets, full replacement (docs/dictation.md §21).
@@ -1059,6 +1101,7 @@ impl AppCore {
         let (mcp, mcp_notice) = mcp::McpRuntime::new(config.mcp_host.clone(), &config.data_dir, mcp_tx);
         let (imports, import_rx) = import::ImportRuntime::new(config.media_decoder.clone(), &config.data_dir);
         let (auto, auto_rx) = auto_backup::AutoBackups::new(&config.data_dir, now_ms());
+        let (learn, learn_rx) = learn::LearnRuntime::new(&config.data_dir);
         let mut rt = Runtime {
             config,
             manager,
@@ -1137,11 +1180,27 @@ impl AppCore {
             last_result: None,
             imports,
             auto,
+            learn,
         };
         rt.system_fingerprint = rt.config.network.system_fingerprint();
         rt.connect_relay()?;
-        let inbox =
-            Inbox { cmd_rx, link_rx, dict_rx, model_rx, act_rx, phone_rx, check_rx, process_rx, listed_rx, mcp_rx, recover_rx, usage_rx, import_rx, auto_rx };
+        let inbox = Inbox {
+            cmd_rx,
+            link_rx,
+            dict_rx,
+            model_rx,
+            act_rx,
+            phone_rx,
+            check_rx,
+            process_rx,
+            listed_rx,
+            mcp_rx,
+            recover_rx,
+            usage_rx,
+            import_rx,
+            auto_rx,
+            learn_rx,
+        };
         Ok((rt, inbox, CoreHandle { cmd: cmd_tx, levels: levels_tx }, evt_rx))
     }
 }
@@ -1453,6 +1512,8 @@ struct Runtime {
     last_result: Option<String>,
     /// The import queue (docs/dictation.md §31).
     imports: import::ImportRuntime,
+    /// 从选中文字学习 and its notice (docs/dictation.md §35).
+    learn: learn::LearnRuntime,
     /// The automatic backups (docs/dictation.md §4.6.1).
     auto: auto_backup::AutoBackups,
 }
@@ -1581,6 +1642,7 @@ impl Runtime {
             mut usage_rx,
             mut import_rx,
             mut auto_rx,
+            mut learn_rx,
         } = inbox;
         self.emit(CoreEvent::Ready {
             identity: self.identity.public(),
@@ -1639,6 +1701,7 @@ impl Runtime {
                 Some(inbound) = usage_rx.recv() => self.on_usage(inbound),
                 Some(inbound) = import_rx.recv() => self.on_import(inbound),
                 Some(inbound) = auto_rx.recv() => self.on_auto_backup(inbound, now_ms()),
+                Some(inbound) = learn_rx.recv() => self.on_learn(inbound),
                 Ok(()) = quota_rx.changed() => self.emit(CoreEvent::Engines(self.engine_status())),
                 _ = ticker.tick() => self.tick().await,
             }
@@ -1694,6 +1757,7 @@ impl Runtime {
             CoreCommand::SetHotkey(text) => self.set_hotkey(&text),
             CoreCommand::SetEditHotkey(text) => self.set_edit_hotkey(text.as_deref()),
             CoreCommand::SetCopyLastHotkey(text) => self.set_copy_last_hotkey(text.as_deref()),
+            CoreCommand::SetLearnHotkey(text) => self.set_learn_hotkey(text.as_deref()),
             CoreCommand::SetSoloKey(key) => self.set_solo_key(key),
             CoreCommand::SetMicrophone(device) => self.set_microphone(device),
             CoreCommand::SetRecording(recording) => self.set_recording(recording),
@@ -1751,6 +1815,27 @@ impl Runtime {
                 self.copy_last_result(reply);
                 Ok(())
             }
+            CoreCommand::LearnSelection { source } => {
+                self.learn_selection(source);
+                Ok(())
+            }
+            CoreCommand::LearnNoticeAccept { id } => {
+                self.learn_notice_accept(id);
+                Ok(())
+            }
+            CoreCommand::LearnNoticeUndo { id } => {
+                self.learn_notice_undo(id);
+                Ok(())
+            }
+            CoreCommand::LearnNoticeDismiss { id } => {
+                self.learn_notice_dismiss(id);
+                Ok(())
+            }
+            CoreCommand::LearnNoticeKeep { id } => {
+                self.learn_notice_keep(id);
+                Ok(())
+            }
+            CoreCommand::HistoryClearCorrected(id) => self.clear_correction(id),
             CoreCommand::HotkeyEdge { pressed, at_ms, source, purpose, chorded } => self.hotkey_edge(Edge { pressed, at_ms, source }, purpose, chorded),
             CoreCommand::SetActivation { activation, hold_threshold_ms, extra_recording_ms } => {
                 self.set_activation(activation, hold_threshold_ms, extra_recording_ms)
@@ -2896,7 +2981,10 @@ impl Runtime {
                         self.last_result = Some(text.to_owned());
                     }
                     self.follow_refine_notice(&status.phase);
+                    let phase = status.phase.clone();
                     self.emit(CoreEvent::Dictation(status));
+                    // docs/dictation.md §35: after the phase, so the pill sees it idle first.
+                    self.follow_learn_notice(&phase);
                     // A phone's text waits for the take to end (docs/dictation.md §20.6).
                     if hint == PhaseHint::Idle {
                         self.deliver_next_text();
@@ -3233,6 +3321,9 @@ impl Runtime {
         if self.copy_last_chord_is(&hotkey) {
             return Err(CoreError::Invalid(format!("hotkey: {} 已用作「复制上一条结果」的快捷键", hotkey.display())));
         }
+        if self.learn_chord_is(&hotkey) {
+            return Err(CoreError::Invalid(format!("hotkey: {} 已用作「从选中文字学习」的快捷键", hotkey.display())));
+        }
         self.settings.hotkey = hotkey.display();
         self.save_settings()
     }
@@ -3240,6 +3331,36 @@ impl Runtime {
     /// `hotkey` is the 复制上一条结果 chord (docs/dictation.md §28).
     fn copy_last_chord_is(&self, hotkey: &crate::Hotkey) -> bool {
         self.settings.copy_last_hotkey.as_deref().is_some_and(|copy| crate::Hotkey::same_chord(&hotkey.display(), copy))
+    }
+
+    /// `hotkey` is the 从选中文字学习 chord (docs/dictation.md §35).
+    fn learn_chord_is(&self, hotkey: &crate::Hotkey) -> bool {
+        self.settings.learn_hotkey.as_deref().is_some_and(|learn| crate::Hotkey::same_chord(&hotkey.display(), learn))
+    }
+
+    /// `SetLearnHotkey` (docs/dictation.md §35): `None` assigns none; a chord is validated like the
+    /// dictation hotkey and refused when it is the dictation's, the voice edit's or 复制上一条结果's.
+    fn set_learn_hotkey(&mut self, text: Option<&str>) -> Result<(), CoreError> {
+        let chord = match text {
+            None => None,
+            Some(text) => {
+                let hotkey = crate::Hotkey::parse(text)?;
+                if crate::Hotkey::same_chord(&hotkey.display(), &self.settings.hotkey) {
+                    return Err(CoreError::Invalid(format!("learn_hotkey: {} 已用作听写快捷键", hotkey.display())));
+                }
+                if let Some(edit) = self.settings.edit_hotkey.as_deref()
+                    && crate::Hotkey::same_chord(&hotkey.display(), edit)
+                {
+                    return Err(CoreError::Invalid(format!("learn_hotkey: {} 已用作「编辑选中文本」的快捷键", hotkey.display())));
+                }
+                if self.copy_last_chord_is(&hotkey) {
+                    return Err(CoreError::Invalid(format!("learn_hotkey: {} 已用作「复制上一条结果」的快捷键", hotkey.display())));
+                }
+                Some(hotkey.display())
+            }
+        };
+        self.settings.learn_hotkey = chord;
+        self.save_settings()
     }
 
     /// `SetCopyLastHotkey` (docs/dictation.md §28): `None` assigns none; a chord is validated like
@@ -3256,6 +3377,9 @@ impl Runtime {
                     && crate::Hotkey::same_chord(&hotkey.display(), edit)
                 {
                     return Err(CoreError::Invalid(format!("copy_last_hotkey: {} 已用作「编辑选中文本」的快捷键", hotkey.display())));
+                }
+                if self.learn_chord_is(&hotkey) {
+                    return Err(CoreError::Invalid(format!("copy_last_hotkey: {} 已用作「从选中文字学习」的快捷键", hotkey.display())));
                 }
                 Some(hotkey.display())
             }
@@ -3302,6 +3426,9 @@ impl Runtime {
                 }
                 if self.copy_last_chord_is(&hotkey) {
                     return Err(CoreError::Invalid(format!("edit_hotkey: {} 已用作「复制上一条结果」的快捷键", hotkey.display())));
+                }
+                if self.learn_chord_is(&hotkey) {
+                    return Err(CoreError::Invalid(format!("edit_hotkey: {} 已用作「从选中文字学习」的快捷键", hotkey.display())));
                 }
                 Some(hotkey.display())
             }

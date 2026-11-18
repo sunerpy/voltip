@@ -288,7 +288,9 @@ function SoloKeyRow({
  *  `settings.edit_hotkey` with its own recorder (`settings_set_edit_hotkey`, `null` = off) and the
  *  shell's `edit_registered` / `edit_error`; it needs the AI refine service, which the row says.
  *  复制上一条结果 (§28) is `settings.copy_last_hotkey` with a recorder of its own
- *  (`settings_set_copy_last_hotkey`, none by default) and `copy_last_registered` / `copy_last_error`. */
+ *  (`settings_set_copy_last_hotkey`, none by default) and `copy_last_registered` / `copy_last_error`;
+ *  从选中文字学习 (§35) likewise with `settings.learn_hotkey`, `settings_set_learn_hotkey` and
+ *  `learn_registered` / `learn_error`. */
 export function Hotkey() {
   const shell = useShell();
   const { backend } = useBackend();
@@ -355,20 +357,41 @@ export function Hotkey() {
   );
   const copyLastRecorder = useChordRecorder({ onCommit: saveCopyLast, onReject: reject });
   const copyLastRecording = copyLastRecorder.recording;
+  // docs/dictation.md §35: 从选中文字学习, recorded the same way; none by default.
+  const learnHotkey = state.settings.learn_hotkey ?? null;
+  const learnRegistered = learnHotkey !== null && status.learn_registered === learnHotkey;
+  const saveLearn = useCallback(
+    (combo: string | null) => {
+      void backend.invoke("settings_set_learn_hotkey", { hotkey: combo });
+    },
+    [backend],
+  );
+  const learnRecorder = useChordRecorder({ onCommit: saveLearn, onReject: reject });
+  const learnRecording = learnRecorder.recording;
+  // One recorder at a time.
   const startRecording = () => {
     editRecorder.cancel();
     copyLastRecorder.cancel();
+    learnRecorder.cancel();
     recorder.start();
   };
   const startEditRecording = () => {
     recorder.cancel();
     copyLastRecorder.cancel();
+    learnRecorder.cancel();
     editRecorder.start();
   };
   const startCopyLastRecording = () => {
     recorder.cancel();
     editRecorder.cancel();
+    learnRecorder.cancel();
     copyLastRecorder.start();
+  };
+  const startLearnRecording = () => {
+    recorder.cancel();
+    editRecorder.cancel();
+    copyLastRecorder.cancel();
+    learnRecorder.start();
   };
 
   const platformText = platform ? platformLabel(platform, locale) : "—";
@@ -579,6 +602,67 @@ export function Hotkey() {
             )}
           </div>
         </StatusRow>
+        {/* docs/dictation.md §35: 从选中文字学习. */}
+        <StatusRow label={t("learn.settings.label")} help={t("learn.settings.help")}>
+          <div
+            className={`flex h-11 items-center gap-3 rounded-10 bg-surface px-3 ${learnRecording ? "border-2 border-primary" : "hairline"}`}
+            data-testid="learn-hotkey-recorder"
+            data-recording={learnRecording ? "true" : "false"}>
+            {learnRecording ? (
+              learnRecorder.preview ? (
+                <Keycaps keys={learnRecorder.preview} />
+              ) : (
+                <LampText tone="ok" pulse>
+                  {t("settings.hotkey.recording")}
+                </LampText>
+              )
+            ) : learnHotkey === null ? (
+              <span className="text-[12px] text-fg-subtle" data-testid="learn-hotkey-status">
+                {t("learn.settings.none")}
+              </span>
+            ) : (
+              <>
+                <Keycaps keys={learnHotkey} />
+                <span className="text-[12px] text-fg-subtle" data-testid="learn-hotkey-status">
+                  {status.learn_error
+                    ? t("settings.hotkey.savedFailed")
+                    : learnRegistered
+                      ? t("settings.hotkey.savedOk")
+                      : t("settings.hotkey.savedWaiting")}
+                </span>
+              </>
+            )}
+            <Button
+              size="sm"
+              variant={learnRecording ? "ghost" : "primary"}
+              aria-label={
+                learnRecording
+                  ? t("learn.settings.cancelLabel")
+                  : learnHotkey === null
+                    ? t("learn.settings.recordLabel")
+                    : t("learn.settings.rerecordLabel")
+              }
+              onClick={learnRecording ? learnRecorder.cancel : startLearnRecording}>
+              {learnRecording
+                ? t("settings.hotkey.cancelRecording")
+                : learnHotkey === null
+                  ? t("learn.settings.record")
+                  : t("settings.hotkey.record")}
+            </Button>
+            {learnHotkey !== null && (
+              <Button
+                size="sm"
+                variant="ghost"
+                aria-label={t("learn.settings.clearLabel")}
+                onClick={() => {
+                  learnRecorder.cancel();
+                  saveLearn(null);
+                }}>
+                {t("learn.settings.clear")}
+              </Button>
+            )}
+          </div>
+        </StatusRow>
       </SettingsRows>
 
       <SettingsSection
@@ -678,6 +762,18 @@ export function Hotkey() {
             </Button>
           }>
           {status.copy_last_error}
+        </Banner>
+      )}
+      {status.learn_error && (
+        <Banner
+          tone="danger"
+          marker="bar"
+          actions={
+            <Button size="sm" onClick={startLearnRecording}>
+              {t("settings.hotkey.change")}
+            </Button>
+          }>
+          {status.learn_error}
         </Banner>
       )}
 

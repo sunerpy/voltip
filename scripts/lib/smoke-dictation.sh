@@ -61,15 +61,20 @@ PY
 # Settings for a take that ends in the injector: the custom provider's recognition at <asr_url>
 # (the mock; the custom endpoint needs no key), no refine; every
 # other value is the app default (澄空 theme, system locale, hold Ctrl+Alt+Space), so screenshots
-# look like a first start. voltip_smoke_settings <settings.json> <asr_url> [paste|clipboard_only] [relay: true|false]
+# look like a first start. The optional last argument is 从选中文字学习's shortcut (none by
+# default, docs/dictation.md §35).
+# voltip_smoke_settings <settings.json> <asr_url> [paste|clipboard_only] [relay: true|false] [learn shortcut]
 voltip_smoke_settings() {
   mkdir -p "$(dirname "$1")"
+  local learn=""
+  [ -n "${5:-}" ] && learn="\"learn_hotkey\": \"$5\","
   cat >"$1" <<JSON
 {
   "schema": 1,
   "theme": "glass",
   "follow_system_theme": false,
   "relay_enabled": ${4:-false},
+  ${learn}
   "engines": {
     "asr_provider": "custom",
     "providers": { "custom": { "asr_url": "$2", "asr_model": "voltip-smoke-mock" } },
@@ -192,6 +197,28 @@ except sqlite3.Error:
     sys.exit(0)
 if row:
     print(json.loads(row[0]).get("id", ""))
+PY
+}
+
+# The newest entry the user corrected (docs/dictation.md §35) as `text<TAB>corrected<TAB>via`
+# (empty when none), read the same way: voltip_smoke_last_corrected <history.sqlite3>
+voltip_smoke_last_corrected() {
+  python3 - "$1" <<'PY'
+import json, pathlib, sqlite3, sys
+path = pathlib.Path(sys.argv[1])
+if not path.is_file():
+    sys.exit(0)
+try:
+    conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+    rows = conn.execute("SELECT json FROM entries ORDER BY at_ms DESC, rowid DESC").fetchall()
+except sqlite3.Error:
+    sys.exit(0)
+for (row,) in rows:
+    e = json.loads(row)
+    c = e.get("corrected")
+    if c:
+        print(f"{e.get('text', '')}\t{c.get('text', '')}\t{c.get('via', '')}")
+        break
 PY
 }
 

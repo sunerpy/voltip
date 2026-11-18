@@ -19,7 +19,7 @@ use voltip_core::backup::auto::{AutoBackupFailure, AutoBackupFile, AutoBackupVie
 use voltip_core::connectivity::{ConnectivityReport, ConnectivityStatus, PeerCheck, ProbeResult, RelayCheck};
 use voltip_core::dictation::{ClipboardCode, FailureCode, InsertCheck, ProcessingStage, Via};
 use voltip_core::history::process::ProcessState;
-use voltip_core::history::{ImportedFile, ProcessedText};
+use voltip_core::history::{CorrectedText, CorrectionVia, ImportedFile, ProcessedText};
 use voltip_core::import::{ImportFailure, ImportJob, ImportState, ImportsView};
 use voltip_core::mcp::{HistoryRange, McpAction, McpActivity, McpClient, McpRead, McpSettings, McpStatus, McpWrite};
 use voltip_core::models_location::{ModelsLocationView, ModelsMove, ModelsMoveOutcome};
@@ -31,6 +31,7 @@ use voltip_core::trial::{TrialFailure, TrialResult, TrialView};
 use voltip_core::ui::{
     GpuDevice, HardwareStatus, HotkeyCapabilities, HotkeyStatus, NetworkStatus, RefineNotice, ServePhase, ServeStatus, UiEvent, UiState, UpdateStatus,
 };
+use voltip_core::vocabulary::{BatchUndoOutcome, SuggestionPick};
 use voltip_core::{
     Activation, AppRef, BuiltIn, BuiltinScene, CAPABILITY_OFFLINE, CAPABILITY_STREAMING, ChineseScript, ClipboardAfter, ContextSharing, DeviceConnection,
     DeviceView, DictationPhase, DictationStatus, DictionaryDraft, DictionaryEntry, EditRecord, EngineSettings, EngineStatus, EntrySource, FallbackModel,
@@ -40,7 +41,7 @@ use voltip_core::{
     SceneDraft, SceneMatch, SceneOverrides, SceneRef, Segment, ServiceKind, Settings, SoloKey, SoloLoss, SwitchedWindow, TakeContext, TakeKind, ThemeId,
     UserSecrets, VocabularyHit, VocabularyHits,
 };
-use voltip_core::{EntryOrigin, FailureKind, OriginKind, RelayFailure};
+use voltip_core::{EntryOrigin, FailureKind, LearnNotice, LearnOutcome, NoticeAccepted, OriginKind, RelayFailure};
 use voltip_crypto::{PublicKey, SafetyCode};
 use voltip_identity::{DeviceIdentityPublic, TrustedDevice};
 use voltip_pairing::{FailureReason, PairingState, Snapshot};
@@ -623,6 +624,7 @@ fn history_entries() -> Vec<HistoryEntry> {
             preset: Some(PresetRef { id: PresetId::Builtin(BuiltinPreset::Formal), name: "书面语".into() }),
             origin: None,
             processed: None,
+            corrected: None,
             file: None,
             // docs/dictation.md §30.1, §30.5: the take's timeline; its recognition got the glossary.
             timing: Some(take_timing()),
@@ -663,6 +665,7 @@ fn history_entries() -> Vec<HistoryEntry> {
             preset: None,
             origin: None,
             processed: None,
+            corrected: None,
             file: None,
             timing: None,
             glossary_sent: None,
@@ -701,6 +704,7 @@ fn history_entries() -> Vec<HistoryEntry> {
             preset: None,
             origin: None,
             processed: None,
+            corrected: None,
             file: None,
             timing: None,
             glossary_sent: None,
@@ -737,6 +741,7 @@ fn history_entries() -> Vec<HistoryEntry> {
             preset: None,
             origin: Some(EntryOrigin { device: "Pixel 8".into(), kind: OriginKind::Typed }),
             processed: None,
+            corrected: None,
             file: None,
             timing: None,
             glossary_sent: None,
@@ -781,6 +786,7 @@ fn imported_history_entry() -> HistoryEntry {
         preset: Some(PresetRef { id: PresetId::Builtin(BuiltinPreset::Proofread), name: "校对".into() }),
         origin: None,
         processed: None,
+        corrected: None,
         file: Some(ImportedFile { name: "季度会议.mp4".into(), duration_ms: 9_500 }),
         timing: None,
         glossary_sent: Some(false),
@@ -1310,6 +1316,8 @@ fn full_state() -> UiState {
             edit_error: None,
             copy_last_registered: Some("Ctrl+Shift+V".into()),
             copy_last_error: None,
+            learn_registered: Some("Ctrl+Alt+L".into()),
+            learn_error: None,
             capabilities: capabilities(true, true),
             solo_registered: Some(SoloKey::RightCtrl),
             solo_error: None,
@@ -1350,6 +1358,16 @@ fn full_state() -> UiState {
         dictionary: dictionary(),
         rules: rules(),
         vocabulary_ignored: ignored_pairs(),
+        learn_notice: Some(LearnNotice {
+            id: 3,
+            outcome: LearnOutcome::Learned {
+                pairs: vec![SuggestionPick { heard: "Quinn for".into(), polished: "Qwen 4".into(), history_id: uuid(HISTORY_ID) }],
+                safe: true,
+            },
+            shown: true,
+            accepted: None,
+            undone: None,
+        }),
         scenes: scenes(),
         phone_take: Some(PhoneTakeView {
             device: DESKTOP_KEY.to_hex(),
@@ -1453,6 +1471,7 @@ fn event_tag(event: &UiEvent) -> &'static str {
         UiEvent::Dictionary { .. } => "dictionary",
         UiEvent::Rules { .. } => "rules",
         UiEvent::VocabularyIgnored { .. } => "vocabulary_ignored",
+        UiEvent::LearnNotice { .. } => "learn_notice",
         UiEvent::Scenes { .. } => "scenes",
         UiEvent::Presets { .. } => "presets",
         UiEvent::PresetTry { .. } => "preset_try",
@@ -1604,6 +1623,11 @@ fn models_event(list: Vec<ModelState>) -> UiEvent {
 }
 
 /// Same for the dictionary and the rules (docs/dictation.md §16.4).
+/// A shown learn notice with `outcome` (docs/dictation.md §35).
+fn learn_notice(outcome: LearnOutcome) -> UiEvent {
+    UiEvent::LearnNotice { notice: Some(LearnNotice { id: 5, outcome, shown: true, accepted: None, undone: None }) }
+}
+
 fn dictionary_event(list: Vec<DictionaryEntry>) -> UiEvent {
     UiState::default().apply(voltip_core::CoreEvent::Dictionary(list))
 }
@@ -1679,6 +1703,8 @@ fn all_events() -> Vec<UiEvent> {
             edit_error: None,
             copy_last_registered: Some("Ctrl+Shift+V".into()),
             copy_last_error: None,
+            learn_registered: None,
+            learn_error: None,
             capabilities: capabilities(true, true),
             solo_registered: Some(SoloKey::MouseBack),
             solo_error: None,
@@ -1696,6 +1722,8 @@ fn all_events() -> Vec<UiEvent> {
             edit_error: Some("Ctrl+Alt+E 注册失败：already registered".into()),
             copy_last_registered: None,
             copy_last_error: Some("Ctrl+Shift+V 注册失败：already registered".into()),
+            learn_registered: None,
+            learn_error: Some("Ctrl+Alt+L 与另一个快捷键相同，未生效".into()),
             capabilities: capabilities(true, false),
             solo_registered: Some(SoloKey::RightAlt),
             solo_error: None,
@@ -1714,6 +1742,8 @@ fn all_events() -> Vec<UiEvent> {
             edit_error: None,
             copy_last_registered: None,
             copy_last_error: None,
+            learn_registered: None,
+            learn_error: None,
             capabilities: capabilities(false, false),
             solo_registered: None,
             solo_error: Some("右 Ctrl 无法单独触发：纯 Wayland 会话不允许应用监听全局按键".into()),
@@ -2129,6 +2159,11 @@ fn all_events() -> Vec<UiEvent> {
         }]),
         // docs/dictation.md §22: a long take processed with a preset keeps the result beside its text.
         history_event(vec![HistoryEntry { processed: Some(Box::new(processed_text())), ..history_entries().remove(0) }]),
+        // docs/dictation.md §35: the user's correction kept beside the inserted text.
+        history_event(vec![HistoryEntry {
+            corrected: Some(Box::new(CorrectedText { text: "我在用 Qwen 4 max 做测试".into(), at_ms: AT_MS + 60_000, via: CorrectionVia::Selection })),
+            ..history_entries().remove(0)
+        }]),
         // docs/dictation.md §22: a long take's text past 5000 characters waits on the clipboard.
         history_event(vec![HistoryEntry {
             outcome: Outcome::Clipboard { reason: voltip_core::dictation::long::TOO_LONG_TO_PASTE.into(), code: Some(ClipboardCode::TooLong) },
@@ -2259,6 +2294,45 @@ fn all_events() -> Vec<UiEvent> {
         // The pairs the learning suggestions leave out (docs/dictation.md §16.10), and none.
         UiEvent::VocabularyIgnored { pairs: ignored_pairs() },
         UiEvent::VocabularyIgnored { pairs: Vec::new() },
+        // The learn notice (docs/dictation.md §35): learned and waiting behind a take's result,
+        // shown after 加入词典 and its 撤销, each reason there was nothing to learn, and gone.
+        UiEvent::LearnNotice {
+            notice: Some(LearnNotice {
+                id: 4,
+                outcome: LearnOutcome::Learned {
+                    pairs: vec![SuggestionPick { heard: "Quinn for".into(), polished: "Qwen 4".into(), history_id: uuid(HISTORY_ID) }],
+                    safe: true,
+                },
+                shown: false,
+                accepted: None,
+                undone: None,
+            }),
+        },
+        UiEvent::LearnNotice {
+            notice: Some(LearnNotice {
+                id: 4,
+                outcome: LearnOutcome::Learned {
+                    pairs: vec![SuggestionPick { heard: "非书".into(), polished: "飞书".into(), history_id: uuid(HISTORY_ID) }],
+                    safe: true,
+                },
+                shown: true,
+                accepted: Some(NoticeAccepted { added: 1, refused: 0, undo: Some(uuid(HISTORY_ID)) }),
+                undone: Some(BatchUndoOutcome::Undone),
+            }),
+        },
+        learn_notice(LearnOutcome::Learned {
+            pairs: vec![SuggestionPick { heard: "非".into(), polished: "飞".into(), history_id: uuid(HISTORY_ID) }],
+            safe: false,
+        }),
+        learn_notice(LearnOutcome::NoPairs),
+        learn_notice(LearnOutcome::Unchanged),
+        learn_notice(LearnOutcome::NoMatch),
+        learn_notice(LearnOutcome::NoSelection),
+        learn_notice(LearnOutcome::TooLong { max: 8000 }),
+        learn_notice(LearnOutcome::Terminal),
+        learn_notice(LearnOutcome::HistoryOff),
+        learn_notice(LearnOutcome::Failed { message: "clipboard: 无法读取剪贴板".into() }),
+        UiEvent::LearnNotice { notice: None },
         // Voice edit (docs/dictation.md §19): the edit hotkey switched off, and an edit take in every
         // phase the pill discriminates on, with the four refusals.
         UiEvent::Settings(Settings { edit_hotkey: None, ..settings() }),
@@ -2558,6 +2632,7 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::SettingsSetHotkey { .. } => "SettingsSetHotkey",
         UiCommand::SettingsSetEditHotkey { .. } => "SettingsSetEditHotkey",
         UiCommand::SettingsSetCopyLastHotkey { .. } => "SettingsSetCopyLastHotkey",
+        UiCommand::SettingsSetLearnHotkey { .. } => "SettingsSetLearnHotkey",
         UiCommand::SettingsSetSoloKey { .. } => "SettingsSetSoloKey",
         UiCommand::SettingsSetMicrophone { .. } => "SettingsSetMicrophone",
         UiCommand::SettingsSetRecording { .. } => "SettingsSetRecording",
@@ -2586,6 +2661,10 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::DictationStop => "DictationStop",
         UiCommand::DictationCancel => "DictationCancel",
         UiCommand::DictationDismiss { .. } => "DictationDismiss",
+        UiCommand::LearnNoticeAccept { .. } => "LearnNoticeAccept",
+        UiCommand::LearnNoticeUndo { .. } => "LearnNoticeUndo",
+        UiCommand::LearnNoticeDismiss { .. } => "LearnNoticeDismiss",
+        UiCommand::LearnNoticeKeep { .. } => "LearnNoticeKeep",
         UiCommand::HotkeyEdge { .. } => "HotkeyEdge",
         UiCommand::SettingsSetActivation { .. } => "SettingsSetActivation",
         UiCommand::SettingsSetEngines { .. } => "SettingsSetEngines",
@@ -2596,6 +2675,7 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::HistoryDelete { .. } => "HistoryDelete",
         UiCommand::HistoryClear => "HistoryClear",
         UiCommand::HistoryStar { .. } => "HistoryStar",
+        UiCommand::HistoryClearCorrected { .. } => "HistoryClearCorrected",
         UiCommand::HistoryProcess { .. } => "HistoryProcess",
         UiCommand::HistoryProcessCancel { .. } => "HistoryProcessCancel",
         UiCommand::ModelDownload { .. } => "ModelDownload",
@@ -2669,6 +2749,8 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         ("settings_set_edit_hotkey", json!({ "hotkey": "Ctrl+Alt+Shift+E" }), "SettingsSetEditHotkey"),
         // docs/dictation.md §28: the 复制上一条结果 hotkey (`null` assigns none).
         ("settings_set_copy_last_hotkey", json!({ "hotkey": "Ctrl+Shift+V" }), "SettingsSetCopyLastHotkey"),
+        // docs/dictation.md §35: the 从选中文字学习 hotkey (`null` assigns none).
+        ("settings_set_learn_hotkey", json!({ "hotkey": "Ctrl+Alt+L" }), "SettingsSetLearnHotkey"),
         // docs/dictation.md §13.1: the lone-key trigger (`null` switches it off).
         ("settings_set_solo_key", json!({ "key": "mouse_back" }), "SettingsSetSoloKey"),
         ("settings_set_microphone", json!({ "device": "wasapi:{0.0.1.00000000}.{c2}" }), "SettingsSetMicrophone"),
@@ -2719,6 +2801,11 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         ("dictation_cancel", Value::Null, "DictationCancel"),
         // docs/dictation.md §28: the result card's 关闭, for the take whose card it is.
         ("dictation_dismiss", json!({ "session": 3 }), "DictationDismiss"),
+        // docs/dictation.md §35: the learn notice's buttons.
+        ("learn_notice_accept", json!({ "id": 4 }), "LearnNoticeAccept"),
+        ("learn_notice_undo", json!({ "id": 4 }), "LearnNoticeUndo"),
+        ("learn_notice_dismiss", json!({ "id": 4 }), "LearnNoticeDismiss"),
+        ("learn_notice_keep", json!({ "id": 4 }), "LearnNoticeKeep"),
         // The activation machine's inputs (docs/dictation.md §13): one CLI press — of the voice-edit
         // key (`voltip --edit-toggle`, §19) — and one mode change.
         ("hotkey_edge", json!({ "pressed": true, "atMs": AT_MS, "source": "cli", "purpose": "edit" }), "HotkeyEdge"),
@@ -2736,6 +2823,7 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         ("history_delete", json!({ "id": HISTORY_ID }), "HistoryDelete"),
         ("history_clear", Value::Null, "HistoryClear"),
         ("history_star", json!({ "id": HISTORY_ID, "starred": true }), "HistoryStar"),
+        ("history_clear_corrected", json!({ "id": HISTORY_ID }), "HistoryClearCorrected"),
         // 用 AI 预设处理 (docs/dictation.md §22).
         ("history_process", json!({ "requestId": 5, "id": HISTORY_ID, "preset": "notes" }), "HistoryProcess"),
         ("history_process_cancel", json!({ "requestId": 5 }), "HistoryProcessCancel"),
@@ -3218,6 +3306,7 @@ fn commands_fixture_is_the_wire_form_and_parses_into_every_variant() {
         "SettingsSetHotkey",
         "SettingsSetEditHotkey",
         "SettingsSetCopyLastHotkey",
+        "SettingsSetLearnHotkey",
         "SettingsSetSoloKey",
         "SettingsSetMicrophone",
         "SettingsSetRecording",
@@ -3238,6 +3327,10 @@ fn commands_fixture_is_the_wire_form_and_parses_into_every_variant() {
         "DictationStop",
         "DictationCancel",
         "DictationDismiss",
+        "LearnNoticeAccept",
+        "LearnNoticeUndo",
+        "LearnNoticeDismiss",
+        "LearnNoticeKeep",
         "HotkeyEdge",
         "SettingsSetActivation",
         "SettingsSetEngines",
@@ -3247,6 +3340,7 @@ fn commands_fixture_is_the_wire_form_and_parses_into_every_variant() {
         "HistoryDelete",
         "HistoryClear",
         "HistoryStar",
+        "HistoryClearCorrected",
         "ModelDownload",
         "ModelCancel",
         "ModelRemove",
@@ -3400,15 +3494,16 @@ fn vocabulary_backtest_fixture_matches_serde_output() {
 fn vocabulary_suggestions_fixture_matches_serde_output() {
     use voltip_core::mcp::candidates::PairExample;
     use voltip_core::vocabulary::{
-        AcceptOutcome, BatchAcceptOutcome, BatchIgnoreOutcome, BatchItem, BatchUndoOutcome, EntryClash, Refusal, RuleWarning, Suggestion, SuggestionUndo,
-        Suggestions, SuggestionsAnswer, UndoOutcome,
+        AcceptOutcome, BatchAcceptOutcome, BatchIgnoreOutcome, BatchItem, EntryClash, Refusal, RuleWarning, Suggestion, SuggestionUndo, Suggestions,
+        SuggestionsAnswer, UndoOutcome,
     };
     let ready = SuggestionsAnswer::Ready(Suggestions {
         scanned: 2000,
         refined: 1480,
         skipped: 3,
         total: 41,
-        repeated: 9,
+        repeated: 10,
+        edited: 2,
         pairs: vec![
             Suggestion {
                 heard: "维他命".into(),
@@ -3419,6 +3514,7 @@ fn vocabulary_suggestions_fixture_matches_serde_output() {
                     PairExample { history_id: uuid(HISTORY_ID), snippet: "维他命的安装包发给我".into() },
                     PairExample { history_id: uuid(HISTORY_ID_2), snippet: "…今天用维他命跑了一遍回归".into() },
                 ],
+                from_edits: 0,
             },
             Suggestion {
                 heard: "提成".into(),
@@ -3426,6 +3522,16 @@ fn vocabulary_suggestions_fixture_matches_serde_output() {
                 count: 3,
                 last_at_ms: AT_MS - 86_400_000,
                 examples: vec![PairExample { history_id: uuid(HISTORY_ID_3), snippet: "提成在 Teams 里面".into() }],
+                from_edits: 0,
+            },
+            // docs/dictation.md §35: a pair the user corrected in the application, once.
+            Suggestion {
+                heard: "Quinn for".into(),
+                polished: "Qwen 4".into(),
+                count: 1,
+                last_at_ms: AT_MS - 3_600_000,
+                examples: vec![PairExample { history_id: uuid(HISTORY_ID_2), snippet: "我在用 Quinn for max 做测试".into() }],
+                from_edits: 1,
             },
         ],
     });

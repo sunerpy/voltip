@@ -166,6 +166,7 @@ impl Runtime {
             preset: None,
             origin: Some(EntryOrigin { device: text.name, kind: origin_kind(text.source) }),
             processed: None,
+            corrected: None,
             file: None,
             timing: None,
             glossary_sent: None,

@@ -192,6 +192,11 @@ export interface Backend {
   overlayPaste(text: string): Promise<PasteOutcome>;
   /** The result card's 打开历史 (`open_history`, §28): the main window comes up on the history page. */
   openHistory(): Promise<void>;
+  /** The learn notice's 查看 (`open_suggestions`, docs/dictation.md §35): the main window comes up
+   *  on the dictionary's learning suggestions. */
+  openSuggestions(): Promise<void>;
+  /** The learn notice's 打开设置 (`open_privacy`, §35): the main window comes up on 设置 › 隐私. */
+  openPrivacy(): Promise<void>;
   /** Open the vendor's API-key page (`site`'s, for a vendor with several, docs/dictation.md
    *  §3.2), with `page: "quota"` its page of free quota and usage, or with `page: "setup"` the page
    *  where its service is activated (§3.16), in the browser (`provider_console_open`); the shell

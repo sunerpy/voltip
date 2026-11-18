@@ -43,7 +43,8 @@ export const AI_ROUTE: Route = { name: "ai" };
 export type Route =
   | { name: "home" }
   | { name: "history"; filter?: string }
-  | { name: "dictionary" }
+  /** `view: "suggestions"`: open the learning suggestions (the learn notice's 查看, §35). */
+  | { name: "dictionary"; view?: "suggestions" }
   /** `compose`: open the editor on a new rule (the palette's 新建规则), then drop the flag. */
   | { name: "rules"; compose?: true }
   | { name: "devices" }
@@ -80,7 +81,9 @@ export function parseRoute(path: string): Route {
       return filter === null ? { name: "history" } : { name: "history", filter };
     }
     case "dictionary":
-      return { name: "dictionary" };
+      return second === "suggestions"
+        ? { name: "dictionary", view: "suggestions" }
+        : { name: "dictionary" };
     case "rules":
       return params.get("new") === "1" ? { name: "rules", compose: true } : { name: "rules" };
     case "engines":
@@ -142,6 +145,7 @@ export function routePath(route: Route): string {
     case "speech":
       return route.section === undefined ? "/speech" : `/speech/${route.section}`;
     case "dictionary":
+      return route.view === undefined ? "/dictionary" : `/dictionary/${route.view}`;
     case "devices":
     case "usage":
     case "feedback":

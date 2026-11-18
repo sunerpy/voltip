@@ -54,6 +54,15 @@ const DESKTOP_ONLY: &[&str] = &[
     // The dictionary's learning suggestions (docs/dictation.md §16.10) are the desktop's.
     "vocabulary_suggestion_ignore",
     "vocabulary_suggestion_unignore",
+    // 从选中文字学习 (docs/dictation.md §35): the desktop's hotkey, pill and history detail.
+    "settings_set_learn_hotkey",
+    "learn_notice_accept",
+    "learn_notice_undo",
+    "learn_notice_dismiss",
+    "learn_notice_keep",
+    "history_clear_corrected",
+    "open_suggestions",
+    "open_privacy",
     // The automatic backups (docs/dictation.md §4.6.1) are the desktop's.
     "settings_set_backup",
     "backup_folder_choose",

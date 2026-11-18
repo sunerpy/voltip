@@ -51,7 +51,7 @@ import {
   useHistoryProcess,
 } from "../../features/history/LongEntryTools";
 import { textChars } from "../../features/history/stats";
-import { EditDetail, TimingBar, VocabularyHits } from "./DetailParts";
+import { CorrectedDetail, EditDetail, TimingBar, VocabularyHits } from "./DetailParts";
 import { DiffText, MarkedText } from "./FixText";
 import { type CardOpen, KnownCard, QuickFixCard, type SavedFix } from "./QuickFixCard";
 import { SelectionToolbar } from "./SelectionToolbar";
@@ -652,6 +652,7 @@ export function HistoryDetail({
           {t("history.liveError", { reason: entry.live_error })}
         </p>
       )}
+      <CorrectedDetail entry={entry} />
       {entry.vocabulary !== undefined && <VocabularyHits hits={entry.vocabulary} t={t} />}
       {!sentAsText(entry) && <TimingBar entry={entry} t={t} />}
       <div className="grid grid-cols-2 gap-x-6 gap-y-2 border-t border-border pt-3">

@@ -361,6 +361,7 @@ describe("TauriBackend", () => {
       skipped: 0,
       total: 0,
       repeated: 0,
+      edited: 0,
       pairs: [],
     };
     const undo = { id: "u", entry_id: "e", term: "Voltip", created: true, previous_heard_as: [] };

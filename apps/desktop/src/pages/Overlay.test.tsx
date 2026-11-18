@@ -4,6 +4,7 @@ import {
   livePreviewText,
   type DictationPhase,
   type DictationStatus,
+  type LearnNotice,
   type PasteOutcome,
 } from "@voltip/shared";
 import {
@@ -1362,5 +1363,111 @@ describe("Overlay result cards (docs/dictation.md §28)", () => {
     expect(pill).toHaveTextContent("已复制上一条结果");
     expect(screen.queryAllByRole("button")).toEqual([]);
     expect(isOverlayWindowState("copied", false)).toBe(true);
+  });
+});
+
+describe("Overlay learn notice (docs/dictation.md §35)", () => {
+  const pick = {
+    heard: "Quinn for",
+    polished: "Qwen 4",
+    history_id: "00000000-0000-4000-8000-000000000035",
+  };
+  const learned = (safe: boolean, more: Partial<LearnNotice> = {}): LearnNotice => ({
+    id: 3,
+    outcome: { kind: "learned", pairs: [pick], safe },
+    shown: true,
+    ...more,
+  });
+  const buttons = () =>
+    within(screen.getByTestId("overlay-window"))
+      .queryAllByRole("button")
+      .map((b) => b.getAttribute("aria-label") ?? b.textContent ?? "");
+  /** The window once the core's state (with the notice) has arrived. */
+  const notice = async () => {
+    await waitFor(() => {
+      expect(screen.getByTestId("overlay-window")).toHaveAttribute("data-state", "learned");
+    });
+    return screen.getByTestId("overlay-window");
+  };
+
+  it("offers the pair with 加入词典 and 查看, and the buttons go to the core and the shell", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend({ now: () => Date.now() });
+    const invoke = vi.spyOn(backend, "invoke");
+    const view = vi.spyOn(backend, "openSuggestions");
+    backend.showLearnNotice(learned(true));
+    renderApp({ path: "/overlay?state=learned", backend });
+    const pill = await notice();
+    expect(pill).toHaveTextContent("已记下 1 处改动：Quinn for → Qwen 4");
+    expect(buttons()).toEqual(["加入词典", "查看", "关闭"]);
+    await user.click(screen.getByRole("button", { name: "查看" }));
+    expect(view).toHaveBeenCalledTimes(1);
+    // D3: every button starts the notice's 8 seconds again, 查看 included.
+    expect(invoke).toHaveBeenCalledWith("learn_notice_keep", { id: 3 });
+    await user.click(screen.getByRole("button", { name: "加入词典" }));
+    expect(invoke).toHaveBeenCalledWith("learn_notice_accept", { id: 3 });
+    await user.click(screen.getByRole("button", { name: "关闭" }));
+    expect(invoke).toHaveBeenCalledWith("learn_notice_dismiss", { id: 3 });
+  });
+
+  it("a short spelling is only viewed; after 加入词典 there is 撤销, then what it did", async () => {
+    const backend = new MockBackend({ now: () => Date.now() });
+    backend.showLearnNotice(learned(false));
+    renderApp({ path: "/overlay?state=learned", backend });
+    await notice();
+    expect(buttons()).toEqual(["查看", "关闭"]);
+    act(() => {
+      backend.showLearnNotice(learned(true, { accepted: { added: 1, refused: 0, undo: "batch" } }));
+    });
+    expect(screen.getByTestId("overlay-window")).toHaveTextContent(
+      "已加入词典：Quinn for → Qwen 4",
+    );
+    expect(buttons()).toEqual(["撤销", "关闭"]);
+    act(() => {
+      backend.showLearnNotice(learned(true, { accepted: { added: 1, refused: 1, undo: "batch" } }));
+    });
+    expect(screen.getByTestId("overlay-window")).toHaveTextContent("1 处已加入，1 处无法加入");
+    expect(buttons()).toEqual(["查看", "撤销", "关闭"]);
+    act(() => {
+      backend.showLearnNotice(
+        learned(true, {
+          accepted: { added: 1, refused: 0, undo: "batch" },
+          undone: { kind: "undone" },
+        }),
+      );
+    });
+    expect(screen.getByTestId("overlay-window")).toHaveTextContent("已撤销");
+  });
+
+  it("says why there was nothing to learn, and offers the privacy settings while the history is off", async () => {
+    const user = userEvent.setup();
+    const backend = new MockBackend({ now: () => Date.now() });
+    const privacy = vi.spyOn(backend, "openPrivacy");
+    const invoke = vi.spyOn(backend, "invoke");
+    const say = (outcome: LearnNotice["outcome"]) => {
+      act(() => {
+        backend.showLearnNotice({ id: 4, outcome, shown: true });
+      });
+      return screen.getByTestId("overlay-window").textContent;
+    };
+    backend.showLearnNotice({ id: 4, outcome: { kind: "no_match" }, shown: true });
+    renderApp({ path: "/overlay?state=learned", backend });
+    expect(await notice()).toHaveTextContent("最近 50 次听写里没有找到这段文字");
+    expect(say({ kind: "no_selection" })).toContain("没有选中文字");
+    expect(say({ kind: "unchanged" })).toContain("选中的文字和听写结果相同");
+    expect(say({ kind: "no_pairs" })).toContain("没有可以加入词典的改动");
+    expect(say({ kind: "too_long", max: 8000 })).toContain("最多 8000 字");
+    expect(say({ kind: "terminal" })).toContain("终端里的文字不能用来学习");
+    expect(say({ kind: "failed", message: "clipboard busy" })).toContain(
+      "无法读取选中的文字：clipboard busy",
+    );
+    expect(say({ kind: "history_off" })).toContain("需要先开启历史记录");
+    await user.click(screen.getByRole("button", { name: "打开设置" }));
+    expect(privacy).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledWith("learn_notice_keep", { id: 4 });
+    act(() => {
+      backend.showLearnNotice(null);
+    });
+    expect(screen.getByTestId("overlay-window")).toHaveAttribute("data-state", "blank");
   });
 });

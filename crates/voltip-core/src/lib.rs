@@ -66,8 +66,8 @@ pub use providers::{
     key_env_var, load_user_secrets, merge_credentials, peek_user_secrets, stored_credential_set,
 };
 pub use runtime::{
-    AUTO_WEEKLY_DELAY, AppCore, CoreCommand, CoreConfig, CoreEvent, CoreHandle, EXTRA_RECORDING_POLL, MAX_ACTIVATION_MS, PRESET_TRY_UNCONFIGURED,
-    SERVE_UNAVAILABLE, TestHooks, now_ms,
+    AUTO_WEEKLY_DELAY, AppCore, CoreCommand, CoreConfig, CoreEvent, CoreHandle, EXTRA_RECORDING_POLL, LEARN_NOTICE_DWELL, LearnNotice, LearnOutcome,
+    MAX_ACTIVATION_MS, NoticeAccepted, PRESET_TRY_UNCONFIGURED, SERVE_UNAVAILABLE, TestHooks, now_ms,
 };
 pub use scenes::{AppRef, BuiltinScene, ContextSharing, Scene, SceneDraft, SceneError, SceneMatch, SceneOverrides, SceneRef, TakeContext};
 pub use settings::{

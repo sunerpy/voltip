@@ -1042,6 +1042,63 @@ describe("Settings · 热键", () => {
     expect(screen.getByTestId("copy-last-hotkey-status")).toHaveTextContent("未设置");
   });
 
+  it("docs/dictation.md section 35: 从选中文字学习 has its own recorder, none by default, and refuses the other three chords", async () => {
+    const user = userEvent.setup();
+    const { backend } = renderApp({ path: "/settings/hotkey" });
+    const learn = await screen.findByTestId("learn-hotkey-recorder");
+    const copyLast = screen.getByTestId("copy-last-hotkey-recorder");
+    expect(screen.getByText("从选中文字学习")).toBeInTheDocument();
+    expect(screen.getByText(/选中改好的文字按这个快捷键/)).toBeInTheDocument();
+    expect(screen.getByTestId("learn-hotkey-status")).toHaveTextContent("未设置");
+    expect(screen.queryByRole("button", { name: "清除 · 从选中文字学习" })).toBeNull();
+    // One recorder at a time.
+    await user.click(screen.getByRole("button", { name: "录制 · 复制上一条结果" }));
+    expect(copyLast).toHaveAttribute("data-recording", "true");
+    await user.click(screen.getByRole("button", { name: "录制 · 从选中文字学习" }));
+    expect(copyLast).toHaveAttribute("data-recording", "false");
+    expect(learn).toHaveAttribute("data-recording", "true");
+    await user.keyboard("{Control>}{Alt>}{l>}");
+    await user.keyboard("{/l}{/Alt}{/Control}");
+    await waitFor(() => {
+      expect(backend.peek().settings.learn_hotkey).toBe("Ctrl+Alt+L");
+    });
+    expect(screen.getByTestId("learn-hotkey-status")).toHaveTextContent("已保存 · 快捷键已生效");
+    // The voice edit's chord is refused with the core's reason; the chord stays.
+    await user.click(screen.getByRole("button", { name: "重新录制 · 从选中文字学习" }));
+    await user.keyboard("{Control>}{Alt>}{e>}{/e}{/Alt}{/Control}");
+    await waitFor(() => {
+      expect(
+        backend.log.some(
+          (e) =>
+            e.type === "error" &&
+            e.message === "learn_hotkey: Ctrl+Alt+E 已用作「编辑选中文本」的快捷键",
+        ),
+      ).toBe(true);
+    });
+    expect(backend.peek().settings.learn_hotkey).toBe("Ctrl+Alt+L");
+    // The shell could not register it: the row says so and the banner offers a new chord.
+    act(() => {
+      backend.publish({
+        type: "hotkey",
+        registered: DEFAULT_HOTKEY,
+        learn_error: "Ctrl+Alt+L 与另一个快捷键相同，未生效",
+        pressed: false,
+        capturing: false,
+        backend: "global-shortcut · Windows · RegisterHotKey",
+      });
+    });
+    expect(await screen.findByText("Ctrl+Alt+L 与另一个快捷键相同，未生效")).toBeInTheDocument();
+    expect(screen.getByTestId("learn-hotkey-status")).toHaveTextContent("已保存 · 未能生效");
+    await user.click(screen.getByRole("button", { name: "更换快捷键" }));
+    expect(learn).toHaveAttribute("data-recording", "true");
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "清除 · 从选中文字学习" }));
+    await waitFor(() => {
+      expect(backend.peek().settings).not.toHaveProperty("learn_hotkey");
+    });
+    expect(screen.getByTestId("learn-hotkey-status")).toHaveTextContent("未设置");
+  });
+
   it("regression: without a refine key the edit row says it needs the AI refine service (section 19)", async () => {
     const backend = new MockBackend({
       settings: { engines: { ...defaultEngineSettings(), llm_provider: "groq" } },

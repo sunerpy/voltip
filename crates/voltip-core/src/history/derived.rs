@@ -72,7 +72,8 @@ pub(super) const fn outcome_name(outcome: &Outcome) -> &'static str {
 /// The text `history_query` searches: the fields the history page searched when it filtered in the
 /// webview — a built-in scene's name in both languages, the text, the transcript, both models, the
 /// application's name and id, the scene's name, the voice edit's instruction and selection — the
-/// processed text (docs/dictation.md §22) and an imported file's name (§31), each lowercased on its
+/// processed text (docs/dictation.md §22), the user's correction (§35) and an imported file's name
+/// (§31), each lowercased on its
 /// own and joined by [`FIELD_SEPARATOR`].
 pub(super) fn search_text(entry: &HistoryEntry) -> String {
     let builtin = entry.scene.as_ref().and_then(|s| s.builtin);
@@ -89,6 +90,7 @@ pub(super) fn search_text(entry: &HistoryEntry) -> String {
         entry.edit.as_ref().map(|e| e.instruction.as_str()),
         entry.edit.as_ref().map(|e| e.selection.as_str()),
         entry.processed.as_ref().map(|p| p.text.as_str()),
+        entry.corrected.as_ref().map(|c| c.text.as_str()),
         entry.file.as_ref().map(|f| f.name.as_str()),
     ];
     let mut out = String::new();

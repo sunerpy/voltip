@@ -189,6 +189,12 @@ pub struct HistoryEntry {
     /// was. Absent until it ran. Boxed: most entries have none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub processed: Option<Box<ProcessedText>>,
+    /// What the user corrected the inserted text to in the application it went to, as 从选中文字学习
+    /// read it (docs/dictation.md §35): the whole take with the user's wording where they changed
+    /// it. The learning suggestions learn from it; `text` stays what was inserted. Absent until the
+    /// user taught it, and in entries written before it. Boxed: most entries have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corrected: Option<Box<CorrectedText>>,
     /// The audio or video file the entry was transcribed from (docs/dictation.md §31); absent for
     /// takes and in entries written before it. Such an entry is no dictation of the user's: it
     /// counts toward no statistics and teaches the dictionary nothing.
@@ -224,6 +230,29 @@ pub struct ProcessedText {
     pub preset: PresetRef,
     /// Unix time in milliseconds.
     pub at_ms: u64,
+}
+
+/// The user's correction of a take (docs/dictation.md §35): the take's whole text as they left it,
+/// when it was read, and how.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct CorrectedText {
+    /// The take's text with the user's wording.
+    pub text: String,
+    /// Unix time in milliseconds.
+    pub at_ms: u64,
+    /// How Voltip read it.
+    pub via: CorrectionVia,
+}
+
+/// How a correction was read (docs/dictation.md §35).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CorrectionVia {
+    /// The user selected the corrected text and asked Voltip to learn from it (从选中文字学习).
+    Selection,
+    /// Read from the text field the take went to after the paste: the experimental field
+    /// tracking of a later version writes it. This version writes none, and loads it.
+    Follow,
 }
 
 /// The other device of an entry: on a computer the phone it came from (`take`, `typed`,

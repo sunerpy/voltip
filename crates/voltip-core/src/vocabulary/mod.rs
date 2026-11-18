@@ -12,6 +12,7 @@
 
 mod backtest;
 mod ignored;
+pub mod learn;
 mod matcher;
 pub mod packs;
 mod store;
@@ -32,7 +33,7 @@ pub use store::{DICTIONARY_FILE_NAME, DictionaryStore, RULES_FILE_NAME, RuleStor
 pub use suggest::{
     AcceptOutcome, Accepted, AcceptedBatch, Batch, BatchAcceptOutcome, BatchIgnoreOutcome, BatchItem, BatchLog, BatchUndoOutcome, EntryClash, MAX_BATCH,
     MAX_SUGGESTIONS, MAX_UNDOS, REPEATED_MIN, Refusal, Reply, Suggestion, SuggestionPair, SuggestionPick, SuggestionUndo, Suggestions, SuggestionsAnswer,
-    UndoLog, UndoOutcome, accept, accept_batch, suggestions, undo, undo_batch,
+    UndoLog, UndoOutcome, accept, accept_batch, edit_picks, suggestions, undo, undo_batch,
 };
 pub use toml_io::{RULES_TOML_VERSION, export_rules_toml, parse_rules_toml};
 

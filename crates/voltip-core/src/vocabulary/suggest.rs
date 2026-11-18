@@ -21,7 +21,7 @@ use super::{
     Vocabulary, validate_dictionary_draft,
 };
 use crate::history::HistoryText;
-use crate::mcp::candidates::{MAX_PAIRS, PairExample, candidates};
+use crate::mcp::candidates::{MAX_PAIRS, Pair, PairExample, scan, tally, widen};
 
 /// Most suggestions one call returns (the MCP tool's [`MAX_PAIRS`]).
 pub const MAX_SUGGESTIONS: usize = MAX_PAIRS;
@@ -33,12 +33,13 @@ pub const MAX_BATCH: usize = MAX_SUGGESTIONS;
 /// The count from which a suggestion is repeated: the page lists those by default.
 pub const REPEATED_MIN: u32 = 2;
 
-/// One suggestion: a pair the AI clean-up changed, counted over the takes.
+/// One suggestion: a pair the AI clean-up changed, or the user corrected in the application the
+/// take went to (docs/dictation.md §35), counted over the takes.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Suggestion {
     /// What the recogniser wrote.
     pub heard: String,
-    /// What the polished text has instead.
+    /// What the polished text has instead, or what the user corrected it to: the right spelling.
     pub polished: String,
     /// How often, in all takes scanned.
     pub count: u32,
@@ -46,6 +47,13 @@ pub struct Suggestion {
     pub last_at_ms: u64,
     /// Up to three snippets of the recognised text around it, newest first.
     pub examples: Vec<PairExample>,
+    /// Of `count`, the times the user's own correction made it; the rest the AI clean-up did.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub from_edits: u32,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 /// The suggestions over the recent takes.
@@ -59,10 +67,13 @@ pub struct Suggestions {
     pub skipped: u32,
     /// Suggestions in all, before `pairs` was cut to the limit.
     pub total: u32,
-    /// Of `total`, the suggestions counted [`REPEATED_MIN`] times or more: what the page shows by
-    /// default.
+    /// Of `total`, the suggestions counted [`REPEATED_MIN`] times or more, and those the user
+    /// corrected themselves (`from_edits`, even once): what the page shows by default (推荐).
     #[serde(default)]
     pub repeated: u32,
+    /// Of the takes looked at, those the user corrected (docs/dictation.md §35).
+    #[serde(default)]
+    pub edited: u32,
     /// The suggestions, most frequent first, then the most recent.
     pub pairs: Vec<Suggestion>,
 }
@@ -78,30 +89,79 @@ pub enum SuggestionsAnswer {
     Ready(Suggestions),
 }
 
-/// The pairs of `history` (newest first) the AI clean-up made, as [`candidates`] counts them,
-/// without the ones `dictionary` corrects already (`known`) and the ones in `ignored`, most
-/// frequent first, then the most recent; at most `limit` of them in `pairs`.
+/// A counted pair the ignored list leaves out: the pair itself, or the single characters it was
+/// widened from (docs/dictation.md §16.10), so a pair ignored before the widening stays ignored.
+fn is_ignored(ignored: &[IgnoredPair], pair: &Pair) -> bool {
+    ignored
+        .iter()
+        .any(|i| (i.heard == pair.heard && i.polished == pair.polished) || pair.single.as_ref().is_some_and(|(h, p)| i.heard == *h && i.polished == *p))
+}
+
+/// The pairs of `history` (newest first): those the AI clean-up made and those the user corrected
+/// (docs/dictation.md §35), widened when they were single characters and counted together
+/// ([`crate::mcp::candidates`]), without the ones `dictionary` corrects already (`known`) and the
+/// ones in `ignored`; most frequent first, then the most recent; at most `limit` of them in `pairs`.
 pub fn suggestions(dictionary: &[DictionaryEntry], rules: &[ReplacementRule], history: &[HistoryText], ignored: &[IgnoredPair], limit: usize) -> Suggestions {
-    let found = candidates(dictionary, rules, history, None, usize::MAX);
-    let scanned = usize::try_from(found.scanned).unwrap_or(usize::MAX).min(history.len());
-    let mut pairs: Vec<Suggestion> = found
-        .pairs
+    let read = scan(dictionary, rules, history, None, true);
+    let scanned = usize::try_from(read.scanned).unwrap_or(usize::MAX).min(history.len());
+    let mut pairs: Vec<Suggestion> = tally(dictionary, history, widen(history, &read))
         .into_iter()
-        .filter(|p| !p.known && !ignored.iter().any(|i| i.heard == p.heard && i.polished == p.polished))
-        .map(|p| Suggestion { heard: p.heard, polished: p.polished, count: p.count, last_at_ms: p.last_at_ms, examples: p.examples })
+        .filter(|p| !p.known && !is_ignored(ignored, p))
+        .map(|p| Suggestion { heard: p.heard, polished: p.polished, count: p.count, last_at_ms: p.last_at_ms, examples: p.examples, from_edits: p.from_edits })
         .collect();
-    pairs.sort_by(|a, b| b.count.cmp(&a.count).then(b.last_at_ms.cmp(&a.last_at_ms)));
     let total = u32::try_from(pairs.len()).unwrap_or(u32::MAX);
-    let repeated = u32::try_from(pairs.iter().filter(|p| p.count >= REPEATED_MIN).count()).unwrap_or(u32::MAX);
+    let repeated = u32::try_from(pairs.iter().filter(|p| p.count >= REPEATED_MIN || p.from_edits > 0).count()).unwrap_or(u32::MAX);
     pairs.truncate(limit);
     Suggestions {
-        scanned: found.scanned,
+        scanned: read.scanned,
         refined: u32::try_from(history[..scanned].iter().filter(|t| t.refined).count()).unwrap_or(u32::MAX),
-        skipped: found.skipped,
+        skipped: read.skipped,
         total,
         repeated,
+        edited: read.edited,
         pairs,
     }
+}
+
+/// The pairs the user's corrections of the takes `ids` give, counted as [`suggestions`] counts
+/// them over `history` (so widened the same way), without the known and the ignored ones, in the
+/// order the takes come: what the notice of 从选中文字学习 offers (docs/dictation.md §35). Each
+/// pick names the first of `ids` it came from.
+pub fn edit_picks(
+    dictionary: &[DictionaryEntry],
+    rules: &[ReplacementRule],
+    history: &[HistoryText],
+    ignored: &[IgnoredPair],
+    ids: &[Uuid],
+) -> Vec<SuggestionPick> {
+    let read = scan(dictionary, rules, history, None, true);
+    let known: Vec<&str> = dictionary.iter().filter(|e| e.enabled).flat_map(|e| e.heard_as.iter().map(String::as_str)).collect();
+    let is_known = |heard: &str| known.iter().any(|k| k.eq_ignore_ascii_case(heard));
+    let mut picks: Vec<SuggestionPick> = Vec::new();
+    for counted in widen(history, &read) {
+        let take = &history[counted.found.take];
+        if !counted.found.edit || !ids.contains(&take.id) {
+            continue;
+        }
+        let pair = Pair {
+            heard: counted.found.heard,
+            polished: counted.found.right,
+            count: 1,
+            last_at_ms: take.at_ms,
+            known: false,
+            examples: Vec::new(),
+            from_edits: 1,
+            single: counted.single,
+        };
+        let known_single = pair.single.as_ref().is_some_and(|(h, _)| is_known(h));
+        if is_known(&pair.heard) || known_single || is_ignored(ignored, &pair) {
+            continue;
+        }
+        if !picks.iter().any(|p| p.heard == pair.heard && p.polished == pair.polished) {
+            picks.push(SuggestionPick { heard: pair.heard, polished: pair.polished, history_id: take.id });
+        }
+    }
+    picks
 }
 
 /// How an entry stands in the way of an accept.
@@ -637,7 +697,15 @@ mod tests {
     use crate::vocabulary::{RuleKind, VocabularyHits};
 
     fn take(raw: &str, text: &str, at_ms: u64) -> HistoryText {
-        HistoryText { id: Uuid::new_v4(), at_ms, raw_text: raw.into(), text: text.into(), refined: true, vocabulary: VocabularyHits::default() }
+        HistoryText {
+            id: Uuid::new_v4(),
+            at_ms,
+            raw_text: raw.into(),
+            text: text.into(),
+            refined: true,
+            vocabulary: VocabularyHits::default(),
+            corrected: None,
+        }
     }
 
     fn rule(name: &str, kind: RuleKind, pattern: &str, replacement: &str) -> ReplacementRule {
@@ -691,14 +759,92 @@ mod tests {
         let history = history();
         let out = suggestions(&[], &[], &history, &[], MAX_SUGGESTIONS);
         assert_eq!((out.scanned, out.refined, out.skipped, out.total), (5, 4, 0, 3));
-        assert_eq!(pairs(&out), [("非", "飞", 2), ("维他命", "Voltip", 1), ("库伯内特斯", "Kubernetes", 1)], "count, then the newest first");
+        assert_eq!(
+            pairs(&out),
+            [("非书", "飞书", 2), ("维他命", "Voltip", 1), ("库伯内特斯", "Kubernetes", 1)],
+            "count, then the newest first; 非 → 飞 widened"
+        );
         assert_eq!(out.pairs[0].last_at_ms, 40);
         assert_eq!(out.pairs[0].examples.iter().map(|e| e.history_id).collect::<Vec<_>>(), [history[1].id, history[2].id], "newest first");
         assert_eq!(out.pairs[1].examples[0].snippet, "我们用维他命开会");
         let one = suggestions(&[], &[], &history, &[], 1);
-        assert_eq!((one.total, pairs(&one)), (3, vec![("非", "飞", 2)]), "the limit cuts the list, the total stays");
+        assert_eq!((one.total, pairs(&one)), (3, vec![("非书", "飞书", 2)]), "the limit cuts the list, the total stays");
         let none = suggestions(&[], &[], &[], &[], MAX_SUGGESTIONS);
         assert_eq!((none.scanned, none.refined, none.total, none.pairs.len()), (0, 0, 0, 0));
+    }
+
+    /// A take whose text was inserted as recognised, then corrected by the user to `corrected`.
+    fn corrected(text: &str, corrected: &str, at_ms: u64) -> HistoryText {
+        HistoryText { refined: false, corrected: Some(corrected.into()), ..take(text, text, at_ms) }
+    }
+
+    /// docs/dictation.md §35: the user's corrections are a second source, counted with the
+    /// clean-up's pairs; one correction is enough to be shown by default.
+    #[test]
+    fn the_users_corrections_are_counted_with_the_clean_ups_pairs() {
+        let history = vec![
+            corrected("我在用 Quinn for max 做测试", "我在用 Qwen 4 max 做测试", 50),
+            corrected("发到非书群", "发到飞书群", 40),
+            take("又是非书", "又是飞书。", 30),
+            take("库伯内特斯部署", "Kubernetes 部署", 20),
+        ];
+        let out = suggestions(&[], &[], &history, &[], MAX_SUGGESTIONS);
+        let got: Vec<(&str, &str, u32, u32)> = out.pairs.iter().map(|p| (p.heard.as_str(), p.polished.as_str(), p.count, p.from_edits)).collect();
+        assert_eq!(got, [("非书", "飞书", 2, 1), ("Quinn for", "Qwen 4", 1, 1), ("库伯内特斯", "Kubernetes", 1, 0)]);
+        assert_eq!((out.scanned, out.refined, out.edited, out.total, out.repeated), (4, 2, 2, 3, 2), "corrected once is shown by default");
+        assert_eq!(out.pairs[1].examples[0].snippet, "我在用 Quinn for max 做测试");
+        assert_eq!(out.pairs[1].examples[0].history_id, history[0].id);
+        let json = serde_json::to_value(&out.pairs[2]).unwrap();
+        assert!(json.get("from_edits").is_none(), "left off the wire when none: {json}");
+    }
+
+    /// Regression (goal review of PR #260, 2026-11-18): the user's corrections count each pair once
+    /// per take (plan 4.7), however often the take holds it; and a corrected take too long to
+    /// compare is still one of the `edited` takes read, as a skipped polished one is `refined`.
+    #[test]
+    fn regression_a_correction_counts_once_per_take_and_a_skipped_one_is_still_edited() {
+        let history = vec![corrected("Quinn for max 和 Quinn for max 都试过", "Qwen 4 max 和 Qwen 4 max 都试过", 50)];
+        let out = suggestions(&[], &[], &history, &[], MAX_SUGGESTIONS);
+        let got: Vec<(&str, &str, u32, u32)> = out.pairs.iter().map(|p| (p.heard.as_str(), p.polished.as_str(), p.count, p.from_edits)).collect();
+        assert_eq!(got, [("Quinn for", "Qwen 4", 1, 1)]);
+        let long = "字 ".repeat(1200);
+        let history = vec![corrected(&long, &format!("{long}改"), 50)];
+        let out = suggestions(&[], &[], &history, &[], MAX_SUGGESTIONS);
+        assert_eq!((out.scanned, out.skipped, out.edited), (1, 1, 1));
+    }
+
+    /// docs/dictation.md §16.10: a single character is widened by the neighbour that makes the
+    /// spelling the takes use more often, the right one on a tie, and stays alone without one.
+    #[test]
+    fn a_single_character_is_widened_to_the_spelling_the_takes_use() {
+        let history = vec![
+            take("钉丁开会", "钉钉开会。", 50),
+            take("打开钉钉", "打开钉钉。", 40),
+            take("钉钉群里说", "钉钉群里说。", 30),
+            take("用a非。", "用a飞。", 20),
+        ];
+        let out = suggestions(&[], &[], &history, &[], MAX_SUGGESTIONS);
+        assert_eq!(pairs(&out), [("钉丁", "钉钉", 1), ("非", "飞", 1)], "钉钉 is the common spelling; no CJK neighbour for 非");
+    }
+
+    /// docs/dictation.md §35: the notice offers the pairs of the takes it corrected, widened as the
+    /// page widens them, without the known and the ignored ones.
+    #[test]
+    fn the_notice_offers_the_corrections_of_its_takes_only() {
+        let history = vec![
+            corrected("发到非书群，我在用 Quinn for max", "发到飞书群，我在用 Qwen 4 max", 50),
+            corrected("又是维他命", "又是 Voltip", 40),
+            take("又是非书", "又是飞书。", 30),
+        ];
+        let ids = [history[0].id];
+        let picks = |dictionary: &[DictionaryEntry], ignored: &[IgnoredPair]| {
+            edit_picks(dictionary, &[], &history, ignored, &ids).into_iter().map(|p| (p.heard, p.polished, p.history_id)).collect::<Vec<_>>()
+        };
+        let id = history[0].id;
+        assert_eq!(picks(&[], &[]), [("非书".into(), "飞书".into(), id), ("Quinn for".into(), "Qwen 4".into(), id)]);
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with(dir.path(), &[("飞书", &["非"], true)]);
+        assert_eq!(picks(store.entries(), &[ignored("Quinn for", "Qwen 4")]), [], "known before the widening; ignored");
     }
 
     /// A pair whose `heard` an enabled entry corrects already, and an ignored pair, are not
@@ -709,7 +855,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = store_with(dir.path(), &[("Voltip", &["维他命"], true), ("飞书", &["非"], false)]);
         let out = suggestions(store.entries(), &[], &history, &[ignored("库伯内特斯", "Kubernetes")], MAX_SUGGESTIONS);
-        assert_eq!(pairs(&out), [("非", "飞", 2)], "known: 维他命; ignored: 库伯内特斯; the entry that is off does not count");
+        assert_eq!(pairs(&out), [("非书", "飞书", 2)], "known: 维他命; ignored: 库伯内特斯; the entry that is off does not count");
         assert_eq!(out.total, 1);
         let other_case = suggestions(&[], &[], &history, &[ignored("库伯内特斯", "kubernetes")], MAX_SUGGESTIONS);
         assert_eq!(other_case.total, 3, "an ignored pair is matched exactly");
@@ -723,9 +869,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut store = store_with(dir.path(), &[("飞书", &["飞输"], true)]);
         let before = suggestions(store.entries(), &[], &history, &[], MAX_SUGGESTIONS);
-        assert_eq!(pairs(&before), [("维他命", "Voltip", 1), ("非", "飞", 1)]);
+        assert_eq!(pairs(&before), [("维他命", "Voltip", 1), ("非书", "飞书", 1)]);
         accept(&mut store, &[], "维他命", "Voltip", history[0].id, 100).unwrap();
-        accept(&mut store, &[], "非", "飞", history[1].id, 101).unwrap();
+        accept(&mut store, &[], "非书", "飞书", history[1].id, 101).unwrap();
         let after = suggestions(store.entries(), &[], &history, &[], MAX_SUGGESTIONS);
         assert!(after.pairs.is_empty(), "{:?}", after.pairs);
         assert_eq!(after.total, 0);
@@ -885,13 +1031,13 @@ mod tests {
     fn the_repeated_suggestions_are_counted_before_the_cut() {
         let history = history();
         let one = suggestions(&[], &[], &history, &[], 1);
-        assert_eq!((one.total, one.repeated, one.pairs.len()), (3, 1, 1), "非 → 飞 twice; the other two once");
+        assert_eq!((one.total, one.repeated, one.pairs.len()), (3, 1, 1), "非书 → 飞书 twice; the other two once");
         let more = vec![take("又是维他命", "又是 Voltip。", 60), take("还有库伯内特斯", "还有 Kubernetes", 55)];
         let history: Vec<HistoryText> = more.into_iter().chain(history).collect();
         let cut = suggestions(&[], &[], &history, &[], 1);
         assert_eq!((cut.total, cut.repeated, pairs(&cut)), (3, 3, vec![("维他命", "Voltip", 2)]), "all three twice, one listed");
         let ignoring = suggestions(&[], &[], &history, &[ignored("非", "飞")], MAX_SUGGESTIONS);
-        assert_eq!((ignoring.total, ignoring.repeated), (2, 2), "an ignored pair counts nowhere");
+        assert_eq!((ignoring.total, ignoring.repeated), (2, 2), "an ignored pair counts nowhere, ignored before it was widened too");
         assert_eq!(suggestions(&[], &[], &[], &[], MAX_SUGGESTIONS).repeated, 0);
     }
 

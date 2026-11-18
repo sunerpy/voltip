@@ -822,7 +822,9 @@ jobs:
 
       # The insert check's UI Automation reader on this desktop (docs/dictation.md §28): a paste
       # into Notepad is written, the test's own read-only EDIT stays not written, the focus moving
-      # to its other EDIT is unconfirmed. Only the small voltip-focus crate is built.
+      # to its other EDIT is unconfirmed. And the copy that reads the selection (§19, §35):
+      # Notepad's selection comes back while Ctrl+Alt of the shortcut is held, the clipboard put
+      # back. Only the small voltip-focus crate is built.
       - name: Build the insert check's reader test
         run: cargo test -p voltip-focus --test focus_windows --no-run
 
@@ -974,12 +976,13 @@ jobs:
             libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev libdbus-1-dev \
             libayatana-appindicator3-dev librsvg2-dev libasound2-dev libssl-dev \
             libx11-dev libxtst-dev libxcb1-dev patchelf pkg-config cmake \
-            xvfb xdotool scrot x11-utils python3-pil \
+            xvfb xdotool scrot x11-utils python3-pil python3-tk \
             xclip pulseaudio pulseaudio-utils libasound2-plugins \
             weston sway wtype wl-clipboard grim dbus \
             at-spi2-core libglib2.0-bin python3-gi gir1.2-gtk-3.0
           command -v Xvfb xdotool scrot xclip pulseaudio pactl paplay weston sway wtype wl-copy grim dbus-daemon gdbus
           /usr/bin/python3 -c 'import PIL; print("PIL", PIL.__version__)'
+          /usr/bin/python3 -c 'import tkinter; print("Tk", tkinter.TkVersion)'
 
       - name: Rust toolchain (rust-toolchain.toml)
         run: |
@@ -1033,9 +1036,15 @@ jobs:
         run: xvfb-run -a -s "-screen 0 1280x1024x24 -noreset" cargo test -p voltip-hooks --lib -- --ignored --test-threads=1 --nocapture
 
       # The whole clipboard across a paste on a real X server (docs/dictation.md §14.3): an image
-      # and HTML xclip copied come back, and the dictation is marked for clipboard managers.
-      - name: Real clipboard under Xvfb (cargo test -p voltip-inject --test real_display -- --ignored)
-        run: xvfb-run -a -s "-screen 0 1280x1024x24 -noreset" cargo test -p voltip-inject --test real_display real_an_image -- --ignored --test-threads=1 --nocapture
+      # and HTML xclip copied come back, and the dictation is marked for clipboard managers. The
+      # copy that reads the selection (§19, 从选中文字学习 §35): a Tk entry's selection comes back
+      # with Ctrl+Insert, a modifier still held from the shortcut let go first, the clipboard put
+      # back; while a grabbed hotkey key is down the copy never reaches the entry.
+      - name: Real clipboard and selection copy under Xvfb (cargo test -p voltip-inject --test real_display -- --ignored)
+        run: >-
+          xvfb-run -a -s "-screen 0 1280x1024x24 -noreset" cargo test -p voltip-inject --test real_display --
+          --ignored --test-threads=1 --nocapture
+          real_an_image real_copy_chord_reads_the_selection_of_an_x11_text_widget regression_x11_hotkey_grab_swallows_the_copy_until_the_key_is_up
 
       # The insert check's AT-SPI reader against a GTK 3 window on a real X server, in a private
       # D-Bus session with the accessibility bus switched on (docs/dictation.md §28): a typed text
@@ -1412,8 +1421,10 @@ jobs:
 
       # The insert check's Accessibility reader (docs/dictation.md §28): a paste into the test's own
       # text view, which can be selected but not edited, stays not written; a paste into a TextEdit
-      # document is written. The test has its own main (AppKit runs on the main thread); its
-      # binary is granted Accessibility and event posting as the event tap's is.
+      # document is written, and the copy that reads the selection (§19, §35) brings TextEdit's
+      # selection back with Cmd+C and puts the pasteboard back. The test has its own main (AppKit
+      # runs on the main thread); its binary is granted Accessibility and event posting as the
+      # event tap's is.
       - name: Real insert check (Accessibility granted to the test binary)
         if: matrix.arch == 'aarch64'
         timeout-minutes: 15

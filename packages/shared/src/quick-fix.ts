@@ -168,8 +168,37 @@ export function takePolishPairs(
 ): PolishPair[] {
   if (!entry.refined) return [];
   const pairs = polishPairs(entry.raw_text, entry.text);
+  if (pairs.length === 0 || entry.vocabulary === undefined) return pairs;
+  const replay = replayOf(entry, dictionary, rules);
+  if (replay === undefined) return [];
+  return pairs.filter(
+    (p) =>
+      replay.run(p.heard) !== p.polished &&
+      !replay.explained.some(
+        (q) =>
+          q.heard === p.heard && q.polished === p.polished && q.start < p.end && p.start < q.end,
+      ),
+  );
+}
+
+/** A take's own corrections and rules replayed over its original text as defined now
+ *  (docs/dictation.md §16.9): what they turn a wording into, and the replacements they make;
+ *  `undefined` when one of them is gone or was changed after the take. With nothing fired, `run`
+ *  changes nothing. */
+export interface Replay {
+  run: (text: string) => string;
+  explained: PolishPair[];
+}
+
+export function replayOf(
+  entry: Pick<HistoryEntry, "at_ms" | "raw_text" | "vocabulary">,
+  dictionary: readonly DictionaryEntry[],
+  rules: readonly ReplacementRule[],
+): Replay | undefined {
   const fired = entry.vocabulary;
-  if (pairs.length === 0 || fired === undefined) return pairs;
+  if (fired === undefined || fired.corrections.length + fired.rules.length === 0) {
+    return { run: (text) => text, explained: [] };
+  }
   /** The fired ones as they stood at the take, in the order they fired; `undefined` when one is
    *  gone or was changed since. */
   const asThen = <T extends { id: string; updated_at_ms: number }>(
@@ -186,20 +215,74 @@ export function takePolishPairs(
   };
   const entries = asThen(fired.corrections, dictionary);
   const firedRules = asThen(fired.rules, rules);
-  if (entries === undefined || firedRules === undefined) return [];
+  if (entries === undefined || firedRules === undefined) return undefined;
   const vocabulary = Vocabulary.compile(
     entries.map((e) => ({ ...e, enabled: true })),
     firedRules.map((r) => ({ ...r, enabled: true, pending: false })),
   );
   const run = (text: string) => vocabulary.applyRules(vocabulary.correct(text).text).text;
-  const explained = polishPairs(entry.raw_text, run(entry.raw_text));
-  return pairs.filter(
+  return { run, explained: polishPairs(entry.raw_text, run(entry.raw_text)) };
+}
+
+/** The replacements of what was inserted (`text`) → the user's correction (`corrected`) whose
+ *  inserted wording is the recogniser's: where `raw_text` → `text` keeps the tokens, ASCII case
+ *  aside (docs/dictation.md §35), with `start`/`end` in `raw_text` and the recognised wording as
+ *  `heard`. `voltip_core::vocabulary::learn::recognised_changes`. */
+export function recognisedEditPairs(
+  entry: Pick<HistoryEntry, "raw_text" | "text">,
+  corrected: string,
+): PolishPair[] {
+  const pairs = polishPairs(entry.text, corrected);
+  if (pairs.length === 0) return [];
+  // For each code unit of `text`, the code unit of `raw_text` it is, where the two keep it.
+  const toRaw: (number | undefined)[] = [];
+  let r = 0;
+  for (const seg of diffSegments({ rawText: entry.raw_text, text: entry.text }, (a, b) =>
+    sameIgnoringAsciiCase(a, b),
+  )) {
+    const n = seg.text.length;
+    if (seg.kind === "same") {
+      for (let k = 0; k < n; k += 1) toRaw.push(r + k);
+      r += n;
+    } else if (seg.kind === "del") {
+      r += n;
+    } else {
+      for (let k = 0; k < n; k += 1) toRaw.push(undefined);
+    }
+  }
+  const out: PolishPair[] = [];
+  for (const p of pairs) {
+    const start = toRaw[p.start];
+    if (start === undefined) continue;
+    let whole = true;
+    for (let k = p.start; k < p.end; k += 1) {
+      if (toRaw[k] !== start + (k - p.start)) whole = false;
+    }
+    if (!whole) continue;
+    const heard = entry.raw_text.slice(start, start + (p.end - p.start));
+    if (heard === p.polished) continue;
+    out.push({ ...p, start, end: start + (p.end - p.start), heard });
+  }
+  return out;
+}
+
+/** The replacements the user's correction of a take teaches (docs/dictation.md §35): its
+ *  `recognisedEditPairs` without those the take's own corrections and rules made (overlapping
+ *  one of their replacements, or turning the recognised wording into the user's); none when one of
+ *  them is gone or was changed since. `voltip_core::vocabulary::learn::edit_changes`. */
+export function takeEditPairs(
+  entry: Pick<HistoryEntry, "at_ms" | "raw_text" | "text" | "vocabulary" | "corrected">,
+  dictionary: readonly DictionaryEntry[],
+  rules: readonly ReplacementRule[],
+): PolishPair[] {
+  const corrected = entry.corrected?.text;
+  if (corrected === undefined) return [];
+  const replay = replayOf(entry, dictionary, rules);
+  if (replay === undefined) return [];
+  return recognisedEditPairs(entry, corrected).filter(
     (p) =>
-      run(p.heard) !== p.polished &&
-      !explained.some(
-        (q) =>
-          q.heard === p.heard && q.polished === p.polished && q.start < p.end && p.start < q.end,
-      ),
+      !replay.explained.some((q) => q.start < p.end && p.start < q.end) &&
+      replay.run(p.heard) !== p.polished,
   );
 }
 
