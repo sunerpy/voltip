@@ -115,9 +115,49 @@ pub fn skips(os: HostOs, app_id: &str) -> bool {
     !id.is_empty() && skipped_apps(os).any(|skipped| skipped == id)
 }
 
+/// `app_id` (as the probe reports it, normalised again here) is a terminal on `os`, macOS's
+/// included: its selection is program output, so 从选中文字学习 copies nothing there
+/// (docs/dictation.md §35). The voice edit's table (`foreground::terminal_ids`) has none on macOS,
+/// where Cmd+C is safe; the text is still not a dictation.
+pub fn holds_program_output(os: HostOs, app_id: &str) -> bool {
+    let id = normalize_app_id(app_id);
+    let terminals: &[&str] = match os {
+        HostOs::Windows => &WINDOWS_TERMINALS,
+        HostOs::Linux => &LINUX_TERMINALS,
+        HostOs::Macos => &MACOS_TERMINALS,
+        HostOs::Other => &[],
+    };
+    !id.is_empty() && terminals.contains(&id.as_str())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression (goal review of PR #260, 2026-11-18): 从选中文字学习 asked the voice edit's
+    /// table, which has no macOS terminal, so Terminal's selection was copied. Its own table names
+    /// every host's terminals and nothing else.
+    #[test]
+    fn regression_every_hosts_terminals_hold_program_output() {
+        for (os, id) in [
+            (HostOs::Macos, "com.apple.Terminal"),
+            (HostOs::Macos, "com.googlecode.iterm2"),
+            (HostOs::Windows, "WindowsTerminal.exe"),
+            (HostOs::Linux, "gnome-terminal-server"),
+        ] {
+            assert!(holds_program_output(os, id), "{os:?} {id}");
+        }
+        assert!(!crate::foreground::is_terminal(HostOs::Macos, "com.apple.Terminal"), "the voice edit still allows macOS's terminals");
+        for (os, id) in [
+            (HostOs::Macos, "com.apple.TextEdit"),
+            (HostOs::Windows, "notepad.exe"),
+            (HostOs::Macos, "com.microsoft.rdc.macos"),
+            (HostOs::Other, "xterm"),
+            (HostOs::Linux, ""),
+        ] {
+            assert!(!holds_program_output(os, id), "{os:?} {id}");
+        }
+    }
 
     /// docs/dictation.md §28: terminals and remote screens are never read, on every host; an
     /// ordinary app is.

@@ -1100,6 +1100,15 @@ pub trait Injector: Send + Sync + 'static {
         false
     }
 
+    /// Whether `app_id` is a terminal on this host for 从选中文字学习 (docs/dictation.md §35): its
+    /// selection is program output, not a dictation the user corrected, so nothing is copied there.
+    /// Unlike [`Injector::is_terminal_app`] this includes macOS's terminals, where Cmd+C copies
+    /// without reaching the program but the text is still not a dictation. The default is the
+    /// voice edit's table.
+    fn holds_program_output(&self, app_id: &str) -> bool {
+        self.is_terminal_app(app_id)
+    }
+
     /// The reader that checks whether a paste reached the focused field (docs/dictation.md §28).
     /// The default — the phone, the local speech service, most fakes — has none: no check runs.
     fn focus_reader(&self) -> Option<Arc<dyn FocusReader>> {

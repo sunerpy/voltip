@@ -822,6 +822,7 @@ const DESKTOP_ONLY: &[&str] = &[
     "learn_notice_accept",
     "learn_notice_undo",
     "learn_notice_dismiss",
+    "learn_notice_keep",
     "history_clear_corrected",
     "open_suggestions",
     "open_privacy",

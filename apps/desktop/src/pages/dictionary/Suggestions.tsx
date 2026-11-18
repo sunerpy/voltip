@@ -593,7 +593,14 @@ export function SuggestionsPanel({ view, onShowEntry }: SuggestionsPanelProps) {
       </EmptyState>
     ) : (
       <EmptyState title={t("dictionary.suggestions.empty.noneTitle")}>
-        {t("dictionary.suggestions.empty.none", { n: load.answer.refined })}
+        {load.answer.edited === 0
+          ? t("dictionary.suggestions.empty.none", { n: load.answer.refined })
+          : load.answer.refined === 0
+            ? t("dictionary.suggestions.empty.noneEdited", { n: load.answer.edited })
+            : t("dictionary.suggestions.empty.noneBoth", {
+                refined: load.answer.refined,
+                edited: load.answer.edited,
+              })}
       </EmptyState>
     );
 

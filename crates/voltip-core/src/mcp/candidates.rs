@@ -15,7 +15,7 @@
 //! trimmed from both ends; a pair that is only punctuation, or longer than a dictionary form may
 //! be, is left out.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -349,6 +349,11 @@ pub(crate) fn scan(dictionary: &[DictionaryEntry], rules: &[ReplacementRule], hi
         if polish.is_some_and(|size| size > MAX_DIFF_CELLS) || edit.is_some_and(|(a, b)| a > MAX_DIFF_CELLS || b > MAX_DIFF_CELLS) {
             out.scanned = out.scanned.saturating_add(1);
             out.skipped = out.skipped.saturating_add(1);
+            // Read, if not compared: one of the corrected takes, as a skipped polished one is
+            // counted among the polished.
+            if corrected.is_some() {
+                out.edited = out.edited.saturating_add(1);
+            }
             continue;
         }
         // A take whose corrections or rules fired is diffed once more for the replay (counted as
@@ -584,8 +589,13 @@ pub(crate) fn tally(dictionary: &[DictionaryEntry], history: &[HistoryText], cou
     let is_known = |heard: &str| known.iter().any(|k| k.eq_ignore_ascii_case(heard));
     let mut index: HashMap<(String, String), usize> = HashMap::new();
     let mut pairs: Vec<Pair> = Vec::new();
+    // The user's corrections count each pair once per take (docs/dictation.md §16.10).
+    let mut corrected: HashSet<(usize, String, String)> = HashSet::new();
     for Counted { found, single, heard_len } in counted {
         let take = &history[found.take];
+        if found.edit && !corrected.insert((found.take, found.heard.clone(), found.right.clone())) {
+            continue;
+        }
         let key = (found.heard.clone(), found.right.clone());
         let slot = *index.entry(key).or_insert_with(|| {
             pairs.push(Pair {

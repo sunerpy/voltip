@@ -799,6 +799,20 @@ fn a_correction_is_stored_beside_the_entry_searched_and_read_with_the_recent_tex
     assert!(reader.query(&page(HistoryQuery { query: "qwen 4".into(), ..Default::default() })).unwrap().entries.is_empty(), "cleared: not searched");
 }
 
+/// Regression (goal review of PR #260, 2026-11-18): the stored correction's `via` is the wire the
+/// experimental field tracking (docs/dictation.md §35, a later version) writes too. With only
+/// `selection` known, an entry it corrected (`follow`) — synced from a phone's copy, or read after
+/// going back a version — would not load at all.
+#[test]
+fn regression_a_correction_read_in_the_field_loads() {
+    let mut json = serde_json::to_value(entry("我在用 Quinn for max 做测试")).unwrap();
+    json["corrected"] = serde_json::json!({ "text": "我在用 Qwen 4 max 做测试", "at_ms": 5, "via": "follow" });
+    let loaded: HistoryEntry = serde_json::from_value(json).unwrap();
+    assert_eq!(loaded.corrected.map(|c| c.via), Some(CorrectionVia::Follow));
+    assert_eq!(serde_json::to_value(CorrectionVia::Follow).unwrap(), "follow");
+    assert_eq!(serde_json::to_value(CorrectionVia::Selection).unwrap(), "selection");
+}
+
 /// 用 AI 预设处理 (docs/dictation.md §22): the result is stored beside the entry's own text (the
 /// text is untouched), replaces an earlier one, is found by the search, survives a reopen and is
 /// omitted from the JSON until it exists; an unknown id stores nothing.

@@ -835,6 +835,19 @@ describe("history detail · the user's correction (docs/dictation.md §35)", () 
     expect(backend.peek().history_recent[0]?.text).toBe("我在用 Quinn for max 做测试");
   });
 
+  it("a correction a later version read in the text field loads and says so", async () => {
+    const corrected = take(9, "我在用 Quinn for max 做测试", "我在用 Quinn for max 做测试", {
+      refined: false,
+      at_ms: T,
+      corrected: { text: "我在用 Qwen 4 max 做测试", at_ms: T, via: "follow" },
+    });
+    setup({ history: [corrected, ...OTHERS] });
+    const box = await screen.findByTestId("history-corrected");
+    expect(box).toHaveTextContent("我在用 Qwen 4 max 做测试");
+    expect(box).toHaveTextContent("在输入框中修改");
+    expect(box).not.toHaveTextContent("从选中文字学习");
+  });
+
   it("a take nobody corrected has no such line", async () => {
     setup();
     expect(await screen.findByTestId("entry-text")).toBeInTheDocument();

@@ -2264,6 +2264,10 @@ fn learning_from_the_selection_runs_through_the_command_layer() {
         assert_eq!(invoke(webview, "learn_notice_undo", json!({ "id": notice.id })), Ok(Value::Null));
         let st = wait_state(webview, |s| s.learn_notice.as_ref().is_some_and(|n| n.undone.is_some()));
         assert!(st.dictionary.is_empty(), "{:?}", st.dictionary);
+        // 查看 / 打开设置 keep the notice (its stay starts again); the notice is named.
+        assert_eq!(invoke(webview, "learn_notice_keep", json!({ "id": notice.id })), Ok(Value::Null));
+        assert!(invoke(webview, "learn_notice_keep", json!({})).is_err());
+        wait_state(webview, |s| s.learn_notice.as_ref().is_some_and(|n| n.id == notice.id && n.shown));
         assert_eq!(invoke(webview, "learn_notice_dismiss", json!({ "id": notice.id + 1 })), Ok(Value::Null), "another notice: nothing changes");
         assert!(invoke(webview, "learn_notice_dismiss", json!({})).is_err(), "the notice is named");
         assert_eq!(invoke(webview, "learn_notice_dismiss", json!({ "id": notice.id })), Ok(Value::Null));

@@ -171,6 +171,26 @@ describe("learning suggestions (docs/dictation.md §16.10)", () => {
     });
   });
 
+  it("regression: a correction counts once per take, and a corrected take too long to compare is still edited", () => {
+    // Goal review of PR #260 (2026-11-18): the plan counts the user's corrections once per take.
+    const corrected = (text: string, fixed: string, at: number): HistoryEntry => ({
+      ...take(text, text, at, false),
+      corrected: { text: fixed, at_ms: at + 1, via: "selection" },
+    });
+    const twice = suggestVocabulary(
+      [],
+      [],
+      [corrected("Quinn for max 和 Quinn for max 都试过", "Qwen 4 max 和 Qwen 4 max 都试过", 50)],
+      [],
+    );
+    expect(twice.pairs.map((p) => [p.heard, p.polished, p.count, p.from_edits])).toEqual([
+      ["Quinn for", "Qwen 4", 1, 1],
+    ]);
+    const long = "字 ".repeat(1200);
+    const skipped = suggestVocabulary([], [], [corrected(long, `${long}改`, 50)], []);
+    expect([skipped.scanned, skipped.skipped, skipped.edited]).toEqual([1, 1, 1]);
+  });
+
   it("§16.10: a single character is widened to the spelling the takes use, and stays alone without a neighbour", () => {
     const takes = [
       take("钉丁开会", "钉钉开会。", 50),

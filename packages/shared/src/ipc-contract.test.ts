@@ -160,6 +160,7 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   learn_notice_accept: null,
   learn_notice_undo: null,
   learn_notice_dismiss: null,
+  learn_notice_keep: null,
   settings_set_engines: null,
   provider_key_set: null,
   engines_quota_reset: null,
@@ -425,6 +426,7 @@ const argSchemas = {
   learn_notice_accept: z.object({ id: z.number().int().nonnegative() }).strict(),
   learn_notice_undo: z.object({ id: z.number().int().nonnegative() }).strict(),
   learn_notice_dismiss: z.object({ id: z.number().int().nonnegative() }).strict(),
+  learn_notice_keep: z.object({ id: z.number().int().nonnegative() }).strict(),
 } satisfies {
   [C in MutationCommand as CommandArgs[C] extends undefined ? never : C]: z.ZodType<CommandArgs[C]>;
 };
@@ -469,6 +471,8 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
       return backend.invoke(name, argSchemas.learn_notice_undo.parse(args));
     case "learn_notice_dismiss":
       return backend.invoke(name, argSchemas.learn_notice_dismiss.parse(args));
+    case "learn_notice_keep":
+      return backend.invoke(name, argSchemas.learn_notice_keep.parse(args));
     case "pairing_join_code":
       return backend.invoke(name, argSchemas.pairing_join_code.parse(args));
     case "pairing_join_ticket":

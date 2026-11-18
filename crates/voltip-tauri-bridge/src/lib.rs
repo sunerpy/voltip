@@ -271,6 +271,11 @@ pub enum UiCommand {
         /// `LearnNotice.id`.
         id: u64,
     },
+    /// The learn notice's 查看 or 打开设置: it stays its whole time again.
+    LearnNoticeKeep {
+        /// `LearnNotice.id`.
+        id: u64,
+    },
     /// A key transition for the activation machine (docs/dictation.md §13): the desktop shell sends
     /// one per hotkey press / release, the CLI one per `voltip --toggle`.
     HotkeyEdge {
@@ -727,6 +732,7 @@ impl UiCommand {
             Self::LearnNoticeAccept { id } => CoreCommand::LearnNoticeAccept { id },
             Self::LearnNoticeUndo { id } => CoreCommand::LearnNoticeUndo { id },
             Self::LearnNoticeDismiss { id } => CoreCommand::LearnNoticeDismiss { id },
+            Self::LearnNoticeKeep { id } => CoreCommand::LearnNoticeKeep { id },
             Self::HotkeyEdge { pressed, at_ms, source, purpose, chorded } => CoreCommand::HotkeyEdge { pressed, at_ms, source, purpose, chorded },
             Self::SettingsSetActivation { activation, hold_threshold_ms, extra_recording_ms } => {
                 CoreCommand::SetActivation { activation, hold_threshold_ms, extra_recording_ms }

@@ -1395,6 +1395,12 @@ export const en: Messages = {
           one: "The last polished entry has nothing new for the dictionary.",
           other: "The last {n} polished entries have nothing new for the dictionary.",
         },
+        noneEdited: {
+          one: "The last entry with your corrections has nothing new for the dictionary.",
+          other: "The last {n} entries with your corrections have nothing new for the dictionary.",
+        },
+        noneBoth:
+          "The last {refined} polished entries and {edited} entries with your corrections have nothing new for the dictionary.",
         noneRepeatedTitle: "Nothing suggested",
         noneRepeated: {
           one: "1 more pair was seen once.",
@@ -1417,7 +1423,7 @@ export const en: Messages = {
       ignoredList: {
         title: "Ignored ({n})",
         table: "Ignored",
-        column: { pair: "Recognised → polished", at: "Ignored" },
+        column: { pair: "Recognised → right spelling", at: "Ignored" },
         unignore: "Stop ignoring",
         row: "Stop ignoring: {heard} → {polished}",
         showAll: "Show all ({n})",
@@ -2730,6 +2736,7 @@ export const en: Messages = {
     history: {
       corrected: "Later corrected to",
       via: "Learn from selection · {time}",
+      viaFollow: "Edited in the text field · {time}",
       remove: "Remove",
       removeLabel: "Remove the later correction",
     },

@@ -834,6 +834,36 @@ describe("Dictionary page · learning suggestions (docs/dictation.md §16.10)", 
     ).toBeInTheDocument();
   });
 
+  it("regression: with only corrected takes and nothing new, 学习建议 names the corrections, not 0 polished takes", async () => {
+    // Goal review of PR #260 (2026-11-18): the empty state counted the polished takes only and read
+    // 「最近 0 条经过 AI 润色的记录里」 although the takes it compared were the user's corrections.
+    const user = userEvent.setup();
+    renderApp({
+      path: "/dictionary",
+      backend: learning({
+        dictionary: [entry(VOLTIP, "Qwen 4", ["Quinn for"])],
+        history: [
+          {
+            ...take(
+              SC,
+              AT - HOUR,
+              "我在用 Quinn for max 做测试",
+              "我在用 Quinn for max 做测试",
+              false,
+            ),
+            corrected: { text: "我在用 Qwen 4 max 做测试", at_ms: AT - HOUR, via: "selection" },
+          },
+        ],
+      }),
+    });
+    await openSuggestions(user, /^学习建议$/);
+    expect(await screen.findByText("暂无学习建议")).toBeInTheDocument();
+    expect(
+      screen.getByText("最近 1 条有你修改的记录里，没有新的写法可以加入词典。"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/最近 0 条经过 AI 润色/)).toBeNull();
+  });
+
   it("忽略 puts the pair on 已忽略（n） with when it was ignored, and 取消忽略 there makes it a suggestion again", async () => {
     const user = userEvent.setup();
     const backend = learning({ now: () => Date.now() });

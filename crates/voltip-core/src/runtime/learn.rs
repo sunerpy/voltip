@@ -318,6 +318,13 @@ impl Runtime {
         self.set_learn_notice(Some(LearnNotice { undone: Some(outcome), ..notice }));
     }
 
+    /// The notice's 查看 or 打开设置: shown, it stays its whole time again (D3).
+    pub(super) fn learn_notice_keep(&mut self, id: u64) {
+        if let Some(notice) = self.learn.notice.clone().filter(|n| n.id == id && n.shown) {
+            self.set_learn_notice(Some(notice));
+        }
+    }
+
     /// The notice's ×.
     pub(super) fn learn_notice_dismiss(&mut self, id: u64) {
         if self.learn.notice.as_ref().is_some_and(|n| n.id == id) {
@@ -365,7 +372,7 @@ async fn read_and_compare(
             _ => None,
         };
         if let Some(app) = app
-            && injector.is_terminal_app(&app.app_id)
+            && injector.holds_program_output(&app.app_id)
         {
             tracing::info!(app = %app.app_id, "learn selection refused: a terminal is in front");
             return Err(LearnOutcome::Terminal);

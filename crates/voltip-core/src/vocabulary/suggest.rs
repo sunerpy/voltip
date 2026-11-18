@@ -798,6 +798,21 @@ mod tests {
         assert!(json.get("from_edits").is_none(), "left off the wire when none: {json}");
     }
 
+    /// Regression (goal review of PR #260, 2026-11-18): the user's corrections count each pair once
+    /// per take (plan 4.7), however often the take holds it; and a corrected take too long to
+    /// compare is still one of the `edited` takes read, as a skipped polished one is `refined`.
+    #[test]
+    fn regression_a_correction_counts_once_per_take_and_a_skipped_one_is_still_edited() {
+        let history = vec![corrected("Quinn for max 和 Quinn for max 都试过", "Qwen 4 max 和 Qwen 4 max 都试过", 50)];
+        let out = suggestions(&[], &[], &history, &[], MAX_SUGGESTIONS);
+        let got: Vec<(&str, &str, u32, u32)> = out.pairs.iter().map(|p| (p.heard.as_str(), p.polished.as_str(), p.count, p.from_edits)).collect();
+        assert_eq!(got, [("Quinn for", "Qwen 4", 1, 1)]);
+        let long = "字 ".repeat(1200);
+        let history = vec![corrected(&long, &format!("{long}改"), 50)];
+        let out = suggestions(&[], &[], &history, &[], MAX_SUGGESTIONS);
+        assert_eq!((out.scanned, out.skipped, out.edited), (1, 1, 1));
+    }
+
     /// docs/dictation.md §16.10: a single character is widened by the neighbour that makes the
     /// spelling the takes use more often, the right one on a tie, and stays alone without one.
     #[test]

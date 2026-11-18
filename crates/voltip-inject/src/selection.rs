@@ -4,13 +4,18 @@
 //! ordering, what counts as "nothing selected", when the restore is skipped) live here over the
 //! same two ports as the paste ([`ClipboardPort`], [`KeystrokePort`]), so they run headless.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use crate::InjectError;
 use crate::clip::ClipSnapshot;
 use crate::injector::{ClipboardPort, KeystrokePort};
 use crate::toolchain::{Chord, Key, Modifier};
+
+/// One selection copy at a time in this process: each saves, clears and restores the one
+/// clipboard, so two at once (the learn shortcut pressed twice, a learn and a voice edit) would
+/// save each other's cleared clipboard and read each other's restore as a selection.
+static COPYING: Mutex<()> = Mutex::new(());
 
 /// How long the copy waits for the application to put the selection on the clipboard.
 pub const COPY_TIMEOUT: Duration = Duration::from_millis(250);
@@ -148,6 +153,8 @@ impl ClipboardSelection {
 
 impl SelectionSource for ClipboardSelection {
     fn copy_selection(&self, held: &[Modifier]) -> Result<Option<String>, InjectError> {
+        // Held from the save to the restore; a copy that panicked leaves nothing to protect.
+        let _one = COPYING.lock().unwrap_or_else(PoisonError::into_inner);
         let previous = match self.clipboard.snapshot() {
             Ok(previous) => Some(previous),
             Err(err) => {
@@ -460,5 +467,62 @@ mod tests {
         let err = c.copy_selection(&[]).unwrap_err();
         assert!(matches!(&err, InjectError::Keystroke(m) if m.contains("cannot press a chord")), "{err:?}");
         assert_eq!(clipboard.current().as_deref(), Some("previous"));
+    }
+
+    /// An application whose copy waits for `go` before it puts `selection` on the clipboard, and
+    /// says on `pressed` that the chord arrived (one copy at a time: the test holds it in flight).
+    struct HeldApp {
+        clipboard: Arc<MemoryClipboard>,
+        selection: Option<String>,
+        pressed: std::sync::mpsc::Sender<()>,
+        go: Mutex<std::sync::mpsc::Receiver<()>>,
+    }
+
+    impl KeystrokePort for HeldApp {
+        fn deliver(&self, _: Chord, _: &str) -> Result<Delivered, DeliveryError> {
+            unreachable!("the copy never pastes")
+        }
+
+        fn press_chord(&self, _: Chord, _: &[Modifier]) -> Result<Delivered, DeliveryError> {
+            let _ = self.pressed.send(());
+            if let Some(selection) = &self.selection {
+                // Held until the test lets it go (bounded: a broken test cannot hang the run).
+                let _ = self.go.lock().unwrap().recv_timeout(Duration::from_secs(5));
+                self.clipboard.write_text(selection).unwrap();
+            }
+            Ok(Delivered { tool: "fake".into(), delivery: Delivery::Chord })
+        }
+    }
+
+    /// Regression (goal review of PR #260, 2026-11-18): two copies at once — the learn shortcut
+    /// pressed twice, or a learn and a voice edit — each saved, cleared and restored the one
+    /// clipboard: the second saved the first's cleared clipboard, took the user's text the first
+    /// put back for its selection, and finally emptied the clipboard. One copy runs at a time now:
+    /// the second waits until the first has put the clipboard back.
+    #[test]
+    fn regression_two_copies_at_once_neither_read_nor_lose_the_users_clipboard() {
+        let clipboard = MemoryClipboard::holding("用户原来的剪贴板");
+        let (pressed_a, in_a) = std::sync::mpsc::channel();
+        let (go_a, held_a) = std::sync::mpsc::channel();
+        let app_a =
+            Arc::new(HeldApp { clipboard: clipboard.clone(), selection: Some("选中的一段话".into()), pressed: pressed_a, go: Mutex::new(held_a) });
+        let (pressed_b, in_b) = std::sync::mpsc::channel();
+        let (_go_b, held_b) = std::sync::mpsc::channel();
+        // The second copy's application has nothing selected.
+        let app_b = Arc::new(HeldApp { clipboard: clipboard.clone(), selection: None, pressed: pressed_b, go: Mutex::new(held_b) });
+        let first = ClipboardSelection::with_ports(clipboard.clone(), app_a, copy_chord_for("linux"), fast());
+        let second = ClipboardSelection::with_ports(clipboard.clone(), app_b, copy_chord_for("linux"), fast());
+        let a = std::thread::spawn(move || first.copy_selection(&[]));
+        in_a.recv_timeout(Duration::from_secs(5)).expect("the first copy pressed its chord");
+        let b = std::thread::spawn(move || second.copy_selection(&[]));
+        // While the first copy is in flight the second must not reach its chord.
+        let overlapped = in_b.recv_timeout(Duration::from_millis(300)).is_ok();
+        go_a.send(()).unwrap();
+        let got_a = a.join().unwrap().unwrap();
+        let got_b = b.join().unwrap().unwrap();
+        assert!(!overlapped, "the second copy ran while the first held the clipboard");
+        assert_eq!(got_a.as_deref(), Some("选中的一段话"));
+        assert_eq!(got_b, None, "nothing was selected for the second copy");
+        assert_eq!(clipboard.current().as_deref(), Some("用户原来的剪贴板"), "the user's clipboard is back");
     }
 }
