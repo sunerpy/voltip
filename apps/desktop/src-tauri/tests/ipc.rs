@@ -157,27 +157,35 @@ fn with_running_app_on(
     ports: DictationPorts,
     body: impl FnOnce(&AppHandle<MockRuntime>, &WebviewWindow<MockRuntime>, &mpsc::Receiver<String>) + Send + 'static,
 ) {
-    run_app(None, ports, body);
+    run_app(None, ports, |_| {}, body);
 }
 
 /// [`with_running_app`] on a relay of the test's own, connected before `body` runs.
 fn with_running_app_on_a_relay(body: impl FnOnce(&AppHandle<MockRuntime>, &WebviewWindow<MockRuntime>, &mpsc::Receiver<String>) + Send + 'static) {
     let relay = TestRelay::start();
-    run_app(Some(&relay.url), fakes::ports(), |handle, webview, rx| {
-        wait_state(webview, |s| s.identity.is_some() && s.relay.state.is_connected());
-        body(handle, webview, rx);
-    });
+    run_app(
+        Some(&relay.url),
+        fakes::ports(),
+        |_| {},
+        |handle, webview, rx| {
+            wait_state(webview, |s| s.identity.is_some() && s.relay.state.is_connected());
+            body(handle, webview, rx);
+        },
+    );
 }
 
 fn run_app(
     relay_url: Option<&str>,
     ports: DictationPorts,
+    configure: impl FnOnce(&mut CoreConfig),
     body: impl FnOnce(&AppHandle<MockRuntime>, &WebviewWindow<MockRuntime>, &mpsc::Receiver<String>) + Send + 'static,
 ) {
     let dir = tempfile::tempdir().unwrap();
+    let mut config = core_config(dir.path(), relay_url);
+    configure(&mut config);
     let app = build_app(
         mock_builder(),
-        core_config(dir.path(), relay_url),
+        config,
         Arc::new(MemorySecretStore::new()),
         ShellOptions::HEADLESS,
         voltip_desktop_lib::dictation::ShellPorts::headless(ports),
@@ -1958,6 +1966,8 @@ fn command_list_matches_the_handlers_the_typescript_contract_and_the_fixtures() 
             "overlay_copy",
             "overlay_paste",
             "open_history",
+            "open_suggestions",
+            "open_privacy",
             "provider_console_open",
             "project_link_open",
             "guide_open",
@@ -2201,6 +2211,77 @@ fn the_copy_last_chord_is_saved_through_its_own_command() {
         assert_eq!(invoke(webview, "settings_set_copy_last_hotkey", json!({ "hotkey": null })), Ok(Value::Null));
         wait_state(webview, |s| s.settings.copy_last_hotkey.is_none());
         assert!(invoke(webview, "settings_set_copy_last_hotkey", json!({ "hotkey": 5 })).is_err());
+    });
+}
+
+/// docs/dictation.md §35, through the command layer: 从选中文字学习's chord has its own command
+/// (none by default, refused when the dictation uses it); `voltip --learn-selection` copies the
+/// selection with no key held, the correction is kept with the take and shown by `history_entry`,
+/// the notice offers the pair, 加入词典 and 撤销 change the dictionary, × closes it, the history
+/// detail's 移除 forgets the correction, and the notice's 查看 and 打开设置 ask the main window for
+/// the learning suggestions and the privacy settings.
+#[test]
+fn learning_from_the_selection_runs_through_the_command_layer() {
+    const HEARD: &str = "我在用 Quinn for max 做测试";
+    const FIXED: &str = "我在用 Qwen 4 max 做测试";
+    let injector = Arc::new(fakes::FakeInjector::paste().with_selection(FIXED));
+    let ports = fakes::ports_with(Arc::new(fakes::FakeAudio::speech()), Arc::new(fakes::FakeTranscriber::ok(HEARD)), None, injector.clone());
+    // The notice stays until the test closes it, however slow the machine.
+    let long_stay = |cfg: &mut CoreConfig| cfg.learn_notice_dwell = Duration::from_secs(600);
+    run_app(None, ports, long_stay, move |app, webview, rx| {
+        wait_state(webview, |s| s.identity.is_some());
+        assert_eq!(core_state(webview).settings.learn_hotkey, None, "none by default");
+        assert_eq!(invoke(webview, "settings_set_learn_hotkey", json!({ "hotkey": "Ctrl+Alt+L" })), Ok(Value::Null));
+        wait_state(webview, |s| s.settings.learn_hotkey.as_deref() == Some("Ctrl+Alt+L"));
+        assert_eq!(invoke(webview, "settings_set_learn_hotkey", json!({ "hotkey": "Ctrl+Alt+Space" })), Ok(Value::Null));
+        wait_event(rx, "error (learn_hotkey)", |e| e["type"] == "error" && e["message"].as_str().is_some_and(|m| m.contains("已用作听写快捷键")));
+        assert_eq!(core_state(webview).settings.learn_hotkey.as_deref(), Some("Ctrl+Alt+L"));
+        assert!(invoke(webview, "settings_set_learn_hotkey", json!({ "hotkey": 5 })).is_err());
+
+        assert_eq!(invoke(webview, "dictation_start", json!({})), Ok(Value::Null));
+        wait_state(webview, |s| matches!(s.dictation.phase, DictationPhase::Listening { ready: true, .. }));
+        assert_eq!(invoke(webview, "dictation_stop", json!({})), Ok(Value::Null));
+        wait_state(webview, |s| s.dictation.phase.is_terminal());
+        let id = wait_state(webview, |s| s.history_recent.len() == 1).history_recent[0].id.to_string();
+        assert_eq!(invoke(webview, "dictation_cancel", json!({})), Ok(Value::Null));
+        wait_state(webview, |s| s.dictation.phase == DictationPhase::Idle);
+
+        voltip_desktop_lib::learn_selection(app, EdgeSource::Cli);
+        let notice = wait_state(webview, |s| s.learn_notice.as_ref().is_some_and(|n| n.shown)).learn_notice.unwrap();
+        let voltip_core::LearnOutcome::Learned { pairs, safe } = &notice.outcome else { panic!("{notice:?}") };
+        assert_eq!(pairs.iter().map(|p| (p.heard.as_str(), p.polished.as_str())).collect::<Vec<_>>(), [("Quinn for", "Qwen 4")]);
+        assert!(safe);
+        assert_eq!(injector.copies(), [Vec::<voltip_core::Modifier>::new()], "nothing is held from the command line");
+        let entry = invoke(webview, "history_entry", json!({ "id": id })).unwrap();
+        assert_eq!(
+            (entry["text"].as_str(), entry["corrected"]["text"].as_str(), entry["corrected"]["via"].as_str()),
+            (Some(HEARD), Some(FIXED), Some("selection"))
+        );
+
+        assert_eq!(invoke(webview, "learn_notice_accept", json!({ "id": notice.id })), Ok(Value::Null));
+        let st = wait_state(webview, |s| s.learn_notice.as_ref().is_some_and(|n| n.accepted.is_some()));
+        assert_eq!(st.dictionary.iter().map(|e| (e.term.as_str(), e.heard_as.clone())).collect::<Vec<_>>(), [("Qwen 4", vec!["Quinn for".to_owned()])]);
+        assert_eq!(invoke(webview, "learn_notice_undo", json!({ "id": notice.id })), Ok(Value::Null));
+        let st = wait_state(webview, |s| s.learn_notice.as_ref().is_some_and(|n| n.undone.is_some()));
+        assert!(st.dictionary.is_empty(), "{:?}", st.dictionary);
+        assert_eq!(invoke(webview, "learn_notice_dismiss", json!({ "id": notice.id + 1 })), Ok(Value::Null), "another notice: nothing changes");
+        assert!(invoke(webview, "learn_notice_dismiss", json!({})).is_err(), "the notice is named");
+        assert_eq!(invoke(webview, "learn_notice_dismiss", json!({ "id": notice.id })), Ok(Value::Null));
+        wait_state(webview, |s| s.learn_notice.is_none());
+
+        assert_eq!(invoke(webview, "history_clear_corrected", json!({ "id": id })), Ok(Value::Null));
+        wait_for(|| invoke(webview, "history_entry", json!({ "id": id })).unwrap().get("corrected").is_none_or(Value::is_null).then_some(()));
+        assert!(invoke(webview, "history_clear_corrected", json!({ "id": "not-an-id" })).is_err());
+
+        let (tx, requests) = mpsc::channel::<String>();
+        app.listen_any("voltip://tray", move |ev| {
+            let _ = tx.send(ev.payload().to_owned());
+        });
+        for (command, action) in [("open_suggestions", "suggestions"), ("open_privacy", "privacy")] {
+            assert_eq!(invoke(webview, command, json!({})), Ok(Value::Null));
+            let request: Value = serde_json::from_str(&requests.recv_timeout(STEP_TIMEOUT).expect("the main window is asked")).unwrap();
+            assert_eq!(request, json!({ "action": action }));
+        }
     });
 }
 

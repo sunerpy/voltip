@@ -545,6 +545,7 @@ impl Runtime {
             preset: None,
             origin: Some(EntryOrigin { device: computer, kind: OriginKind::Sent }),
             processed: None,
+            corrected: None,
             file: None,
             timing: None,
             glossary_sent: None,

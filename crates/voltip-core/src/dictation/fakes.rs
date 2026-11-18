@@ -1763,6 +1763,7 @@ pub fn history_entry(text: &str) -> crate::HistoryEntry {
         preset: None,
         origin: None,
         processed: None,
+        corrected: None,
         file: None,
         timing: None,
         glossary_sent: None,

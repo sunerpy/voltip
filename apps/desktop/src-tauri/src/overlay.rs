@@ -45,6 +45,9 @@ pub const LIVE_STATE: &str = "live";
 pub const HIDE_AFTER_BLANK: Duration = Duration::from_millis(80);
 /// The pill's flash after 复制上一条结果 (docs/dictation.md §28): `已复制上一条结果`, between takes.
 pub const COPIED_STATE: &str = "copied";
+/// The pill's notice after 从选中文字学习 (docs/dictation.md §35): the webview renders
+/// `UiState.learn_notice`; the core times it.
+pub const LEARNED_STATE: &str = "learned";
 /// Debug-build knob: `=1` draws the pill window opaque. X11 without a compositor (Xvfb smoke
 /// tests) renders an RGBA window as a black rectangle, so the headless run cannot prove the pill
 /// paints unless transparency is off. Release builds ignore it.
@@ -359,6 +362,24 @@ fn let_go<R: Runtime>(app: &AppHandle<R>) {
     let _ = stacking;
 }
 
+/// Whether the pill shows the learn notice (docs/dictation.md §35): the core says it is on the
+/// pill (`shown`, so never over a take or its result), and the pill is not off.
+pub fn learned_wanted(phase: &DictationPhase, notice: Option<&voltip_core::LearnNotice>, placement: OverlayPlacement) -> bool {
+    placement != OverlayPlacement::Off && *phase == DictationPhase::Idle && notice.is_some_and(|n| n.shown)
+}
+
+/// Show or take away the learn notice after its state changed.
+fn apply_learned<R: Runtime>(app: &AppHandle<R>, bridge: &Bridge) {
+    let state = bridge.state();
+    if learned_wanted(&state.dictation.phase, state.learn_notice.as_ref(), state.settings.overlay) {
+        if let Err(e) = show_fixed(app, LEARNED_STATE, state.settings.overlay) {
+            tracing::warn!(error = %e, "overlay learn notice failed");
+        }
+    } else if app.try_state::<OverlaySlot>().is_some_and(|slot| slot.current() == LEARNED_STATE) {
+        hide(app);
+    }
+}
+
 /// Keep the pill in step with `UiEvent::Dictation` for as long as the bridge lives.
 pub fn follow_dictation<R: Runtime>(app: AppHandle<R>, bridge: Bridge) {
     let mut events = bridge.events();
@@ -366,6 +387,7 @@ pub fn follow_dictation<R: Runtime>(app: AppHandle<R>, bridge: Bridge) {
         loop {
             match events.recv().await {
                 Ok(UiEvent::Dictation(status)) => apply_phase(&app, &status.phase, bridge.state().settings.overlay),
+                Ok(UiEvent::LearnNotice { .. }) => apply_learned(&app, &bridge),
                 // Switched off while a take shows the pill: hide it now, not at the next phase.
                 Ok(UiEvent::Settings(settings)) if settings.overlay == OverlayPlacement::Off => hide(&app),
                 Ok(_) => {}
@@ -373,6 +395,7 @@ pub fn follow_dictation<R: Runtime>(app: AppHandle<R>, bridge: Bridge) {
                     // Catch up from the cached state rather than replaying stale phases.
                     let state = bridge.state();
                     apply_phase(&app, &state.dictation.phase, state.settings.overlay);
+                    apply_learned(&app, &bridge);
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
@@ -436,6 +459,19 @@ mod tests {
         assert!(!copied_flash_wanted(&DictationPhase::Idle, OverlayPlacement::Off));
         assert!(!copied_flash_wanted(&DictationPhase::Listening { started_at: 1, ready: true, live: None, locked: false }, OverlayPlacement::Bottom));
         assert!(!copied_flash_wanted(&DictationPhase::CANCELLED, OverlayPlacement::Bottom), "a finished take is still on screen");
+    }
+
+    /// docs/dictation.md §35: the learn notice is on the pill only once the core shows it (never
+    /// over a take or its result) and with the pill on.
+    #[test]
+    fn the_learn_notice_shows_only_when_the_core_shows_it_between_takes() {
+        let notice = |shown| voltip_core::LearnNotice { id: 1, outcome: voltip_core::LearnOutcome::NoMatch, shown, accepted: None, undone: None };
+        let shown = notice(true);
+        assert!(learned_wanted(&DictationPhase::Idle, Some(&shown), OverlayPlacement::Bottom));
+        assert!(!learned_wanted(&DictationPhase::Idle, Some(&notice(false)), OverlayPlacement::Bottom), "waiting behind a result");
+        assert!(!learned_wanted(&DictationPhase::Idle, None, OverlayPlacement::Bottom));
+        assert!(!learned_wanted(&DictationPhase::Idle, Some(&shown), OverlayPlacement::Off));
+        assert!(!learned_wanted(&DictationPhase::CANCELLED, Some(&shown), OverlayPlacement::Top), "a take's result has the pill");
     }
 
     /// 2026-11-01: hiding waits a frame; a take that showed the pill in that frame (its first phase

@@ -297,6 +297,7 @@ pub async fn run(job: Job, mut partial: Partial, report: Report) -> Outcome {
         preset: refined.then(|| TakePreset::default().to_ref()),
         origin: None,
         processed: None,
+        corrected: None,
         file: Some(ImportedFile { name, duration_ms }),
         timing: None,
         // docs/dictation.md §30.6: as a long take's, when any segment's request carried it.

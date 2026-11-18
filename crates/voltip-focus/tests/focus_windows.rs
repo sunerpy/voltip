@@ -1,9 +1,11 @@
 //! The insert check's UI Automation reader against real Windows controls (docs/dictation.md §28):
 //! a paste into Notepad is `written`; the same paste into a read-only EDIT of this test's own
 //! window leaves it `not_written`; the focus moving to the window's other EDIT is `unconfirmed`.
-//! It pastes the way Voltip does (the clipboard and Ctrl+V) into windows it brings to the front,
-//! so it is ignored: CI runs it on the windows-2025 desktop (`hooks-windows`), never on a
-//! computer someone is using:
+//! And the copy that reads the selection (§19, 从选中文字学习 §35): Notepad's selection comes
+//! back while the shortcut's modifiers are still held, and the clipboard holds what it held.
+//! It pastes and copies the way Voltip does (the clipboard, Ctrl+V and Ctrl+Insert) in windows it
+//! brings to the front, so it is ignored: CI runs it on the windows-2025 desktop (`hooks-windows`),
+//! never on a computer someone is using:
 //! `cargo test -p voltip-focus --test focus_windows -- --ignored --test-threads=1 --nocapture`.
 
 // The test's own window is Win32 FFI (windows-sys); UI Automation's focus calls are COM.
@@ -16,7 +18,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use voltip_focus::{Expected, Reader, Settled, UnconfirmedWhy, Watch, windows as uia};
-use voltip_inject::{Injector as _, PasteOptions};
+use voltip_inject::{ClipboardPort as _, CopyOptions, Injector as _, Modifier, PasteOptions, SelectionSource as _, SystemClipboard, system_selection};
 use voltip_platform::HostOs;
 use voltip_platform::insert_check::rules::InsertCheck;
 use windows::Win32::Foundation::HWND;
@@ -25,7 +27,10 @@ use windows::Win32::UI::Accessibility::{CUIAutomation8, IUIAutomation};
 use windows_sys::Win32::Foundation::RECT;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Threading::GetCurrentThreadId;
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEINPUT, SendInput};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+    INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_KEYUP, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEINPUT, SendInput, VIRTUAL_KEY,
+    VK_A, VK_CONTROL, VK_MENU,
+};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, ES_AUTOHSCROLL, ES_READONLY, FindWindowW, GetForegroundWindow, GetMessageW,
     GetWindowRect, GetWindowThreadProcessId, HWND_TOPMOST, MSG, PostThreadMessageW, RegisterClassW, SWP_NOMOVE, SWP_NOSIZE, SetCursorPos, SetWindowPos,
@@ -190,9 +195,17 @@ struct Notepad {
 
 impl Notepad {
     fn open() -> Self {
+        let class = wide("Notepad");
+        let until = Instant::now() + WAIT;
+        // The Notepad an earlier test ended may not have closed its window yet; this test must not
+        // find that one.
+        // SAFETY: a class-name lookup.
+        while unsafe { FindWindowW(class.as_ptr(), std::ptr::null()) } as isize != 0 {
+            assert!(Instant::now() < until, "a Notepad window from before is still open");
+            std::thread::sleep(Duration::from_millis(100));
+        }
         // Dropped on every path, the window found or not: `Drop` ends and reaps the process.
         let mut notepad = Self { started: Command::new("notepad.exe").spawn().expect("notepad.exe"), window: 0 };
-        let class = wide("Notepad");
         let until = Instant::now() + WAIT;
         while notepad.window == 0 {
             assert!(Instant::now() < until, "no Notepad window");
@@ -239,6 +252,37 @@ fn paste_into(top: isize) {
     voltip_inject::system_paste_injector(PasteOptions::for_os("windows")).inject(TYPED).expect("the paste went out");
 }
 
+/// Press (`up` false) or release (`up` true) the keys `vks`, in order, as a keyboard would.
+fn keys(vks: &[VIRTUAL_KEY], up: bool) {
+    let flags = if up { KEYEVENTF_KEYUP } else { 0 };
+    let inputs: Vec<INPUT> = vks
+        .iter()
+        .map(|&vk| INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: vk, wScan: 0, dwFlags: flags, time: 0, dwExtraInfo: 0 } } })
+        .collect();
+    // SAFETY: an array of INPUTs that outlives the call.
+    let sent = unsafe { SendInput(inputs.len() as u32, inputs.as_ptr(), std::mem::size_of::<INPUT>() as i32) };
+    assert_eq!(sent as usize, inputs.len(), "the keys {vks:?} (up: {up})");
+}
+
+/// Keys this test holds down, released however the test ends: a key left down would stay down
+/// for the rest of the job.
+struct Held(Vec<VIRTUAL_KEY>);
+
+impl Held {
+    fn down(vks: &[VIRTUAL_KEY]) -> Self {
+        keys(vks, false);
+        Self(vks.to_vec())
+    }
+}
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        let mut vks = std::mem::take(&mut self.0);
+        vks.reverse();
+        keys(&vks, true);
+    }
+}
+
 #[test]
 #[ignore = "pastes into windows it brings to the front: CI's windows-2025 desktop only"]
 fn a_paste_lands_in_notepad_a_read_only_edit_stays_and_another_edit_takes_the_focus() {
@@ -261,4 +305,31 @@ fn a_paste_lands_in_notepad_a_read_only_edit_stays_and_another_edit_takes_the_fo
     let watch = wait_watch(&reader, OWN);
     click(own.other, own.top, "the other EDIT");
     assert_eq!(watch.settle(WATCH), Settled::unconfirmed(UnconfirmedWhy::ControlChanged), "the focus moved");
+}
+
+/// docs/dictation.md §35 (the copy of §19): 从选中文字学习 reads Notepad's selection the way Voltip
+/// does, with Ctrl+Insert while the user still holds Ctrl+Alt of the shortcut (`Alt` is let go
+/// after `Ctrl` went down, so no menu bar opens), and puts back what the clipboard held.
+#[test]
+#[ignore = "copies out of windows it brings to the front: CI's windows-2025 desktop only"]
+fn the_copy_reads_notepads_selection_with_the_shortcut_held_and_puts_the_clipboard_back() {
+    let focuser = Focuser::new();
+    let reader = Reader::new(HostOs::Windows, uia::open);
+    let notepad = Notepad::open();
+    focuser.focus(notepad.window, notepad.window, "Notepad");
+    let watch = wait_watch(&reader, "notepad");
+    paste_into(notepad.window);
+    assert_eq!(watch.settle(WATCH), Settled::sure(InsertCheck::Written), "the text is in Notepad");
+    drop(Held::down(&[VK_CONTROL, VK_A]));
+
+    let clipboard = SystemClipboard::new();
+    clipboard.write_text("SENTINEL").expect("the clipboard");
+    let copier = system_selection(CopyOptions { timeout: Duration::from_secs(1), ..CopyOptions::default() });
+    // SAFETY: plain query.
+    assert_eq!(unsafe { GetForegroundWindow() } as isize, notepad.window, "the copy would go elsewhere");
+    let held = Held::down(&[VK_CONTROL, VK_MENU]);
+    let copied = copier.copy_selection(&[Modifier::Control, Modifier::Alt]);
+    drop(held);
+    assert_eq!(copied.expect("the copy went out").as_deref(), Some(TYPED), "Notepad's selection");
+    assert_eq!(clipboard.read_text().expect("the clipboard").as_deref(), Some("SENTINEL"), "the previous clipboard is back");
 }

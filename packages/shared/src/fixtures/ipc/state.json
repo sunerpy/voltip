@@ -202,6 +202,7 @@
     "backend": "global-shortcut · Windows · RegisterHotKey",
     "edit_registered": "Ctrl+Alt+E",
     "copy_last_registered": "Ctrl+Shift+V",
+    "learn_registered": "Ctrl+Alt+L",
     "capabilities": {
       "global": true,
       "everywhere": true,
@@ -1669,6 +1670,21 @@
       "at_ms": 1758700600000
     }
   ],
+  "learn_notice": {
+    "id": 3,
+    "outcome": {
+      "kind": "learned",
+      "pairs": [
+        {
+          "heard": "Quinn for",
+          "polished": "Qwen 4",
+          "history_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+        }
+      ],
+      "safe": true
+    },
+    "shown": true
+  },
   "scenes": [
     {
       "id": "5c0ffee0-1a2b-4c3d-8e4f-5a6b7c8d9e0f",

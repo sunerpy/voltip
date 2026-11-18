@@ -60,7 +60,7 @@ pub const DEV_DATA_DIR_ENV: &str = "VOLTIP_DEV_DATA_DIR";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 161] = [
+pub const COMMANDS: [&str; 168] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -86,6 +86,7 @@ pub const COMMANDS: [&str; 161] = [
     "settings_set_hotkey",
     "settings_set_edit_hotkey",
     "settings_set_copy_last_hotkey",
+    "settings_set_learn_hotkey",
     "settings_set_solo_key",
     "settings_set_microphone",
     "settings_set_recording",
@@ -101,6 +102,9 @@ pub const COMMANDS: [&str; 161] = [
     "dictation_stop",
     "dictation_cancel",
     "dictation_dismiss",
+    "learn_notice_accept",
+    "learn_notice_undo",
+    "learn_notice_dismiss",
     "hotkey_edge",
     "settings_set_activation",
     "settings_set_engines",
@@ -119,6 +123,7 @@ pub const COMMANDS: [&str; 161] = [
     "history_delete",
     "history_clear",
     "history_star",
+    "history_clear_corrected",
     "history_process",
     "history_process_cancel",
     "audio_cache_clear",
@@ -221,6 +226,8 @@ pub const COMMANDS: [&str; 161] = [
     "overlay_copy",
     "overlay_paste",
     "open_history",
+    "open_suggestions",
+    "open_privacy",
     "phone_share_text",
 ];
 
@@ -414,6 +421,38 @@ fn settings_set_hotkey(bridge: tauri::State<'_, Bridge>, hotkey: String) -> Resu
 #[tauri::command]
 fn settings_set_edit_hotkey(bridge: tauri::State<'_, Bridge>, hotkey: Option<String>) -> Result<(), String> {
     Ok(bridge.dispatch(UiCommand::SettingsSetEditHotkey { hotkey })?)
+}
+
+/// 从选中文字学习's chord (docs/dictation.md §35): a chord, or `null` for none (`--learn-selection`
+/// keeps working). The core validates it like the dictation hotkey, refuses the other three chords,
+/// persists and re-emits `settings`; the hotkey module re-registers.
+#[tauri::command]
+fn settings_set_learn_hotkey(bridge: tauri::State<'_, Bridge>, hotkey: Option<String>) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::SettingsSetLearnHotkey { hotkey })?)
+}
+
+/// The learn notice's 加入词典 (docs/dictation.md §35).
+#[tauri::command]
+fn learn_notice_accept(bridge: tauri::State<'_, Bridge>, id: u64) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::LearnNoticeAccept { id })?)
+}
+
+/// The learn notice's 撤销.
+#[tauri::command]
+fn learn_notice_undo(bridge: tauri::State<'_, Bridge>, id: u64) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::LearnNoticeUndo { id })?)
+}
+
+/// The learn notice's ×.
+#[tauri::command]
+fn learn_notice_dismiss(bridge: tauri::State<'_, Bridge>, id: u64) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::LearnNoticeDismiss { id })?)
+}
+
+/// The history detail's 移除 (docs/dictation.md §35): the user's correction of the entry is forgotten.
+#[tauri::command]
+fn history_clear_corrected(bridge: tauri::State<'_, Bridge>, id: String) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::HistoryClearCorrected { id })?)
 }
 
 /// 复制上一条结果's chord (docs/dictation.md §28): a chord, or `null` for none (`--copy-last` and
@@ -1539,6 +1578,34 @@ fn open_history<R: Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
     app.emit_to(MAIN_WINDOW, MAIN_REQUEST_EVENT, serde_json::json!({ "action": "history" })).map_err(|e| e.to_string())
 }
 
+/// The learn notice's 查看 (docs/dictation.md §35): the main window comes up on the dictionary's
+/// learning suggestions.
+#[tauri::command]
+fn open_suggestions<R: Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
+    show_main_window(&app);
+    app.emit_to(MAIN_WINDOW, MAIN_REQUEST_EVENT, serde_json::json!({ "action": "suggestions" })).map_err(|e| e.to_string())
+}
+
+/// The learn notice's 打开设置 while the history is off (docs/dictation.md §35): the main window
+/// comes up on 设置 › 隐私.
+#[tauri::command]
+fn open_privacy<R: Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
+    show_main_window(&app);
+    app.emit_to(MAIN_WINDOW, MAIN_REQUEST_EVENT, serde_json::json!({ "action": "privacy" })).map_err(|e| e.to_string())
+}
+
+/// 从选中文字学习 (docs/dictation.md §35) from the hotkey or `--learn-selection`: the core copies the
+/// selection in front and learns from it; the pill shows the notice.
+pub fn learn_selection<R: Runtime>(app: &tauri::AppHandle<R>, source: voltip_core::EdgeSource) {
+    let Some(bridge) = app.try_state::<Bridge>() else {
+        tracing::warn!(?source, "learn selection before the core is up; dropped");
+        return;
+    };
+    if let Err(e) = bridge.learn_selection(source) {
+        tracing::warn!(error = %e, ?source, "learn selection not accepted");
+    }
+}
+
 /// What the shell wires besides the core.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ShellOptions {
@@ -1605,6 +1672,10 @@ pub fn on_second_instance<R: Runtime>(app: &tauri::AppHandle<R>, args: &[String]
     }
     if cli::copy_last_from_args(args) {
         copy_last::run(app, "cli");
+        return;
+    }
+    if cli::learn_selection_from_args(args) {
+        learn_selection(app, voltip_core::EdgeSource::Cli);
         return;
     }
     match cli::remote_from_args(args) {
@@ -1781,6 +1852,7 @@ pub fn build_app<R: Runtime>(
             settings_set_hotkey,
             settings_set_edit_hotkey,
             settings_set_copy_last_hotkey,
+            settings_set_learn_hotkey,
             settings_set_solo_key,
             settings_set_microphone,
             settings_set_recording,
@@ -1796,6 +1868,9 @@ pub fn build_app<R: Runtime>(
             dictation_stop,
             dictation_cancel,
             dictation_dismiss,
+            learn_notice_accept,
+            learn_notice_undo,
+            learn_notice_dismiss,
             hotkey_edge,
             settings_set_activation,
             settings_set_engines,
@@ -1814,6 +1889,7 @@ pub fn build_app<R: Runtime>(
             history_delete,
             history_clear,
             history_star,
+            history_clear_corrected,
             history_process,
             history_process_cancel,
             audio_cache_clear,
@@ -1916,6 +1992,8 @@ pub fn build_app<R: Runtime>(
             overlay_copy,
             overlay_paste,
             open_history,
+            open_suggestions,
+            open_privacy,
             phone_share_text
         ])
 }
@@ -1950,7 +2028,7 @@ pub fn run() {
     };
     let action = args.action();
     // `--quit` and `--copy-last` only reach a running instance; they never start one.
-    let forward_only = matches!(action, cli::Action::Quit | cli::Action::CopyLast);
+    let forward_only = matches!(action, cli::Action::Quit | cli::Action::CopyLast | cli::Action::LearnSelection);
     let start_hidden = match &action {
         cli::Action::Gui { start_hidden, remote } => {
             if let Some(remote) = remote {
@@ -1960,7 +2038,7 @@ pub fn run() {
         }
         // Built like the GUI below so the single-instance plugin can hand `--quit` / `--copy-last`
         // to a running instance (and end this process); getting past `build` means there is none.
-        cli::Action::Quit | cli::Action::CopyLast => true,
+        cli::Action::Quit | cli::Action::CopyLast | cli::Action::LearnSelection => true,
         headless => {
             tracing::debug!(?headless, "headless action");
             // Unlocked handles: each write takes the lock briefly. Holding `stdout().lock()` across

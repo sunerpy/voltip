@@ -85,6 +85,7 @@ import {
   type EngineStatus,
   type HistoryEntry,
   type IgnoredPair,
+  type LearnNotice,
   type HotkeyEdgeArgs,
   type InjectPreflight,
   type PasteFailure,
@@ -1184,6 +1185,9 @@ export class MockBackend implements Backend {
   readonly overlayPastes: string[] = [];
   /** How often the result card's 打开历史 ran (tests). */
   historyOpens = 0;
+  /** How often the learn notice's 查看 and 打开设置 ran (tests). */
+  suggestionsOpens = 0;
+  privacyOpens = 0;
   private meters = new Set<ReturnType<typeof setInterval>>();
   private permissions: PermissionReport | (() => PermissionReport);
   private readonly preflight: InjectPreflight;
@@ -2191,9 +2195,44 @@ export class MockBackend implements Backend {
     return Promise.resolve(structuredClone(this.pasteOutcome));
   }
 
+  /** Forget the user's correction of entry `id` (§35); its text stays. */
+  private clearCorrection(id: string): void {
+    this.setHistory(
+      this.history.map((e) => {
+        if (e.id !== id || e.corrected === undefined) return e;
+        const { corrected: _gone, ...rest } = e;
+        return rest;
+      }),
+    );
+  }
+
+  /** The learn chord (§35) is `hotkey`. */
+  private learnChordIs(hotkey: string): boolean {
+    const learn = this.state.settings.learn_hotkey;
+    return learn != null && mockSameChord(hotkey, learn);
+  }
+
+  /** Show a learn notice on the pill as the core would after a 从选中文字学习 (§35; the browser
+   *  has no selection to copy, so tests and the dev sheet hand it the notice). */
+  showLearnNotice(notice: LearnNotice | null): void {
+    this.emit({ type: "learn_notice", notice });
+  }
+
   /** `open_history` (§28): the shell would bring the main window up on the history page. */
   openHistory(): Promise<void> {
     this.historyOpens += 1;
+    return Promise.resolve();
+  }
+
+  /** `open_suggestions` (§35): the shell would bring the main window up on the learning suggestions. */
+  openSuggestions(): Promise<void> {
+    this.suggestionsOpens += 1;
+    return Promise.resolve();
+  }
+
+  /** `open_privacy` (§35): the shell would bring the main window up on 设置 › 隐私. */
+  openPrivacy(): Promise<void> {
+    this.privacyOpens += 1;
     return Promise.resolve();
   }
 
@@ -2355,6 +2394,10 @@ export class MockBackend implements Backend {
         });
         return;
       }
+      if (this.learnChordIs(hotkey)) {
+        this.emit({ type: "error", message: `hotkey: ${hotkey} 已用作「从选中文字学习」的快捷键` });
+        return;
+      }
       this.emit({ type: "settings", ...this.state.settings, hotkey });
       this.emit({ type: "hotkey", ...this.hotkeyStatus(false) });
     },
@@ -2438,6 +2481,13 @@ export class MockBackend implements Backend {
           });
           return;
         }
+        if (this.learnChordIs(hotkey)) {
+          this.emit({
+            type: "error",
+            message: `edit_hotkey: ${hotkey} 已用作「从选中文字学习」的快捷键`,
+          });
+          return;
+        }
       }
       this.emit({
         type: "settings",
@@ -2468,6 +2518,13 @@ export class MockBackend implements Backend {
           });
           return;
         }
+        if (this.learnChordIs(hotkey)) {
+          this.emit({
+            type: "error",
+            message: `copy_last_hotkey: ${hotkey} 已用作「从选中文字学习」的快捷键`,
+          });
+          return;
+        }
       }
       const { copy_last_hotkey: _old, ...rest } = this.state.settings;
       this.emit({
@@ -2476,6 +2533,75 @@ export class MockBackend implements Backend {
         ...(hotkey === null ? {} : { copy_last_hotkey: hotkey }),
       });
       this.emit({ type: "hotkey", ...this.hotkeyStatus(false) });
+    },
+    settings_set_learn_hotkey: (args) => {
+      // Mirrors `SetLearnHotkey` (docs/dictation.md §35): validated like the dictation chord, never
+      // one of the other three; `null` assigns none.
+      const { hotkey } = required(args);
+      if (hotkey !== null) {
+        const problem = mockChordProblem(hotkey);
+        if (problem !== undefined) {
+          this.emit({ type: "error", message: `hotkey: ${hotkey} ${problem}` });
+          return;
+        }
+        const taken: [string | null | undefined, string][] = [
+          [this.state.settings.hotkey, "听写快捷键"],
+          [this.state.settings.edit_hotkey, "「编辑选中文本」的快捷键"],
+          [this.state.settings.copy_last_hotkey, "「复制上一条结果」的快捷键"],
+        ];
+        const clash = taken.find(([chord]) => chord != null && mockSameChord(hotkey, chord));
+        if (clash !== undefined) {
+          this.emit({ type: "error", message: `learn_hotkey: ${hotkey} 已用作${clash[1]}` });
+          return;
+        }
+      }
+      const { learn_hotkey: _old, ...rest } = this.state.settings;
+      this.emit({
+        type: "settings",
+        ...rest,
+        ...(hotkey === null ? {} : { learn_hotkey: hotkey }),
+      });
+      this.emit({ type: "hotkey", ...this.hotkeyStatus(false) });
+    },
+    learn_notice_accept: (args) => {
+      // Mirrors `LearnNoticeAccept` (§35): the notice's pairs through the batch 加入词典.
+      const { id } = required(args);
+      const notice = this.state.learn_notice;
+      if (notice == null || notice.id !== id || notice.accepted !== undefined) return;
+      if (notice.outcome.kind !== "learned" || !notice.outcome.safe) return;
+      void this.vocabularySuggestionsAccept(notice.outcome.pairs).then((outcome) => {
+        const added = outcome.items.filter((i) => i.kind === "accepted").length;
+        this.emit({
+          type: "learn_notice",
+          notice: {
+            ...notice,
+            accepted: {
+              added,
+              refused: outcome.items.length - added,
+              ...(outcome.undo === null ? {} : { undo: outcome.undo }),
+            },
+          },
+        });
+      });
+    },
+    learn_notice_undo: (args) => {
+      const { id } = required(args);
+      const notice = this.state.learn_notice;
+      const batch = notice?.accepted?.undo;
+      if (notice == null || notice.id !== id || notice.undone !== undefined || batch === undefined)
+        return;
+      void this.vocabularySuggestionsUndo(batch).then((undone) => {
+        this.emit({ type: "learn_notice", notice: { ...notice, undone } });
+      });
+    },
+    learn_notice_dismiss: (args) => {
+      const { id } = required(args);
+      if (this.state.learn_notice?.id === id) this.emit({ type: "learn_notice", notice: null });
+    },
+    history_clear_corrected: (args) => {
+      // Mirrors `HistoryClearCorrected` (§35): the entry's correction goes, its text stays.
+      const { id } = required(args);
+      this.clearCorrection(id);
     },
     hotkey_capture: (args) => {
       // Mirrors the desktop shell: recording suspends the registration, closing restores it.
@@ -5379,11 +5505,12 @@ export class MockBackend implements Backend {
   /** What the desktop shell reports after (re)registering both chords: the dictation chord, and the
    *  edit chord while it is on; nothing while the recorder holds the keyboard. */
   private hotkeyStatus(capturing: boolean): HotkeyStatus {
-    const { hotkey, edit_hotkey, solo_key, copy_last_hotkey } = this.state.settings;
+    const { hotkey, edit_hotkey, solo_key, copy_last_hotkey, learn_hotkey } = this.state.settings;
     return {
       ...(capturing ? {} : { registered: hotkey }),
       ...(capturing || edit_hotkey === null ? {} : { edit_registered: edit_hotkey }),
       ...(capturing || copy_last_hotkey == null ? {} : { copy_last_registered: copy_last_hotkey }),
+      ...(capturing || learn_hotkey == null ? {} : { learn_registered: learn_hotkey }),
       ...(capturing ? {} : mockSoloStatus(solo_key)),
       pressed: false,
       capturing,
@@ -6781,7 +6908,9 @@ export function sampleBackup(nowMs: number): MockBackupFile {
  *  瑞迪斯 → Redis and 泰普斯克瑞普特 → TypeScript twice) and two seen once. */
 export function sampleSuggestionTakes(nowMs: number): HistoryEntry[] {
   const newest = startOfLocalDay(nowMs) - 3 * DAY_MS + 18 * 3_600_000;
-  const takes: [string, string][] = [
+  // The third text is the take as the user corrected it in the application (docs/dictation.md
+  // §35): the learning suggestions mark those pairs 你的修改.
+  const takes: [string, string, string?][] = [
     ["用维他命录了一段会议纪要", "用 Voltip 录了一段会议纪要。"],
     ["库伯内提斯集群要升级", "Kubernetes 集群要升级。"],
     ["缓存先放到瑞迪斯里", "缓存先放到 Redis 里。"],
@@ -6795,12 +6924,23 @@ export function sampleSuggestionTakes(nowMs: number): HistoryEntry[] {
     ["泰普斯克瑞普特的类型检查没过", "TypeScript 的类型检查没过。"],
     ["打开格拉法纳上的曲线", "打开 Grafana 上的曲线。"],
     ["维他命的悬浮窗挡住了按钮", "Voltip 的悬浮窗挡住了按钮。"],
+    ["维他命的设置页打不开", "维他命的设置页打不开。", "Voltip 的设置页打不开。"],
+    ["我在用 Quinn for max 做测试", "我在用 Quinn for max 做测试。", "我在用 Qwen 4 max 做测试。"],
   ];
-  return takes.map(([raw, text], i) => ({
+  return takes.map(([raw, text, corrected], i) => ({
     id: `00000000-0000-4000-8000-${String(900 + i).padStart(12, "0")}`,
     at_ms: newest - i * 3 * 3_600_000,
     raw_text: raw,
     text,
+    ...(corrected === undefined
+      ? {}
+      : {
+          corrected: {
+            text: corrected,
+            at_ms: newest - i * 3 * 3_600_000 + 600_000,
+            via: "selection" as const,
+          },
+        }),
     refined: true,
     asr_model: MOCK_ENGINE_BUILTIN.asr_model,
     refine_model: MOCK_ENGINE_BUILTIN.refine_model,

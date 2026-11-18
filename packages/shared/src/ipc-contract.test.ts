@@ -103,6 +103,7 @@ const EVENT_TYPE_SET: Record<UiEventType, null> = {
   dictionary: null,
   rules: null,
   vocabulary_ignored: null,
+  learn_notice: null,
   scenes: null,
   presets: null,
   preset_try: null,
@@ -145,6 +146,7 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   settings_set_hotkey: null,
   settings_set_edit_hotkey: null,
   settings_set_copy_last_hotkey: null,
+  settings_set_learn_hotkey: null,
   settings_set_solo_key: null,
   settings_set_microphone: null,
   settings_set_recording: null,
@@ -155,6 +157,9 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   dictation_stop: null,
   dictation_cancel: null,
   dictation_dismiss: null,
+  learn_notice_accept: null,
+  learn_notice_undo: null,
+  learn_notice_dismiss: null,
   settings_set_engines: null,
   provider_key_set: null,
   engines_quota_reset: null,
@@ -163,6 +168,7 @@ const MUTATION_COMMAND_SET: Record<MutationCommand, null> = {
   history_delete: null,
   history_clear: null,
   history_star: null,
+  history_clear_corrected: null,
   history_process: null,
   history_process_cancel: null,
   settings_set_audio_cache: null,
@@ -269,6 +275,7 @@ const argSchemas = {
   settings_set_hotkey: z.object({ hotkey: z.string() }),
   settings_set_edit_hotkey: z.object({ hotkey: z.string().nullable() }).strict(),
   settings_set_copy_last_hotkey: z.object({ hotkey: z.string().nullable() }).strict(),
+  settings_set_learn_hotkey: z.object({ hotkey: z.string().nullable() }).strict(),
   settings_set_solo_key: z.object({ key: soloKeySchema.nullable() }).strict(),
   settings_set_microphone: z.object({ device: z.string().nullable() }).strict(),
   settings_set_recording: z.object({ recording: recordingSettingsSchema.strict() }).strict(),
@@ -295,6 +302,7 @@ const argSchemas = {
     .strict(),
   history_delete: z.object({ id: z.string() }),
   history_star: z.object({ id: z.string(), starred: z.boolean() }),
+  history_clear_corrected: z.object({ id: z.string() }).strict(),
   history_process: z
     .object({
       requestId: z.number().int().nonnegative(),
@@ -414,6 +422,9 @@ const argSchemas = {
   mcp_undo: z.object({ id: z.string() }).strict(),
   usage_notice_dismiss: z.object({ notice: usageNoticeSchema }).strict(),
   dictation_dismiss: z.object({ session: z.number().int().nonnegative() }).strict(),
+  learn_notice_accept: z.object({ id: z.number().int().nonnegative() }).strict(),
+  learn_notice_undo: z.object({ id: z.number().int().nonnegative() }).strict(),
+  learn_notice_dismiss: z.object({ id: z.number().int().nonnegative() }).strict(),
 } satisfies {
   [C in MutationCommand as CommandArgs[C] extends undefined ? never : C]: z.ZodType<CommandArgs[C]>;
 };
@@ -452,6 +463,12 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
       return backend.invoke(name);
     case "dictation_dismiss":
       return backend.invoke(name, argSchemas.dictation_dismiss.parse(args));
+    case "learn_notice_accept":
+      return backend.invoke(name, argSchemas.learn_notice_accept.parse(args));
+    case "learn_notice_undo":
+      return backend.invoke(name, argSchemas.learn_notice_undo.parse(args));
+    case "learn_notice_dismiss":
+      return backend.invoke(name, argSchemas.learn_notice_dismiss.parse(args));
     case "pairing_join_code":
       return backend.invoke(name, argSchemas.pairing_join_code.parse(args));
     case "pairing_join_ticket":
@@ -487,6 +504,8 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
       return backend.invoke(name, argSchemas.settings_set_edit_hotkey.parse(args));
     case "settings_set_copy_last_hotkey":
       return backend.invoke(name, argSchemas.settings_set_copy_last_hotkey.parse(args));
+    case "settings_set_learn_hotkey":
+      return backend.invoke(name, argSchemas.settings_set_learn_hotkey.parse(args));
     case "settings_set_solo_key":
       return backend.invoke(name, argSchemas.settings_set_solo_key.parse(args));
     case "settings_set_microphone":
@@ -509,6 +528,8 @@ function replay(backend: TauriBackend, name: MutationCommand, args: unknown): Pr
       return backend.invoke(name, argSchemas.history_delete.parse(args));
     case "history_star":
       return backend.invoke(name, argSchemas.history_star.parse(args));
+    case "history_clear_corrected":
+      return backend.invoke(name, argSchemas.history_clear_corrected.parse(args));
     case "settings_set_locale":
       return backend.invoke(name, argSchemas.settings_set_locale.parse(args));
     case "settings_set_auto_update":
@@ -1674,12 +1695,19 @@ describe("history queries (docs/dictation.md section 4.4)", () => {
       .parse(loadFixture("vocabulary-suggestions.json"));
     const ready = suggestionsAnswerSchema.parse(fixture.ready);
     if (ready.status !== "ready") throw new Error("ready");
-    expect([ready.scanned, ready.refined, ready.skipped, ready.total, ready.repeated]).toEqual([
-      2000, 1480, 3, 41, 9,
-    ]);
-    expect(ready.pairs.map((p) => [p.heard, p.polished, p.count])).toEqual([
-      ["维他命", "Voltip", 12],
-      ["提成", "集成", 3],
+    expect([
+      ready.scanned,
+      ready.refined,
+      ready.skipped,
+      ready.total,
+      ready.repeated,
+      ready.edited,
+    ]).toEqual([2000, 1480, 3, 41, 10, 2]);
+    expect(ready.pairs.map((p) => [p.heard, p.polished, p.count, p.from_edits])).toEqual([
+      ["维他命", "Voltip", 12, 0],
+      ["提成", "集成", 3, 0],
+      // docs/dictation.md §35: corrected by the user once.
+      ["Quinn for", "Qwen 4", 1, 1],
     ]);
     expect(ready.pairs[0]?.examples).toHaveLength(2);
     expect(suggestionsAnswerSchema.parse(fixture.history_off)).toEqual({ status: "history_off" });

@@ -20,6 +20,13 @@ describe("parseRoute / routePath", () => {
     expect(parseRoute("/history")).toEqual({ name: "history" });
     expect(parseRoute("/history?filter=today")).toEqual({ name: "history", filter: "today" });
     expect(parseRoute("/dictionary")).toEqual({ name: "dictionary" });
+    // docs/dictation.md §35: the learn notice's 查看 opens the learning suggestions.
+    expect(parseRoute("/dictionary/suggestions")).toEqual({
+      name: "dictionary",
+      view: "suggestions",
+    });
+    expect(routePath({ name: "dictionary", view: "suggestions" })).toBe("/dictionary/suggestions");
+    expect(routePath({ name: "dictionary" })).toBe("/dictionary");
     expect(parseRoute("/rules")).toEqual({ name: "rules" });
     // regression (2026-09-28): 语音模型 and AI 模型 are pages of the main layout, no longer settings
     // groups; every older link (the `/engines` page, the `/settings/engine`, `/settings/speech`,

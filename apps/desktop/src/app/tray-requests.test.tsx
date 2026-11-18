@@ -40,6 +40,9 @@ describe("tray requests", () => {
     expect(trayRequestOf({ action: "update" })).toBe("update");
     // docs/dictation.md §28: the result card's 打开历史.
     expect(trayRequestOf({ action: "history" })).toBe("history");
+    // docs/dictation.md §35: the learn notice's 查看 and 打开设置.
+    expect(trayRequestOf({ action: "suggestions" })).toBe("suggestions");
+    expect(trayRequestOf({ action: "privacy" })).toBe("privacy");
     for (const payload of [null, undefined, "settings", {}, { action: "quit" }, { action: 1 }])
       expect(trayRequestOf(payload)).toBeUndefined();
   });
@@ -95,5 +98,23 @@ describe("tray requests", () => {
     });
     await tray.send({ action: "history" });
     expect(await screen.findByTestId("page-history")).toBeInTheDocument();
+  });
+
+  it("docs/dictation.md section 35: the learn notice's 查看 opens the learning suggestions, 打开设置 the privacy settings", async () => {
+    const tray = fakeTray();
+    renderApp({ traySource: tray.source });
+    await waitFor(() => {
+      expect(tray.subscribed()).toBe(true);
+    });
+    await tray.send({ action: "suggestions" });
+    expect(
+      await screen.findByRole("tab", { name: /^学习建议/, selected: true }),
+    ).toBeInTheDocument();
+    await tray.send({ action: "privacy" });
+    expect(await screen.findByRole("dialog", { name: "设置" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "隐私与历史" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 });

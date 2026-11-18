@@ -287,6 +287,7 @@ fn shallow(entry: &HistoryEntry) -> HistoryEntry {
         preset: None,
         origin: None,
         processed: None,
+        corrected: None,
         file: None,
         timing: entry.timing,
         glossary_sent: entry.glossary_sent,

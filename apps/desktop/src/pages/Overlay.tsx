@@ -2,6 +2,7 @@ import {
   DEFAULT_LOCALE,
   type DictationPhase,
   type DictationStatus,
+  type LearnNotice,
   type LiveText,
   type Locale,
   type MessageKey,
@@ -56,6 +57,10 @@ export const BLANK_STATE = "blank";
 export const LIVE_STATE = "live";
 /** The shell's flash after 复制上一条结果 (docs/dictation.md §28), between takes. */
 export const COPIED_STATE = "copied";
+/** The learn notice after 从选中文字学习 (docs/dictation.md §35): `state.learn_notice`. */
+export const LEARNED_STATE = "learned";
+/** `voltip_core::vocabulary::learn::LEARN_TAKES`: the dictations a selection is compared with. */
+export const LEARN_TAKES = 50;
 
 /** Route states the transparent pill window renders without the shell around it. A single sample
  *  pill (`state=listening`) is a `pnpm dev` view (`OverlaySheet`); a release build knows only the
@@ -65,6 +70,7 @@ export function isOverlayWindowState(value: string, dev: boolean = import.meta.e
     value === BLANK_STATE ||
     value === LIVE_STATE ||
     value === COPIED_STATE ||
+    value === LEARNED_STATE ||
     (dev && isPillState(value))
   );
 }
@@ -172,6 +178,143 @@ export function pillLiveCaption(
   };
 }
 
+/** What the learn notice says, how it looks and which buttons it offers (docs/dictation.md §35):
+ *  a card either way, the check for what was learned, added or undone, the alert otherwise. */
+export function learnCard(
+  notice: LearnNotice,
+  t: TFunction,
+): { state: PillState; label: string; buttons: ("add" | "view" | "undo" | "settings")[] } {
+  const o = notice.outcome;
+  switch (o.kind) {
+    case "learned": {
+      const first = o.pairs[0];
+      const pair =
+        first === undefined
+          ? ""
+          : t("learn.notice.pair", { heard: first.heard, polished: first.polished });
+      const accepted = notice.accepted;
+      if (notice.undone !== undefined) {
+        return {
+          state: notice.undone.kind === "undone" ? "inserted" : "error",
+          label:
+            notice.undone.kind === "undone"
+              ? t("learn.notice.undone")
+              : t("learn.notice.undoFailed"),
+          buttons: ["view"],
+        };
+      }
+      if (accepted !== undefined) {
+        const undo = accepted.undo === undefined ? [] : (["undo"] as const);
+        if (accepted.added === 0)
+          return { state: "error", label: t("learn.notice.refusedAll"), buttons: ["view"] };
+        if (accepted.refused > 0) {
+          return {
+            state: "inserted",
+            label: t("learn.notice.addedSome", {
+              n: accepted.added,
+              added: accepted.added,
+              refused: accepted.refused,
+            }),
+            buttons: ["view", ...undo],
+          };
+        }
+        const added =
+          accepted.added === 1
+            ? t("learn.notice.added", { pair })
+            : t("learn.notice.addedMany", { n: accepted.added });
+        return { state: "inserted", label: added, buttons: [...undo] };
+      }
+      return {
+        state: "inserted",
+        label:
+          o.pairs.length === 1
+            ? t("learn.notice.learned", { pair })
+            : t("learn.notice.learnedMany", { n: o.pairs.length, pair }),
+        // A short spelling changes other words too: the dictionary page warns, so it is added there.
+        buttons: o.safe ? ["add", "view"] : ["view"],
+      };
+    }
+    case "no_pairs":
+      return { state: "error", label: t("learn.notice.noPairs"), buttons: [] };
+    case "unchanged":
+      return { state: "error", label: t("learn.notice.unchanged"), buttons: [] };
+    case "no_match":
+      return { state: "error", label: t("learn.notice.noMatch", { n: LEARN_TAKES }), buttons: [] };
+    case "no_selection":
+      return { state: "error", label: t("learn.notice.noSelection"), buttons: [] };
+    case "too_long":
+      return { state: "error", label: t("learn.notice.tooLong", { max: o.max }), buttons: [] };
+    case "terminal":
+      return { state: "error", label: t("learn.notice.terminal"), buttons: [] };
+    case "history_off":
+      return { state: "error", label: t("learn.notice.historyOff"), buttons: ["settings"] };
+    case "failed":
+      return {
+        state: "error",
+        label: t("learn.notice.failed", { message: o.message }),
+        buttons: [],
+      };
+  }
+}
+
+/** The pill window's learn notice: the card, its buttons and ×, all through the core. */
+function LearnedCard({ notice, theme }: { notice: LearnNotice; theme: string }) {
+  const { backend } = useBackend();
+  const { t } = useI18n();
+  const card = learnCard(notice, t);
+  const id = notice.id;
+  const actions: PillAction[] = card.buttons.map((button) => {
+    switch (button) {
+      case "add":
+        return {
+          label: t("learn.notice.add"),
+          primary: true,
+          onClick: () => {
+            void backend.invoke("learn_notice_accept", { id });
+          },
+        };
+      case "undo":
+        return {
+          label: t("learn.notice.undo"),
+          onClick: () => {
+            void backend.invoke("learn_notice_undo", { id });
+          },
+        };
+      case "settings":
+        return {
+          label: t("learn.notice.openSettings"),
+          primary: true,
+          onClick: () => {
+            void backend.openPrivacy();
+          },
+        };
+      case "view":
+        return {
+          label: t("learn.notice.view"),
+          onClick: () => {
+            void backend.openSuggestions();
+          },
+        };
+    }
+  });
+  return (
+    <div
+      className="flex h-full items-start justify-center bg-transparent pt-2"
+      data-testid="overlay-window"
+      data-theme={theme}
+      data-state={LEARNED_STATE}>
+      <Pill
+        state={card.state}
+        label={card.label}
+        actions={actions}
+        onDismiss={() => {
+          void backend.invoke("learn_notice_dismiss", { id });
+        }}
+      />
+    </div>
+  );
+}
+
 /** The transparent pill window. The shell loads it on `state=live` and only shows / hides it; the
  *  pill itself follows `state.dictation`, the meter channel and the live preview. */
 export function Overlay({ state }: OverlayProps) {
@@ -196,6 +339,15 @@ export function Overlay({ state }: OverlayProps) {
   const now = useTickingNow(listening);
   const stageNow = useStageNow(pill !== undefined && dictation.phase.phase === "processing");
 
+  if (current === LEARNED_STATE) {
+    const notice = uiState.learn_notice;
+    if (notice == null) {
+      return (
+        <div className="h-full bg-transparent" data-testid="overlay-window" data-state="blank" />
+      );
+    }
+    return <LearnedCard notice={notice} theme={pillTheme} />;
+  }
   if (current === COPIED_STATE) {
     return (
       <div

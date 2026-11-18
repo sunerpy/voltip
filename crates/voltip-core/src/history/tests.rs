@@ -41,6 +41,7 @@ pub(super) fn entry(text: &str) -> HistoryEntry {
         preset: None,
         origin: None,
         processed: None,
+        corrected: None,
         file: None,
         timing: None,
         glossary_sent: None,
@@ -769,6 +770,35 @@ fn twenty_thousand_entries_open_search_and_count_in_time() {
     assert!(counted < Duration::from_millis(100), "stats {counted:?}");
 }
 
+/// 从选中文字学习 (docs/dictation.md §35): the user's correction is stored beside the entry's own
+/// text (which stays what was inserted), replaces an earlier one, is searched, read back by
+/// `recent_texts`, cleared with `None`, and absent from the JSON until it exists; an unknown id
+/// stores nothing.
+#[test]
+fn a_correction_is_stored_beside_the_entry_searched_and_read_with_the_recent_texts() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = HistoryStore::open(dir.path());
+    let take = entry("我在用 Quinn for max 做测试");
+    store.push(take.clone(), MAX_ENTRIES).unwrap();
+    assert!(!serde_json::to_string(&take).unwrap().contains("corrected"));
+    let corrected = |text: &str, at_ms| CorrectedText { text: text.into(), at_ms, via: CorrectionVia::Selection };
+    assert!(store.set_corrected(take.id, Some(corrected("我在用 Qwen max 做测试", 1))).unwrap());
+    assert!(store.set_corrected(take.id, Some(corrected("我在用 Qwen 4 max 做测试", 2))).unwrap(), "replaces the earlier one");
+    assert!(!store.set_corrected(Uuid::new_v4(), Some(corrected("x", 3))).unwrap());
+    let stored = HistoryStore::open(dir.path()).get(take.id).unwrap().unwrap();
+    assert_eq!(stored.text, take.text, "the inserted text stays");
+    assert_eq!(stored.corrected, Some(Box::new(corrected("我在用 Qwen 4 max 做测试", 2))));
+    let json = serde_json::to_value(&stored).unwrap();
+    assert_eq!(json["corrected"], serde_json::json!({ "text": "我在用 Qwen 4 max 做测试", "at_ms": 2, "via": "selection" }));
+    let reader = HistoryReader::new(dir.path());
+    assert_eq!(reader.query(&page(HistoryQuery { query: "qwen 4".into(), ..Default::default() })).unwrap().entries.len(), 1);
+    assert_eq!(reader.recent_texts(10).unwrap()[0].corrected.as_deref(), Some("我在用 Qwen 4 max 做测试"));
+    assert!(store.set_corrected(take.id, None).unwrap());
+    assert_eq!(store.get(take.id).unwrap().unwrap().corrected, None);
+    assert_eq!(reader.recent_texts(10).unwrap()[0].corrected, None);
+    assert!(reader.query(&page(HistoryQuery { query: "qwen 4".into(), ..Default::default() })).unwrap().entries.is_empty(), "cleared: not searched");
+}
+
 /// 用 AI 预设处理 (docs/dictation.md §22): the result is stored beside the entry's own text (the
 /// text is untouched), replaces an earlier one, is found by the search, survives a reopen and is
 /// omitted from the JSON until it exists; an unknown id stores nothing.
@@ -1174,7 +1204,13 @@ fn recent_texts_are_the_newest_recognised_takes() {
     assert_eq!(
         texts[0],
         HistoryText {
-            id: rows[5].id, at_ms: base + 5, raw_text: "最新".into(), text: "最新。".into(), refined: true, vocabulary: VocabularyHits::default()
+            id: rows[5].id,
+            at_ms: base + 5,
+            raw_text: "最新".into(),
+            text: "最新。".into(),
+            refined: true,
+            vocabulary: VocabularyHits::default(),
+            corrected: None
         }
     );
     // Whether the polish made the text, and what fired: what the correction summary leaves out (§25).

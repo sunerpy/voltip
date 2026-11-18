@@ -1306,14 +1306,21 @@ export const zhCN = {
     /** 学习建议 (docs/dictation.md §16.10): what AI polish changed in the history's recognised
      *  text, offered for the dictionary. */
     suggestions: {
-      explainTitle: "从 AI 润色的改动中学习",
+      explainTitle: "从 AI 润色和你的修改中学习",
       explain:
-        "比较最近记录的识别原文和 AI 润色后的文字，列出「识别成 A、润色改成 B」的写法，按出现次数排列。加入词典后，识别完成时就会直接纠正。只逐字比较，不调用 AI。",
+        "比较最近记录的识别原文和 AI 润色后的文字，以及你在其他应用里改正、用「从选中文字学习」记下的文字，列出「识别成 A、改成 B」的写法，按出现次数排列。加入词典后，识别完成时就会直接纠正。只逐字比较，不调用 AI。",
+      /** The explanation card's hint while 从选中文字学习 has no shortcut (§35). */
+      hint: "在其他应用里改正听写结果后，选中改好的文字，按「从选中文字学习」的快捷键，这里也会列出你的修改。",
+      hintSet: "设置快捷键",
+      /** Where a pair came from (§35). */
+      source: { polish: "润色", edit: "你的修改" },
       undoNote:
         "加入或忽略后可以立即撤销。离开词典页后，加入词典不能再撤销，忽略的写法可以在「已忽略」中取消忽略。",
+      /** What the default 显示范围 shows (§35). */
+      filterNote: "「推荐」列出出现 2 次及以上的写法，以及你改正过的写法。",
       list: "学习建议",
       table: "学习建议",
-      column: { pair: "识别结果 → 润色结果", count: "次数", last: "最近一次" },
+      column: { pair: "识别结果 → 正确写法", count: "次数", last: "最近一次" },
       accept: "加入词典",
       ignore: "忽略",
       accepted: "已加入词典",
@@ -1326,7 +1333,11 @@ export const zhCN = {
         details: "详情：{heard} → {polished}",
       },
       /** Which suggestions the list shows: by default those seen twice or more. */
-      filter: { label: "显示范围", repeated: "出现 2 次及以上", all: "全部" },
+      filter: {
+        label: "显示范围",
+        repeated: "推荐",
+        all: "全部",
+      },
       /** The rows' check boxes. */
       select: { all: "全选", row: "选择：{heard} → {polished}" },
       /** The bar over the list while rows are checked. */
@@ -1397,15 +1408,15 @@ export const zhCN = {
         historyOffTitle: "需要开启历史记录",
         historyOff: "学习建议来自历史记录。开启历史记录后，新的听写会参与比较。",
         openPrivacy: "打开隐私设置",
-        noPolishedTitle: "最近的记录里没有经过 AI 润色的听写",
+        noPolishedTitle: "最近的记录里没有经过 AI 润色或你改正过的听写",
         noPolished:
-          "学习建议比较识别原文和 AI 润色后的文字。开启 AI 润色并听写几次后，这里会列出润色改动过的写法。",
+          "学习建议比较识别原文和 AI 润色后的文字，也收录你用「从选中文字学习」记下的修改。开启 AI 润色并听写几次，或在其他应用里改正后按这个快捷键，这里就会列出写法。",
         noneTitle: "暂无学习建议",
         none: {
           one: "最近 {n} 条经过 AI 润色的记录里，没有新的写法可以加入词典。",
           other: "最近 {n} 条经过 AI 润色的记录里，没有新的写法可以加入词典。",
         },
-        noneRepeatedTitle: "没有出现 2 次及以上的建议",
+        noneRepeatedTitle: "没有推荐的建议",
         noneRepeated: { one: "另有 {n} 组只出现 1 次。", other: "另有 {n} 组只出现 1 次。" },
         showAll: "显示全部",
       },
@@ -1414,6 +1425,7 @@ export const zhCN = {
         other: "最近 {n} 条记录 · {refined} 条经过 AI 润色",
       },
       skipped: "{n} 条过长，未比较",
+      edited: "{n} 条有你的修改",
       more: "显示前 {shown} 组 · 共 {total} 组",
       shown: { one: "显示 {n} 组", other: "显示 {n} 组" },
       hiddenOnce: { one: "隐藏 {n} 组只出现 1 次的建议", other: "隐藏 {n} 组只出现 1 次的建议" },
@@ -2667,6 +2679,54 @@ export const zhCN = {
       copyLastCancelLabel: "取消录制 · 复制上一条结果",
       copyLastClear: "清除",
       copyLastClearLabel: "清除 · 复制上一条结果",
+    },
+  },
+  /** 从选中文字学习 (docs/dictation.md §35): the shortcut, the pill's notice after it, and the
+   *  correction kept with a history entry. */
+  learn: {
+    settings: {
+      label: "从选中文字学习",
+      help: "在其他应用里改正听写结果后，选中改好的文字按这个快捷键，Voltip 会记下改动，到词典的学习建议里确认",
+      none: "未设置",
+      record: "录制",
+      recordLabel: "录制 · 从选中文字学习",
+      rerecordLabel: "重新录制 · 从选中文字学习",
+      cancelLabel: "取消录制 · 从选中文字学习",
+      clear: "清除",
+      clearLabel: "清除 · 从选中文字学习",
+    },
+    notice: {
+      pair: "{heard} → {polished}",
+      learned: "已记下 1 处改动：{pair}",
+      learnedMany: "已记下 {n} 处改动：{pair} 等",
+      added: "已加入词典：{pair}",
+      addedMany: "已将 {n} 处改动加入词典",
+      addedSome: {
+        one: "{added} 处已加入，{refused} 处无法加入",
+        other: "{added} 处已加入，{refused} 处无法加入",
+      },
+      refusedAll: "无法加入词典，原因见词典页",
+      undone: "已撤销",
+      undoFailed: "无法撤销",
+      noPairs: "没有可以加入词典的改动",
+      unchanged: "选中的文字和听写结果相同",
+      noMatch: "最近 {n} 次听写里没有找到这段文字",
+      noSelection: "没有选中文字",
+      tooLong: "选中的文字太长，最多 {max} 字",
+      terminal: "终端里的文字不能用来学习",
+      historyOff: "需要先开启历史记录",
+      failed: "无法读取选中的文字：{message}",
+      add: "加入词典",
+      view: "查看",
+      undo: "撤销",
+      openSettings: "打开设置",
+    },
+    /** The history detail's line about the user's correction. */
+    history: {
+      corrected: "之后改成",
+      via: "从选中文字学习 · {time}",
+      remove: "移除",
+      removeLabel: "移除之后改成的文字",
     },
   },
   /** docs/dictation.md §3.14: 服务出错时也改用候补, the models of this computer in a recognition

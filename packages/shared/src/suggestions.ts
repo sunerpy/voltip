@@ -4,7 +4,7 @@
 // rules page's hints — with the semantics of `voltip_core::vocabulary::{suggest, rule_warnings}`.
 
 import { diffTokens } from "./refine";
-import { MAX_PAIR_DIFF_CELLS, takePolishPairs } from "./quick-fix";
+import { MAX_PAIR_DIFF_CELLS, type PolishPair, takeEditPairs, takePolishPairs } from "./quick-fix";
 import {
   type BacktestDraft,
   type BatchItem,
@@ -100,12 +100,131 @@ function snippetAround(raw: string, start: number, end: number): string {
  *  older takes are not read past it. */
 export const MAX_SCAN_CELLS = 50_000_000;
 
+/** One pair of one take before the counting (`voltip_core::mcp::candidates::Found`). */
+interface Found {
+  take: number;
+  pair: PolishPair;
+  /** The user's correction made it (§35), not the AI clean-up. */
+  edit: boolean;
+}
+
+/** One CJK character: Han, kana or Hangul (`is_cjk_letter`). */
+const CJK_LETTER =
+  /^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}々〆〇]$/u;
+
+function singleCjk(text: string): boolean {
+  return CJK_LETTER.test(text);
+}
+
+/** How often `needle` occurs in `text`, overlapping occurrences counted. */
+function occurrences(text: string, needle: string): number {
+  let n = 0;
+  for (let at = text.indexOf(needle); at >= 0; at = text.indexOf(needle, at + 1)) n += 1;
+  return n;
+}
+
+/** A pair widened by one unchanged neighbour (`voltip_core::mcp::candidates::widen`). */
+interface Widened {
+  found: Found;
+  /** The pair before it was widened, when it was. */
+  single?: { heard: string; polished: string };
+}
+
+/** Every pair whose heard or right form is a single CJK character, widened by the same
+ *  unchanged neighbour on both sides (docs/dictation.md §16.10): 非 → 飞 in 「非书」 becomes
+ *  非书 → 飞书. With a neighbour on both sides, the side whose widened right form occurs more often
+ *  in the compared takes' final texts and corrections wins, the right one on a tie. */
+function widen(
+  takes: readonly HistoryEntry[],
+  found: readonly Found[],
+  compared: readonly number[],
+): Widened[] {
+  const options = found.map((f) => {
+    const { pair } = f;
+    if (!singleCjk(pair.heard) && !singleCjk(pair.polished)) return [];
+    const take = takes[f.take];
+    if (take === undefined) return [];
+    const raw = take.raw_text;
+    const right = f.edit ? (take.corrected?.text ?? take.text) : take.text;
+    const out: {
+      heard: string;
+      polished: string;
+      start: number;
+      end: number;
+      polishedStart: number;
+      polishedEnd: number;
+    }[] = [];
+    const after = Array.from(raw.slice(pair.end))[0];
+    const afterRight = Array.from(right.slice(pair.polishedEnd))[0];
+    if (after !== undefined && after === afterRight && singleCjk(after)) {
+      out.push({
+        heard: pair.heard + after,
+        polished: pair.polished + after,
+        start: pair.start,
+        end: pair.end + after.length,
+        polishedStart: pair.polishedStart,
+        polishedEnd: pair.polishedEnd + after.length,
+      });
+    }
+    const before = Array.from(raw.slice(0, pair.start)).at(-1);
+    const beforeRight = Array.from(right.slice(0, pair.polishedStart)).at(-1);
+    if (before !== undefined && before === beforeRight && singleCjk(before)) {
+      out.push({
+        heard: before + pair.heard,
+        polished: before + pair.polished,
+        start: pair.start - before.length,
+        end: pair.end,
+        polishedStart: pair.polishedStart - before.length,
+        polishedEnd: pair.polishedEnd,
+      });
+    }
+    return out;
+  });
+  const counts = new Map<string, number>();
+  for (const o of options) {
+    if (o.length < 2) continue;
+    for (const w of o) {
+      if (counts.has(w.polished)) continue;
+      let n = 0;
+      for (const index of compared) {
+        const take = takes[index];
+        if (take === undefined) continue;
+        n += occurrences(take.text, w.polished);
+        if (take.corrected !== undefined) n += occurrences(take.corrected.text, w.polished);
+      }
+      counts.set(w.polished, n);
+    }
+  }
+  return found.map((f, i) => {
+    const o = options[i] ?? [];
+    const [rightSide, leftSide] = o;
+    const chosen =
+      rightSide === undefined
+        ? undefined
+        : leftSide !== undefined &&
+            (counts.get(leftSide.polished) ?? 0) > (counts.get(rightSide.polished) ?? 0)
+          ? leftSide
+          : rightSide;
+    if (chosen === undefined) return { found: f };
+    return {
+      found: { ...f, pair: { ...chosen } },
+      single: { heard: f.pair.heard, polished: f.pair.polished },
+    };
+  });
+}
+
+/** The cells the token LCS of `a` and `b` compares, as the core counts them against its caps. */
+function cellsOf(a: string, b: string): number {
+  return (diffTokens(a).length + 1) * (diffTokens(b).length + 1);
+}
+
 /** `vocabulary_suggestions` as the core answers it, over `takes` (newest first, as the history
- *  holds them): the AI clean-up's pairs (`takePolishPairs`, the core's comparison), without the
- *  ones an enabled entry corrects already and the ignored ones, most frequent first, then the most
- *  recent; at most `limit` of them. Like the core it stops reading older takes once the cells it
- *  compared would pass `scanCells` (a take whose corrections or rules fired is compared twice),
- *  and `scanned` counts the takes it read. */
+ *  holds them): the AI clean-up's pairs (`takePolishPairs`, the core's comparison) and the user's
+ *  corrections (`takeEditPairs`, §35), widened when they were single characters and counted
+ *  together, without the ones an enabled entry corrects already and the ignored ones (also when
+ *  ignored before the widening), most frequent first, then the most recent; at most `limit` of
+ *  them. Like the core it stops reading older takes once the cells it compared would pass
+ *  `scanCells`, and `scanned` counts the takes it read. */
 export function suggestVocabulary(
   dictionary: readonly DictionaryEntry[],
   rules: readonly ReplacementRule[],
@@ -115,58 +234,96 @@ export function suggestVocabulary(
   scanCells: number = MAX_SCAN_CELLS,
 ): ReadySuggestions {
   const known = dictionary.filter((e) => e.enabled).flatMap((e) => e.heard_as);
-  const found = new Map<string, Suggestion>();
+  const isKnown = (heard: string) => known.some((k) => sameIgnoringAsciiCase(k, heard));
+  const found: Found[] = [];
+  const compared: number[] = [];
   let skipped = 0;
   let scanned = 0;
+  let edited = 0;
   let cells = 0;
-  for (const take of takes) {
-    if (!take.refined) {
+  for (const [index, take] of takes.entries()) {
+    const corrected = take.corrected?.text;
+    if (!take.refined && corrected === undefined) {
       scanned += 1;
       continue;
     }
-    const size = (diffTokens(take.raw_text).length + 1) * (diffTokens(take.text).length + 1);
-    if (size > MAX_PAIR_DIFF_CELLS) {
+    const polish = take.refined ? cellsOf(take.raw_text, take.text) : undefined;
+    const edit =
+      corrected === undefined
+        ? undefined
+        : { text: cellsOf(take.text, corrected), raw: cellsOf(take.raw_text, take.text) };
+    if (
+      (polish ?? 0) > MAX_PAIR_DIFF_CELLS ||
+      (edit !== undefined && (edit.text > MAX_PAIR_DIFF_CELLS || edit.raw > MAX_PAIR_DIFF_CELLS))
+    ) {
       scanned += 1;
       skipped += 1;
       continue;
     }
     const fired =
       (take.vocabulary?.corrections.length ?? 0) + (take.vocabulary?.rules.length ?? 0) > 0;
-    const cost = fired ? size * 2 : size;
+    const replayCost = fired ? (polish ?? cellsOf(take.raw_text, take.raw_text)) : 0;
+    const cost = (polish ?? 0) + (edit === undefined ? 0 : edit.text + edit.raw) + replayCost;
     if (cells + cost > scanCells) break;
     cells += cost;
     scanned += 1;
-    for (const pair of takePolishPairs(take, dictionary, rules)) {
-      const key = JSON.stringify([pair.heard, pair.polished]);
-      let suggestion = found.get(key);
-      if (suggestion === undefined) {
-        suggestion = {
-          heard: pair.heard,
-          polished: pair.polished,
-          count: 0,
-          last_at_ms: take.at_ms,
-          examples: [],
-        };
-        found.set(key, suggestion);
-      }
-      suggestion.count += 1;
-      suggestion.last_at_ms = Math.max(suggestion.last_at_ms, take.at_ms);
-      if (
-        suggestion.examples.length < 3 &&
-        !suggestion.examples.some((e) => e.history_id === take.id)
-      ) {
-        suggestion.examples.push({
-          history_id: take.id,
-          snippet: snippetAround(take.raw_text, pair.start, pair.end),
-        });
-      }
+    compared.push(index);
+    if (corrected !== undefined) edited += 1;
+    for (const pair of takePolishPairs(take, dictionary, rules))
+      found.push({ take: index, pair, edit: false });
+    for (const pair of takeEditPairs(take, dictionary, rules))
+      found.push({ take: index, pair, edit: true });
+  }
+  const bySuggestion = new Map<
+    string,
+    Suggestion & { single?: { heard: string; polished: string } }
+  >();
+  for (const { found: f, single } of widen(takes, found, compared)) {
+    const take = takes[f.take];
+    if (take === undefined) continue;
+    const key = JSON.stringify([f.pair.heard, f.pair.polished]);
+    let suggestion = bySuggestion.get(key);
+    if (suggestion === undefined) {
+      suggestion = {
+        heard: f.pair.heard,
+        polished: f.pair.polished,
+        count: 0,
+        last_at_ms: take.at_ms,
+        examples: [],
+        from_edits: 0,
+        ...(single === undefined ? {} : { single }),
+      };
+      bySuggestion.set(key, suggestion);
+    }
+    suggestion.count += 1;
+    if (f.edit) suggestion.from_edits += 1;
+    suggestion.last_at_ms = Math.max(suggestion.last_at_ms, take.at_ms);
+    if (
+      suggestion.examples.length < 3 &&
+      !suggestion.examples.some((e) => e.history_id === take.id)
+    ) {
+      suggestion.examples.push({
+        history_id: take.id,
+        snippet: snippetAround(take.raw_text, f.pair.start, f.pair.end),
+      });
     }
   }
-  const pairs = [...found.values()].filter(
-    (s) =>
-      !known.some((k) => sameIgnoringAsciiCase(k, s.heard)) &&
-      !ignored.some((i) => i.heard === s.heard && i.polished === s.polished),
-  );
+  const isIgnored = (s: {
+    heard: string;
+    polished: string;
+    single?: { heard: string; polished: string };
+  }) =>
+    ignored.some(
+      (i) =>
+        (i.heard === s.heard && i.polished === s.polished) ||
+        (s.single !== undefined && i.heard === s.single.heard && i.polished === s.single.polished),
+    );
+  const pairs: Suggestion[] = [...bySuggestion.values()]
+    .filter(
+      (s) =>
+        !isKnown(s.heard) && !(s.single !== undefined && isKnown(s.single.heard)) && !isIgnored(s),
+    )
+    .map(({ single: _single, ...s }) => s);
   pairs.sort((a, b) => b.count - a.count || b.last_at_ms - a.last_at_ms);
   return {
     status: "ready",
@@ -174,7 +331,8 @@ export function suggestVocabulary(
     refined: takes.slice(0, scanned).filter((t) => t.refined).length,
     skipped,
     total: pairs.length,
-    repeated: pairs.filter((p) => p.count >= SUGGESTION_REPEATED_MIN).length,
+    repeated: pairs.filter((p) => p.count >= SUGGESTION_REPEATED_MIN || p.from_edits > 0).length,
+    edited,
     pairs: pairs.slice(0, limit),
   };
 }

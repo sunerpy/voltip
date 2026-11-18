@@ -146,6 +146,12 @@ pub enum UiCommand {
         /// Chord text or `null`.
         hotkey: Option<String>,
     },
+    /// 从选中文字学习 hotkey (docs/dictation.md §35): a chord, or `null` for none (the default);
+    /// validated and persisted like the dictation hotkey, never one of the other three chords.
+    SettingsSetLearnHotkey {
+        /// Chord text or `null`.
+        hotkey: Option<String>,
+    },
     /// Lone-key trigger (docs/dictation.md §13.1): `right_ctrl` … `mouse_forward`, or `null` to
     /// switch it off; persisted, the desktop shell watches the key when the `settings` event arrives.
     SettingsSetSoloKey {
@@ -250,6 +256,21 @@ pub enum UiCommand {
         /// `DictationStatus.session` of the take whose card it is.
         session: u64,
     },
+    /// The learn notice's 加入词典 (docs/dictation.md §35).
+    LearnNoticeAccept {
+        /// `LearnNotice.id`.
+        id: u64,
+    },
+    /// The learn notice's 撤销.
+    LearnNoticeUndo {
+        /// `LearnNotice.id`.
+        id: u64,
+    },
+    /// The learn notice's ×.
+    LearnNoticeDismiss {
+        /// `LearnNotice.id`.
+        id: u64,
+    },
     /// A key transition for the activation machine (docs/dictation.md §13): the desktop shell sends
     /// one per hotkey press / release, the CLI one per `voltip --toggle`.
     HotkeyEdge {
@@ -337,6 +358,11 @@ pub enum UiCommand {
         id: String,
         /// New flag.
         starred: bool,
+    },
+    /// Forget the user's correction of an entry (the history detail's 移除, docs/dictation.md §35).
+    HistoryClearCorrected {
+        /// UUID.
+        id: String,
     },
     /// 用 AI 预设处理 (docs/dictation.md §22): the entry's text through a preset in parts; progress
     /// and the end arrive as `history_process` events with `request_id`.
@@ -665,6 +691,7 @@ impl UiCommand {
             Self::SettingsSetHotkey { hotkey } => CoreCommand::SetHotkey(hotkey),
             Self::SettingsSetEditHotkey { hotkey } => CoreCommand::SetEditHotkey(hotkey),
             Self::SettingsSetCopyLastHotkey { hotkey } => CoreCommand::SetCopyLastHotkey(hotkey),
+            Self::SettingsSetLearnHotkey { hotkey } => CoreCommand::SetLearnHotkey(hotkey),
             Self::SettingsSetSoloKey { key } => CoreCommand::SetSoloKey(key),
             Self::SettingsSetMicrophone { device } => CoreCommand::SetMicrophone(device),
             Self::SettingsSetRecording { recording } => CoreCommand::SetRecording(recording),
@@ -697,6 +724,9 @@ impl UiCommand {
             Self::DictationStop => CoreCommand::DictationStop,
             Self::DictationCancel => CoreCommand::DictationCancel,
             Self::DictationDismiss { session } => CoreCommand::DictationDismiss { session },
+            Self::LearnNoticeAccept { id } => CoreCommand::LearnNoticeAccept { id },
+            Self::LearnNoticeUndo { id } => CoreCommand::LearnNoticeUndo { id },
+            Self::LearnNoticeDismiss { id } => CoreCommand::LearnNoticeDismiss { id },
             Self::HotkeyEdge { pressed, at_ms, source, purpose, chorded } => CoreCommand::HotkeyEdge { pressed, at_ms, source, purpose, chorded },
             Self::SettingsSetActivation { activation, hold_threshold_ms, extra_recording_ms } => {
                 CoreCommand::SetActivation { activation, hold_threshold_ms, extra_recording_ms }
@@ -709,6 +739,7 @@ impl UiCommand {
             Self::HistoryDelete { id } => CoreCommand::HistoryDelete(parse_id(&id)?),
             Self::HistoryClear => CoreCommand::HistoryClear,
             Self::HistoryStar { id, starred } => CoreCommand::HistoryStar(parse_id(&id)?, starred),
+            Self::HistoryClearCorrected { id } => CoreCommand::HistoryClearCorrected(parse_id(&id)?),
             Self::HistoryProcess { request_id, id, preset } => CoreCommand::HistoryProcess {
                 request_id,
                 id: parse_id(&id)?,
@@ -1115,6 +1146,14 @@ impl Bridge {
                 no_answer
             }
         }
+    }
+
+    /// 从选中文字学习 (docs/dictation.md §35; the hotkey, `--learn-selection`): the core copies the
+    /// selection in front and learns from it; what came of it arrives as `learn_notice`. Not a
+    /// webview command: only the shell's key and command line start it.
+    pub fn learn_selection(&self, source: voltip_core::EdgeSource) -> Result<(), BridgeError> {
+        self.handle.try_send(CoreCommand::LearnSelection { source })?;
+        Ok(())
     }
 
     /// 复制上一条结果 (docs/dictation.md §28; the tray's entry, the hotkey, `--copy-last`): the newest
@@ -2023,7 +2062,11 @@ mod tests {
         };
         let heard = |bridge: &Bridge| ready(bridge.vocabulary_suggestions(None).unwrap()).pairs.into_iter().map(|p| p.heard).collect::<Vec<_>>();
         let first = ready(bridge.vocabulary_suggestions(None).unwrap());
-        assert_eq!(first.pairs.iter().map(|p| p.heard.as_str()).collect::<Vec<_>>(), ["维他命", "千问", "非"], "the rule's own change is left out");
+        assert_eq!(
+            first.pairs.iter().map(|p| p.heard.as_str()).collect::<Vec<_>>(),
+            ["维他命", "千问", "非书"],
+            "the rule's own change is left out; 非 widened"
+        );
         assert_eq!((first.scanned, first.refined, first.skipped, first.total), (3, 3, 0, 3));
         let one = ready(bridge.vocabulary_suggestions(Some(1)).unwrap());
         assert_eq!((one.pairs.len(), one.total), (1, 3));
@@ -2039,10 +2082,10 @@ mod tests {
         };
         until(&bridge, &mut rx, |s| s.dictionary.len() == 1).await;
         assert_eq!(bridge.state().dictionary[0].source, EntrySource::History { history_id: ids[0] });
-        assert_eq!(heard(&bridge), ["千问", "非"]);
+        assert_eq!(heard(&bridge), ["千问", "非书"]);
         assert_eq!(bridge.vocabulary_suggestion_undo(undo.id, wait).await.unwrap(), UndoOutcome::Undone);
         until(&bridge, &mut rx, |s| s.dictionary.is_empty()).await;
-        assert_eq!(heard(&bridge), ["维他命", "千问", "非"]);
+        assert_eq!(heard(&bridge), ["维他命", "千问", "非书"]);
         assert_eq!(bridge.vocabulary_suggestion_undo(undo.id, wait).await.unwrap(), UndoOutcome::Expired, "once");
         let err = String::from(bridge.vocabulary_suggestion_accept(" ".into(), "Voltip".into(), ids[0], wait).await.unwrap_err());
         assert!(err.contains("不能为空"), "{err}");
@@ -2050,18 +2093,18 @@ mod tests {
         // The rule changed after the take: that take no longer counts.
         bridge.dispatch(UiCommand::RulesUpdate { id: rule_id.to_string(), rule: feishu("非书 → 飞书") }).unwrap();
         until(&bridge, &mut rx, |s| s.rules.first().is_some_and(|r| r.updated_at_ms > 1)).await;
-        assert_eq!(heard(&bridge), ["维他命", "非"]);
+        assert_eq!(heard(&bridge), ["维他命", "非书"]);
         // A take deleted from the history no longer counts.
         bridge.dispatch(UiCommand::HistoryDelete { id: ids[0].to_string() }).unwrap();
         until(&bridge, &mut rx, |s| s.history_total == 2).await;
-        assert_eq!(heard(&bridge), ["非"]);
-        // 忽略 and its 撤销.
+        assert_eq!(heard(&bridge), ["非书"]);
+        // 忽略 and its 撤销 (a pair ignored before it was widened hides the widened one).
         bridge.dispatch(UiCommand::VocabularySuggestionIgnore { heard: "非".into(), polished: "飞".into() }).unwrap();
         until(&bridge, &mut rx, |s| s.vocabulary_ignored.len() == 1).await;
         assert!(heard(&bridge).is_empty());
         bridge.dispatch(UiCommand::VocabularySuggestionUnignore { heard: "非".into(), polished: "飞".into() }).unwrap();
         until(&bridge, &mut rx, |s| s.vocabulary_ignored.is_empty()).await;
-        assert_eq!(heard(&bridge), ["非"]);
+        assert_eq!(heard(&bridge), ["非书"]);
         assert!(bridge.dispatch(UiCommand::VocabularySuggestionIgnore { heard: "同".into(), polished: "同".into() }).is_err(), "refused here");
 
         // The rules page's hints: a second rule that finds what the first finds.
@@ -2119,8 +2162,8 @@ mod tests {
         };
         let heard = |bridge: &Bridge| ready(bridge).pairs.into_iter().map(|p| p.heard).collect::<Vec<_>>();
         let first = ready(&bridge);
-        assert_eq!((first.total, first.repeated), (3, 1), "非 → 飞 twice, the other two once");
-        assert_eq!(heard(&bridge), ["非", "维他命", "库伯内特斯"]);
+        assert_eq!((first.total, first.repeated), (3, 1), "非书 → 飞书 twice, the other two once");
+        assert_eq!(heard(&bridge), ["非书", "维他命", "库伯内特斯"]);
 
         let wait = Duration::from_secs(20);
         let pick = |heard: &str, polished: &str, at: usize| SuggestionPick { heard: heard.into(), polished: polished.into(), history_id: ids[at] };
@@ -2128,11 +2171,11 @@ mod tests {
         assert!(accepted.items.iter().all(|i| matches!(i, BatchItem::Accepted { created: true, .. })), "{accepted:?}");
         until(&bridge, &mut rx, |s| s.dictionary.len() == 2).await;
         assert_eq!(bridge.state().dictionary[1].heard_as, ["库伯内特斯"], "checked and trimmed here");
-        assert_eq!(heard(&bridge), ["非"]);
+        assert_eq!(heard(&bridge), ["非书"]);
         let undo = accepted.undo.expect("an undo");
         assert_eq!(bridge.vocabulary_suggestions_undo(undo, wait).await.unwrap(), BatchUndoOutcome::Undone);
         until(&bridge, &mut rx, |s| s.dictionary.is_empty()).await;
-        assert_eq!(heard(&bridge), ["非", "维他命", "库伯内特斯"]);
+        assert_eq!(heard(&bridge), ["非书", "维他命", "库伯内特斯"]);
         assert_eq!(bridge.vocabulary_suggestions_undo(undo, wait).await.unwrap(), BatchUndoOutcome::Expired, "once");
 
         let pair = |heard: &str, polished: &str| SuggestionPair { heard: heard.into(), polished: polished.into() };
@@ -2144,7 +2187,7 @@ mod tests {
         assert_eq!(heard(&bridge), ["库伯内特斯"]);
         assert_eq!(bridge.vocabulary_suggestions_undo(undo, wait).await.unwrap(), BatchUndoOutcome::Undone);
         until(&bridge, &mut rx, |s| s.vocabulary_ignored.is_empty()).await;
-        assert_eq!(heard(&bridge), ["非", "维他命", "库伯内特斯"]);
+        assert_eq!(heard(&bridge), ["非书", "维他命", "库伯内特斯"]);
 
         // Refused here, nothing sent to the core.
         let err = String::from(bridge.vocabulary_suggestions_accept(Vec::new(), wait).await.unwrap_err());
