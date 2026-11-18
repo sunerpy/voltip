@@ -60,7 +60,7 @@ pub const DEV_DATA_DIR_ENV: &str = "VOLTIP_DEV_DATA_DIR";
 /// (`packages/shared/src/schema.ts` `CommandArgs`) and the IPC fixtures
 /// (`packages/shared/src/fixtures/ipc/commands.json`) must name exactly this set; `tests/ipc.rs`
 /// checks all three against each other.
-pub const COMMANDS: [&str; 168] = [
+pub const COMMANDS: [&str; 169] = [
     "core_state",
     "pairing_start",
     "pairing_join_code",
@@ -105,6 +105,7 @@ pub const COMMANDS: [&str; 168] = [
     "learn_notice_accept",
     "learn_notice_undo",
     "learn_notice_dismiss",
+    "learn_notice_keep",
     "hotkey_edge",
     "settings_set_activation",
     "settings_set_engines",
@@ -447,6 +448,13 @@ fn learn_notice_undo(bridge: tauri::State<'_, Bridge>, id: u64) -> Result<(), St
 #[tauri::command]
 fn learn_notice_dismiss(bridge: tauri::State<'_, Bridge>, id: u64) -> Result<(), String> {
     Ok(bridge.dispatch(UiCommand::LearnNoticeDismiss { id })?)
+}
+
+/// The learn notice's 查看 and 打开设置 (docs/dictation.md §35): the notice stays its whole time
+/// again while the main window opens the page.
+#[tauri::command]
+fn learn_notice_keep(bridge: tauri::State<'_, Bridge>, id: u64) -> Result<(), String> {
+    Ok(bridge.dispatch(UiCommand::LearnNoticeKeep { id })?)
 }
 
 /// The history detail's 移除 (docs/dictation.md §35): the user's correction of the entry is forgotten.
@@ -1871,6 +1879,7 @@ pub fn build_app<R: Runtime>(
             learn_notice_accept,
             learn_notice_undo,
             learn_notice_dismiss,
+            learn_notice_keep,
             hotkey_edge,
             settings_set_activation,
             settings_set_engines,

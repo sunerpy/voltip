@@ -285,6 +285,8 @@ function LearnedCard({ notice, theme }: { notice: LearnNotice; theme: string }) 
           label: t("learn.notice.openSettings"),
           primary: true,
           onClick: () => {
+            // Like the other buttons, it starts the notice's stay again (D3).
+            void backend.invoke("learn_notice_keep", { id });
             void backend.openPrivacy();
           },
         };
@@ -292,6 +294,7 @@ function LearnedCard({ notice, theme }: { notice: LearnNotice; theme: string }) 
         return {
           label: t("learn.notice.view"),
           onClick: () => {
+            void backend.invoke("learn_notice_keep", { id });
             void backend.openSuggestions();
           },
         };

@@ -1966,7 +1966,9 @@ export type ProcessedText = z.infer<typeof processedTextSchema>;
 export const correctedTextSchema = z.object({
   text: z.string(),
   at_ms: z.number().nonnegative(),
-  via: z.enum(["selection"]),
+  /** `follow`: read in the text field after the paste, the experimental tracking of a later
+   *  version (docs/dictation.md §35); this version writes `selection` only. */
+  via: z.enum(["selection", "follow"]),
 });
 export type CorrectedText = z.infer<typeof correctedTextSchema>;
 
@@ -3718,6 +3720,7 @@ export interface CommandArgs {
   learn_notice_accept: { id: number };
   learn_notice_undo: { id: number };
   learn_notice_dismiss: { id: number };
+  learn_notice_keep: { id: number };
   /** The history detail's 移除 (§35): forget the user's correction of the entry. */
   history_clear_corrected: { id: string };
   /** The lone-key trigger (docs/dictation.md §13.1), or `null` to switch it off. */

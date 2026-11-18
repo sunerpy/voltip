@@ -2598,6 +2598,10 @@ export class MockBackend implements Backend {
       const { id } = required(args);
       if (this.state.learn_notice?.id === id) this.emit({ type: "learn_notice", notice: null });
     },
+    learn_notice_keep: (args) => {
+      // Mirrors `LearnNoticeKeep` (§35): the mock's notices have no timer, so nothing changes.
+      required(args);
+    },
     history_clear_corrected: (args) => {
       // Mirrors `HistoryClearCorrected` (§35): the entry's correction goes, its text stays.
       const { id } = required(args);

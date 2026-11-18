@@ -1402,6 +1402,8 @@ describe("Overlay learn notice (docs/dictation.md §35)", () => {
     expect(buttons()).toEqual(["加入词典", "查看", "关闭"]);
     await user.click(screen.getByRole("button", { name: "查看" }));
     expect(view).toHaveBeenCalledTimes(1);
+    // D3: every button starts the notice's 8 seconds again, 查看 included.
+    expect(invoke).toHaveBeenCalledWith("learn_notice_keep", { id: 3 });
     await user.click(screen.getByRole("button", { name: "加入词典" }));
     expect(invoke).toHaveBeenCalledWith("learn_notice_accept", { id: 3 });
     await user.click(screen.getByRole("button", { name: "关闭" }));
@@ -1441,6 +1443,7 @@ describe("Overlay learn notice (docs/dictation.md §35)", () => {
     const user = userEvent.setup();
     const backend = new MockBackend({ now: () => Date.now() });
     const privacy = vi.spyOn(backend, "openPrivacy");
+    const invoke = vi.spyOn(backend, "invoke");
     const say = (outcome: LearnNotice["outcome"]) => {
       act(() => {
         backend.showLearnNotice({ id: 4, outcome, shown: true });
@@ -1461,6 +1464,7 @@ describe("Overlay learn notice (docs/dictation.md §35)", () => {
     expect(say({ kind: "history_off" })).toContain("需要先开启历史记录");
     await user.click(screen.getByRole("button", { name: "打开设置" }));
     expect(privacy).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledWith("learn_notice_keep", { id: 4 });
     act(() => {
       backend.showLearnNotice(null);
     });

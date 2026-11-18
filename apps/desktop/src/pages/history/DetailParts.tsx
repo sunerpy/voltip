@@ -260,7 +260,7 @@ export function CorrectedDetail({ entry }: { entry: HistoryEntry }) {
           {corrected.text}
         </p>
         <p className="mt-1 text-[11px] text-fg-subtle">
-          {t("learn.history.via", {
+          {t(corrected.via === "follow" ? "learn.history.viaFollow" : "learn.history.via", {
             time: formatDateTime(locale, corrected.at_ms, {
               dateStyle: "medium",
               timeStyle: "short",

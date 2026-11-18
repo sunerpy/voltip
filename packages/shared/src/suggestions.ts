@@ -258,6 +258,9 @@ export function suggestVocabulary(
     ) {
       scanned += 1;
       skipped += 1;
+      // Read, if not compared: one of the corrected takes, as a skipped polished one is counted
+      // among the polished.
+      if (corrected !== undefined) edited += 1;
       continue;
     }
     const fired =
@@ -278,10 +281,17 @@ export function suggestVocabulary(
     string,
     Suggestion & { single?: { heard: string; polished: string } }
   >();
+  // The user's corrections count each pair once per take (docs/dictation.md §16.10).
+  const correctedPairs = new Set<string>();
   for (const { found: f, single } of widen(takes, found, compared)) {
     const take = takes[f.take];
     if (take === undefined) continue;
     const key = JSON.stringify([f.pair.heard, f.pair.polished]);
+    if (f.edit) {
+      const once = JSON.stringify([f.take, f.pair.heard, f.pair.polished]);
+      if (correctedPairs.has(once)) continue;
+      correctedPairs.add(once);
+    }
     let suggestion = bySuggestion.get(key);
     if (suggestion === undefined) {
       suggestion = {

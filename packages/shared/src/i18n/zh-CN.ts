@@ -1416,6 +1416,14 @@ export const zhCN = {
           one: "最近 {n} 条经过 AI 润色的记录里，没有新的写法可以加入词典。",
           other: "最近 {n} 条经过 AI 润色的记录里，没有新的写法可以加入词典。",
         },
+        /** No takes were polished; the user corrected some (docs/dictation.md §35). */
+        noneEdited: {
+          one: "最近 {n} 条有你修改的记录里，没有新的写法可以加入词典。",
+          other: "最近 {n} 条有你修改的记录里，没有新的写法可以加入词典。",
+        },
+        /** Takes were polished and some corrected. */
+        noneBoth:
+          "最近 {refined} 条经过 AI 润色的记录和 {edited} 条有你修改的记录里，没有新的写法可以加入词典。",
         noneRepeatedTitle: "没有推荐的建议",
         noneRepeated: { one: "另有 {n} 组只出现 1 次。", other: "另有 {n} 组只出现 1 次。" },
         showAll: "显示全部",
@@ -1433,7 +1441,7 @@ export const zhCN = {
       ignoredList: {
         title: "已忽略（{n}）",
         table: "已忽略",
-        column: { pair: "识别结果 → 润色结果", at: "忽略时间" },
+        column: { pair: "识别结果 → 正确写法", at: "忽略时间" },
         unignore: "取消忽略",
         row: "取消忽略：{heard} → {polished}",
         showAll: "显示全部（{n}）",
@@ -2725,6 +2733,8 @@ export const zhCN = {
     history: {
       corrected: "之后改成",
       via: "从选中文字学习 · {time}",
+      /** A correction a later version read in the text field (`via: follow`). */
+      viaFollow: "在输入框中修改 · {time}",
       remove: "移除",
       removeLabel: "移除之后改成的文字",
     },

@@ -2664,6 +2664,7 @@ fn command_variant(cmd: &UiCommand) -> &'static str {
         UiCommand::LearnNoticeAccept { .. } => "LearnNoticeAccept",
         UiCommand::LearnNoticeUndo { .. } => "LearnNoticeUndo",
         UiCommand::LearnNoticeDismiss { .. } => "LearnNoticeDismiss",
+        UiCommand::LearnNoticeKeep { .. } => "LearnNoticeKeep",
         UiCommand::HotkeyEdge { .. } => "HotkeyEdge",
         UiCommand::SettingsSetActivation { .. } => "SettingsSetActivation",
         UiCommand::SettingsSetEngines { .. } => "SettingsSetEngines",
@@ -2804,6 +2805,7 @@ fn all_commands() -> Vec<(&'static str, Value, &'static str)> {
         ("learn_notice_accept", json!({ "id": 4 }), "LearnNoticeAccept"),
         ("learn_notice_undo", json!({ "id": 4 }), "LearnNoticeUndo"),
         ("learn_notice_dismiss", json!({ "id": 4 }), "LearnNoticeDismiss"),
+        ("learn_notice_keep", json!({ "id": 4 }), "LearnNoticeKeep"),
         // The activation machine's inputs (docs/dictation.md §13): one CLI press — of the voice-edit
         // key (`voltip --edit-toggle`, §19) — and one mode change.
         ("hotkey_edge", json!({ "pressed": true, "atMs": AT_MS, "source": "cli", "purpose": "edit" }), "HotkeyEdge"),
@@ -3328,6 +3330,7 @@ fn commands_fixture_is_the_wire_form_and_parses_into_every_variant() {
         "LearnNoticeAccept",
         "LearnNoticeUndo",
         "LearnNoticeDismiss",
+        "LearnNoticeKeep",
         "HotkeyEdge",
         "SettingsSetActivation",
         "SettingsSetEngines",

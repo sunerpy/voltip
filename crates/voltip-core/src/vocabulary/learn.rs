@@ -304,10 +304,12 @@ pub struct Matched {
     pub similarity: f64,
 }
 
-/// A candidate before the choice.
+/// A candidate before the choice: `alignment` is with the corrected text, or with the inserted
+/// text when the corrected one shares no word with the selection (`on_inserted`).
 struct Candidate {
     index: usize,
     alignment: Alignment,
+    on_inserted: bool,
     similarity: f64,
 }
 
@@ -318,30 +320,35 @@ fn overlaps(a: (usize, usize), b: (usize, usize)) -> bool {
 /// The takes (newest first) that `selection` is the corrected form of, newest first: each the most
 /// alike take of a part of the selection (similarity at least [`MATCH_MIN`], a word in common; a
 /// newer take wins within [`MATCH_TIE`]), at most [`MAX_TAKES_PER_SELECTION`], over parts that do
-/// not overlap. A take already corrected is compared as corrected (and as inserted, for the
-/// similarity), and its new corrected text builds on the earlier one.
+/// not overlap. A take already corrected is compared with both its corrected and its inserted
+/// text, the higher similarity counting; its new corrected text builds on the earlier correction,
+/// or on the inserted text when the corrected one has no word in common with the selection (the
+/// original wording selected again to take a correction back).
 pub fn match_selection(selection: &str, takes: &[HistoryText]) -> Vec<Matched> {
     let selection = normalize(selection);
     let sel = toks(&selection);
     let words: HashSet<&str> = sel.iter().filter(|t| t.word).map(|t| t.key).collect();
+    let shares = |toks: &[Tok<'_>]| toks.iter().any(|t| t.word && words.contains(t.key));
     let mut candidates: Vec<Candidate> = Vec::new();
     let mut cells = 0usize;
     for (index, take) in takes.iter().enumerate() {
-        let base_text = take.corrected.as_deref().unwrap_or(&take.text);
-        let base = toks(base_text);
-        if !base.iter().any(|t| t.word && words.contains(t.key)) {
+        let corrected = take.corrected.as_deref().map(toks).filter(|t| shares(t));
+        let inserted = Some(toks(&take.text)).filter(|t| (take.corrected.is_some() || corrected.is_none()) && shares(t));
+        if corrected.is_none() && inserted.is_none() {
             continue;
         }
-        let inserted = take.corrected.as_ref().map(|_| toks(&take.text));
-        let cost = (base.len() + 1).saturating_mul(sel.len() + 1).saturating_add(inserted.as_ref().map_or(0, |t| (t.len() + 1).saturating_mul(sel.len() + 1)));
+        let cost =
+            [&corrected, &inserted].iter().filter_map(|t| t.as_ref()).fold(0usize, |sum, t| sum.saturating_add((t.len() + 1).saturating_mul(sel.len() + 1)));
         if cells.saturating_add(cost) > MAX_SCAN_CELLS {
             break;
         }
         cells += cost;
-        let Some(alignment) = align(&base, &sel) else { continue };
-        let similarity = inserted.and_then(|t| align(&t, &sel)).map_or(alignment.similarity, |a| a.similarity.max(alignment.similarity));
+        let on_corrected = corrected.as_deref().and_then(|t| align(t, &sel));
+        let on_inserted = inserted.as_deref().and_then(|t| align(t, &sel));
+        let similarity = on_corrected.iter().chain(on_inserted.iter()).map(|a| a.similarity).fold(f64::NAN, f64::max);
+        let Some((alignment, from_inserted)) = on_corrected.map(|a| (a, false)).or(on_inserted.map(|a| (a, true))) else { continue };
         if similarity >= MATCH_MIN {
-            candidates.push(Candidate { index, alignment, similarity });
+            candidates.push(Candidate { index, alignment, on_inserted: from_inserted, similarity });
         }
     }
     let mut chosen: Vec<Candidate> = Vec::new();
@@ -366,7 +373,7 @@ pub fn match_selection(selection: &str, takes: &[HistoryText]) -> Vec<Matched> {
         .into_iter()
         .map(|c| {
             let take = &takes[c.index];
-            let base = toks(take.corrected.as_deref().unwrap_or(&take.text));
+            let base = toks(if c.on_inserted { &take.text } else { take.corrected.as_deref().unwrap_or(&take.text) });
             let join = |toks: &[Tok<'_>]| toks.iter().map(|t| t.text).collect::<String>();
             let (a, b) = c.alignment.take;
             let (s, e) = c.alignment.selection;
@@ -462,6 +469,22 @@ mod tests {
         assert_eq!(pairs(&take, &found.corrected), [("注入".into(), "测试".into())]);
         let take = plain("注入成功", 10);
         assert_eq!(one("测试成功", std::slice::from_ref(&take)).corrected, "测试成功", "at the start too");
+    }
+
+    /// Regression (goal review of PR #260, 2026-11-18): a take corrected before is compared with
+    /// its corrected text and its inserted text, the higher similarity counting (§35.4). Only the
+    /// corrected text was searched, so selecting the original wording again to take a correction
+    /// back found nothing when the correction had replaced every word.
+    #[test]
+    fn regression_the_original_wording_takes_back_a_correction_that_shares_no_word_with_it() {
+        let take = HistoryText { corrected: Some("Qwen 4".into()), ..plain("Quinn for", 10) };
+        let found = one("Quinn for", std::slice::from_ref(&take));
+        assert_eq!(found.corrected, "Quinn for");
+        assert!((found.similarity - 1.0).abs() < 1e-9, "{}", found.similarity);
+        assert!(!storable(&take, &found.corrected), "nothing left to keep: the correction is cleared");
+        // Sharing a word with the corrected text, the correction stays the base (§35.4).
+        let take = HistoryText { corrected: Some("我在用 Qwen 4 max 做测试".into()), ..plain("我在用 Quinn for max 做测试", 10) };
+        assert_eq!(one("用 Qwen 4 max 做实验", std::slice::from_ref(&take)).corrected, "我在用 Qwen 4 max 做实验");
     }
 
     #[test]

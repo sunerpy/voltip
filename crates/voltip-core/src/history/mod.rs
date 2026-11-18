@@ -250,6 +250,9 @@ pub struct CorrectedText {
 pub enum CorrectionVia {
     /// The user selected the corrected text and asked Voltip to learn from it (从选中文字学习).
     Selection,
+    /// Read from the text field the take went to after the paste: the experimental field
+    /// tracking of a later version writes it. This version writes none, and loads it.
+    Follow,
 }
 
 /// The other device of an entry: on a computer the phone it came from (`take`, `typed`,

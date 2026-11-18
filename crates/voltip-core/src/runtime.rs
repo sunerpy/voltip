@@ -443,6 +443,12 @@ pub enum CoreCommand {
         /// `LearnNotice::id`.
         id: u64,
     },
+    /// The learn notice's 查看 or 打开设置 (a page of the main window): the notice stays its
+    /// whole time again, as after its other buttons.
+    LearnNoticeKeep {
+        /// `LearnNotice::id`.
+        id: u64,
+    },
     /// Forget the user's correction of a history entry (its detail's 移除, docs/dictation.md §35).
     HistoryClearCorrected(Uuid),
     /// A hotkey / CLI key transition (docs/dictation.md §13): the activation machine turns it into
@@ -1823,6 +1829,10 @@ impl Runtime {
             }
             CoreCommand::LearnNoticeDismiss { id } => {
                 self.learn_notice_dismiss(id);
+                Ok(())
+            }
+            CoreCommand::LearnNoticeKeep { id } => {
+                self.learn_notice_keep(id);
                 Ok(())
             }
             CoreCommand::HistoryClearCorrected(id) => self.clear_correction(id),

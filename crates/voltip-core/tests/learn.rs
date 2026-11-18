@@ -257,3 +257,46 @@ async fn the_notice_says_why_nothing_was_learned() {
     let long = "字".repeat(8001);
     assert!(matches!(outcome(FakeInjector::paste().with_selection(&long), None, true, true).await, (LearnOutcome::TooLong { max: 8000 }, 1)));
 }
+
+/// Regression (goal review of PR #260, 2026-11-18): 「查看」 and 「打开设置」 open a page in the main
+/// window and tell the core nothing, so the notice went at its first deadline although the user
+/// had just pressed a button (D3: every button starts the 8 seconds again). Now they keep the
+/// notice (`LearnNoticeKeep`), as 加入词典 and 撤销 do; another notice's id changes nothing.
+#[tokio::test]
+async fn regression_view_and_open_settings_start_the_notices_stay_again() {
+    let mut node = start(FakeInjector::paste().with_selection(FIXED), None, false);
+    ready(&mut node).await;
+    dictate(&mut node).await;
+    idle(&mut node).await;
+    learn(&node).await;
+    let shown = notice(&mut node).await.expect("a notice");
+    assert!(shown.shown);
+    // Pressed late in the stay: the notice is there a whole stay after it.
+    tokio::time::sleep(DWELL * 3 / 4).await;
+    node.handle.send(CoreCommand::LearnNoticeKeep { id: shown.id + 1 }).await.unwrap();
+    node.handle.send(CoreCommand::LearnNoticeKeep { id: shown.id }).await.unwrap();
+    let pressed = Instant::now();
+    let kept = notice(&mut node).await.expect("the notice stays");
+    assert_eq!(kept, shown, "nothing on it changes");
+    assert_eq!(notice(&mut node).await, None, "gone after its stay");
+    assert!(pressed.elapsed() >= DWELL - Duration::from_millis(50), "timed from the button: {:?}", pressed.elapsed());
+}
+
+/// Regression (goal review of PR #260, 2026-11-18): on macOS the voice edit's terminal table is
+/// empty (Cmd+C is safe there), and the learn task asked that table, so a selection in Terminal or
+/// iTerm2 was copied and compared. Learning asks the port's own question, which names macOS's
+/// terminals: no key is pressed there.
+#[tokio::test]
+async fn regression_a_terminal_the_voice_edit_allows_is_still_not_learned_from() {
+    let terminal: Arc<dyn ForegroundProbe> = Arc::new(FakeProbe::app("com.apple.terminal", "Terminal", None));
+    // The voice edit's table (macOS: none) says no; learning's says yes.
+    let injector = FakeInjector::paste().with_selection(FIXED).with_terminals(|_| false).with_program_output(|id| id == "com.apple.terminal");
+    let mut node = start(injector, Some(terminal), false);
+    ready(&mut node).await;
+    dictate(&mut node).await;
+    idle(&mut node).await;
+    learn(&node).await;
+    let outcome = notice(&mut node).await.expect("a notice").outcome;
+    assert_eq!(outcome, LearnOutcome::Terminal);
+    assert!(node.injector.copies().is_empty(), "no key pressed in the terminal: {:?}", node.injector.copies());
+}
