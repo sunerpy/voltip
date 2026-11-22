@@ -67,12 +67,12 @@ arboard = { version = "=3.7.0", default-features = false, features = ["wayland-d
 async-trait = "=0.1.92"
 axum = { version = "=0.8.9", features = ["ws", "multipart"] }
 base64 = "=0.23.1"
-bytes = "=1.12.1"
+bytes = "=1.12.2"
 # The local time in the names of the automatic backups (crates/voltip-core, docs/dictation.md
 # §4.6.1); already in the graph through rmcp. The clock only: no locales, no old time API.
 chrono = { version = "=0.4.45", default-features = false, features = ["clock", "std"] }
 ciborium = "=0.2.2"
-clap = { version = "=4.6.7", features = ["derive", "env"] }
+clap = { version = "=4.6.8", features = ["derive", "env"] }
 # No `jack` / `asio` / `pipewire` / `pulseaudio` features: WASAPI, CoreAudio and ALSA only.
 cpal = "=0.18.2"
 directories = "=6.0.0"
@@ -88,7 +88,7 @@ ferrous-opencc = "=0.4.0"
 # rustix, GetDiskFreeSpaceExW through windows-sys, both already in the graph. No async features.
 # 豆包语音's gzip-compressed frames (crates/voltip-asr, docs/dictation.md §3.15); already in the
 # graph, its pure-Rust backend.
-flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }
+flate2 = { version = "=1.1.11", default-features = false, features = ["rust_backend"] }
 fs4 = { version = "=1.1.0", default-features = false }
 futures-util = { version = "=0.3.34", default-features = false, features = ["sink", "std"] }
 hex = "=0.4.3"
@@ -113,20 +113,20 @@ md-5 = "=0.11.0"
 keyring = "=4.2.0"
 parking_lot = "=0.13.0"
 proptest = "=1.12.0"
-rand = "=0.10.3"
+rand = "=0.10.4"
 # Regex replacement rules (docs/dictation.md §16): linear-time matching, compiled size capped per rule.
-regex = "=1.13.1"
+regex = "=1.13.2"
 # The local MCP service (crates/voltip-mcp, docs/dictation.md §25): the official Rust SDK of the Model
 # Context Protocol, Apache-2.0. The server and its Streamable HTTP transport only (no macros); the
 # tests add the client.
-rmcp = { version = "=3.8.0", default-features = false, features = ["server", "transport-streamable-http-server"] }
+rmcp = { version = "=3.11.0", default-features = false, features = ["server", "transport-streamable-http-server"] }
 # rustls (aws-lc-rs provider + platform verifier) so the Windows cross-build needs no OpenSSL;
 # `socks`: SOCKS5 proxies (docs/dictation.md §24).
 reqwest = { version = "=0.13.5", default-features = false, features = ["rustls", "multipart", "json", "http2", "socks"] }
 # Lock-free SPSC ring for the recorder's live tap (docs/dictation.md §11): the audio callback
 # pushes 16 kHz mono frames, the decode thread pops them; no lock and no allocation on the audio thread.
 rtrb = "=0.4.1"
-rubato = "=5.0.1"
+rubato = "=5.1.0"
 # The history database (docs/dictation.md §4): `bundled` compiles SQLite itself from C for every
 # target (the Windows cross-build, Android), so no system library is needed anywhere.
 rusqlite = { version = "=0.41.1", features = ["bundled"] }
@@ -147,7 +147,7 @@ sha1 = "=0.11.0"
 sherpa-onnx = { version = "=1.13.8", default-features = false, features = ["shared"] }
 # Opus for a phone take's audio (docs/dictation.md §20.1): a pure-Rust port of libopus 1.6, no C
 # toolchain on any target (Android, the Windows cross-build); BSD-3-Clause.
-opus-rs = "=0.1.41"
+opus-rs = "=0.1.42"
 # The same crate's `-sys` half, named only by the desktop shell: see apps/desktop/src-tauri/Cargo.toml.
 sherpa-onnx-sys = { version = "=1.13.8", default-features = false, features = ["shared"] }
 snow = "=0.10.0"
@@ -185,7 +185,7 @@ toml = "=1.1.6"
 # for macOS and Vulkan on behind its `vulkan` feature (§10.6), which the Windows and Linux packages
 # use. Built from source with cmake and linked statically (a Vulkan build links the system's loader
 # dynamically), and it cross-compiles to x86_64-pc-windows-msvc under cargo-xwin.
-transcribe-cpp = { version = "=0.4.1", default-features = false }
+transcribe-cpp = { version = "=0.4.2", default-features = false }
 # The WebSocket client's TLS provider. tokio-tungstenite pulls rustls without one, so a binary that
 # does not also link reqwest (the mobile shell, the core test suite) would panic on the first `wss://`
 # dial. aws-lc-rs matches reqwest's choice: exactly one provider in every binary, auto-detected.
@@ -202,10 +202,10 @@ url = { version = "=2.5.8", features = ["serde"] }
 # Mozilla's root store as DER certificates: what the HTTP clients trust on Android, where reqwest's
 # platform verifier needs a JNI context the app never hands it (voltip-asr, voltip-refine). Already
 # in the graph through rustls-platform-verifier; CDLA-Permissive-2.0 like webpki-roots (deny.toml).
-webpki-root-certs = "=1.0.11"
-uuid = { version = "=1.29.0", features = ["v4", "serde"] }
+webpki-root-certs = "=1.0.12"
+uuid = { version = "=1.29.3", features = ["v4", "serde"] }
 wiremock = "=0.6.5"
-zeroize = { version = "=1.9.1", features = ["derive"] }
+zeroize = { version = "=1.9.2", features = ["derive"] }
 
 voltip-protocol = { path = "crates/voltip-protocol" }
 voltip-net = { path = "crates/voltip-net" }

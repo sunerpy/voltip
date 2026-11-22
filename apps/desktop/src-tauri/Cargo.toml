@@ -41,7 +41,7 @@ required-features = ["keychain-harness"]
 [build-dependencies]
 # build.rs reads the app version from package.json (already in the graph through tauri-build).
 serde_json.workspace = true
-tauri-build = { version = "=2.7.4", features = [] }
+tauri-build = { version = "=2.7.6", features = [] }
 
 [dependencies]
 async-trait.workspace = true
@@ -54,7 +54,7 @@ serde_json.workspace = true
 # agree, and it reads only this table). No effect on the other platforms. The app is not meant for
 # the Mac App Store, which rejects private API use.
 tauri = { version = "=2.12.5", default-features = false, features = ["wry", "macos-private-api"] }
-tauri-plugin-opener = "=2.7.2"
+tauri-plugin-opener = "=2.7.3"
 tauri-plugin-global-shortcut = "=2.4.1"
 # The save dialog of 导出字幕 / 导出文本 (src/export.rs, docs/dictation.md §22); called from Rust
 # only. 2.8.4 wraps rfd 0.17, whose dialogs work as 0.16's did: the GTK3 backend is unchanged, the
@@ -142,7 +142,7 @@ security-framework-sys = "=2.17.0"
 # The updater has already minisign-verified these bytes. Before replacing the running bundle,
 # keychain_handoff expands its macOS `.app.tar.gz` to start the staged build and persist secrets in
 # that build's cdhash partition. Keep the exact versions already in tauri-plugin-updater's graph.
-flate2 = "=1.1.10"
+flate2 = "=1.1.11"
 tar = "=0.4.46"
 tempfile.workspace = true
 
@@ -179,7 +179,7 @@ windows-sys = { version = "=0.61.2", features = [
 tauri = { version = "=2.12.5", default-features = false, features = ["wry", "test"] }
 # tests/bundle.rs: the merged per-target tauri.*.conf.json through Tauri's own config schema (the
 # version tauri-build already resolves, so nothing new is compiled).
-tauri-utils = { version = "=2.10.2", default-features = false }
+tauri-utils = { version = "=2.10.4", default-features = false }
 # tests/bundle.rs: merges a --config overlay the way the Tauri CLI does. 5.0 only moves its JSON
 # Pointer dependency to jsonptr 0.8: `merge` (RFC 7396) is the code of the 4.2 tauri-utils uses.
 json-patch = { version = "=5.0.0", default-features = false }
