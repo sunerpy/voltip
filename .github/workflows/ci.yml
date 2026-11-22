@@ -186,7 +186,7 @@ jobs:
           rustc --version && cargo --version && cargo clippy --version && cargo fmt --version
 
       - name: cargo-llvm-cov, cargo-nextest and cargo-deny (prebuilt, pinned)
-        uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
+        uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with:
           tool: cargo-llvm-cov@${{ env.CARGO_LLVM_COV_VERSION }},cargo-nextest@${{ env.CARGO_NEXTEST_VERSION }},cargo-deny@${{ env.CARGO_DENY_VERSION }}
 
@@ -419,13 +419,13 @@ jobs:
           rustc --version && cargo --version
 
       - name: cargo-xwin (prebuilt, pinned)
-        uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
+        uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with:
           tool: cargo-xwin@${{ env.CARGO_XWIN_VERSION }}
 
       # THIRD-PARTY-NOTICES.txt (scripts/release/third-party-notices.py) for the package.
       - name: cargo-about (prebuilt, pinned)
-        uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
+        uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with:
           tool: cargo-about@${{ env.CARGO_ABOUT_VERSION }}
 
@@ -1132,7 +1132,7 @@ jobs:
 
       # THIRD-PARTY-NOTICES.txt for the app (third-party-notices.py --app mobile-rn).
       - name: cargo-about (prebuilt, pinned)
-        uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
+        uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with:
           tool: cargo-about@${{ env.CARGO_ABOUT_VERSION }}
 
