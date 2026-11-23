@@ -139,13 +139,6 @@ ignore = [
     # proc-macro-error arrives only through the same archived GTK3 bindings.
     { id = "RUSTSEC-2024-0370", reason = "proc-macro-error is transitive through gtk3-rs macros and has no safe upgrade in this graph; remove with the Tauri GTK4 migration" },
 
-    # Tauri's urlpattern dependency currently resolves through rust-unic 0.9.
-    { id = "RUSTSEC-2025-0075", reason = "unic-char-range is transitive through tauri-utils -> urlpattern -> rust-unic; remove when that upstream chain migrates" },
-    { id = "RUSTSEC-2025-0080", reason = "unic-common is transitive through tauri-utils -> urlpattern -> rust-unic; remove when that upstream chain migrates" },
-    { id = "RUSTSEC-2025-0081", reason = "unic-char-property is transitive through tauri-utils -> urlpattern -> rust-unic; remove when that upstream chain migrates" },
-    { id = "RUSTSEC-2025-0098", reason = "unic-ucd-version is transitive through tauri-utils -> urlpattern -> rust-unic; remove when that upstream chain migrates" },
-    { id = "RUSTSEC-2025-0100", reason = "unic-ucd-ident is transitive through tauri-utils -> urlpattern -> rust-unic; remove when that upstream chain migrates" },
-
 ]
 
 [sources]
