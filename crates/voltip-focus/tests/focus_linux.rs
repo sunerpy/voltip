@@ -1,7 +1,8 @@
 //! The insert check's AT-SPI reader against a real GTK 3 window (docs/dictation.md §28): text that
 //! lands in an editable entry is `written`, the same keys on a read-only entry leave it
 //! `not_written`, the focus moving to another entry is `unconfirmed`, and with accessibility off
-//! nothing is read. Ignored: it needs an X server, a D-Bus session with the accessibility bus and
+//! nothing is read. 从选中文字学习's read (§35) gives the entry's text around its selection and
+//! around its caret. Ignored: it needs an X server, a D-Bus session with the accessibility bus and
 //! GTK 3. Run it with `scripts/focus-check-linux.sh`, which sets them up (CI's `smoke-desktop`).
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -12,7 +13,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use voltip_focus::{Expected, Reader, Settled, UnconfirmedWhy, linux};
+use voltip_focus::{Expected, FocusContext, Reader, Settled, UnconfirmedWhy, linux};
 use voltip_platform::HostOs;
 use voltip_platform::insert_check::rules::InsertCheck;
 
@@ -123,6 +124,39 @@ fn a_typed_text_lands_a_read_only_entry_stays_and_another_entry_takes_the_focus(
     let watch = reader.watch(APP, &Expected::of(TYPED)).expect("the focused entry is read");
     window.focus("other");
     assert_eq!(watch.settle(WATCH), Settled::unconfirmed(UnconfirmedWhy::ControlChanged));
+}
+
+/// Read the focused entry for 从选中文字学习 until `wanted` holds (the keys reach GTK a little later).
+fn wait_context(reader: &Reader, what: &str, wanted: impl Fn(&FocusContext) -> bool) -> FocusContext {
+    let until = std::time::Instant::now() + ANSWER;
+    loop {
+        let read = reader.context(APP, None);
+        if let Ok(context) = &read
+            && wanted(context)
+        {
+            return context.clone();
+        }
+        assert!(std::time::Instant::now() < until, "{what}: last read {read:?}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// docs/dictation.md §35: the entry's text around its selection, and around its caret with nothing
+/// selected; the read goes through the same rules as the insert check's.
+#[test]
+#[ignore = "needs Xvfb, the accessibility bus and GTK 3: scripts/focus-check-linux.sh"]
+fn a_learning_read_gives_the_entrys_text_around_the_selection_and_the_caret() {
+    let mut window = Entries::start();
+    let reader = reader();
+    window.focus("editable");
+    xdotool(&["type", "--delay", "5", " voltip check"]);
+    xdotool(&["key", "shift+ctrl+Left"]);
+    let around = wait_context(&reader, "the last word selected", |c| c.selected == "check");
+    assert_eq!((around.before.as_str(), around.after.as_str()), ("前文 voltip ", ""));
+    xdotool(&["key", "Home"]);
+    let at_start = wait_context(&reader, "the caret at the start", |c| c.selected.is_empty() && c.before.is_empty());
+    assert_eq!(at_start.after, "前文 voltip check");
+    assert_eq!(reader.context("gnome-terminal", None).err(), Some(UnconfirmedWhy::Skipped), "a terminal is never read");
 }
 
 #[test]

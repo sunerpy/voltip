@@ -10292,7 +10292,10 @@ mod tests {
         let fx = r.take().await;
         assert_eq!(done_check(&fx), Some(InsertCheck::NotWritten), "{fx:?}");
         assert_eq!(record(&fx).unwrap().outcome, Outcome::Inserted { via: Via::Paste, check: Some(InsertCheck::NotWritten) });
-        assert_eq!(reader.calls(), FocusCalls { watched: vec![("notepad".to_owned(), FAKE_TRANSCRIPT.to_owned())], settled: vec![CONFIRM_WITHIN] });
+        assert_eq!(
+            reader.calls(),
+            FocusCalls { watched: vec![("notepad".to_owned(), FAKE_TRANSCRIPT.to_owned())], settled: vec![CONFIRM_WITHIN], contexts: Vec::new() }
+        );
         assert_eq!(r.injector.injected(), [FAKE_TRANSCRIPT.to_owned()], "no second paste");
         assert_eq!(r.injector.events(), [InsertEvent::Begin, InsertEvent::Piece(FAKE_TRANSCRIPT.into()), InsertEvent::Finish]);
     }

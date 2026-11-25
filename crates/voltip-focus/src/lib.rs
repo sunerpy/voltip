@@ -21,7 +21,9 @@ use std::time::Duration;
 use parking_lot::Mutex;
 use voltip_platform::HostOs;
 use voltip_platform::insert_check::rules::READ_BEFORE_CARET;
-pub use voltip_platform::insert_check::rules::{Expected, FOCUS_READ_DEADLINE, FocusText, POLL_EVERY, Sample, Settled, UnconfirmedWhy, settle_by_polling};
+pub use voltip_platform::insert_check::rules::{
+    CONTEXT_CHARS, Expected, FOCUS_READ_DEADLINE, FocusContext, FocusText, POLL_EVERY, Sample, Settled, UnconfirmedWhy, settle_by_polling,
+};
 
 #[cfg(target_os = "linux")]
 pub mod linux;
@@ -48,6 +50,14 @@ pub trait FocusPlatform {
 
     /// What `control` holds around its caret; `None` when it has no text to read.
     fn text(&mut self, control: &Self::Control) -> Option<FocusText>;
+
+    /// The paragraph of `control` around its selection, or its caret (docs/dictation.md §35,
+    /// [`FocusContext`]); for a control that tells only its whole value, the one place of `hint`
+    /// (the copied selection) in it. `None` when that cannot be read.
+    fn context(&mut self, control: &Self::Control, hint: Option<&str>) -> Option<FocusContext> {
+        let _ = (control, hint);
+        None
+    }
 }
 
 /// What the worker thread is asked.
@@ -58,6 +68,9 @@ enum Request {
     Sample(u64, mpsc::SyncSender<Sample>),
     /// Forget the control kept under the token.
     End(u64),
+    /// Read the focused control's paragraph around its selection, for 从选中文字学习, with the
+    /// copied selection as the hint.
+    Context(Option<String>, mpsc::SyncSender<Result<FocusContext, UnconfirmedWhy>>),
 }
 
 /// The worker thread's loop: open the platform on this thread (COM, the accessibility bus), then
@@ -98,6 +111,10 @@ fn serve<P: FocusPlatform>(open: fn() -> Result<P, String>, requests: &mpsc::Rec
             }
             Request::End(token) => {
                 kept.remove(&token);
+            }
+            Request::Context(hint, reply) => {
+                let answer = platform.focused().and_then(|control| platform.context(&control, hint.as_deref()).ok_or(UnconfirmedWhy::Unreadable));
+                let _ = reply.send(answer);
             }
         }
     }
@@ -177,6 +194,14 @@ impl Inner {
         }
     }
 
+    fn context(&self, hint: Option<String>) -> Result<FocusContext, UnconfirmedWhy> {
+        match self.ask(|reply| Request::Context(hint, reply)) {
+            Ok(answer) => answer,
+            Err(Unanswered::TimedOut) => Err(UnconfirmedWhy::Timeout),
+            Err(Unanswered::NoWorker) => Err(UnconfirmedWhy::Unreadable),
+        }
+    }
+
     fn end(&self, token: u64) {
         if let Some(worker) = self.worker.lock().as_ref() {
             let _ = worker.requests.send(Request::End(token));
@@ -224,6 +249,19 @@ impl Reader {
         }
         let (token, before) = self.0.begin()?;
         Ok(Watch { inner: self.0.clone(), token, before, expected: expected.clone() })
+    }
+
+    /// Read the focused control of `app_id` for 从选中文字学习 (docs/dictation.md §35): its
+    /// paragraph around the selection or the caret, at most [`CONTEXT_CHARS`] characters on each
+    /// side, with `hint` (the copied selection) placing it in a control that tells no caret. The
+    /// insert check's rules hold: a terminal, a remote desktop, a virtual machine and a password
+    /// field are never read, and the read is bounded by the deadline. Only the cut context leaves
+    /// the worker thread. Blocking.
+    pub fn context(&self, app_id: &str, hint: Option<&str>) -> Result<FocusContext, UnconfirmedWhy> {
+        if voltip_platform::insert_check::skips(self.0.os, app_id) {
+            return Err(UnconfirmedWhy::Skipped);
+        }
+        self.0.context(hint.map(str::to_owned))
     }
 }
 
@@ -315,6 +353,10 @@ mod tests {
         password: bool,
         hang: Option<Duration>,
         none: bool,
+        /// The selection, in characters; the caret at the end of the text when `None`.
+        selection: Option<(usize, usize)>,
+        /// A control that tells its whole value but no caret.
+        value_only: bool,
     }
 
     static FIELD: Mutex<Option<Field>> = Mutex::new(None);
@@ -345,6 +387,15 @@ mod tests {
             let field = FIELD.lock().clone().unwrap_or_default();
             let n = field.text.chars().count();
             Some(FocusText::read(Some(n), Some(n), Some((n, n)), None, Some(&field.text)))
+        }
+        fn context(&mut self, _control: &u32, hint: Option<&str>) -> Option<FocusContext> {
+            let field = FIELD.lock().clone().unwrap_or_default();
+            if field.value_only {
+                return FocusContext::find(&field.text, hint?);
+            }
+            let n = field.text.chars().count();
+            let (start, end) = field.selection.unwrap_or((n, n));
+            FocusContext::around(&field.text, start, end)
         }
     }
 
@@ -401,6 +452,52 @@ mod tests {
         // Any other application is read.
         set(Field { control: 1, text: "x".into(), ..Field::default() });
         assert!(reader.watch("notepad", &Expected::of("你好")).is_ok());
+    }
+
+    /// docs/dictation.md §35: 从选中文字学习 reads the selection's paragraph around it, with the
+    /// insert check's rules for what is never read and how long a read may take.
+    #[test]
+    fn a_learning_read_gives_the_paragraph_around_the_selection_or_the_caret() {
+        let _serial = SERIAL.lock();
+        let reader = reader(Duration::from_secs(2));
+        let text = "上一段\n今天测试一下Qwen 4 Max的推理能力。";
+        set(Field { control: 1, text: text.into(), selection: Some((10, 16)), ..Field::default() });
+        let c = reader.context("notepad", None).expect("read");
+        assert_eq!((c.before.as_str(), c.selected.as_str(), c.after.as_str()), ("今天测试一下", "Qwen 4", " Max的推理能力。"));
+        // Nothing selected: the paragraph up to the caret.
+        set(Field { control: 1, text: text.into(), ..Field::default() });
+        let c = reader.context("notepad", None).expect("read");
+        assert_eq!((c.before.as_str(), c.selected.as_str(), c.after.as_str()), ("今天测试一下Qwen 4 Max的推理能力。", "", ""));
+    }
+
+    #[test]
+    fn a_learning_read_skips_terminals_remote_screens_and_password_fields() {
+        let _serial = SERIAL.lock();
+        let reader = reader(Duration::from_secs(2));
+        set(Field { control: 1, text: "x".into(), ..Field::default() });
+        for skipped in ["windowsterminal", "mstsc"] {
+            assert_eq!(reader.context(skipped, None).err(), Some(UnconfirmedWhy::Skipped), "{skipped}");
+        }
+        set(Field { control: 1, text: "x".into(), password: true, ..Field::default() });
+        assert_eq!(reader.context("notepad", None).err(), Some(UnconfirmedWhy::Skipped));
+        set(Field { control: 1, text: "x".into(), none: true, ..Field::default() });
+        assert_eq!(reader.context("notepad", None).err(), Some(UnconfirmedWhy::Unreadable));
+        set(Field { control: 1, text: "x".into(), hang: Some(Duration::from_millis(400)), ..Field::default() });
+        let slow = Reader::with_deadline(HostOs::Windows, open, Duration::from_millis(100));
+        assert_eq!(slow.context("notepad", None).err(), Some(UnconfirmedWhy::Timeout));
+    }
+
+    /// A control that tells its whole value but no caret is placed by the copied selection, when it
+    /// is there exactly once.
+    #[test]
+    fn a_value_only_control_is_placed_by_the_copied_selection() {
+        let _serial = SERIAL.lock();
+        let reader = reader(Duration::from_secs(2));
+        set(Field { control: 1, text: "今天测试一下Qwen 4 Max的推理能力。".into(), value_only: true, ..Field::default() });
+        let c = reader.context("msedge", Some("Qwen 4")).expect("placed");
+        assert_eq!((c.before.as_str(), c.after.as_str()), ("今天测试一下", " Max的推理能力。"));
+        assert_eq!(reader.context("msedge", None).err(), Some(UnconfirmedWhy::Unreadable), "nothing copied: no place");
+        assert_eq!(reader.context("msedge", Some("GPT")).err(), Some(UnconfirmedWhy::Unreadable));
     }
 
     /// Wait until the fake platform has been opened `n` times in all.

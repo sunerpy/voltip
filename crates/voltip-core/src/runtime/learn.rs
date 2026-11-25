@@ -1,9 +1,12 @@
 //! 从选中文字学习 (`CoreCommand::LearnSelection`, docs/dictation.md §35): the user corrected a take
-//! in the application it went to, selected the corrected text and pressed the shortcut (or ran
-//! `voltip --learn-selection`). On a task: the probe names the application in front (a terminal's
-//! selection is program output: no key is pressed), the copy chord reads the selection (§19.2, the
-//! clipboard put back afterwards), and the newest [`LEARN_TAKES`] recognised takes are compared with
-//! it (`crate::vocabulary::learn`). Back here the corrections are stored with their entries; then
+//! in the application it went to, selected the corrected text (or left the caret in it) and pressed
+//! the shortcut (or ran `voltip --learn-selection`). On a task: the probe names the application in
+//! front (a terminal's selection is program output: no key is pressed, nothing is read), the copy
+//! chord reads the selection (§19.2, the clipboard put back afterwards), the focused control's
+//! reader reads the paragraph around the selection or the caret (`FocusReader::context`, at most
+//! [`crate::dictation::CONTEXT_CHARS`] characters a side), and the newest [`LEARN_TAKES`] recognised
+//! takes are compared with that paragraph, the take at the selection kept, or with the selection
+//! alone when nothing was read (`crate::vocabulary::learn`). Back here the corrections are stored with their entries; then
 //! the learning suggestions are counted over the history once more for the pairs the corrected
 //! takes give, and the notice ([`LearnNotice`], `UiState.learn_notice`) offers them on the pill.
 //!
@@ -25,7 +28,7 @@ use crate::dictation::activation::EdgeSource;
 use crate::dictation::{DictationPhase, ForegroundApp};
 use crate::history::{CorrectedText, CorrectionVia, HistoryReader, MAX_RECENT_TEXTS};
 use crate::settings::OverlayPlacement;
-use crate::vocabulary::learn::{LEARN_TAKES, MAX_LEARN_SELECTION_CHARS, match_selection, storable};
+use crate::vocabulary::learn::{LEARN_TAKES, MAX_LEARN_SELECTION_CHARS, match_around, match_selection, storable};
 use crate::vocabulary::{BatchItem, BatchUndoOutcome, SuggestionPick, edit_picks};
 
 /// How long the notice stays on the pill, counted from when it shows and again after each button.
@@ -49,8 +52,13 @@ pub enum LearnOutcome {
     NoPairs,
     /// The selection is what was inserted (or what it was put back to).
     Unchanged,
-    /// None of the newest takes is like the selection.
-    NoMatch,
+    /// None of the newest takes is like the selection, or like the paragraph read around it.
+    NoMatch {
+        /// The paragraph around the selection (or the caret) was read from the focused control; when
+        /// it was not, the notice asks for the unchanged words around the change to be selected too.
+        #[serde(default)]
+        context: bool,
+    },
     /// Nothing was selected (or the application did not copy).
     NoSelection,
     /// The selection is longer than `max` characters.
@@ -118,11 +126,19 @@ pub(super) struct Correction {
     unchanged: bool,
 }
 
+/// What the task found: the takes the selection corrects, and whether the paragraph around it was
+/// read (the 没有找到 notice says so).
+#[derive(Debug)]
+pub(super) struct Compared {
+    corrections: Vec<Correction>,
+    context: bool,
+}
+
 /// What the tasks send back.
 #[derive(Debug)]
 pub(super) enum LearnInbound {
     /// The selection was read and compared, or the attempt ended early.
-    Compared { request: u64, result: Result<Vec<Correction>, LearnOutcome> },
+    Compared { request: u64, result: Result<Compared, LearnOutcome> },
     /// The pairs of the corrected takes are counted.
     Counted { request: u64, picks: Result<Vec<SuggestionPick>, String> },
     /// A notice's time is up.
@@ -187,7 +203,7 @@ impl Runtime {
         match inbound {
             LearnInbound::Compared { request, result } if request == self.learn.request => match result {
                 Err(outcome) => self.show_learned(outcome),
-                Ok(corrections) => self.keep_corrections(request, corrections),
+                Ok(compared) => self.keep_corrections(request, compared),
             },
             LearnInbound::Counted { request, picks } if request == self.learn.request => match picks {
                 Ok(picks) if picks.is_empty() => self.show_learned(LearnOutcome::NoPairs),
@@ -207,9 +223,10 @@ impl Runtime {
     }
 
     /// Store what the selection corrects, then count the pairs those takes give.
-    fn keep_corrections(&mut self, request: u64, corrections: Vec<Correction>) {
+    fn keep_corrections(&mut self, request: u64, compared: Compared) {
+        let Compared { corrections, context } = compared;
         if corrections.is_empty() {
-            self.show_learned(LearnOutcome::NoMatch);
+            self.show_learned(LearnOutcome::NoMatch { context });
             return;
         }
         let mut written = false;
@@ -347,7 +364,7 @@ fn learned_name(outcome: &LearnOutcome) -> &'static str {
         LearnOutcome::Learned { .. } => "learned",
         LearnOutcome::NoPairs => "no_pairs",
         LearnOutcome::Unchanged => "unchanged",
-        LearnOutcome::NoMatch => "no_match",
+        LearnOutcome::NoMatch { .. } => "no_match",
         LearnOutcome::NoSelection => "no_selection",
         LearnOutcome::TooLong { .. } => "too_long",
         LearnOutcome::Terminal => "terminal",
@@ -356,49 +373,87 @@ fn learned_name(outcome: &LearnOutcome) -> &'static str {
     }
 }
 
-/// The task: the application in front, the selection, the takes it corrects.
+/// The task: the application in front, the selection, the paragraph around it, the takes they
+/// correct.
 async fn read_and_compare(
     probe: Option<Arc<dyn crate::dictation::ForegroundProbe>>,
     injector: Arc<dyn crate::dictation::Injector>,
     reader: Arc<HistoryReader>,
     held: Vec<crate::hotkey::Modifier>,
-) -> Result<Vec<Correction>, LearnOutcome> {
+) -> Result<Compared, LearnOutcome> {
     // §19.2: no key is pressed before the probe said which application is in front; a terminal's
-    // selection is program output. No answer (pure Wayland, a slow probe): copied anyway.
+    // selection is program output. No answer (pure Wayland, a slow probe): copied anyway, but
+    // nothing is read around it (§28.2: a field whose application nobody named is not read).
+    let mut front = None;
     if let Some(probe) = probe {
         let deadline = probe.deadline();
         let app = match tokio::time::timeout(deadline, tokio::task::spawn_blocking(move || probe.foreground())).await {
             Ok(Ok(Ok(app))) => app.and_then(ForegroundApp::sanitized),
             _ => None,
         };
-        if let Some(app) = app
+        if let Some(app) = &app
             && injector.holds_program_output(&app.app_id)
         {
             tracing::info!(app = %app.app_id, "learn selection refused: a terminal is in front");
             return Err(LearnOutcome::Terminal);
         }
+        front = app;
     }
-    let copied = tokio::task::spawn_blocking(move || injector.copy_selection(&held)).await;
-    let selection = match copied {
-        Ok(Ok(Some(text))) if !text.trim().is_empty() => text,
-        Ok(Ok(_)) => return Err(LearnOutcome::NoSelection),
+    let copier = injector.clone();
+    let copied = match tokio::task::spawn_blocking(move || copier.copy_selection(&held)).await {
+        Ok(Ok(text)) => text.filter(|t| !t.trim().is_empty()),
         Ok(Err(e)) => return Err(LearnOutcome::Failed { message: e.to_string() }),
         Err(e) => return Err(LearnOutcome::Failed { message: format!("copy task failed: {e}") }),
     };
-    if selection.chars().count() > MAX_LEARN_SELECTION_CHARS {
+    if copied.as_ref().is_some_and(|t| t.chars().count() > MAX_LEARN_SELECTION_CHARS) {
         return Err(LearnOutcome::TooLong { max: u32::try_from(MAX_LEARN_SELECTION_CHARS).unwrap_or(u32::MAX) });
     }
-    tracing::debug!(chars = selection.chars().count(), "learn selection: copied");
+    // §35: the paragraph around the selection, or the caret, with the copied selection placing it
+    // in a control that tells no caret. In memory only; nothing of it is logged.
+    let context = match (front, injector.focus_reader()) {
+        (Some(app), Some(focus)) => {
+            let hint = copied.clone();
+            match tokio::task::spawn_blocking(move || focus.context(&app, hint.as_deref())).await {
+                Ok(Ok(context)) if !context.is_empty() => Some(context),
+                Ok(Ok(_)) => None,
+                Ok(Err(why)) => {
+                    tracing::debug!(?why, "learn selection: nothing read around the selection");
+                    None
+                }
+                Err(e) => {
+                    tracing::debug!(error = %e, "learn selection: the read task failed");
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+    if copied.is_none() && context.is_none() {
+        return Err(LearnOutcome::NoSelection);
+    }
+    tracing::debug!(
+        copied = copied.as_ref().map(|t| t.chars().count()),
+        context = context.as_ref().map(|c| c.before.chars().count() + c.selected.chars().count() + c.after.chars().count()),
+        "learn selection: read"
+    );
     tokio::task::spawn_blocking(move || {
         let takes = reader.recent_texts(LEARN_TAKES).map_err(|e| LearnOutcome::Failed { message: e.to_string() })?;
-        Ok(match_selection(&selection, &takes)
+        let around = context.as_ref().map(|c| match_around(&c.before, &c.selected, &c.after, &takes)).unwrap_or_default();
+        // A paragraph that holds no take at the selection (a stale or unusual reading): the
+        // selection alone, as before the context was read.
+        let found = match (around.is_empty(), copied.as_deref()) {
+            (true, Some(selection)) => match_selection(selection, &takes),
+            _ => around,
+        };
+        let corrections = found
             .into_iter()
             .map(|m| {
                 let take = &takes[m.index];
                 let keep = storable(take, &m.corrected).then_some(m.corrected.clone());
                 Correction { id: take.id, keep, had: take.corrected.is_some(), unchanged: m.corrected == take.text }
             })
-            .collect())
+            .collect();
+        Ok(Compared { corrections, context: context.is_some() })
     })
     .await
     .unwrap_or_else(|e| Err(LearnOutcome::Failed { message: format!("learn task failed: {e}") }))

@@ -15,7 +15,7 @@
 // documented contracts, and no pointer outlives the object that owns it.
 #![allow(unsafe_code)]
 
-use voltip_platform::insert_check::rules::{FocusText, MAX_SELECTED_CHARS, UnconfirmedWhy};
+use voltip_platform::insert_check::rules::{FocusContext, FocusText, MAX_SELECTED_CHARS, UnconfirmedWhy};
 use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize};
 use windows::Win32::UI::Accessibility::{
     CUIAutomation8, IUIAutomation, IUIAutomation2, IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextPattern2, IUIAutomationTextRange,
@@ -97,9 +97,17 @@ fn offset_of(document: &IUIAutomationTextRange, range: &IUIAutomationTextRange, 
     }
 }
 
-/// The text facts of a `TextPattern`, with `caret` from `TextPattern2` when there is one (else the
+/// What a `TextPattern` tells of its document: the whole text (at most [`MAX_DOCUMENT`] units), the
+/// first selection's bounds and text, and the caret from `TextPattern2` when there is one (else the
 /// end of the first selection range).
-fn read_pattern(pattern: &IUIAutomationTextPattern, caret: Option<IUIAutomationTextRange>) -> Option<FocusText> {
+struct Document {
+    whole: Vec<u16>,
+    bounds: Option<(usize, usize)>,
+    selected: Option<String>,
+    caret: Option<usize>,
+}
+
+fn read_document(pattern: &IUIAutomationTextPattern, caret: Option<IUIAutomationTextRange>) -> Option<Document> {
     // SAFETY: a valid pattern of the focused element.
     let document = unsafe { pattern.DocumentRange() }.ok()?;
     // SAFETY: as above.
@@ -125,16 +133,38 @@ fn read_pattern(pattern: &IUIAutomationTextPattern, caret: Option<IUIAutomationT
         Some(range) => Some(offset_of(&document, &range, TextPatternRangeEndpoint_Start)?),
         None => bounds.map(|(_, end)| end),
     };
+    Some(Document { whole, bounds, selected, caret })
+}
+
+/// The text facts of a `TextPattern` ([`read_document`]).
+fn read_pattern(pattern: &IUIAutomationTextPattern, caret: Option<IUIAutomationTextRange>) -> Option<FocusText> {
+    let Document { whole, bounds, selected, caret } = read_document(pattern, caret)?;
     let before = caret.map_or_else(|| utf16_before(&whole, whole.len()), |caret| utf16_before(&whole, caret));
     Some(FocusText::read(Some(whole.len()), caret, bounds, selected.as_deref(), Some(&before)))
 }
 
-/// The whole value of a control with `ValuePattern` only: no caret.
-fn read_value(element: &IUIAutomationElement) -> Option<FocusText> {
+/// The paragraph around the selection or the caret of a `TextPattern` (docs/dictation.md §35);
+/// without either, the one place of `hint` in the document.
+fn context_pattern(pattern: &IUIAutomationTextPattern, caret: Option<IUIAutomationTextRange>, hint: Option<&str>) -> Option<FocusContext> {
+    let Document { whole, bounds, caret, .. } = read_document(pattern, caret)?;
+    match (bounds, caret) {
+        (Some((start, end)), _) => FocusContext::around_utf16(&whole, start, end),
+        (None, Some(caret)) => FocusContext::around_utf16(&whole, caret, caret),
+        (None, None) => FocusContext::find(&utf16_text(&whole), hint?),
+    }
+}
+
+/// The whole value of a control with `ValuePattern` only (no caret), as UTF-16 units.
+fn value_units(element: &IUIAutomationElement) -> Option<Vec<u16>> {
     // SAFETY: a valid element; an unsupported pattern is an error.
     let pattern = unsafe { element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId) }.ok()?;
     // SAFETY: a valid pattern.
-    let value = units(&unsafe { pattern.CurrentValue() }.ok()?, MAX_DOCUMENT)?;
+    units(&unsafe { pattern.CurrentValue() }.ok()?, MAX_DOCUMENT)
+}
+
+/// The whole value of a control with `ValuePattern` only: no caret.
+fn read_value(element: &IUIAutomationElement) -> Option<FocusText> {
+    let value = value_units(element)?;
     Some(FocusText::read(Some(value.len()), None, None, None, Some(&utf16_before(&value, value.len()))))
 }
 
@@ -173,5 +203,24 @@ impl FocusPlatform for Uia {
             return Some(text);
         }
         read_value(element)
+    }
+
+    fn context(&mut self, element: &IUIAutomationElement, hint: Option<&str>) -> Option<FocusContext> {
+        // SAFETY: a valid element; unsupported patterns are errors.
+        if let Ok(two) = unsafe { element.GetCurrentPatternAs::<IUIAutomationTextPattern2>(UIA_TextPattern2Id) } {
+            let mut active = BOOL::default();
+            // SAFETY: a valid pattern; `active` outlives the call.
+            let caret = unsafe { two.GetCaretRange(&raw mut active) }.ok();
+            if let Some(context) = context_pattern(&two, caret, hint) {
+                return Some(context);
+            }
+        }
+        // SAFETY: as above.
+        if let Ok(one) = unsafe { element.GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId) }
+            && let Some(context) = context_pattern(&one, None, hint)
+        {
+            return Some(context);
+        }
+        FocusContext::find(&utf16_text(&value_units(element)?), hint?)
     }
 }

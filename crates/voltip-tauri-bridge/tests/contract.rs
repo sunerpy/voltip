@@ -2349,7 +2349,9 @@ fn all_events() -> Vec<UiEvent> {
         }),
         learn_notice(LearnOutcome::NoPairs),
         learn_notice(LearnOutcome::Unchanged),
-        learn_notice(LearnOutcome::NoMatch),
+        // §35: the paragraph around the selection was read, or only the selection was compared.
+        learn_notice(LearnOutcome::NoMatch { context: true }),
+        learn_notice(LearnOutcome::NoMatch { context: false }),
         learn_notice(LearnOutcome::NoSelection),
         learn_notice(LearnOutcome::TooLong { max: 8000 }),
         learn_notice(LearnOutcome::Terminal),

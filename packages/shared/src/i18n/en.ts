@@ -1288,7 +1288,7 @@ export const en: Messages = {
       explain:
         "Compares the recognised text of recent history entries with the polished text, and with the text you corrected in another app and noted with Learn from selection, and lists the words recognised as A and changed to B, most frequent first. Once a pair is in the dictionary, it is corrected right after recognition. The comparison is character by character; no AI is used.",
       /** The explanation card's hint while 从选中文字学习 has no shortcut (§35). */
-      hint: "After you correct a dictation in another app, select the corrected text and press the Learn from selection shortcut; your corrections show here too.",
+      hint: "After you correct a dictation in another app, leave the cursor in the change or select the corrected text, and press the Learn from selection shortcut; your corrections show here too.",
       hintSet: "Set the shortcut",
       /** Where a pair came from (§35). */
       source: { polish: "Polish", edit: "Your correction" },
@@ -2712,7 +2712,7 @@ export const en: Messages = {
   learn: {
     settings: {
       label: "Learn from selection",
-      help: "After you correct a dictation in another app, select the corrected text and press this shortcut. Voltip notes the change for you to confirm in the dictionary's suggestions.",
+      help: "After you correct a dictation in another app, leave the cursor in the change, or select the corrected text, and press this shortcut. Voltip finds the dictation and notes the change for you to confirm in the dictionary's suggestions.",
       none: "Not set",
       record: "Record",
       recordLabel: "Record · Learn from selection",
@@ -2735,8 +2735,9 @@ export const en: Messages = {
       undone: "Undone",
       undoFailed: "Couldn't undo",
       noPairs: "No change to add to the dictionary",
-      unchanged: "The selection matches what was dictated",
-      noMatch: "Not found in the last {n} dictations",
+      unchanged: "This text matches what was dictated",
+      noMatch: "Nothing near the cursor matches the last {n} dictations",
+      noMatchSelection: "Not found; select the words around your change too",
       noSelection: "Nothing is selected",
       tooLong: "The selection is too long ({max} characters at most)",
       terminal: "Text in a terminal can't be learned from",

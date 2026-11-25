@@ -18,7 +18,8 @@ use core_foundation::base::{CFType, CFTypeRef, TCFType};
 use core_foundation::number::CFNumber;
 use core_foundation::string::{CFString, CFStringRef};
 use core_foundation_sys::base::{CFIndex, CFRange};
-use voltip_platform::insert_check::rules::{FocusText, MAX_SELECTED_CHARS, READ_BEFORE_CARET, UnconfirmedWhy};
+use core_foundation_sys::string::{CFStringGetCharacters, CFStringGetLength};
+use voltip_platform::insert_check::rules::{CONTEXT_CHARS, FocusContext, FocusText, MAX_SELECTED_CHARS, READ_BEFORE_CARET, UnconfirmedWhy};
 
 use crate::FocusPlatform;
 
@@ -73,8 +74,18 @@ fn copy(element: &CFType, attribute: &'static str) -> Option<CFType> {
     (error == AX_ERROR_SUCCESS && !value.is_null()).then(|| unsafe { CFType::wrap_under_create_rule(value) })
 }
 
+/// `value` as text, read as UTF-16 units: a range cut inside a surrogate pair (the learning read
+/// asks for ranges at any unit, §35) reads as U+FFFD at that end, where core-foundation's
+/// `to_string` asserts and would end the reader's thread (the review of 2026-11-25).
 fn string(value: &CFType) -> Option<String> {
-    value.downcast::<CFString>().map(|s| s.to_string())
+    let text = value.downcast::<CFString>()?;
+    let raw = text.as_concrete_TypeRef();
+    // SAFETY: a live CFString.
+    let length = unsafe { CFStringGetLength(raw) };
+    let mut units = vec![0u16; usize::try_from(length).ok()?];
+    // SAFETY: `units` holds exactly `length` UniChars, the range is the whole string.
+    unsafe { CFStringGetCharacters(raw, CFRange { location: 0, length }, units.as_mut_ptr()) };
+    Some(String::from_utf16_lossy(&units))
 }
 
 fn index(value: &CFType) -> Option<usize> {
@@ -141,5 +152,46 @@ impl FocusPlatform for Ax {
         let value = copy(element, "AXValue").and_then(|v| string(&v))?;
         let units: Vec<u16> = value.encode_utf16().collect();
         Some(FocusText::read(Some(units.len()), None, None, None, Some(&crate::utf16_before(&units, units.len()))))
+    }
+
+    fn context(&mut self, element: &CFType, hint: Option<&str>) -> Option<FocusContext> {
+        let chars = copy(element, "AXNumberOfCharacters").and_then(|n| index(&n));
+        let selection = copy(element, "AXSelectedTextRange").and_then(|r| range(&r));
+        if let (Some(chars), Some((location, length))) = (chars, selection) {
+            if length > MAX_SELECTED_CHARS {
+                return None;
+            }
+            let (start, end) = (location.min(chars), (location + length).min(chars));
+            // Two units a character at most, and a few more: what `FocusContext` keeps of each side.
+            let window = 2 * CONTEXT_CHARS + 4;
+            let before = string_for_range(element, start.saturating_sub(window), start)?;
+            let selected = if end > start { string_for_range(element, start, end)? } else { String::new() };
+            let after = string_for_range(element, end, (end + window).min(chars))?;
+            return FocusContext::from_parts(&before, &selected, &after);
+        }
+        // Only the whole value: the copied selection places the context.
+        let value = copy(element, "AXValue").and_then(|v| string(&v))?;
+        FocusContext::find(&value, hint?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core_foundation_sys::base::kCFAllocatorDefault;
+    use core_foundation_sys::string::CFStringCreateWithCharacters;
+
+    use super::*;
+
+    /// The review of 2026-11-25: a string with an unpaired surrogate, as `AXStringForRange` gives
+    /// for a range cut inside a pair, reads with U+FFFD there instead of ending the thread.
+    #[test]
+    fn regression_a_range_cut_inside_a_pair_reads_with_a_replacement_character() {
+        let units: [u16; 3] = [0xDC00, 0x0041, 0xD83D];
+        // SAFETY: `units` outlives the call; the result follows the create rule.
+        let raw = unsafe { CFStringCreateWithCharacters(kCFAllocatorDefault, units.as_ptr(), 3) };
+        assert!(!raw.is_null());
+        // SAFETY: a new reference we own.
+        let value = unsafe { CFType::wrap_under_create_rule(raw.cast()) };
+        assert_eq!(string(&value).as_deref(), Some("\u{fffd}A\u{fffd}"));
     }
 }

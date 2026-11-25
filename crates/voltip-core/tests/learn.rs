@@ -9,8 +9,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc;
-use voltip_core::dictation::fakes::{FakeAudio, FakeInjector, FakeProbe, FakeTranscriber};
-use voltip_core::dictation::{DictationPorts, ForegroundProbe, Transcriber};
+use voltip_core::dictation::fakes::{FakeAudio, FakeFocusReader, FakeInjector, FakeProbe, FakeTranscriber};
+use voltip_core::dictation::{DictationPorts, ForegroundProbe, Transcriber, UnconfirmedWhy};
 use voltip_core::{
     AppCore, CoreCommand, CoreConfig, CoreEvent, CoreHandle, DictationPhase, EdgeSource, HistoryEntry, LearnNotice, LearnOutcome, Modifier, OverlayPlacement,
     ResolvedEngines, SETTINGS_FILE_NAME, Settings, SettingsStore,
@@ -252,7 +252,7 @@ async fn the_notice_says_why_nothing_was_learned() {
     let in_terminal = FakeInjector::paste().with_selection(FIXED).with_terminals(|id| id == "windowsterminal");
     assert_eq!(outcome(in_terminal, Some(terminal), true, true).await, (LearnOutcome::Terminal, 0), "no key pressed in a terminal");
     assert_eq!(outcome(FakeInjector::paste(), None, true, true).await, (LearnOutcome::NoSelection, 1));
-    assert_eq!(outcome(FakeInjector::paste().with_selection("今天天气不错"), None, true, true).await, (LearnOutcome::NoMatch, 1));
+    assert_eq!(outcome(FakeInjector::paste().with_selection("今天天气不错"), None, true, true).await, (LearnOutcome::NoMatch { context: false }, 1));
     assert_eq!(outcome(FakeInjector::paste().with_selection(HEARD), None, true, true).await, (LearnOutcome::Unchanged, 1));
     let long = "字".repeat(8001);
     assert!(matches!(outcome(FakeInjector::paste().with_selection(&long), None, true, true).await, (LearnOutcome::TooLong { max: 8000 }, 1)));
@@ -290,7 +290,12 @@ async fn regression_view_and_open_settings_start_the_notices_stay_again() {
 async fn regression_a_terminal_the_voice_edit_allows_is_still_not_learned_from() {
     let terminal: Arc<dyn ForegroundProbe> = Arc::new(FakeProbe::app("com.apple.terminal", "Terminal", None));
     // The voice edit's table (macOS: none) says no; learning's says yes.
-    let injector = FakeInjector::paste().with_selection(FIXED).with_terminals(|_| false).with_program_output(|id| id == "com.apple.terminal");
+    let reader = Arc::new(FakeFocusReader::around("我在用 ", "Qwen 4", " max 做测试"));
+    let injector = FakeInjector::paste()
+        .with_selection(FIXED)
+        .with_terminals(|_| false)
+        .with_program_output(|id| id == "com.apple.terminal")
+        .with_focus_reader(reader.clone());
     let mut node = start(injector, Some(terminal), false);
     ready(&mut node).await;
     dictate(&mut node).await;
@@ -299,4 +304,83 @@ async fn regression_a_terminal_the_voice_edit_allows_is_still_not_learned_from()
     let outcome = notice(&mut node).await.expect("a notice").outcome;
     assert_eq!(outcome, LearnOutcome::Terminal);
     assert!(node.injector.copies().is_empty(), "no key pressed in the terminal: {:?}", node.injector.copies());
+    assert!(reader.calls().contexts.is_empty(), "nothing read in the terminal either");
+}
+
+/// The application in front, as the probe names it: the learning read needs a name, as the insert
+/// check does (docs/dictation.md §28.2).
+fn notepad() -> Option<Arc<dyn ForegroundProbe>> {
+    Some(Arc::new(FakeProbe::app("notepad", "Notepad", None)))
+}
+
+/// What one 从选中文字学习 after one take came to, and what the reader was asked.
+async fn learned_with(injector: FakeInjector, reader: &Arc<FakeFocusReader>) -> (LearnOutcome, Option<HistoryEntry>, Vec<(String, Option<String>)>) {
+    let mut node = start(injector.with_focus_reader(reader.clone()), notepad(), false);
+    ready(&mut node).await;
+    dictate(&mut node).await;
+    idle(&mut node).await;
+    learn(&node).await;
+    // The correction is kept before the notice comes: collect it on the way.
+    let mut kept = None;
+    let outcome = loop {
+        match tokio::time::timeout(STEP, node.events.recv()).await.expect("event within 10 s").expect("core alive") {
+            CoreEvent::History { recent, .. } => kept = recent.iter().find(|e| e.corrected.is_some()).cloned().or(kept),
+            CoreEvent::LearnNotice(Some(n)) => break n.outcome,
+            _ => {}
+        }
+    };
+    (outcome, kept, reader.calls().contexts)
+}
+
+fn pairs_of(outcome: &LearnOutcome) -> Vec<(String, String)> {
+    match outcome {
+        LearnOutcome::Learned { pairs, .. } => pairs.iter().map(|p| (p.heard.clone(), p.polished.clone())).collect(),
+        other => panic!("not learned: {other:?}"),
+    }
+}
+
+/// docs/dictation.md §35. Regression, 2026-11-25 (the user on windows-local): with only the
+/// corrected words selected (「Qwen 4」 of 「…Qwen 4 Max…」), the pill said 「最近50次听写里没有找到这段文字」:
+/// they share no word with the take. Now the paragraph around the selection is read through the
+/// focused control (the copied selection as the hint) and the take is found.
+#[tokio::test]
+async fn regression_only_the_corrected_words_selected_are_learned_from_their_paragraph() {
+    let reader = Arc::new(FakeFocusReader::around("我在用 ", "Qwen 4", " max 做测试"));
+    let (outcome, entry, asked) = learned_with(FakeInjector::paste().with_selection("Qwen 4"), &reader).await;
+    assert_eq!(pairs_of(&outcome), [("Quinn for".to_owned(), "Qwen 4".to_owned())]);
+    assert_eq!(entry.expect("kept").corrected.unwrap().text, FIXED);
+    assert_eq!(asked, [("notepad".to_owned(), Some("Qwen 4".to_owned()))], "the reader is asked with the copied selection");
+}
+
+/// Nothing selected, the caret in the corrected sentence: its paragraph is enough. Regression of
+/// the same report: the pill said 「没有选中文字」.
+#[tokio::test]
+async fn regression_with_nothing_selected_the_paragraph_at_the_caret_is_learned() {
+    let reader = Arc::new(FakeFocusReader::around(FIXED, "", ""));
+    let (outcome, entry, asked) = learned_with(FakeInjector::paste(), &reader).await;
+    assert_eq!(pairs_of(&outcome), [("Quinn for".to_owned(), "Qwen 4".to_owned())]);
+    assert_eq!(entry.expect("kept").corrected.unwrap().text, FIXED);
+    assert_eq!(asked, [("notepad".to_owned(), None)]);
+}
+
+/// docs/dictation.md §35: the 没有找到 notice says whether the text around the cursor was read; a
+/// paragraph that does not hold the take falls back to the selection alone.
+#[tokio::test]
+async fn the_notice_says_whether_the_text_around_the_cursor_was_read() {
+    // Unreadable: the selection alone, not found.
+    let unreadable = Arc::new(FakeFocusReader::refusing(UnconfirmedWhy::Unreadable));
+    let (outcome, _, _) = learned_with(FakeInjector::paste().with_selection("今天天气不错"), &unreadable).await;
+    assert_eq!(outcome, LearnOutcome::NoMatch { context: false });
+    // Read, and neither the paragraph nor the selection is a take.
+    let read = Arc::new(FakeFocusReader::around("今天", "天气", "不错"));
+    let (outcome, _, _) = learned_with(FakeInjector::paste().with_selection("天气"), &read).await;
+    assert_eq!(outcome, LearnOutcome::NoMatch { context: true });
+    // Read, but the paragraph holds no take while the copied selection does: the selection wins.
+    let stale = Arc::new(FakeFocusReader::around("完全不同的", "内容", ""));
+    let (outcome, entry, _) = learned_with(FakeInjector::paste().with_selection(FIXED), &stale).await;
+    assert_eq!(pairs_of(&outcome), [("Quinn for".to_owned(), "Qwen 4".to_owned())]);
+    assert_eq!(entry.expect("kept").corrected.unwrap().text, FIXED);
+    // Nothing selected and nothing read: still 没有选中文字.
+    let (outcome, _, _) = learned_with(FakeInjector::paste(), &unreadable).await;
+    assert_eq!(outcome, LearnOutcome::NoSelection);
 }

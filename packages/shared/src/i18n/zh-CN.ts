@@ -1317,7 +1317,7 @@ export const zhCN = {
       explain:
         "比较最近记录的识别原文和 AI 润色后的文字，以及你在其他应用里改正、用「从选中文字学习」记下的文字，列出「识别成 A、改成 B」的写法，按出现次数排列。加入词典后，识别完成时就会直接纠正。只逐字比较，不调用 AI。",
       /** The explanation card's hint while 从选中文字学习 has no shortcut (§35). */
-      hint: "在其他应用里改正听写结果后，选中改好的文字，按「从选中文字学习」的快捷键，这里也会列出你的修改。",
+      hint: "在其他应用里改正听写结果后，把光标留在改过的地方或选中改好的文字，按「从选中文字学习」的快捷键，这里也会列出你的修改。",
       hintSet: "设置快捷键",
       /** Where a pair came from (§35). */
       source: { polish: "润色", edit: "你的修改" },
@@ -2720,7 +2720,7 @@ export const zhCN = {
   learn: {
     settings: {
       label: "从选中文字学习",
-      help: "在其他应用里改正听写结果后，选中改好的文字按这个快捷键，Voltip 会记下改动，到词典的学习建议里确认",
+      help: "在其他应用里改正听写结果后，把光标留在改过的地方，或选中改好的文字，按这个快捷键，Voltip 会找到这次听写并记下改动，到词典的学习建议里确认",
       none: "未设置",
       record: "录制",
       recordLabel: "录制 · 从选中文字学习",
@@ -2743,8 +2743,11 @@ export const zhCN = {
       undone: "已撤销",
       undoFailed: "无法撤销",
       noPairs: "没有可以加入词典的改动",
-      unchanged: "选中的文字和听写结果相同",
-      noMatch: "最近 {n} 次听写里没有找到这段文字",
+      unchanged: "这段文字和听写结果相同",
+      /** The paragraph around the selection was read (docs/dictation.md §35). */
+      noMatch: "最近 {n} 次听写里没有找到光标附近的文字",
+      /** Only the selection was compared: the field could not be read. */
+      noMatchSelection: "没找到这段文字，请连同前后没改的字一起选中",
       noSelection: "没有选中文字",
       tooLong: "选中的文字太长，最多 {max} 字",
       terminal: "终端里的文字不能用来学习",

@@ -10,7 +10,7 @@ use std::collections::HashSet;
 
 use crate::dictation::insert_check::normalize;
 use crate::history::HistoryText;
-use crate::mcp::candidates::{MAX_DIFF_CELLS, MAX_SCAN_CELLS, Replacement, Replay, SegmentKind, diff_segments_by, diff_tokens, replacements};
+use crate::mcp::candidates::{MAX_DIFF_CELLS, MAX_SCAN_CELLS, Replacement, Replay, SegmentKind, diff_segments_by, diff_tokens, is_cjk_letter, replacements};
 
 /// Recognised takes a selection is compared with, newest first.
 pub const LEARN_TAKES: usize = 50;
@@ -179,21 +179,29 @@ enum End {
     Finish,
 }
 
+/// How [`edge`] ranks a run: its character LCS with the missing run, whether it meets the text
+/// around it at a word's edge, then fewer words apart from the missing run, then fewer characters.
+type EdgeRank = (usize, bool, std::cmp::Reverse<usize>, std::cmp::Reverse<usize>);
+
 /// The tokens of the selection's run `extra` that replace the take's run `missing` at one end of
 /// the match (the error was the take's first or last words): whole tokens next to the matched part,
 /// starting (at the start) or ending (at the finish) with a word, within one word of `missing`'s
 /// count and half to twice its characters, the most similar character by character; on a tie the
-/// one closest to `missing`'s count of words, then the shortest. The rest of `extra` is text the
-/// user selected besides the take. `None` when no run fits. The answer is how many tokens of
-/// `extra` are taken, and their character LCS with `missing`.
-fn edge(missing: &[Tok<'_>], extra: &[Tok<'_>], end: End) -> Option<(usize, usize)> {
+/// one that meets the rest of `extra` at a word's edge ([`word_edge`]), then the one closest to
+/// `missing`'s count of words, then the shortest. The rest of `extra` is text the user selected
+/// besides the take. At most `limit` tokens are taken: with a paragraph read around the selection,
+/// the change at a take's end lies in the selection, not in the text around it (the review of
+/// 2026-11-25: 「我们讨论一下千问四Max…」 with 千问四 corrected took 「下」 of the text glued before
+/// the take into the change). `None` when no run fits. The answer is how many tokens of `extra` are
+/// taken, and their character LCS with `missing`.
+fn edge(missing: &[Tok<'_>], extra: &[Tok<'_>], end: End, limit: usize) -> Option<(usize, usize)> {
     let (words, chars) = (words_of(missing), chars_of(missing));
     if words == 0 || words_of(extra) == 0 || chars > INNER_MAX {
         return None;
     }
     let target = folded(missing);
-    let mut best: Option<(usize, usize, usize, usize)> = None; // (taken, score, word difference, chars)
-    for taken in 1..=extra.len() {
+    let mut best: Option<(usize, EdgeRank)> = None;
+    for taken in 1..=extra.len().min(limit) {
         let run = match end {
             End::Start => &extra[extra.len() - taken..],
             End::Finish => &extra[..taken],
@@ -210,12 +218,35 @@ fn edge(missing: &[Tok<'_>], extra: &[Tok<'_>], end: End) -> Option<(usize, usiz
             continue;
         }
         let score = lcs_len(&folded(run), &target);
-        let apart = run_words.abs_diff(words);
-        if best.is_none_or(|(_, s, a, c)| (score, std::cmp::Reverse(apart), std::cmp::Reverse(run_chars)) > (s, std::cmp::Reverse(a), std::cmp::Reverse(c))) {
-            best = Some((taken, score, apart, run_chars));
+        let rank = (score, word_edge(extra, taken, end), std::cmp::Reverse(run_words.abs_diff(words)), std::cmp::Reverse(run_chars));
+        if best.as_ref().is_none_or(|(_, r)| rank > *r) {
+            best = Some((taken, rank));
         }
     }
-    best.map(|(taken, score, _, _)| (taken, score))
+    best.map(|(taken, (score, ..))| (taken, score))
+}
+
+/// Whether the run of the last (at the start) or first (at the finish) `taken` tokens of `extra`
+/// meets the rest of `extra` where one word ends and another begins: at the edge of the text, at
+/// white space or punctuation, or where CJK text meets another script. With nothing selected and
+/// the caret in 「我们讨论一下Qwen 4 Max的推理能力」 (千问四 corrected), 「Qwen 4」 begins at such a
+/// place and 「下Qwen 4」 inside 「讨论一下」, the text glued before the take (2026-11-26: the
+/// paragraph read around the caret learned 「千问四 → 下Qwen 4」).
+fn word_edge(extra: &[Tok<'_>], taken: usize, end: End) -> bool {
+    let (left, right) = match end {
+        End::Start => match extra.len().checked_sub(taken + 1) {
+            Some(i) => (&extra[i], &extra[i + 1]),
+            None => return true,
+        },
+        End::Finish => match extra.get(taken) {
+            Some(next) => (&extra[taken - 1], next),
+            None => return true,
+        },
+    };
+    if left.text.len() != left.key.len() || !left.word || !right.word {
+        return true;
+    }
+    matches!((left.key.chars().next_back(), right.text.chars().next()), (Some(a), Some(b)) if is_cjk_letter(a) != is_cjk_letter(b))
 }
 
 /// Where a take and a selection meet, and how alike they are there.
@@ -257,8 +288,10 @@ fn densest(take: &[Tok<'_>], selection: &[Tok<'_>], pairs: &[(usize, usize)]) ->
     best.1.to_vec()
 }
 
-/// The alignment of `take` and `selection`, or `None` when they share no word.
-fn align(take: &[Tok<'_>], selection: &[Tok<'_>]) -> Option<Alignment> {
+/// The alignment of `take` and `selection`, or `None` when they share no word. `inside`: the tokens
+/// of `selection` the user selected in a paragraph read around it; a change at an end of the take
+/// is taken from them only ([`edge`]).
+fn align(take: &[Tok<'_>], selection: &[Tok<'_>], inside: Option<(usize, usize)>) -> Option<Alignment> {
     let pairs = densest(take, selection, &lcs_pairs(take, selection)?);
     if !pairs.iter().any(|&(i, _)| take[i].word) {
         return None;
@@ -272,14 +305,15 @@ fn align(take: &[Tok<'_>], selection: &[Tok<'_>]) -> Option<Alignment> {
             matched += lcs_len(&folded(gap_take), &folded(gap_selection));
         }
     }
-    let (take_start, selection_start) = match edge(&take[..first.0], &selection[..first.1], End::Start) {
+    let (lo, hi) = inside.unwrap_or((0, selection.len()));
+    let (take_start, selection_start) = match edge(&take[..first.0], &selection[..first.1], End::Start, first.1.saturating_sub(lo)) {
         Some((taken, score)) => {
             matched += score;
             (0, first.1 - taken)
         }
         None => (first.0, first.1),
     };
-    let (take_end, selection_end) = match edge(&take[last.0 + 1..], &selection[last.1 + 1..], End::Finish) {
+    let (take_end, selection_end) = match edge(&take[last.0 + 1..], &selection[last.1 + 1..], End::Finish, hi.saturating_sub(last.1 + 1)) {
         Some((taken, score)) => {
             matched += score;
             (take.len(), last.1 + 1 + taken)
@@ -333,6 +367,8 @@ pub struct Matched {
     pub corrected: String,
     /// See [`MATCH_MIN`].
     pub similarity: f64,
+    /// The characters of the selection (as [`normalize`]d) the take covers, `[start, end)`.
+    pub span: (usize, usize),
 }
 
 /// A candidate before the choice: `alignment` is with the corrected text, or with the inserted
@@ -356,8 +392,35 @@ fn overlaps(a: (usize, usize), b: (usize, usize)) -> bool {
 /// or on the inserted text when the corrected one has no word in common with the selection (the
 /// original wording selected again to take a correction back).
 pub fn match_selection(selection: &str, takes: &[HistoryText]) -> Vec<Matched> {
+    match_at(selection, takes, None)
+}
+
+/// [`match_selection`], with only the takes whose part meets `focus` (characters of the normalised
+/// selection: a range that is not empty must overlap the take's part, an empty one must lie in it
+/// or at its edge) taking part in the choice, so takes elsewhere cannot take the places.
+fn match_at(selection: &str, takes: &[HistoryText], focus: Option<(usize, usize)>) -> Vec<Matched> {
     let selection = normalize(selection);
     let sel = toks(&selection);
+    // Characters before each token of the selection, white space included: a token's text is its
+    // part of the selection, so the tokens join back into it.
+    let offsets: Vec<usize> = std::iter::once(0)
+        .chain(sel.iter().scan(0usize, |at, t| {
+            *at += t.text.chars().count();
+            Some(*at)
+        }))
+        .collect();
+    let span = |a: &Alignment| (offsets[a.selection.0], offsets[a.selection.1]);
+    // The tokens a selection inside the paragraph covers: from the one it starts in to the one it
+    // ends in.
+    let inside = focus.filter(|(at, to)| to > at).map(|(at, to)| {
+        let first = offsets.iter().rposition(|&o| o <= at).unwrap_or(0).min(sel.len());
+        let last = offsets.iter().position(|&o| o >= to).unwrap_or(sel.len()).max(first);
+        (first, last)
+    });
+    let meets = |a: &Alignment| {
+        let (start, end) = span(a);
+        focus.is_none_or(|(at, to)| if to > at { start < to && at < end } else { start <= at && at <= end })
+    };
     let words: HashSet<&str> = sel.iter().filter(|t| t.word).map(|t| t.key).collect();
     let shares = |toks: &[Tok<'_>]| toks.iter().any(|t| t.word && words.contains(t.key));
     let mut candidates: Vec<Candidate> = Vec::new();
@@ -374,8 +437,8 @@ pub fn match_selection(selection: &str, takes: &[HistoryText]) -> Vec<Matched> {
             break;
         }
         cells += cost;
-        let on_corrected = corrected.as_deref().and_then(|t| align(t, &sel));
-        let on_inserted = inserted.as_deref().and_then(|t| align(t, &sel));
+        let on_corrected = corrected.as_deref().and_then(|t| align(t, &sel, inside));
+        let on_inserted = inserted.as_deref().and_then(|t| align(t, &sel, inside));
         // The alignment that wins decides the rebuild: the more alike, then the one covering more
         // of the selection; the corrected text on a full tie.
         let covered = |a: &Alignment| chars_of(&sel[a.selection.0..a.selection.1]);
@@ -385,7 +448,7 @@ pub fn match_selection(selection: &str, takes: &[HistoryText]) -> Vec<Matched> {
             (None, Some(i)) => (i, true),
             (None, None) => continue,
         };
-        if alignment.similarity >= MATCH_MIN {
+        if alignment.similarity >= MATCH_MIN && meets(&alignment) {
             candidates.push(Candidate { index, alignment, on_inserted: from_inserted, similarity: alignment.similarity });
         }
     }
@@ -426,9 +489,21 @@ pub fn match_selection(selection: &str, takes: &[HistoryText]) -> Vec<Matched> {
                 (true | false, None) => splice(&toks(&take.text), c.alignment.take, picked),
                 (false, Some(earlier)) => splice(&toks(earlier), c.alignment.take, picked),
             };
-            Matched { index: c.index, corrected, similarity: c.similarity }
+            Matched { index: c.index, corrected, similarity: c.similarity, span: span(&c.alignment) }
         })
         .collect()
+}
+
+/// The takes (newest first) a paragraph read around the selection corrects (docs/dictation.md §35,
+/// the focused control's [`crate::dictation::FocusContext`]): [`match_selection`] over `before`,
+/// `selected` and `after` together, where only the takes whose part overlaps the selection, or,
+/// with nothing selected, holds or touches the caret between `before` and `after`, take part in
+/// the choice. A take elsewhere in the paragraph is left alone, and cannot take the places of the
+/// one the user pointed at (the review of 2026-11-25).
+pub fn match_around(before: &str, selected: &str, after: &str, takes: &[HistoryText]) -> Vec<Matched> {
+    let (before, selected, after) = (normalize(before), normalize(selected), normalize(after));
+    let (at, len) = (before.chars().count(), selected.chars().count());
+    match_at(&format!("{before}{selected}{after}"), takes, Some((at, at + len)))
 }
 
 #[cfg(test)]
@@ -558,6 +633,103 @@ mod tests {
     fn regression_a_selection_that_stops_before_the_next_word_keeps_the_space() {
         let take = plain("Quinn for max is great", 10);
         assert_eq!(one("Qwen 4 max", std::slice::from_ref(&take)).corrected, "Qwen 4 max is great");
+    }
+
+    /// docs/dictation.md §35. Regression, 2026-11-25 (the user on windows-local): 「今天测试一下千问四Max的推理能力。」
+    /// corrected to 「…Qwen 4 Max…」; with only 「Qwen 4」 selected the pill said 「最近50次听写里没有找到这段文字」:
+    /// the selection shares no word with the take. Read with its paragraph it finds the take, also
+    /// with the change at the start of the selection (which alone matched but learned nothing) and
+    /// with nothing selected, the caret in the sentence or at its end.
+    #[test]
+    fn regression_a_corrected_word_selected_alone_is_learned_from_its_paragraph() {
+        let inserted = "今天测试一下千问四Max的推理能力。";
+        let fixed = "今天测试一下Qwen 4 Max的推理能力。";
+        for take in [plain(inserted, 10), polished("今天测试一下千问四 max 的推理能力", inserted, 10)] {
+            let takes = std::slice::from_ref(&take);
+            assert!(match_selection("Qwen 4", takes).is_empty(), "alone it is not found");
+            for (before, selected, after) in [
+                ("今天测试一下", "Qwen 4", " Max的推理能力。"),
+                ("今天测试一下", "Qwen 4 Max", "的推理能力。"),
+                (fixed, "", ""),
+                ("今天测试一下Qwen", "", " 4 Max的推理能力。"),
+            ] {
+                let found = match_around(before, selected, after, takes);
+                assert_eq!(found.len(), 1, "{before:?} {selected:?} {after:?}: {found:?}");
+                assert_eq!(found[0].corrected, fixed);
+                assert_eq!(pairs(&take, &found[0].corrected), [("千问四".to_owned(), "Qwen 4".to_owned())], "{selected:?}");
+            }
+        }
+    }
+
+    /// Two takes in one paragraph: only the one at the selection, or at the caret, is learned.
+    #[test]
+    fn only_the_take_at_the_selection_or_the_caret_is_learned_from_a_paragraph() {
+        let takes = [plain("我们下午三点在飞书开会", 20), plain("今天测试一下千问四Max的推理能力。", 10)];
+        let found = match_around("今天测试一下", "Qwen 4", " Max的推理能力。我们下午四点在飞书开会", &takes);
+        let got: Vec<(usize, &str)> = found.iter().map(|m| (m.index, m.corrected.as_str())).collect();
+        assert_eq!(got, [(1, "今天测试一下Qwen 4 Max的推理能力。")]);
+        let found = match_around("今天测试一下Qwen 4 Max的推理能力。我们下午", "", "四点在飞书开会", &takes);
+        let got: Vec<(usize, &str)> = found.iter().map(|m| (m.index, m.corrected.as_str())).collect();
+        assert_eq!(got, [(0, "我们下午四点在飞书开会")], "the caret is in the second take");
+    }
+
+    /// The review of 2026-11-25: the takes were chosen over the whole paragraph, at most five, and
+    /// only then kept to the selection, so unchanged takes in the paragraph (alike 1.0) took the five
+    /// places and the corrected one at the cursor was not found.
+    #[test]
+    fn regression_unchanged_takes_around_do_not_crowd_out_the_one_at_the_cursor() {
+        let lines = ["春眠不觉晓。", "处处闻啼鸟。", "夜来风雨声。", "今天测试一下千问四Max的推理能力。", "花落知多少。", "白日依山尽。"];
+        let takes: Vec<HistoryText> = lines.iter().enumerate().map(|(i, t)| plain(t, 100 - i as u64)).collect();
+        let found = match_around("春眠不觉晓。处处闻啼鸟。夜来风雨声。今天测试一下", "Qwen 4", " Max的推理能力。花落知多少。白日依山尽。", &takes);
+        let got: Vec<(usize, &str)> = found.iter().map(|m| (m.index, m.corrected.as_str())).collect();
+        assert_eq!(got, [(3, "今天测试一下Qwen 4 Max的推理能力。")]);
+        let caret = match_around("春眠不觉晓。处处闻啼鸟。夜来风雨声。今天测试一下Qwen 4", "", " Max的推理能力。花落知多少。白日依山尽。", &takes);
+        assert_eq!(caret.iter().map(|m| m.index).collect::<Vec<_>>(), [3], "the caret alone");
+        // A selection over three of seven takes, two of them corrected: both are learned.
+        let seven = ["一。", "二。", "第三句写的是 GitHab 上的项目。", "第四句没有改。", "第五句说 Quinn for max 很好用。", "六。", "七。"];
+        let takes: Vec<HistoryText> = seven.iter().enumerate().map(|(i, t)| plain(t, 100 - i as u64)).collect();
+        let found = match_around("一。二。", "第三句写的是 GitHub 上的项目。第四句没有改。第五句说 Qwen 4 max 很好用。", "六。七。", &takes);
+        let got: Vec<(usize, &str)> = found.iter().filter(|m| m.corrected != takes[m.index].text).map(|m| (m.index, m.corrected.as_str())).collect();
+        assert_eq!(got, [(2, "第三句写的是 GitHub 上的项目。"), (4, "第五句说 Qwen 4 max 很好用。")]);
+    }
+
+    /// The review of 2026-11-25: a take whose first words are the change, glued to text before it
+    /// with no space or mark, took a character of that text into the change (「千问四 → 下Qwen 4」):
+    /// with a selection, the change comes from the selection only.
+    #[test]
+    fn regression_text_glued_before_the_take_is_not_taken_into_the_change() {
+        let take = plain("千问四Max的推理能力", 10);
+        let takes = std::slice::from_ref(&take);
+        for (selected, after) in [("Qwen 4", " Max的推理能力"), ("Qwen 4 Max的推理能力", "")] {
+            let found = match_around("我们讨论一下", selected, after, takes);
+            assert_eq!(found.len(), 1, "{selected:?}: {found:?}");
+            assert_eq!(found[0].corrected, "Qwen 4 Max的推理能力", "{selected:?}");
+            assert_eq!(pairs(&take, &found[0].corrected), [("千问四".to_owned(), "Qwen 4".to_owned())], "{selected:?}");
+        }
+    }
+
+    /// The same field with nothing selected: the caret after the corrected words, or at the end.
+    #[test]
+    fn regression_text_glued_before_the_take_with_only_the_caret_is_not_taken_into_the_change() {
+        let take = plain("千问四Max的推理能力", 10);
+        let takes = std::slice::from_ref(&take);
+        for (before, after) in [("我们讨论一下Qwen 4", " Max的推理能力"), ("我们讨论一下Qwen 4 Max的推理能力", "")] {
+            let found = match_around(before, "", after, takes);
+            assert_eq!(found.len(), 1, "{before:?}: {found:?}");
+            assert_eq!(found[0].corrected, "Qwen 4 Max的推理能力", "{before:?}");
+            assert_eq!(pairs(&take, &found[0].corrected), [("千问四".to_owned(), "Qwen 4".to_owned())], "{before:?}");
+        }
+    }
+
+    /// A match tells which characters of the selection its take covers.
+    #[test]
+    fn a_match_names_the_characters_of_the_selection_its_take_covers() {
+        let takes = [plain("第二次说的是 GitHab 上的项目", 20), plain("第一次说 Quinn for max 很好用", 10)];
+        let selection = "第一次说 Qwen 4 max 很好用第二次说的是 GitHub 上的项目";
+        let found = match_selection(selection, &takes);
+        let chars: Vec<char> = selection.chars().collect();
+        let covered: Vec<(usize, String)> = found.iter().map(|m| (m.index, chars[m.span.0..m.span.1].iter().collect())).collect();
+        assert_eq!(covered, [(0, "第二次说的是 GitHub 上的项目".to_owned()), (1, "第一次说 Qwen 4 max 很好用".to_owned())]);
     }
 
     #[test]

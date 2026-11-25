@@ -24,7 +24,7 @@ mod mac {
         NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSResponder, NSTextView, NSView, NSWindow, NSWindowStyleMask, NSWorkspace,
     };
     use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
-    use voltip_focus::{Expected, Reader, Settled, Watch, macos as ax};
+    use voltip_focus::{Expected, Reader, Settled, UnconfirmedWhy, Watch, macos as ax};
     use voltip_inject::{ClipboardPort as _, CopyOptions, Injector as _, Modifier, PasteOptions, SelectionSource as _, SystemClipboard, system_selection};
     use voltip_platform::HostOs;
     use voltip_platform::insert_check::rules::InsertCheck;
@@ -71,6 +71,39 @@ mod mac {
                 CGEventPost(HID_EVENT_TAP, event);
                 CFRelease(event);
             }
+        }
+    }
+
+    /// Shift+Option+Left in the application in front (`kVK_LeftArrow`): TextEdit selects the word
+    /// before the caret.
+    fn select_last_word() {
+        const KVK_LEFT_ARROW: u16 = 0x7B;
+        const SHIFT_OPTION: u64 = 0x0002_0000 | 0x0008_0000;
+        const HID_EVENT_TAP: u32 = 0;
+        for down in [true, false] {
+            // SAFETY: a keyboard event from the default source, flagged, posted and released.
+            unsafe {
+                let event = CGEventCreateKeyboardEvent(std::ptr::null(), KVK_LEFT_ARROW, down);
+                assert!(!event.is_null(), "CGEventCreateKeyboardEvent");
+                CGEventSetFlags(event, SHIFT_OPTION);
+                CGEventPost(HID_EVENT_TAP, event);
+                CFRelease(event);
+            }
+        }
+    }
+
+    /// Read TextEdit for 从选中文字学习 until `wanted` holds (the keys reach it a little later).
+    fn wait_context(reader: &Reader, what: &str, wanted: impl Fn(&voltip_focus::FocusContext) -> bool) -> voltip_focus::FocusContext {
+        let until = Instant::now() + WAIT;
+        loop {
+            let read = reader.context("com.apple.textedit", None);
+            if let Ok(context) = &read
+                && wanted(context)
+            {
+                return context.clone();
+            }
+            assert!(Instant::now() < until, "{what}: last read {read:?}");
+            std::thread::sleep(Duration::from_millis(50));
         }
     }
 
@@ -153,6 +186,13 @@ mod mac {
         paste();
         assert_eq!(watch.settle(WATCH), Settled::sure(InsertCheck::Written), "TextEdit");
         println!("focus_macos: TextEdit: written");
+
+        // docs/dictation.md §35: the learning read gives TextEdit's text around its selection.
+        select_last_word();
+        let around = wait_context(&reader, "the last word selected", |c| c.selected == "check");
+        assert_eq!((around.before.as_str(), around.after.as_str()), ("voltip ", ""), "TextEdit's text around the selection");
+        println!("focus_macos: TextEdit's text around the selection: read");
+        assert_eq!(reader.context("com.apple.terminal", None).err(), Some(UnconfirmedWhy::Skipped), "a terminal is never read");
 
         // docs/dictation.md §35 (the copy of §19): 从选中文字学习 reads TextEdit's selection with
         // Cmd+C — the shortcut's modifiers do not mix in, enigo posts its own flags — and puts back

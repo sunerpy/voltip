@@ -7344,7 +7344,19 @@
     "notice": {
       "id": 5,
       "outcome": {
-        "kind": "no_match"
+        "kind": "no_match",
+        "context": true
+      },
+      "shown": true
+    }
+  },
+  {
+    "type": "learn_notice",
+    "notice": {
+      "id": 5,
+      "outcome": {
+        "kind": "no_match",
+        "context": false
       },
       "shown": true
     }
