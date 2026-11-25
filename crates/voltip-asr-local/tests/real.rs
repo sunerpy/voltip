@@ -28,7 +28,7 @@ use std::time::{Duration, Instant};
 
 use voltip_asr_local::{
     Abort, CATALOGUE_VERSION, Compute, DefaultLoader, LocalDevice, LocalStreamingTranscriber, LocalTranscriber, MANIFEST_FILE, Manifest, ModelEntry,
-    RecognizerLoader, VadSegmenterFactory, VadTrimmer, entry, hardware, streaming_entry, vad_entry,
+    RecognizerLoader, TAIL_PADDING_SAMPLES, VadSegmenterFactory, VadTrimmer, entry, hardware, streaming_entry, vad_entry,
 };
 use voltip_core::dictation::{LIVE_CHUNK_SAMPLES, Segment, SegmenterFactory, StreamEvent, StreamingTranscriber, Transcriber};
 
@@ -179,6 +179,61 @@ fn real_streaming_model_emits_partials() {
     let s2 = t.open(None).unwrap();
     assert!(again.elapsed().as_millis() < load_ms.max(50), "the recogniser stays loaded");
     assert!(s2.finish().unwrap().tail.is_empty());
+}
+
+/// The sample's end of speech: the end of its last 10 ms window louder than -40 dBFS, plus 30 ms,
+/// as a hotkey released right after the last word ends the take.
+fn speech_end(samples: &[f32]) -> usize {
+    const WINDOW: usize = 160;
+    let threshold = 10f32.powf(-40.0 / 20.0);
+    let last = samples
+        .chunks(WINDOW)
+        .enumerate()
+        .filter(|(_, w)| (w.iter().map(|x| x * x).sum::<f32>() / w.len() as f32).sqrt() > threshold)
+        .map(|(i, w)| i * WINDOW + w.len())
+        .next_back()
+        .expect("the sample has speech");
+    (last + 480).min(samples.len())
+}
+
+/// One take through the streaming session: `samples`, then `silence` of zeros (as 松开后继续录音
+/// records after the release), in the live tap's 100 ms chunks; the take's text with punctuation
+/// and spaces dropped.
+fn streamed_take(t: &LocalStreamingTranscriber, samples: &[f32], silence: Duration) -> String {
+    let mut session = t.open(Some("zh")).unwrap();
+    let quiet = vec![0.0; usize::try_from(silence.as_millis()).unwrap() * 16];
+    for chunk in samples.chunks(LIVE_CHUNK_SAMPLES).chain(quiet.chunks(LIVE_CHUNK_SAMPLES)) {
+        session.feed(chunk);
+        while !matches!(session.poll(), StreamEvent::Idle) {}
+    }
+    let fin = session.finish().unwrap();
+    let text: String = fin.committed.iter().map(|s| s.text.as_str()).chain(std::iter::once(fin.tail.as_str())).collect();
+    text.chars().filter(|c| c.is_alphanumeric()).collect()
+}
+
+/// A take whose hotkey is released right after its last word (松开后继续录音 at 0, the default)
+/// keeps that word in the streaming Zipformer's text: the same as when a second and a half of
+/// silence follows it. Regression, 2026-11-23 on windows-local: 边说边识别 with
+/// zipformer-stream-zh-en lost the last words of its takes (the log: `asr_ms=36`, the text from the
+/// local stream; the same speech as a whole take kept them). `finish` called `input_finished()`
+/// with nothing after the speech, and sherpa-onnx decodes whole chunks only: the last partial chunk
+/// of speech was never decoded. sherpa-onnx's own examples feed silence first
+/// (python-api-examples/online-decode-files.py 0.66 s, c-api-examples/decode-file-c-api.c 0.3 s).
+#[test]
+#[ignore = "needs VOLTIP_LOCAL_STREAM_DIR (the downloaded streaming Zipformer directory) and VOLTIP_LOCAL_SAMPLE_WAV"]
+fn regression_streaming_model_keeps_the_last_words_of_a_take_released_at_once() {
+    let stream_dir = PathBuf::from(std::env::var("VOLTIP_LOCAL_STREAM_DIR").expect("VOLTIP_LOCAL_STREAM_DIR"));
+    let root = tempfile::tempdir().unwrap();
+    stage(root.path(), streaming_entry(), |name| stream_dir.join(name));
+    let (samples, rate) = voltip_asr_local::decode_wav(&sample_wav()).unwrap();
+    assert_eq!(rate, 16_000, "the sample must be 16 kHz mono");
+    let speech = &samples[..speech_end(&samples)];
+    let t = LocalStreamingTranscriber::new(root.path());
+    let held_on = streamed_take(&t, speech, Duration::from_millis(1500));
+    let released = streamed_take(&t, speech, Duration::ZERO);
+    println!("speech {} ms; with 1.5 s of silence after it: {held_on}; released at once: {released}", speech.len() / 16);
+    assert!(is_chinese(&held_on), "the sample is Chinese speech: {held_on}");
+    assert_eq!(released, held_on, "a take released right after its last word keeps it");
 }
 
 /// The Silero VAD through sherpa-onnx (docs/dictation.md §12 `vad_trim`): a synthetic take of
@@ -355,8 +410,9 @@ fn bpe_vocab_from_model(model: &[u8]) -> String {
 }
 
 /// One pass of the sample through a streaming recogniser the way `sherpa.rs` drives it (100 ms
-/// chunks, decode while ready, commit + reset at endpoints, flush at the end). Returns the text and
-/// the per-chunk decode times in microseconds.
+/// chunks, decode while ready, commit + reset at endpoints, flush at the end after
+/// [`TAIL_PADDING_SAMPLES`] of silence). Returns the text and the per-chunk decode times in
+/// microseconds.
 fn stream_pass(recognizer: &sherpa_onnx::OnlineRecognizer, samples: &[f32]) -> (String, Vec<u128>) {
     let stream = recognizer.create_stream();
     let mut text = String::new();
@@ -373,6 +429,7 @@ fn stream_pass(recognizer: &sherpa_onnx::OnlineRecognizer, samples: &[f32]) -> (
         }
         times.push(step.elapsed().as_micros());
     }
+    stream.accept_waveform(16_000, &[0.0; TAIL_PADDING_SAMPLES]);
     stream.input_finished();
     while recognizer.is_ready(&stream) {
         recognizer.decode(&stream);
@@ -421,7 +478,7 @@ fn real_streaming_hotwords_cost_and_effect() {
             max_active_paths: 4,
             enable_endpoint: true,
             rule1_min_trailing_silence: 2.0,
-            rule2_min_trailing_silence: 0.8,
+            rule2_min_trailing_silence: 1.2,
             rule3_min_utterance_length: 20.0,
             ..sherpa_onnx::OnlineRecognizerConfig::default()
         };

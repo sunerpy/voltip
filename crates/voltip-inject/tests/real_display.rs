@@ -280,6 +280,88 @@ fn regression_x11_hotkey_grab_swallows_the_copy_until_the_key_is_up() {
     eprintln!("tk saw: {:?}", tk.drain());
 }
 
+/// An empty Tk entry with the keyboard focus that prints `ready`, then `text=<content>` whenever
+/// it is asked with a `text` line on stdin; `quit` ends it.
+const TK_PASTE_TARGET: &str = r#"
+import queue, sys, threading, tkinter as tk
+root = tk.Tk()
+root.title("voltip-paste-target")
+entry = tk.Entry(root, width=48)
+entry.pack()
+commands = queue.Queue()
+def read_stdin():
+    for line in sys.stdin:
+        commands.put(line.strip())
+threading.Thread(target=read_stdin, daemon=True).start()
+def pump():
+    while not commands.empty():
+        cmd = commands.get()
+        if cmd == "text":
+            print("text=" + entry.get(), flush=True)
+        elif cmd == "clear":
+            entry.delete(0, "end")
+            print("cleared", flush=True)
+        elif cmd == "quit":
+            root.destroy()
+            return
+    root.after(20, pump)
+def ready():
+    entry.focus_force()
+    print("ready", flush=True)
+root.after(100, ready)
+root.after(20, pump)
+root.mainloop()
+"#;
+
+/// What the Tk paste target holds now.
+fn entry_text(tk: &mut Helper) -> String {
+    tk.send("text");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        let line = tk.lines.recv_timeout(left).expect("the entry answers within 10 s");
+        if let Some(text) = line.strip_prefix("text=") {
+            return text.to_owned();
+        }
+    }
+}
+
+/// Why 边说边输入 on X11 must not paste while the hotkey is held (docs/dictation.md §12,
+/// `SelectionTiming::AfterKeyUp`): while a key grabbed with `XGrabKey` is down, the X server
+/// routes the synthesised Ctrl+V to the grabbing client, so a sentence pasted then never reaches
+/// the field — and the injector still reports a paste. Once the key is up the same paste works.
+/// Written 2026-11-23 before the fix, as the review of 边说边输入 on realtime models asked: the
+/// default activation holds the hotkey while speaking, and 边说边输入 pastes each sentence then.
+#[test]
+#[ignore = "needs an X11 display, python3 with tkinter and xdotool; run under xvfb-run"]
+fn regression_x11_hotkey_grab_swallows_a_paste_until_the_key_is_up() {
+    let _display = lock();
+    require_x11();
+    let _grabber = {
+        let grabber = Helper::python(X11_GRABBER, &[]);
+        grabber.expect_line("grabbed");
+        grabber
+    };
+    let mut tk = Helper::python(TK_PASTE_TARGET, &[]);
+    tk.expect_line("ready");
+    let paste = ClipboardPasteInjector::new(Duration::from_millis(50));
+
+    // The hotkey is held: the passive grab is active.
+    xdotool(&["keydown", "ctrl", "alt", "e"]);
+    let during = paste.inject("during").expect("the clipboard write");
+    std::thread::sleep(Duration::from_millis(300));
+    let seen_during = entry_text(&mut tk);
+    // The key comes up; the user still holds nothing.
+    xdotool(&["keyup", "e", "alt", "ctrl"]);
+    let after = paste.inject("after").expect("the clipboard write");
+    std::thread::sleep(Duration::from_millis(300));
+    let seen_after = entry_text(&mut tk);
+    eprintln!("during: {during:?} → {seen_during:?}; after: {after:?} → {seen_after:?}");
+    assert_eq!(during.via, Via::Paste, "the injector believes it pasted during the grab");
+    assert_eq!(seen_during, "", "during the grab the paste never reaches the field");
+    assert_eq!(seen_after, "after", "once the key is up the same paste works");
+}
+
 /// A 1×1 PNG, one red pixel: what an image editor or a browser puts on the clipboard.
 const RED_PIXEL_PNG: [u8; 70] = [
     0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06,

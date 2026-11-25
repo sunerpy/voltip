@@ -103,8 +103,9 @@ export function resultCardFor(dictation: DictationStatus): ResultCard | undefine
 }
 
 /** The pill's line for a finished take: pasted, or copied — because another window came to the
- *  front meanwhile (docs/dictation.md §14.3), because the system did not allow the paste or its
- *  remote interaction could not be used (§14.9), or for any other reason. */
+ *  front meanwhile (docs/dictation.md §14.3; after 边说边输入 typed sentences, only the rest, §12),
+ *  because the system did not allow the paste or its remote interaction could not be used
+ *  (§14.9), or for any other reason. */
 export function doneLabelKey(
   phase: Extract<DictationPhase, { phase: "done" }>,
   edit: boolean,
@@ -112,7 +113,10 @@ export function doneLabelKey(
   if (phase.via === "paste") return edit ? "overlay.live.editDonePaste" : "overlay.live.donePaste";
   switch (phase.clipboard_code) {
     case "target_changed":
-      return edit ? "overlay.live.editDoneTargetChanged" : "overlay.live.doneTargetChanged";
+      if (edit) return "overlay.live.editDoneTargetChanged";
+      return phase.rest === undefined
+        ? "overlay.live.doneTargetChanged"
+        : "overlay.live.doneTargetChangedRest";
     case "remote_denied":
       return edit ? "overlay.live.editDoneRemoteDenied" : "overlay.live.doneRemoteDenied";
     case "remote_unavailable":
@@ -120,6 +124,34 @@ export function doneLabelKey(
     default:
       return edit ? "overlay.live.editDoneClipboard" : "overlay.live.doneClipboard";
   }
+}
+
+/** The characters a finished take's line counts: what went to the clipboard on its own when
+ *  边说边输入 had typed sentences before it (`rest`, docs/dictation.md §12), else the whole text. */
+function doneChars(phase: Extract<DictationPhase, { phase: "done" }>): number {
+  return phase.rest === undefined ? phase.chars : Array.from(phase.rest).length;
+}
+
+/** What a result card's 粘贴 and 复制 take (docs/dictation.md §28): a failure's kept text, or a
+ *  finished take's text — only the copied rest when 边说边输入 typed its start already (§12,
+ *  §14.3); nothing for any other state. */
+export function resultCardText(phase: DictationPhase): string | undefined {
+  if (phase.phase === "done") return phase.rest ?? phase.text;
+  return phase.phase === "failed" ? phase.text : undefined;
+}
+
+/** What the listening pill says about the rest of the text (docs/dictation.md §12, §14.3): a
+ *  sentence of 边说边输入 found another window in front, so the rest is copied at the release; or
+ *  the live session writing a streaming take's text stopped, so the rest is recognised after the
+ *  release. A whole take's preview that stops says nothing: its final text is unaffected. */
+export function pillLiveNotice(
+  live: Pick<LiveText, "degraded" | "streaming" | "switched"> | undefined,
+): MessageKey | undefined {
+  if (live === undefined) return undefined;
+  if (live.switched) return "overlay.live.switchedNotice";
+  return live.degraded !== undefined && live.streaming
+    ? "overlay.live.streamDegradedNotice"
+    : undefined;
 }
 
 /** What the card's 粘贴 says when it could not paste (the card stays); the history's words. */
@@ -158,11 +190,14 @@ export function stageStart(phase: Extract<DictationPhase, { phase: "processing" 
 const LIVE_BARS = 36;
 
 /** The pill's caption from the core's live preview; `undefined` until any text arrived (a degraded
- *  preview keeps showing what it had — the pill itself says nothing about it). Under `live_inject`
- *  (docs/dictation.md §12) the first `injected` committed sentences are already in the front app
- *  and come back as the fainter `injected` part. The tag names whose words they are (§11.10). */
+ *  preview keeps showing what it had; `pillLiveNotice` says what that means for the take). Under
+ *  `live_inject` (docs/dictation.md §12) the first `injected` committed sentences are already in
+ *  the front app and come back as the fainter `injected` part. The tag names whose words they are
+ *  (§11.10). */
 export function pillLiveCaption(
-  live: LiveText | undefined,
+  live:
+    | Pick<LiveText, "committed" | "current" | "degraded" | "injected" | "source" | "provider">
+    | undefined,
   locale: Locale = DEFAULT_LOCALE,
 ): PillLiveCaption | undefined {
   if (live === undefined) return undefined;
@@ -370,6 +405,7 @@ export function Overlay({ state }: OverlayProps) {
 
   const phase = dictation.phase;
   const label = takePhaseLabel(dictation, now, locale);
+  const liveNotice = phase.phase === "listening" ? pillLiveNotice(phase.live) : undefined;
   // docs/dictation.md §19: a voice edit says so, and says what it replaced.
   const edit = dictation.kind === "edit";
   // docs/dictation.md §26: a take that gave no text whose recording the cache holds can be
@@ -400,8 +436,7 @@ export function Overlay({ state }: OverlayProps) {
   const dismiss = () => {
     void backend.invoke("dictation_dismiss", { session });
   };
-  const cardText =
-    phase.phase === "done" ? phase.text : phase.phase === "failed" ? phase.text : undefined;
+  const cardText = resultCardText(phase);
   const textActions = (text: string): PillAction[] => [
     {
       label: t("insertCheck.card.paste"),
@@ -495,6 +530,8 @@ export function Overlay({ state }: OverlayProps) {
         // docs/dictation.md §13: a short press under hold_or_toggle locked the take.
         locked={phase.phase === "listening" && phase.locked}
         live={phase.phase === "listening" ? pillLiveCaption(phase.live, locale) : undefined}
+        // docs/dictation.md §12, §14.3: what happens to the rest of the text from now on.
+        notice={liveNotice === undefined ? undefined : t(liveNotice)}
         preview={phase.phase === "processing" ? phase.preview : undefined}
         label={
           phase.phase === "processing"
@@ -504,7 +541,7 @@ export function Overlay({ state }: OverlayProps) {
               : card === "failed_kept" && failure !== undefined
                 ? t("insertCheck.failedKept", { reason: failure })
                 : phase.phase === "done"
-                  ? t(doneLabelKey(phase, edit), { n: phase.chars })
+                  ? t(doneLabelKey(phase, edit), { n: doneChars(phase) })
                   : builtinAsrOut
                     ? t("usage.pill.asrOut")
                     : phase.phase === "failed"

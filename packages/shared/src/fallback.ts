@@ -159,6 +159,34 @@ export function localFallbackModels(models: readonly ModelState[]): ModelState[]
   return models.filter((m) => m.capabilities.includes("offline") && m.state.kind === "installed");
 }
 
+/** A fallback model that takes whole recordings stands in for the realtime model, or any fallback
+ *  model for the built-in service (§3.5, 2026-11-24): the streaming output modes run as a whole
+ *  take for now, and downloading a model would not help. As `EngineStatus` says it: the streaming
+ *  modes do not take effect (`live_ready`) while a live source is still named — the selected
+ *  service, or the Live preview model previewing the whole take; when nothing could recognise the
+ *  take as it is spoken, none is. */
+export function standInTakesWhole(
+  engines: Pick<EngineStatus, "live_ready" | "live_source">,
+): boolean {
+  return !engines.live_ready && engines.live_source !== undefined;
+}
+
+/** [`standInTakesWhole`] for the built-in service: a fallback model, of any kind, stands in for it
+ *  (§3.5, 2026-11-24), so the texts name the stand-in, not a model that cannot stream. */
+export function standsInForBuiltIn(
+  engines: Pick<EngineStatus, "live_ready" | "live_source" | "asr_provider">,
+): boolean {
+  return standInTakesWhole(engines) && engines.asr_provider === "builtin";
+}
+
+/** The recognition model in use is a realtime model and streams the take now (§11.9): 整段输出
+ *  runs as 边说边识别, with the same text inserted at the release. */
+export function realtimeStreamsNow(
+  engines: Pick<EngineStatus, "live_ready" | "live_source">,
+): boolean {
+  return engines.live_ready && engines.live_source === "stream";
+}
+
 /** Whether `kind`'s chain moves on for failures too (服务出错时也改用候补, §3.14). */
 export function fallbackOnOutage(settings: EngineSettings, kind: ServiceKind): boolean {
   return fallbackSettingsOf(settings, kind).on_outage === true;

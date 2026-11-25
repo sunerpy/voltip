@@ -32,6 +32,7 @@ import {
   siteOf,
   siteUrl,
   withProvider,
+  standInTakesWhole,
 } from "@voltip/shared";
 import { type ReactNode, useEffect, useState } from "react";
 import { useBackend, useUiState } from "../../backend/BackendProvider";
@@ -513,11 +514,22 @@ function AbilityHelp({
         : preview.state.kind === "installed"
           ? "installed"
           : "missing";
+  // §11.10: the built-in service writes the text of the streaming output modes itself, so its line
+  // follows the mode a take with this provider runs in: the one in effect for the provider in
+  // use, the one the settings choose for another (on a computer the built-in service runs both
+  // streaming modes, while a realtime model runs 整段输出 as 边说边识别).
+  // While a fallback model stands in and the streaming modes run whole, the selected service is
+  // not in use: its line says what it does in the mode the settings choose (the review of
+  // 2026-11-24).
+  const outputMode =
+    provider === state.engines.asr_provider && !standInTakesWhole(state.engines)
+      ? state.engines.effective_output_mode
+      : engines.output_mode;
   const lines = asrAbilityHelp(
     provider,
     url,
     model,
-    { previews, providerPreview: engines.provider_preview, localPreview },
+    { previews, providerPreview: engines.provider_preview, localPreview, outputMode },
     t,
   );
   return (

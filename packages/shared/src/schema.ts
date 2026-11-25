@@ -285,8 +285,9 @@ export const engineSettingsSchema = z.object({
   language: z.string().optional(),
   /** 服务商的实时文字 (docs/dictation.md §11.10): the pill shows the words the recognition service
    *  gives while the take is spoken (the built-in service's preview, a realtime model's stream).
-   *  Off, a realtime model still recognises the take as it is spoken; its words are not shown and
-   *  the built-in service sends no preview requests. On by default. The core reads a settings file
+   *  Off, a realtime model still recognises the take as it is spoken and the built-in service
+   *  still recognises a 边说边识别 / 边说边输入 take sentence by sentence (since 2026-11-23); their
+   *  words are not shown and the built-in service sends no preview requests. On by default. The core reads a settings file
    *  with the former single `live_preview` switch into both (§11.10); this side never sees it. */
   provider_preview: z.boolean().default(true),
   /** 本地模型预览: the pill shows the library's streaming model's words
@@ -1011,7 +1012,8 @@ export type LiveSegment = z.infer<typeof liveSegmentSchema>;
 
 /** The live preview while listening (`voltip_core::dictation::LiveText`, docs/dictation.md §11):
  *  `committed` sentences in the normal colour, `current` dimmed; `degraded` says the preview
- *  stopped following the audio (the final text is unaffected). Every field is `#[serde(default)]`. */
+ *  stopped following the audio (a whole take's final text is unaffected; see `streaming`). Every
+ *  field is `#[serde(default)]`. */
 export const liveTextSchema = z.object({
   committed: z.array(liveSegmentSchema).default(() => []),
   current: z.string().default(""),
@@ -1024,6 +1026,16 @@ export const liveTextSchema = z.object({
   /** The service that gave them (the one standing in, if one does, §3.5), for `cloud` and
    *  `stream`; absent for the local model. */
   provider: providerIdSchema.optional(),
+  /** The take runs in a streaming output mode (§12) and these words are its text: the pill shows
+   *  the live session that writes it, or that session failed unseen (§11.10). So `degraded` means
+   *  the rest is recognised whole after the release, not that only the preview stopped. False
+   *  for the local model's words next to a hidden text session: a preview only. Omitted when
+   *  false. */
+  streaming: z.boolean().default(false),
+  /** `live_inject` (§12, §14.3): another window came to the front; the sentences from then on are
+   *  copied when the take ends instead of typed. Sent on its own, with no words, when the pill has
+   *  none. Omitted when false. */
+  switched: z.boolean().default(false),
 });
 export type LiveText = z.infer<typeof liveTextSchema>;
 
@@ -1126,6 +1138,12 @@ export const dictationPhaseSchema = z.discriminatedUnion("phase", [
     check: insertCheckSchema.optional(),
     /** How long each step of the take took (§30.1); absent from a core that did not send it. */
     timing: takeTimingSchema.optional(),
+    /** `live_inject` (§12, §14.3): what went to the clipboard after a window switch or a failed
+     *  paste, when sentences before it were already typed. The result card pastes and copies this,
+     *  not `text`, whose start is in the application already: without the separator in front
+     *  after a window switch, with it after a failed paste (the same window, so a paste continues
+     *  the typed text). Absent otherwise. */
+    rest: z.string().optional(),
   }),
   z.object({
     phase: z.literal("failed"),
@@ -2483,8 +2501,11 @@ export const engineStatusSchema = z.object({
   local_model: z.string().nullable().optional(),
   /** On-device and every model file present and checksummed. */
   local_ready: z.boolean().default(false),
-  /** Something recognises the next take while it is spoken (docs/dictation.md §11.10): the
-   *  streaming output modes take effect. */
+  /** The streaming output modes take effect: something would recognise a streaming take while
+   *  it is spoken (docs/dictation.md §11.10). The built-in service that previews, on a computer,
+   *  always would (since 2026-11-23), also while a whole take is set with both live switches off,
+   *  except while a fallback model stands in for it (§3.5, 2026-11-24); a phone's does not
+   *  preview, and a build without the built-in recognition has none. */
   live_ready: z.boolean().default(false),
   /** What recognises the take while it is spoken (§11.8–§11.10): the built-in service decoding
    *  the sentence again, a realtime model's stream (also while its words are hidden, or while a

@@ -170,6 +170,10 @@ pub fn run_writer(job: WriterJob) {
     let mut samples = vec![0.0f32; 4096];
     let mut gaps = Vec::new();
     loop {
+        // Closed before the reads: the samples pushed until it closed are all readable then, so an
+        // empty read after it is the end. Asked after the read, a chunk pushed in between (the
+        // recorder's last callback, then its stop) was left out of the file (2026-11-23).
+        let was_closed = stream.is_closed();
         if let Some(missing) = stream.gap() {
             // The shell's buffer overflowed: silence keeps the timeline, and the span is noted.
             // The whole gap goes in now: the stream reports it once.
@@ -185,7 +189,7 @@ pub fn run_writer(job: WriterJob) {
         }
         let n = stream.read(&mut samples);
         if n == 0 {
-            if stream.is_closed() {
+            if was_closed {
                 break;
             }
             std::thread::sleep(WRITER_IDLE);
@@ -406,6 +410,72 @@ mod tests {
                 if into >= 30 * RATE - 3 * BLOCK / 2 { 0.0 } else { 0.3 }
             })
             .collect()
+    }
+
+    /// The last chunk the audio thread pushes while the stream closes still goes into the file.
+    /// Regression, 2026-11-23 (the review of the 边说边识别 tail fixes found the race that
+    /// `run_live` had here too): the writer read the stream and asked whether it was closed only
+    /// after an empty read, so a chunk pushed in between — the recorder's last callback, then its
+    /// stop — was left out of a long take's file.
+    #[test]
+    fn regression_the_last_chunk_that_lands_while_the_stream_closes_is_written() {
+        /// 1 s waiting; the first `is_closed` after an empty read pushes 0.1 s more and closes, as
+        /// the audio thread's last callback and the recorder's stop would in between.
+        struct ClosingStream {
+            queue: std::collections::VecDeque<f32>,
+            emptied: std::sync::atomic::AtomicBool,
+            closed: std::sync::atomic::AtomicBool,
+            last: parking_lot::Mutex<Option<Vec<f32>>>,
+        }
+        impl PcmStream for ClosingStream {
+            fn read(&mut self, out: &mut [f32]) -> usize {
+                if let Some(last) = self.last.lock().take() {
+                    self.queue.extend(last);
+                }
+                let n = out.len().min(self.queue.len());
+                for (slot, sample) in out.iter_mut().zip(self.queue.drain(..n)) {
+                    *slot = sample;
+                }
+                self.emptied.store(n == 0, std::sync::atomic::Ordering::SeqCst);
+                n
+            }
+            fn gap(&mut self) -> Option<u64> {
+                None
+            }
+            fn is_closed(&self) -> bool {
+                use std::sync::atomic::Ordering::SeqCst;
+                if self.emptied.load(SeqCst) && !self.closed.swap(true, SeqCst) {
+                    *self.last.lock() = Some(vec![0.3; RATE as usize / 10]);
+                }
+                self.closed.load(SeqCst)
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("take.pcm");
+        let stream = ClosingStream {
+            queue: vec![0.3; RATE as usize].into(),
+            emptied: std::sync::atomic::AtomicBool::new(false),
+            closed: std::sync::atomic::AtomicBool::new(false),
+            last: parking_lot::Mutex::new(None),
+        };
+        let (tx, mut rx) = mpsc::channel(64);
+        let job = WriterJob {
+            session: 1,
+            stream: Box::new(stream),
+            file: File::create(&path).unwrap(),
+            path,
+            segmenter: Box::new(EnergySegmenter::new()),
+            archive: None,
+            tx,
+        };
+        run_writer(job);
+        let mut total = None;
+        while let Ok(event) = rx.try_recv() {
+            if let Internal::LongClosed { total: t, .. } = event {
+                total = Some(t);
+            }
+        }
+        assert_eq!(total, Some(RATE + RATE / 10), "the chunk pushed while the stream closed was written");
     }
 
     #[test]

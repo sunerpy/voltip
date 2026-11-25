@@ -89,11 +89,13 @@ pub enum LiveSource {
 /// shows (docs/dictation.md §11.10): the input of [`LiveSources::plan`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct LiveSources {
-    /// The built-in service previews ([`BuiltIn::asr_live_preview`]) and 服务商的实时文字 is on.
+    /// The built-in service recognises and can decode the take again as it is spoken
+    /// ([`BuiltIn::asr_live_preview`]): the streaming modes' text whatever 服务商的实时文字 says,
+    /// a whole take's preview only while the switch is on (§11.10, 2026-11-23).
     pub cloud: bool,
     /// The recognition service in use is a realtime model ([`AsrProtocol::streams`]).
     pub stream: bool,
-    /// 服务商的实时文字 is on: the pill shows the realtime model's words.
+    /// 服务商的实时文字 is on: the pill shows the built-in service's or the realtime model's words.
     pub provider_shown: bool,
     /// 本地模型预览 is on and the library's streaming model is installed.
     pub local: bool,
@@ -107,21 +109,35 @@ impl LiveSources {
 
     /// The sources of the next take (docs/dictation.md §11.10). `stream_now`: the realtime model's
     /// client streams now — a fallback model taking whole recordings may stand in for it (§3.5).
-    /// The take recognises with the built-in service's preview, else the realtime model, else the
-    /// local model; the pill shows that source's words, except a realtime model's with
-    /// 服务商的实时文字 off: the local model shows its own words then, when its switch allows.
-    pub fn plan(self, stream_now: bool) -> LivePlan {
-        let text = if self.cloud {
+    /// `selected_now`: no fallback model stands in for the selected one. `streaming`: the take runs
+    /// in a streaming output mode. The take recognises with the built-in
+    /// service — a streaming take whatever 服务商的实时文字 says, a whole take only for the preview
+    /// with the switch on (2026-11-23: with it off, the local model wrote the streaming text,
+    /// poorly) — else the realtime model, else the local model; the pill shows that source's
+    /// words, except the built-in service's or a realtime model's with 服务商的实时文字 off: the
+    /// local model shows its own words then, when its switch allows.
+    pub fn plan(self, stream_now: bool, selected_now: bool, streaming: bool) -> LivePlan {
+        let text = if self.cloud && selected_now && (streaming || self.provider_shown) {
             Some(LiveSource::Cloud)
+        } else if self.cloud && streaming {
+            // A fallback model stands in for the built-in service, whose day is used up: a
+            // streaming take runs whole through the chain, one request, not one a sentence
+            // (2026-11-24, the user's decision).
+            None
         } else if self.stream && stream_now {
             Some(LiveSource::Stream)
+        } else if self.stream && streaming {
+            // A fallback model taking whole recordings stands in for the realtime model (§3.5): a
+            // streaming take runs whole through the chain, not on the local model's words
+            // (2026-11-23, the user's decision).
+            None
         } else if self.local {
             Some(LiveSource::Local)
         } else {
             None
         };
         let shown = match text {
-            Some(LiveSource::Stream) if !self.provider_shown => self.local.then_some(LiveSource::Local),
+            Some(LiveSource::Cloud | LiveSource::Stream) if !self.provider_shown => self.local.then_some(LiveSource::Local),
             other => other,
         };
         LivePlan { text, shown }
@@ -133,8 +149,8 @@ impl LiveSources {
 pub struct LivePlan {
     /// What recognises the take while it is spoken: its sentences are the streaming modes' text.
     pub text: Option<LiveSource>,
-    /// Whose words the pill shows: `text`'s, or the local model's next to a realtime model whose
-    /// words are not shown (a second session on the same audio).
+    /// Whose words the pill shows: `text`'s, or the local model's next to a realtime model or the
+    /// built-in service whose words are not shown (a second session on the same audio), or none.
     pub shown: Option<LiveSource>,
 }
 
@@ -1176,17 +1192,14 @@ impl ResolvedEngines {
 
     /// What this configuration can recognise a take with while it is spoken (docs/dictation.md
     /// §11.8–§11.10): the built-in service when it recognises and previews (user request
-    /// 2026-09-30: Qwen3-ASR previews itself) with 服务商的实时文字 on, a realtime model of the
-    /// service in use whatever the switches say (it recognises while the take is spoken anyway), the
-    /// library's streaming model when 本地模型预览 is on and it is installed. Other cloud services do
-    /// not preview: each preview is another request, which their owners pay for.
+    /// 2026-09-30: Qwen3-ASR previews itself), for a whole take with 服务商的实时文字 on and for a
+    /// streaming take whatever it says (user request 2026-11-23, [`LiveSources::plan`]); a realtime
+    /// model of the service in use whatever the switches say (it recognises while the take is
+    /// spoken anyway), the library's streaming model when 本地模型预览 is on and it is installed.
+    /// Other cloud services do not preview: each preview is another request, which their owners pay
+    /// for.
     pub fn live_sources(&self) -> LiveSources {
-        LiveSources {
-            cloud: self.provider_preview && self.cloud_preview,
-            stream: self.asr_streams,
-            provider_shown: self.provider_preview,
-            local: self.local_preview_ready(),
-        }
+        LiveSources { cloud: self.cloud_preview, stream: self.asr_streams, provider_shown: self.provider_preview, local: self.local_preview_ready() }
     }
 
     /// 本地模型预览 is on and the library's streaming model is installed.
@@ -1197,18 +1210,19 @@ impl ResolvedEngines {
     /// What recognises the next take while it is spoken ([`LivePlan::text`]), as long as no fallback
     /// model stands in for the selected one (that is [`ResolvedEngines::status_with`]'s).
     pub fn live_source(&self) -> Option<LiveSource> {
-        self.live_sources().plan(true).text
+        self.live_sources().plan(true, true, self.output_mode.is_streaming()).text
     }
 
     /// Whose words the pill shows while the next take is spoken ([`LivePlan::shown`]).
     pub fn preview_source(&self) -> Option<LiveSource> {
-        self.live_sources().plan(true).shown
+        self.live_sources().plan(true, true, self.output_mode.is_streaming()).shown
     }
 
-    /// Something recognises the next take while it is spoken: the engine opens a streaming session
-    /// next to the recording (docs/dictation.md §11), and the streaming output modes take effect.
+    /// The streaming output modes take effect: something would recognise a streaming take while
+    /// it is spoken (docs/dictation.md §11.10, §12). Asked as if the take streamed, so the built-in
+    /// service counts with 服务商的实时文字 off while a whole take is set too.
     pub fn live_ready(&self) -> bool {
-        self.live_source().is_some()
+        self.live_sources().plan(true, true, true).text.is_some()
     }
 
     /// The output mode a `DictationStart` would run with now (docs/dictation.md §12): the two
@@ -1263,11 +1277,21 @@ impl ResolvedEngines {
         };
         // §3.5, §11.9: a realtime model's stream comes from the first model with quota left. While
         // a model that takes whole recordings only stands in for it, the take does not stream (the
-        // engine's `live_plan`): the local model takes over when it can, otherwise nothing
-        // recognises while the take is spoken and the live source stays the realtime model.
+        // engine's `live_plan`): a streaming mode runs as a whole take through the chain
+        // (2026-11-23), the local model only previews when it can, and with nothing previewing the
+        // live source stays the realtime model.
         let stand_in = self.asr_stand_in(ledger);
-        let plan = self.live_sources().plan(stand_in.is_none_or(FallbackTarget::streams));
-        let live_source = plan.text.or_else(|| self.asr_streams.then_some(LiveSource::Stream));
+        let stream_now = stand_in.is_none_or(FallbackTarget::streams);
+        let selected_now = stand_in.is_none();
+        // §12: a streaming mode without a source runs as a whole take, and its sources are then a
+        // whole take's.
+        let effective = self.output_mode_with(self.live_sources().plan(stream_now, selected_now, self.output_mode.is_streaming()).text);
+        let plan = self.live_sources().plan(stream_now, selected_now, effective.is_streaming());
+        // With nothing previewing while a fallback model stands in, the live source stays the
+        // selected service: the realtime model, or the built-in service (2026-11-24), so the
+        // settings page names the fallback model as the reason.
+        let live_source =
+            plan.text.or_else(|| if self.asr_streams { Some(LiveSource::Stream) } else { (self.cloud_preview && !selected_now).then_some(LiveSource::Cloud) });
         // §11.10: the provider whose words the pill shows — the one standing in, if one does.
         let preview_provider = match plan.shown {
             Some(LiveSource::Cloud | LiveSource::Stream) => Some(stand_in.map_or(self.asr_provider, |target| target.provider)),
@@ -1281,11 +1305,12 @@ impl ResolvedEngines {
             asr_host: user_host(self.asr_provider, &self.asr_remote),
             local_model: self.local_model.as_ref().map(|m| m.id.clone()),
             local_ready: self.local_model.as_ref().is_some_and(|m| m.installed),
-            live_ready: plan.text.is_some(),
+            // §11.10: a streaming take would have a source (the streaming modes take effect).
+            live_ready: self.live_sources().plan(stream_now, selected_now, true).text.is_some(),
             live_source,
             preview_source: plan.shown,
             preview_provider,
-            effective_output_mode: self.output_mode_with(plan.text),
+            effective_output_mode: effective,
             language: self.language.clone(),
             refine_enabled: self.refine_enabled,
             llm_provider: self.llm_provider,
@@ -1599,11 +1624,13 @@ pub struct EngineStatus {
     pub local_model: Option<String>,
     /// On-device and the model's files are on disk and verified.
     pub local_ready: bool,
-    /// The next take recognises while it is spoken ([`EngineStatus::live_source`], docs/dictation.md
-    /// §11.10), so the streaming output modes take effect; whether the pill shows its words is
-    /// [`EngineStatus::preview_source`]. `false` with the source `stream` while a fallback model
-    /// that takes whole recordings only stands in for the realtime model (§3.5) and the local model
-    /// cannot take over.
+    /// A streaming take would be recognised while it is spoken (docs/dictation.md §11.10), so the
+    /// streaming output modes take effect; asked as if the take streamed, so the built-in service
+    /// counts with 服务商的实时文字 off while a whole take is set too (2026-11-23). What recognises
+    /// the next take is [`EngineStatus::live_source`], whose words the pill shows
+    /// [`EngineStatus::preview_source`]. `false` while a fallback model that takes whole recordings
+    /// only stands in for the realtime model, or any fallback model for the built-in service
+    /// (§3.5, 2026-11-24): the streaming modes run whole then, whatever the local model previews.
     pub live_ready: bool,
     /// What recognises the next take while it is spoken; `None` when nothing does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2187,7 +2214,11 @@ mod tests {
         let (streaming, none) = (library(true), library(false));
         let source = |settings: &EngineSettings, built_in: &BuiltIn, models: &[ModelState]| {
             let e = ResolvedEngines::resolve_with_models(settings, &UserSecrets::default(), built_in, models);
-            assert_eq!(e.live_ready(), e.live_source().is_some());
+            // `live_ready`: a streaming take would have a source (§11.10; since 2026-11-23 the
+            // built-in service is one whatever 服务商的实时文字 says, also while a whole take is set).
+            let streaming = EngineSettings { output_mode: OutputMode::StreamingFinal, ..settings.clone() };
+            let s = ResolvedEngines::resolve_with_models(&streaming, &UserSecrets::default(), built_in, models);
+            assert_eq!(e.live_ready(), s.live_source().is_some());
             assert_eq!(e.status().live_source, e.live_source());
             e.live_source()
         };
@@ -2347,43 +2378,93 @@ mod tests {
             ..EngineSettings::default()
         };
         use LiveSource::{Cloud, Local, Stream};
-        // (settings, provider switch, local switch) → (live source, shown source, shown provider, output mode)
+        // (settings, provider switch, local switch) → (live source, shown source, shown provider,
+        // output mode, live_ready). `live_ready` says whether a streaming take would have a source:
+        // since 2026-11-23 the built-in service always is one (§11.10), so a whole take with both
+        // switches off reads `true` there, where it read `false` before.
         let cases = [
-            (&builtin, true, true, Some(Cloud), Some(Cloud), Some(ProviderId::Builtin), OutputMode::WholeTake),
-            (&builtin, false, true, Some(Local), Some(Local), None, OutputMode::WholeTake),
-            (&builtin, true, false, Some(Cloud), Some(Cloud), Some(ProviderId::Builtin), OutputMode::WholeTake),
-            (&builtin, false, false, None, None, None, OutputMode::WholeTake),
-            (&realtime, true, true, Some(Stream), Some(Stream), Some(ProviderId::Aliyun), OutputMode::StreamingFinal),
-            (&realtime, false, true, Some(Stream), Some(Local), None, OutputMode::StreamingFinal),
-            (&realtime, true, false, Some(Stream), Some(Stream), Some(ProviderId::Aliyun), OutputMode::StreamingFinal),
-            (&realtime, false, false, Some(Stream), None, None, OutputMode::StreamingFinal),
-            (&whole, true, true, Some(Local), Some(Local), None, OutputMode::WholeTake),
-            (&whole, false, true, Some(Local), Some(Local), None, OutputMode::WholeTake),
-            (&whole, true, false, None, None, None, OutputMode::WholeTake),
+            (&builtin, true, true, Some(Cloud), Some(Cloud), Some(ProviderId::Builtin), OutputMode::WholeTake, true),
+            (&builtin, false, true, Some(Local), Some(Local), None, OutputMode::WholeTake, true),
+            (&builtin, true, false, Some(Cloud), Some(Cloud), Some(ProviderId::Builtin), OutputMode::WholeTake, true),
+            (&builtin, false, false, None, None, None, OutputMode::WholeTake, true),
+            (&realtime, true, true, Some(Stream), Some(Stream), Some(ProviderId::Aliyun), OutputMode::StreamingFinal, true),
+            (&realtime, false, true, Some(Stream), Some(Local), None, OutputMode::StreamingFinal, true),
+            (&realtime, true, false, Some(Stream), Some(Stream), Some(ProviderId::Aliyun), OutputMode::StreamingFinal, true),
+            (&realtime, false, false, Some(Stream), None, None, OutputMode::StreamingFinal, true),
+            (&whole, true, true, Some(Local), Some(Local), None, OutputMode::WholeTake, true),
+            (&whole, false, true, Some(Local), Some(Local), None, OutputMode::WholeTake, true),
+            (&whole, true, false, None, None, None, OutputMode::WholeTake, false),
         ];
-        for (settings, provider_preview, local_preview, live, shown, provider, mode) in cases {
+        for (settings, provider_preview, local_preview, live, shown, provider, mode, ready) in cases {
             let settings = EngineSettings { provider_preview, local_preview, ..settings.clone() };
             let e = ResolvedEngines::resolve_with_models(&settings, &secrets, &PREVIEWING, &library(true));
             let at = format!("{:?} provider {provider_preview} local {local_preview}", settings.asr_provider);
             assert_eq!((e.live_source(), e.preview_source(), e.effective_output_mode()), (live, shown, mode), "{at}");
             let st = e.status();
-            assert_eq!((st.live_source, st.live_ready, st.preview_source, st.preview_provider), (live, live.is_some(), shown, provider), "{at}");
+            assert_eq!((st.live_source, st.live_ready, st.preview_source, st.preview_provider), (live, ready, shown, provider), "{at}");
         }
         // The local model not downloaded: its switch shows nothing yet.
         let off = EngineSettings { provider_preview: false, ..builtin.clone() };
         let e = ResolvedEngines::resolve_with_models(&off, &secrets, &PREVIEWING, &library(false));
         assert_eq!((e.live_source(), e.preview_source()), (None, None));
-        // A streaming mode runs on whatever recognises while the take is spoken, shown or not.
+        // A streaming mode runs on whatever recognises while the take is spoken, shown or not, and
+        // falls back to a whole take when nothing does. Since 2026-11-23 the built-in service
+        // recognises a streaming take with both switches off too (it was a whole take before).
         for (settings, provider_preview, local_preview, mode) in [
             (&realtime, false, false, OutputMode::LiveInject),
             (&builtin, false, true, OutputMode::StreamingFinal),
-            (&builtin, false, false, OutputMode::WholeTake),
+            (&builtin, false, false, OutputMode::StreamingFinal),
+            (&whole, false, false, OutputMode::WholeTake),
         ] {
             let settings = EngineSettings { provider_preview, local_preview, output_mode: OutputMode::LiveInject, ..settings.clone() };
             let settings = EngineSettings { output_mode: if mode == OutputMode::WholeTake { OutputMode::StreamingFinal } else { mode }, ..settings };
             let e = ResolvedEngines::resolve_with_models(&settings, &secrets, &PREVIEWING, &library(true));
             assert_eq!(e.effective_output_mode(), mode, "{:?} provider {provider_preview} local {local_preview}", settings.asr_provider);
         }
+    }
+
+    /// docs/dictation.md §11.10 (2026-11-23, the user's request 「请优化这个边说边识别，能否也使用内置服务
+    /// 来实现？」): in 边说边识别 and 边说边输入 the built-in service writes the take's text, sentence by
+    /// sentence, whatever 服务商的实时文字 says; the switch only decides whether the pill shows its
+    /// words, and the local model shows its own then when it can. Regression: with the switch off
+    /// the take's text came from the local streaming model (2026-11-23 on windows-local: poor
+    /// accuracy, the last words lost, while the same speech as a whole take was right).
+    #[test]
+    fn the_built_in_service_writes_the_streaming_text_whatever_its_words_switch_says() {
+        const PREVIEWING: BuiltIn = BuiltIn { asr_live_preview: true, ..BUILT };
+        use LiveSource::{Cloud, Local};
+        for mode in [OutputMode::StreamingFinal, OutputMode::LiveInject] {
+            // (provider switch, local switch, local model installed) → (shown source, shown provider)
+            for (provider_preview, local_preview, installed, shown, provider) in [
+                (true, true, true, Some(Cloud), Some(ProviderId::Builtin)),
+                (true, false, true, Some(Cloud), Some(ProviderId::Builtin)),
+                (false, true, true, Some(Local), None),
+                (false, false, true, None, None),
+                (false, true, false, None, None),
+            ] {
+                let settings = EngineSettings { provider_preview, local_preview, output_mode: mode, ..EngineSettings::default() };
+                let e = ResolvedEngines::resolve_with_models(&settings, &UserSecrets::default(), &PREVIEWING, &library(installed));
+                let at = format!("{mode:?} provider {provider_preview} local {local_preview} installed {installed}");
+                assert_eq!((e.live_source(), e.preview_source(), e.effective_output_mode(), e.live_ready()), (Some(Cloud), shown, mode, true), "{at}");
+                let st = e.status();
+                assert_eq!(
+                    (st.live_source, st.live_ready, st.preview_source, st.preview_provider, st.effective_output_mode),
+                    (Some(Cloud), true, shown, provider, mode),
+                    "{at}"
+                );
+            }
+        }
+        // A whole take is as before: with the switch off nothing of the built-in service runs while
+        // it is spoken, and the local model previews when it can.
+        for (local_preview, live) in [(false, None), (true, Some(Local))] {
+            let whole = EngineSettings { provider_preview: false, local_preview, ..EngineSettings::default() };
+            let e = ResolvedEngines::resolve_with_models(&whole, &UserSecrets::default(), &PREVIEWING, &library(true));
+            assert_eq!((e.live_source(), e.preview_source(), e.effective_output_mode(), e.live_ready()), (live, live, OutputMode::WholeTake, true));
+        }
+        // A built-in service that does not decode again (a phone's) still needs the local model.
+        let off = EngineSettings { provider_preview: false, local_preview: false, output_mode: OutputMode::StreamingFinal, ..EngineSettings::default() };
+        let e = ResolvedEngines::resolve_with_models(&off, &UserSecrets::default(), &BUILT, &library(true));
+        assert_eq!((e.live_source(), e.effective_output_mode(), e.live_ready()), (None, OutputMode::WholeTake, false));
     }
 
     /// The output mode (docs/dictation.md §12) rides on the live preview: a streaming mode is
@@ -2816,8 +2897,8 @@ mod tests {
 
     /// docs/dictation.md §3.5, §11.10: the words the pill shows name the model that gives them. A
     /// realtime fallback model standing in shows its own provider; one taking whole recordings has
-    /// no words to show, and the local model takes over when its switch is on and it is installed —
-    /// then its words are also what a streaming mode uses.
+    /// no words to show, and the local model shows its own when its switch is on and it is
+    /// installed — only shows them: a streaming mode runs whole then (2026-11-23).
     #[test]
     fn the_shown_source_follows_the_model_that_stands_in() {
         let (settings, mut secrets) = studio_with_fallbacks();
@@ -2834,7 +2915,9 @@ mod tests {
         ledger.mark(&keys[0], SwitchReason::Quota);
         assert_eq!(shown(&resolved, &ledger), aliyun, "-message is Model Studio's realtime model too");
         ledger.mark(&keys[1], SwitchReason::Quota);
-        let local = (Some(LiveSource::Local), true, Some(LiveSource::Local), None);
+        // Since 2026-11-23 the streaming modes run whole then (`live_ready` false, it was true:
+        // the local model wrote their text).
+        let local = (Some(LiveSource::Local), false, Some(LiveSource::Local), None);
         assert_eq!(shown(&resolved, &ledger), local, "Groq takes whole recordings: the local model shows the words");
         assert_eq!(resolved.status_with(&ledger).effective_output_mode, OutputMode::WholeTake);
         let no_local = ResolvedEngines::resolve_with_models(&EngineSettings { local_preview: false, ..settings.clone() }, &secrets, &BUILT, &library(true));
@@ -2851,6 +2934,70 @@ mod tests {
         let ledger = QuotaLedger::with_clock(|| 1_000);
         ledger.mark(resolved.asr_fallback.selected.as_ref().unwrap(), SwitchReason::Quota);
         assert_eq!(shown(&resolved, &ledger), (Some(LiveSource::Stream), true, Some(LiveSource::Stream), Some(ProviderId::Stepfun)));
+    }
+
+    /// A fallback model that takes whole recordings standing in for the realtime model (its day is
+    /// used up): 边说边识别 and 边说边输入 run as a whole take through the fallback chain, and the local
+    /// model only shows its words, as in any whole take. Regression, 2026-11-23 (the user's decision
+    /// after the review of 边说边输入 on realtime models): the local streaming model wrote their text
+    /// then — the model whose words were poor and lost their ends on windows-local that day.
+    #[test]
+    fn regression_a_whole_take_fallback_standing_in_makes_the_streaming_modes_whole() {
+        let (settings, secrets) = studio_with_fallbacks();
+        for mode in [OutputMode::StreamingFinal, OutputMode::LiveInject] {
+            let settings = EngineSettings { output_mode: mode, ..settings.clone() };
+            let resolved = ResolvedEngines::resolve_with_models(&settings, &secrets, &BUILT, &library(true));
+            let keys: Vec<QuotaKey> =
+                std::iter::once(resolved.asr_fallback.selected.clone().unwrap()).chain(resolved.asr_fallback.targets().map(|t| t.key.clone())).collect();
+            let ledger = QuotaLedger::with_clock(|| 1_000);
+            let st = resolved.status_with(&ledger);
+            assert_eq!((st.live_source, st.live_ready, st.effective_output_mode), (Some(LiveSource::Stream), true, mode), "{mode:?}: the realtime model");
+            // The selected model and -message are out: Groq, which takes whole recordings, stands in.
+            ledger.mark(&keys[0], SwitchReason::Quota);
+            ledger.mark(&keys[1], SwitchReason::Quota);
+            let st = resolved.status_with(&ledger);
+            assert_eq!(st.effective_output_mode, OutputMode::WholeTake, "{mode:?}: a whole take through the chain");
+            assert!(!st.live_ready, "{mode:?}: the streaming modes are paused");
+            assert_eq!((st.live_source, st.preview_source), (Some(LiveSource::Local), Some(LiveSource::Local)), "{mode:?}: the whole take's preview");
+        }
+    }
+
+    /// docs/dictation.md §3.5, §11.10: a fallback model standing in for the built-in service (its
+    /// day used up) makes the streaming modes whole, as one standing in for a realtime model does;
+    /// a whole take's preview falls to the local model. Regression, 2026-11-24 (the user's decision
+    /// 「候补模型顶替时可以修改为整段识别」): the built-in service's sentence-by-sentence recognition
+    /// went on through the chain, a request a sentence to the fallback service.
+    #[test]
+    fn regression_a_fallback_standing_in_for_the_built_in_service_makes_the_streaming_modes_whole() {
+        const PREVIEWING: BuiltIn = BuiltIn { asr_live_preview: true, ..BUILT };
+        let mut secrets = UserSecrets::default();
+        secrets.set(ProviderId::Groq, ServiceKind::Asr, Some("gsk-groq".into()));
+        for mode in [OutputMode::StreamingFinal, OutputMode::LiveInject] {
+            let settings = EngineSettings {
+                output_mode: mode,
+                asr_fallback: FallbackSettings { enabled: true, on_outage: false, models: vec![fallback_entry(ProviderId::Groq, "whisper-large-v3")] },
+                ..EngineSettings::default()
+            };
+            let resolved = ResolvedEngines::resolve_with_models(&settings, &secrets, &PREVIEWING, &library(true));
+            let ledger = QuotaLedger::with_clock(|| 1_000);
+            let st = resolved.status_with(&ledger);
+            assert_eq!((st.live_source, st.live_ready, st.effective_output_mode), (Some(LiveSource::Cloud), true, mode), "{mode:?}: the built-in service");
+            ledger.mark(resolved.asr_fallback.selected.as_ref().unwrap(), SwitchReason::Quota);
+            let st = resolved.status_with(&ledger);
+            assert_eq!(st.effective_output_mode, OutputMode::WholeTake, "{mode:?}: a whole take through the chain");
+            assert!(!st.live_ready, "{mode:?}: the streaming modes are paused");
+            assert_eq!((st.live_source, st.preview_source, st.preview_provider), (Some(LiveSource::Local), Some(LiveSource::Local), None), "{mode:?}");
+            // Without the local model nothing previews, and the live source stays the built-in
+            // service, as it stays the realtime model there: the settings page names the fallback
+            // model as the reason, not a preview switch or a model to download.
+            let bare = ResolvedEngines::resolve_with_models(&settings, &secrets, &PREVIEWING, &library(false));
+            let st = bare.status_with(&ledger);
+            assert_eq!(
+                (st.effective_output_mode, st.live_ready, st.live_source, st.preview_source),
+                (OutputMode::WholeTake, false, Some(LiveSource::Cloud), None),
+                "{mode:?}: no local model"
+            );
+        }
     }
 
     /// The view the engine hands the client factory for one fallback model: only that service changes.

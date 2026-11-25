@@ -1635,6 +1635,7 @@ fn overlay_pill_and_hotkey_edges_follow_the_dictation_contract() {
         clipboard_code: None,
         check: None,
         timing: None,
+        rest: None,
     };
     assert_eq!(pill_for(&done), Some("inserted"));
     let before = voltip_core::now_ms();

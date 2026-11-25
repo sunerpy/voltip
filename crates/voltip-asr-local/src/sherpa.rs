@@ -73,10 +73,22 @@ impl Recognizer for Offline {
 /// decoded (a pause before the first word).
 pub const RULE1_TRAILING_SILENCE_S: f32 = 2.0;
 /// Endpoint rule 2: seconds of trailing silence after tokens were decoded — the dictation rhythm's
-/// sentence boundary.
-pub const RULE2_TRAILING_SILENCE_S: f32 = 0.8;
+/// sentence boundary, as the built-in service's (`RedecodeParams::pause`): 1.2 s since 2026-11-23
+/// (0.8 s before, which cut sentences at a thinking pause).
+pub const RULE2_TRAILING_SILENCE_S: f32 = 1.2;
 /// Endpoint rule 3: an utterance this long (seconds) is committed regardless of silence.
 pub const RULE3_UTTERANCE_S: f32 = 20.0;
+
+/// Silence fed after the take's last sample before the stream is finished (docs/dictation.md §11,
+/// 收尾的静音). The recogniser decodes whole chunks only, with frames to look ahead: without it the
+/// speech in the last chunk of a take released right after its last word is never decoded
+/// (2026-11-23: 「发布计划」 came out as 「发」). sherpa-onnx's own examples feed 0.3–0.66 s; the
+/// 480 ms Zipformer needs more: over 3 sentences × 12 chunk alignments it took 600–1000 ms to give
+/// the whole text, so 1.2 s.
+pub const TAIL_PADDING_SAMPLES: usize = LIVE_SAMPLE_RATE_HZ as usize * 6 / 5;
+
+/// [`TAIL_PADDING_SAMPLES`] of silence, kept off the decode thread's stack (77 kB).
+static TAIL_PADDING: [f32; TAIL_PADDING_SAMPLES] = [0.0; TAIL_PADDING_SAMPLES];
 
 /// Loads the streaming Zipformer transducer (`encoder` / `decoder` / `joiner` + `tokens`) as an
 /// `OnlineRecognizer` with endpoint detection and greedy search.
@@ -188,10 +200,13 @@ impl StreamingSession for OnlineSession {
     }
 
     fn finish(mut self: Box<Self>) -> Result<StreamFinal, DictationError> {
+        // docs/dictation.md §11 (收尾的静音): the speech of the last chunk is decoded only with
+        // frames after it. Not counted in `fed`: it is no part of the take.
+        self.stream.accept_waveform(LIVE_SAMPLE_RATE_HZ as i32, &TAIL_PADDING);
         self.stream.input_finished();
         self.decode_ready();
         let tail = self.text();
-        // No receipt: the live-preview model's text keeps the configured model (docs/dictation.md §3.5).
+        // The receipt (the model's name, this computer) is `LocalSession`'s, in streaming.rs.
         Ok(StreamFinal {
             committed: std::mem::take(&mut self.committed),
             tail,
@@ -281,7 +296,7 @@ mod tests {
     #[test]
     fn endpoint_rules_follow_the_dictation_rhythm() {
         assert_eq!(RULE1_TRAILING_SILENCE_S, 2.0);
-        assert_eq!(RULE2_TRAILING_SILENCE_S, 0.8);
+        assert_eq!(RULE2_TRAILING_SILENCE_S, 1.2);
         assert_eq!(RULE3_UTTERANCE_S, 20.0);
         assert!(format!("{SherpaLoader:?}").contains("SherpaLoader") && format!("{SherpaStreamingLoader:?}").contains("Streaming"));
         assert!(format!("{SherpaVadLoader:?}").contains("Vad"));

@@ -1213,8 +1213,10 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     const mode = screen.getByTestId("output-mode");
     expect(mode).toHaveAttribute("data-mode", "whole_take");
     expect(mode).toHaveAttribute("data-effective", "streaming_final");
+    // The text says what happens, also while a fallback model stands in (2026-11-23, the review of
+    // 边说边输入 on realtime models; it said 「所选识别模型是实时识别模型…」 before).
     expect(within(mode).getByTestId("output-mode-streamed")).toHaveTextContent(
-      "所选识别模型是实时识别模型",
+      "所选的是实时识别模型：说话时就识别，与「边说边识别」相同；候补模型只能整段识别时按整段输出运行。",
     );
     expect(within(mode).getByTestId("output-mode-state")).toHaveTextContent("边说边识别");
     expect(screen.queryByTestId("output-mode-fallback")).toBeNull();
@@ -1378,6 +1380,57 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     expect(stateLine()).toHaveTextContent("使用中 · 阿里云百炼");
   });
 
+  it("regression: on the built-in service with 服务商的实时文字 off, 边说边识别 and 边说边输入 still take effect: the card in effect carries no 实时预览已关闭 badge, and the 实时预览 block says the words are not shown (docs/dictation.md section 11.10)", async () => {
+    // User report 2026-11-23 (Windows): 边说边识别 on the built-in service with 服务商的实时文字
+    // off took its text from the on-device streaming model (实时预览): poor accuracy, the last
+    // words of a take lost. The built-in service now writes a streaming take's text whatever the
+    // switch says; the switch only decides whether its words show.
+    const user = userEvent.setup();
+    const { backend } = renderApp({
+      path: "/speech",
+      mock: {
+        builtIn: {
+          asr: { model: MOCK_ENGINE_BUILTIN.asr_model, key: true, preview: true },
+          llm: { model: MOCK_ENGINE_BUILTIN.refine_model, key: true },
+        },
+        settings: {
+          engines: {
+            ...defaultEngineSettings(),
+            provider_preview: false,
+            local_preview: false,
+            output_mode: "streaming_final",
+          },
+        },
+      },
+    });
+    await openTab(user, "识别设置");
+    const live = await screen.findByTestId("live-preview");
+    const block = () => screen.getByTestId("output-mode");
+    const modes = () => within(block()).getByRole("listbox", { name: "输出方式" });
+    expect(backend.peek().engines).toMatchObject({ live_ready: true, live_source: "cloud" });
+    expect(live).toHaveAttribute("data-state", "hidden");
+    expect(within(live).getByTestId("live-preview-state")).toHaveTextContent(
+      "不显示 · 实时识别照常进行",
+    );
+    expect(block()).toHaveAttribute("data-effective", "streaming_final");
+    expect(within(block()).getByTestId("output-mode-state")).toHaveTextContent("边说边识别");
+    expect(screen.queryByTestId("output-mode-fallback")).toBeNull();
+    expect(
+      within(within(modes()).getByRole("option", { name: "边说边识别" })).getByText("当前生效"),
+    ).toBeInTheDocument();
+    expect(within(modes()).queryByText("实时预览已关闭")).toBeNull();
+    // 边说边输入 the same.
+    await user.click(within(modes()).getByRole("option", { name: "边说边输入" }));
+    await waitFor(() => {
+      expect(block()).toHaveAttribute("data-effective", "live_inject");
+    });
+    expect(
+      within(within(modes()).getByRole("option", { name: "边说边输入" })).getByText("当前生效"),
+    ).toBeInTheDocument();
+    expect(within(modes()).queryByText("实时预览已关闭")).toBeNull();
+    expect(screen.queryByTestId("output-mode-fallback")).toBeNull();
+  });
+
   it("regression: with both switches off and a model that needs a preview, the streaming cards say the preview is off and a streaming mode runs whole (docs/dictation.md section 11.10)", async () => {
     const user = userEvent.setup();
     const { backend } = renderApp({
@@ -1453,21 +1506,22 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
       "aria-selected",
       "true",
     );
+    // The 169 MB model is the 「实时预览」 model (2026-11-23: 「实时识别模型」 names a provider's
+    // realtime model).
     expect(within(block()).getByTestId("output-mode-state")).toHaveTextContent(
-      "实时识别模型未下载，当前按整段输出运行",
+      "「实时预览」模型未下载，当前按整段输出运行",
     );
     expect(within(block()).getByTestId("output-mode-fallback")).toHaveTextContent(
-      "实时识别模型未下载，当前按整段输出运行",
+      "「实时预览」模型未下载，当前按整段输出运行",
     );
     // The 当前生效 badge stays on 整段输出 (what really runs).
     expect(
       within(within(modes()).getByRole("option", { name: "整段输出" })).getByText("当前生效"),
     ).toBeInTheDocument();
-    // Polish is on: the polish view explains live_inject never refines.
+    // Polish is on, but the take runs whole and is polished: the polish view says nothing about
+    // 边说边输入 (the note follows the mode in effect since 2026-11-23; it followed the setting).
     await openTab(user, "AI 模型");
-    expect(screen.getByTestId("refine-live-inject")).toHaveTextContent(
-      "「边说边输入」模式下不进行润色",
-    );
+    expect(screen.queryByTestId("refine-live-inject")).toBeNull();
     await openTab(user, "识别设置");
     // Re-selecting the current card writes nothing.
     const writes = () => backend.log.filter((e) => e.type === "settings").length;
@@ -1509,8 +1563,12 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     expect(
       within(within(modes()).getByRole("option", { name: "边说边输入" })).getByText("当前生效"),
     ).toBeInTheDocument();
-    // Turning polish off removes the note; 流式定稿 keeps polish available (no note).
+    // Polish is on and 边说边输入 takes effect: the polish view explains it never refines. Turning
+    // polish off removes the note; 流式定稿 keeps polish available (no note).
     await openTab(user, "AI 模型");
+    expect(screen.getByTestId("refine-live-inject")).toHaveTextContent(
+      "「边说边输入」模式下不进行润色",
+    );
     await user.click(screen.getByRole("switch", { name: /已开启/ }));
     await waitFor(() => {
       expect(backend.peek().settings.engines.refine_enabled).toBe(false);
@@ -1786,12 +1844,52 @@ describe("Settings · 语音模型 / AI 模型（服务商卡片）", () => {
     expect(livePreviewState(on, { live_ready: true, live_source: "stream" })).toEqual({
       kind: "missing",
     });
+    // The built-in service writing a streaming take with its words off (2026-11-23): the same.
+    expect(livePreviewState(off, { live_ready: true, live_source: "cloud" })).toEqual({
+      kind: "hidden",
+    });
+    expect(livePreviewState(on, { live_ready: true, live_source: "cloud" })).toEqual({
+      kind: "missing",
+    });
     // A whole-recording model standing in for the realtime one (section 3.5).
     expect(livePreviewState(on, { live_ready: false, live_source: "stream" })).toEqual({
       kind: "paused",
     });
+    // A fallback model standing in for the built-in service (2026-11-24): paused and named; in
+    // 整段输出 with its words off the built-in service previews nothing anyway, so the switches
+    // say why (the review of 2026-11-24).
+    const builtInOut = {
+      live_ready: false,
+      live_source: "cloud",
+      asr_provider: "builtin",
+    } as const;
+    const words = (provider_preview: boolean, output_mode: "whole_take" | "streaming_final") => ({
+      provider_preview,
+      output_mode,
+    });
+    expect(livePreviewState({ ...on, ...words(false, "streaming_final") }, builtInOut)).toEqual({
+      kind: "paused",
+      builtIn: true,
+    });
+    expect(livePreviewState({ ...off, ...words(true, "whole_take") }, builtInOut)).toEqual({
+      kind: "paused",
+      builtIn: true,
+    });
+    expect(livePreviewState({ ...off, ...words(false, "whole_take") }, builtInOut)).toEqual({
+      kind: "off",
+    });
+    expect(livePreviewState({ ...on, ...words(false, "whole_take") }, builtInOut)).toEqual({
+      kind: "missing",
+    });
     const text = (state: Parameters<typeof livePreviewStateText>[0], locale: "zh-CN" | "en") =>
       livePreviewStateText(state, createTranslator(locale).t, locale);
+    expect(text({ kind: "paused", builtIn: true }, "zh-CN")).toBe(
+      "暂不可用 · 候补模型正在代替内置服务",
+    );
+    expect(text({ kind: "paused", builtIn: true }, "en")).toBe(
+      "Unavailable · a fallback model stands in for the built-in service",
+    );
+    expect(text({ kind: "paused" }, "zh-CN")).toBe("暂不可用 · 候补模型不支持实时识别");
     expect(
       text({ kind: "showing", source: "stream", provider: "volcengine_speech" }, "zh-CN"),
     ).toBe("使用中 · 火山引擎豆包语音");
@@ -1960,6 +2058,136 @@ describe("fallback models on the engines pages (docs/dictation.md §3.5)", () =>
     });
     expect(live).toHaveAttribute("data-source", "stream");
     expect(mode).toHaveAttribute("data-effective", "streaming_final");
+  });
+
+  it("regression: a fallback model standing in for the built-in service, with no Live preview model, says the fallback model is why the streaming modes run whole and asks for no download (docs/dictation.md §3.5, §12)", async () => {
+    // The user's decision of 2026-11-24 (「候补模型顶替时可以修改为整段识别」): the streaming modes
+    // run as a whole take while a fallback model stands in for the built-in service. With nothing
+    // previewing, the page blamed 本地模型预览 (「「实时预览」模型未下载」) instead.
+    const user = userEvent.setup();
+    const backend = new MockBackend({
+      providerKeys: [{ provider: "groq", kind: "asr" }],
+      builtIn: {
+        asr: { model: MOCK_ENGINE_BUILTIN.asr_model, key: true, preview: true },
+        llm: { model: MOCK_ENGINE_BUILTIN.refine_model, key: true },
+      },
+    });
+    const state = await backend.getState();
+    await backend.invoke("settings_set_engines", {
+      engines: {
+        ...state.settings.engines,
+        output_mode: "streaming_final",
+        asr_fallback: { enabled: true, models: [{ provider: "groq", model: "whisper-large-v3" }] },
+      },
+    });
+    renderApp({ path: "/speech", backend });
+    await openTab(user, "识别设置");
+    const live = await screen.findByTestId("live-preview");
+    const mode = screen.getByTestId("output-mode");
+    expect(mode).toHaveAttribute("data-effective", "streaming_final");
+    act(() => {
+      backend.simulateQuotaExhausted("asr", Date.now() + 86_400_000);
+    });
+    await waitFor(() => {
+      expect(mode).toHaveAttribute("data-effective", "whole_take");
+    });
+    // The review of 2026-11-24: the texts said the fallback model does not transcribe in real
+    // time, untrue for a realtime fallback model; the reason is that one stands in.
+    expect(live).toHaveAttribute("data-state", "paused");
+    expect(within(live).getByTestId("live-preview-state")).toHaveTextContent(
+      "暂不可用 · 候补模型正在代替内置服务",
+    );
+    expect(within(mode).getByTestId("output-mode-fallback")).toHaveTextContent(
+      "候补模型正在代替内置服务，按整段输出运行",
+    );
+    expect(within(mode).queryByText("模型未下载")).toBeNull();
+    expect(within(mode).queryByText(/实时预览已关闭/)).toBeNull();
+    // 整段输出 with both switches off previews nothing, the fallback model or not: the 实时预览
+    // line says the switches are off, and the streaming modes still name no switch.
+    const setEngines = async (engines: Partial<typeof state.settings.engines>) => {
+      await act(async () => {
+        await backend.invoke("settings_set_engines", {
+          engines: { ...backend.peek().settings.engines, ...engines },
+        });
+      });
+    };
+    await setEngines({ output_mode: "whole_take", provider_preview: false, local_preview: false });
+    await waitFor(() => {
+      expect(live).toHaveAttribute("data-state", "off");
+    });
+    expect(within(live).getByTestId("live-preview-state")).toHaveTextContent("已关闭");
+    expect(within(mode).queryByText(/实时预览已关闭/)).toBeNull();
+    // 重新检查: the built-in service writes the text again, unseen.
+    await setEngines({ output_mode: "streaming_final" });
+    await act(async () => {
+      await backend.invoke("engines_quota_reset", { kind: "asr" });
+    });
+    await waitFor(() => {
+      expect(mode).toHaveAttribute("data-effective", "streaming_final");
+    });
+    expect(live).toHaveAttribute("data-state", "hidden");
+  });
+
+  it("regression: with the Live preview model installed, a whole-recording model standing in for a realtime model that ran out says why the streaming modes run whole, blames no preview switch, and drops 边说边输入's no-polish note while the takes are polished (docs/dictation.md §3.5, §12)", async () => {
+    // The user's decision after the review of 边说边输入 on realtime models, 2026-11-23: the
+    // streaming modes run as a whole take through the fallback chain then (they took the Live
+    // preview model's words before), while the pill still shows that model's words. The page read
+    // the preview as the reason (「实时预览已关闭」) and kept saying 边说边输入 is not polished.
+    const user = userEvent.setup();
+    const backend = new MockBackend({
+      providerKeys: [{ provider: "aliyun", kind: "asr" }],
+      models: {
+        [MOCK_STREAMING_MODEL_ID]: {
+          kind: "installed",
+          path: `${MOCK_MODELS_ROOT}/${MOCK_STREAMING_MODEL_ID}`,
+          installed_at: 1_758_700_000,
+        },
+      },
+    });
+    const state = await backend.getState();
+    await backend.invoke("settings_set_engines", {
+      engines: {
+        ...state.settings.engines,
+        asr_provider: "aliyun",
+        output_mode: "live_inject",
+        asr_fallback: {
+          enabled: true,
+          models: [{ provider: "aliyun", model: "qwen-audio-3.1-asr-flash" }],
+        },
+      },
+    });
+    renderApp({ path: "/speech", backend });
+    await openTab(user, "识别设置");
+    const mode = await screen.findByTestId("output-mode");
+    expect(mode).toHaveAttribute("data-effective", "live_inject");
+    act(() => {
+      backend.simulateQuotaExhausted("asr", Date.now() + 86_400_000);
+    });
+    await waitFor(() => {
+      expect(mode).toHaveAttribute("data-effective", "whole_take");
+    });
+    // The pill still shows the Live preview model's words.
+    expect(screen.getByTestId("live-preview")).toHaveAttribute("data-state", "showing");
+    expect(within(mode).getByTestId("output-mode-fallback")).toHaveTextContent(
+      "当前使用的候补模型不支持实时识别，按整段输出运行",
+    );
+    expect(within(mode).getByTestId("output-mode-state")).toHaveTextContent(
+      "当前使用的候补模型不支持实时识别，按整段输出运行",
+    );
+    expect(within(mode).queryByText("实时预览已关闭")).toBeNull();
+    expect(within(mode).queryByText("模型未下载")).toBeNull();
+    // The takes run whole and are polished: the AI page does not say 边说边输入 drops the polish.
+    await openTab(user, "AI 模型");
+    expect(screen.queryByTestId("refine-live-inject")).toBeNull();
+    // 重新检查: the realtime model streams again, and 边说边输入 is not polished again.
+    await act(async () => {
+      await backend.invoke("engines_quota_reset", { kind: "asr" });
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("refine-live-inject")).toHaveTextContent(
+        "「边说边输入」模式下不进行润色",
+      );
+    });
   });
 
   it("the AI page carries the clean-up's list", async () => {

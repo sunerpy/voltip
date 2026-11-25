@@ -18,7 +18,7 @@ With a local model, your recordings are recognised on your computer and no audio
 | Qwen3-ASR 1.7B | 1.7 GB | 30 languages, detected automatically | GPU or CPU | The most accurate, and slower. The same model the built-in service uses |
 | SenseVoice Small | 240 MB | Chinese, English, Japanese, Korean, Cantonese | CPU | The smallest download. Writes punctuation and normalises numbers |
 | Paraformer | 227 MB | Chinese, including dialects, mixed with English | CPU | More accurate on Chinese. Writes no punctuation; AI polish can add it |
-| Live transcription | 169 MB | Chinese and English | CPU | Shows the words while you speak (**Local model preview**, see [Live text while you speak](/dictation/shortcuts#live-text-while-you-speak)). The final text still comes from the model above; not needed with the built-in service |
+| Live preview | 169 MB | Chinese and English | CPU | Shows the words while you speak (**Local model preview**, see [Live text while you speak](/dictation/shortcuts#live-text-while-you-speak)). With the built-in service or a realtime model it only shows the words, and only while **Provider's live text** is off; while a fallback model that only recognises whole recordings stands in for a realtime model whose quota is used up, or any fallback model for the built-in service whose quota is used up, it shows its words with that switch on too, and dictation runs as **All at once**. With another provider or local recognition it only shows the words in **All at once**, while in **While you speak** and **Type as you speak** its sentences are the text, and the history names this model as the transcription model |
 
 The **Language** setting on the Speech models page's **Recognition** tab is passed to the models and services that accept one. Qwen3-ASR always detects the language itself.
 
@@ -33,7 +33,7 @@ After you cancel a dictation, the next one does not wait for the cancelled recog
 ## Downloading
 
 - Release packages download from the project's own mirror first, then from Hugging Face, then from hf-mirror.com. When a source is slow or unreachable, Voltip switches to the next one by itself.
-- The live transcription model is no longer on Hugging Face. After the project's mirror, it comes as one package from the sherpa-onnx project's releases on GitHub, and Voltip takes the model's files out of the package. A copy you already downloaded stays as it is.
+- The **Live preview** model is no longer on Hugging Face. After the project's mirror, it comes as one package from the sherpa-onnx project's releases on GitHub, and Voltip takes the model's files out of the package. A copy you already downloaded stays as it is.
 - An interrupted download resumes where it stopped.
 - Every file is checked against a SHA-256 hash before it is used.
 - Before a download starts, Voltip checks that there is enough free disk space.
@@ -60,7 +60,7 @@ When the app cannot download a model, for example on a network where only anothe
 2. Open each file's address (Hugging Face or hf-mirror.com) in a browser, or copy it to download the file on another device, and save the file into the folder the card shows, under the same name. **Open folder** opens that folder, and **Copy path** copies its location.
 3. Once every file is there, choose **Check and import**. Voltip checks each file's size and SHA-256. When they are all right, the model is ready to use; otherwise the card lists the files that are missing or wrong.
 
-The live transcription model's card lists one package instead of its files: download it and put it into the folder as it is, without unpacking it. **Check and import** takes the model's files out of it and then deletes the package.
+The **Live preview** model's card lists one package instead of its files: download it and put it into the folder as it is, without unpacking it. **Check and import** takes the model's files out of it and then deletes the package.
 
 When the app downloads a model itself, it checks the files already in the folder first and downloads again any that are wrong.
 
@@ -72,7 +72,7 @@ Under **This computer**, **Run on** offers:
 - **CPU**: always the processor. **CPU threads** sets how many it uses.
 - **GPU**: the graphics card, and which one if there are several.
 
-Only the two Qwen3-ASR models use the graphics card: through Vulkan on Windows and Linux, which needs a graphics driver with Vulkan support, and through Metal on a Mac. SenseVoice, Paraformer and the live transcription model always run on the processor. If the graphics card cannot be used, Voltip falls back to the processor and dictation continues.
+Only the two Qwen3-ASR models use the graphics card: through Vulkan on Windows and Linux, which needs a graphics driver with Vulkan support, and through Metal on a Mac. SenseVoice, Paraformer and the **Live preview** model always run on the processor. If the graphics card cannot be used, Voltip falls back to the processor and dictation continues.
 
 If the graphics card fails during recognition, Voltip recognises the recording again on the processor, and **Recognised on** in the [history](/dictation/history) details says so. After a second failure within 10 minutes, the processor is used until Voltip restarts.
 

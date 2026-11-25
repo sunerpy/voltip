@@ -508,13 +508,18 @@ export const zhCN = {
       streaming_final: "边说边确定句子，松开后只补最后一句；润色仍在最后一次做。",
       live_inject: "每句确定后立即输入到当前窗口；此方式不进行润色，取消后已输入的文字不会撤回。",
     },
-    fallback: "实时识别模型未下载，当前按整段输出运行",
+    fallback: "「实时预览」模型未下载，当前按整段输出运行",
     fallbackPaused: "当前使用的候补模型不支持实时识别，按整段输出运行",
+    /** docs/dictation.md §3.5 (2026-11-24): any fallback model standing in for the built-in
+     *  service runs the takes whole. */
+    fallbackBuiltIn: "候补模型正在代替内置服务，按整段输出运行",
     /** docs/dictation.md §11.10: the switches that could give a live source are off. */
     fallbackOff: "实时预览已关闭，当前按整段输出运行",
     previewOff: "实时预览已关闭",
+    /** docs/dictation.md §11.9, §3.5: 整段输出 on a realtime model (the settings page and the scene
+     *  editor). */
     streamed:
-      "所选识别模型是实时识别模型：说话时就已识别，按「边说边识别」运行，文字仍在松开后一次插入。",
+      "所选的是实时识别模型：说话时就识别，与「边说边识别」相同；候补模型只能整段识别时按整段输出运行。",
     effective: "当前生效",
     liveError: "实时识别中断，已改为整段识别：{reason}",
   },
@@ -727,6 +732,8 @@ export const zhCN = {
       privacyText: " · 文本发送到{target}",
       livePreview: "实时预览",
       liveDegraded: "实时预览已中断 · 最终文本不受影响",
+      /** docs/dictation.md §12: the live session that writes a streaming take's text stopped. */
+      liveDegradedStreaming: "实时识别已中断 · 松开后改用整段识别补齐",
     },
     session: {
       saved: "节省时间",
@@ -1755,10 +1762,22 @@ export const zhCN = {
       wholePreviewHelp:
         "松开后识别整段录音；想在说话时看到文字，可在「识别设置」的「实时预览」打开「本地模型预览」并下载它的模型。",
       wholeLocalHelp: "松开后识别整段录音；说话时由本机的「实时预览」模型显示预览。",
+      /** docs/dictation.md §3.15, §11.10: the built-in service in 边说边识别 / 边说边输入 recognises
+       *  each sentence whatever 服务商的实时文字 says; the switch decides what the pill shows: its
+       *  preview, the Live preview model's words, or none. */
+      streamingPreviewHelp:
+        "使用「边说边识别」或「边说边输入」时，每句话说完由内置服务识别，松开后只识别最后一句；说话时由内置服务显示预览，约每 2 秒更新一次。",
+      streamingLocalHelp:
+        "使用「边说边识别」或「边说边输入」时，每句话说完由内置服务识别，松开后只识别最后一句；说话时由本机的「实时预览」模型显示预览。",
+      streamingHiddenHelp:
+        "使用「边说边识别」或「边说边输入」时，每句话说完由内置服务识别，松开后只识别最后一句；说话时不显示文字。",
       hotwordsHelp: "词典的词条作为热词发给识别服务。",
       promptHelp: "词典的词条作为提示词发给识别服务。",
       noGlossaryHelp:
         "这个服务不接收词典的词条：词典在识别之后纠正文字，开启 AI 润色时也交给润色。",
+      /** docs/dictation.md §3.15: iFlytek dictation settles a sentence only when its session ends. */
+      iflytekSentenceHelp:
+        "讯飞语音听写一次只确定一句话（停顿 10 秒或说满 55 秒）：「边说边输入」要等松开后才输入。",
     },
     field: {
       model: "模型",
@@ -2050,24 +2069,25 @@ export const zhCN = {
       /** docs/dictation.md §11.10: the provider's words (`provider_preview`). */
       provider: "服务商的实时文字",
       providerHelp:
-        "使用内置服务时，预览约每 2 秒更新一次，松开后仍识别整段录音；使用实时识别模型（如阿里云百炼的 qwen-audio-3.1-asr-flash-streaming）时，说话时就已识别，松开后只补最后一句。关闭后不显示这些文字：实时识别模型仍边说边识别，结果和速度不变；内置服务不再发送预览请求。",
+        "使用内置服务时，预览约每 2 秒更新一次；使用实时识别模型（如阿里云百炼的 qwen-audio-3.1-asr-flash-streaming）时，说话时就已识别，松开后只补最后一句。关闭后不显示这些文字，识别结果不变：实时识别模型仍边说边识别；内置服务不再发送预览请求，在「边说边识别」和「边说边输入」中仍逐句识别。",
       /** The library's streaming model (`local_preview`). */
       local: "本地模型预览",
       localHelp:
-        "服务商没有实时文字时，由下面的「实时预览」模型在这台电脑上识别并显示，需要先下载；预览不影响最终文本。",
+        "服务商没有实时文字，或关闭了「服务商的实时文字」时，由下面的「实时预览」模型在这台电脑上识别并显示，需要先下载。使用内置服务或实时识别模型时，它只用于显示，不影响最终文本。",
       /** The status line's name for the library's model. */
       localModel: "本地模型",
       state: {
         showing: "使用中 · {source}",
         hidden: "不显示 · 实时识别照常进行",
         paused: "暂不可用 · 候补模型不支持实时识别",
+        pausedBuiltIn: "暂不可用 · 候补模型正在代替内置服务",
         missing: "模型未下载",
         off: "已关闭",
       },
     },
     outputMode: {
       title: "输出方式",
-      note: "决定最终文本的生成方式和插入时机。后两种方式需要说话时就有识别结果：实时识别模型可以直接使用；内置服务需要打开「服务商的实时文字」；其他情况需要打开「本地模型预览」并下载「实时预览」模型。不满足时按「整段输出」运行。",
+      note: "决定最终文本的生成方式和插入时机。后两种方式需要说话时就有识别结果：实时识别模型和内置服务可以直接使用；其他情况需要打开「本地模型预览」并下载「实时预览」模型。不满足时按「整段输出」运行。",
       label: "输出方式",
     },
     vadTrim: {
@@ -2194,7 +2214,7 @@ export const zhCN = {
       "sense-voice-small": "SenseVoice Small，支持中英日韩粤，自带标点和数字格式规整；240 MB",
       "paraformer-zh": "Paraformer 中文（含方言）更准，中英混读；无标点，开启 AI 润色可补；227 MB",
       "zipformer-stream-zh-en":
-        "边说边出字的预览模型（Zipformer 流式，中英混读，自带标点）；最终文本仍由所选的语音模型识别；169 MB",
+        "边说边出字的预览模型（Zipformer 流式，中英混读，自带标点）；使用内置服务、实时识别模型或「整段输出」时只用于显示；169 MB",
     },
     languages: "语言 {languages}",
     size: "{size}",
@@ -2613,6 +2633,12 @@ export const zhCN = {
       editDoneClipboard: "改写结果已复制 {n} 字",
       /** docs/dictation.md §14.3: the window changed while the take was processed. */
       doneTargetChanged: "窗口已切换，文字已复制",
+      /** §12, §14.3: 边说边输入 typed sentences before the window changed; the rest was copied. */
+      doneTargetChangedRest: "窗口已切换，余下 {n} 字已复制",
+      /** §12, §14.3: while listening, a sentence of 边说边输入 found another window in front. */
+      switchedNotice: "窗口已切换，余下的文字松开后复制",
+      /** §12: the live session that writes a streaming take's text stopped while listening. */
+      streamDegradedNotice: "实时识别中断，松开后补齐其余文字",
       editDoneTargetChanged: "窗口已切换，改写结果已复制",
       /** docs/dictation.md §14.9: GNOME's 远程桌面 window was cancelled or closed. */
       doneRemoteDenied: "未获准远程交互，文字已复制",
@@ -3666,7 +3692,10 @@ export const zhCN = {
     prompt: "给 AI 的补充要求",
     promptHelp: "只在 AI 润色时发送，例如「这是聊天消息：口语化，句末不加句号」。",
     promptCount: "{n} / {max}",
-    streamingNotReady: "实时识别模型未下载时，本场景按整段输出运行",
+    streamingNotReady:
+      "说话时没有识别结果（「实时预览」模型未下载或实时预览已关闭）时，本场景按整段输出运行",
+    /** docs/dictation.md §12: 边说边输入 is never polished. */
+    liveInjectRefine: "「边说边输入」不进行润色，这个场景的 AI 润色不会生效",
     saved: "已保存场景 · {name}",
     error: {
       name: "请填写名称",

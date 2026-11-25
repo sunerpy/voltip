@@ -1,6 +1,12 @@
-import { type AppRef, type HistoryEntry, MAX_SCENE_PROMPT_CHARS, type Scene } from "@voltip/shared";
+import {
+  type AppRef,
+  type HistoryEntry,
+  MAX_SCENE_PROMPT_CHARS,
+  type Scene,
+  defaultEngineSettings,
+} from "@voltip/shared";
 import { MockBackend, desktopIdentity } from "@voltip/shared/mock";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { BackendProvider } from "../../backend/BackendProvider";
@@ -145,6 +151,109 @@ describe("the scene cards and editor (desktop 场景 settings and the phone, doc
     await user.click(screen.getByRole("switch", { name: "启用 GitHub" }));
     await waitFor(() => {
       expect(notify).toHaveBeenCalledWith("出错了 · 不行", "danger");
+    });
+    backend.destroy();
+  });
+
+  it("regression: the output mode's notes say what the take really does: 整段输出 on a realtime model streams, 边说边输入 drops the scene's polish, and a fallback model standing in is named (docs/dictation.md §3.5, §12, §18.4)", async () => {
+    // The review of 边说边输入 on realtime models, 2026-11-23: a scene's 整段输出 on a realtime model
+    // ran as 边说边识别 and its 边说边输入 dropped the scene's AI 润色, without a word in the
+    // editor; and with a whole-recording fallback model standing in, its note blamed the Live
+    // preview model.
+    const user = userEvent.setup();
+    const streaming = {
+      kind: "installed" as const,
+      path: "/models/zipformer-stream-zh-en",
+      installed_at: 1,
+    };
+    const backend = new MockBackend({
+      ...NO_BUILTIN,
+      scenes: [CHAT],
+      providerKeys: [{ provider: "aliyun", kind: "asr" }],
+      models: { "zipformer-stream-zh-en": streaming },
+      settings: {
+        engines: {
+          ...defaultEngineSettings(),
+          asr_provider: "aliyun",
+          providers: { aliyun: { asr_model: "qwen-audio-3.1-asr-flash-streaming" } },
+          asr_fallback: {
+            enabled: true,
+            models: [{ provider: "aliyun", model: "qwen-audio-3.1-asr-flash" }],
+          },
+        },
+      },
+    });
+    renderScenes(backend);
+    await user.click(await screen.findByRole("button", { name: "new scene" }));
+    const editor = await screen.findByTestId("scene-editor");
+    const mode = within(editor).getByRole("combobox", { name: "输出方式" });
+    const refine = within(editor).getByRole("combobox", { name: "AI 润色" });
+    await user.selectOptions(mode, "whole_take");
+    expect(within(editor).getByTestId("scene-streamed-note")).toHaveTextContent(
+      "所选的是实时识别模型：说话时就识别，与「边说边识别」相同；候补模型只能整段识别时按整段输出运行。",
+    );
+    // 边说边输入 with the polish on, by the scene or by the settings: it has no effect.
+    await user.selectOptions(mode, "live_inject");
+    expect(within(editor).queryByTestId("scene-streamed-note")).toBeNull();
+    expect(within(editor).getByTestId("scene-refine-note")).toHaveTextContent(
+      "「边说边输入」不进行润色，这个场景的 AI 润色不会生效",
+    );
+    await user.selectOptions(refine, "off");
+    expect(within(editor).queryByTestId("scene-refine-note")).toBeNull();
+    await user.selectOptions(refine, "on");
+    expect(within(editor).getByTestId("scene-refine-note")).toBeInTheDocument();
+    expect(within(editor).queryByTestId("scene-streaming-note")).toBeNull();
+    // The realtime model's quota is used up and a whole-recording model stands in: the streaming
+    // modes run whole for now, so the polish runs; the note names the fallback model.
+    act(() => {
+      backend.simulateQuotaExhausted("asr", NOW + 86_400_000);
+    });
+    await waitFor(() => {
+      expect(within(editor).getByTestId("scene-streaming-note")).toHaveTextContent(
+        "当前使用的候补模型不支持实时识别，按整段输出运行",
+      );
+    });
+    expect(within(editor).queryByTestId("scene-refine-note")).toBeNull();
+    backend.destroy();
+  });
+
+  it("regression: while a fallback model stands in for the built-in service, the editor says so under a streaming mode (docs/dictation.md §3.5, §18.4)", async () => {
+    // The review of 2026-11-24: the note said the fallback model does not transcribe in real time,
+    // untrue for a realtime fallback model.
+    const user = userEvent.setup();
+    const backend = new MockBackend({
+      ...NO_BUILTIN,
+      scenes: [CHAT],
+      builtIn: {
+        asr: { model: "Qwen/Qwen3-ASR-1.7B", key: true, preview: true },
+        llm: { model: "qwen/qwen3.8-27b", key: true },
+      },
+      providerKeys: [{ provider: "volcengine_speech", kind: "asr" }],
+      settings: {
+        engines: {
+          ...defaultEngineSettings(),
+          asr_fallback: {
+            enabled: true,
+            models: [{ provider: "volcengine_speech", model: "volc.seedasr.sauc.duration" }],
+          },
+        },
+      },
+    });
+    renderScenes(backend);
+    await user.click(await screen.findByRole("button", { name: "new scene" }));
+    const editor = await screen.findByTestId("scene-editor");
+    await user.selectOptions(
+      within(editor).getByRole("combobox", { name: "输出方式" }),
+      "live_inject",
+    );
+    expect(within(editor).queryByTestId("scene-streaming-note")).toBeNull();
+    act(() => {
+      backend.simulateQuotaExhausted("asr", NOW + 86_400_000);
+    });
+    await waitFor(() => {
+      expect(within(editor).getByTestId("scene-streaming-note")).toHaveTextContent(
+        "候补模型正在代替内置服务，按整段输出运行",
+      );
     });
     backend.destroy();
   });

@@ -6,9 +6,9 @@
 //! `warm()` on a background thread or by the first `open()`; every session is one `OnlineStream`
 //! over that recogniser. The binding lives in `sherpa.rs` behind [`StreamingLoader`] /
 //! [`StreamingRecognizer`], so the unit tests run on a fake without a model file. Endpoint rule
-//! (dictation rhythm, decided 2026-09-25): rule1 2.0 s of silence before any word, rule2 0.8 s of
-//! silence after words, rule3 20 s of speech; after an endpoint the sentence is committed and the
-//! stream reset. Measured: load 2.6 s, 4 ms average / 44 ms maximum per 100 ms chunk on two threads.
+//! (dictation rhythm, decided 2026-09-25, rule 2 lengthened 2026-11-23): rule1 2.0 s of silence
+//! before any word, rule2 1.2 s of silence after words, rule3 20 s of speech; after an endpoint the
+//! sentence is committed and the stream reset. Measured: load 2.6 s, 4 ms average / 44 ms maximum per 100 ms chunk on two threads.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -16,7 +16,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use parking_lot::Mutex;
-use voltip_core::dictation::{DictationError, StreamingSession, StreamingTranscriber};
+use voltip_core::dictation::{DictationError, StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber, SwitchReason};
+use voltip_core::providers::ProviderId;
 
 use crate::catalogue::{CATALOGUE, ModelEntry};
 use crate::root::ModelsRoot;
@@ -124,11 +125,54 @@ impl LocalStreamingTranscriber {
     }
 }
 
+/// One session of the library's streaming model, which says what wrote its text (docs/dictation.md
+/// §3.5): the model's catalogue name, as a whole take of a local model records it, and this
+/// computer. Without it a streamed take recorded the configured model, which never heard it.
+struct LocalSession {
+    inner: Box<dyn StreamingSession>,
+    model: &'static str,
+}
+
+impl StreamingSession for LocalSession {
+    fn feed(&mut self, pcm16k: &[f32]) {
+        self.inner.feed(pcm16k);
+    }
+
+    fn poll(&mut self) -> StreamEvent {
+        self.inner.poll()
+    }
+
+    fn finish(self: Box<Self>) -> Result<StreamFinal, DictationError> {
+        let model = self.model;
+        let fin = self.inner.finish()?;
+        Ok(StreamFinal {
+            model: fin.model.clone().or_else(|| Some(model.to_owned())),
+            provider: Some(ProviderId::Local),
+            fallback: None,
+            glossary_sent: fin.glossary_sent.or(Some(false)),
+            ..fin
+        })
+    }
+
+    fn model(&self) -> Option<String> {
+        self.inner.model().or_else(|| Some(self.model.to_owned()))
+    }
+
+    fn served(&self) -> (Option<ProviderId>, Option<SwitchReason>) {
+        (Some(ProviderId::Local), None)
+    }
+
+    /// An on-device model takes no glossary (docs/dictation.md §16.3, §30.6).
+    fn glossary_sent(&self) -> Option<bool> {
+        self.inner.glossary_sent().or(Some(false))
+    }
+}
+
 impl StreamingTranscriber for LocalStreamingTranscriber {
     fn open(&self, language: Option<&str>) -> Result<Box<dyn StreamingSession>, DictationError> {
         // The Zipformer zh-en transducer has no language switch; the hint is only logged.
         tracing::debug!(model = self.entry.id, ?language, "streaming session opened");
-        Ok(self.recognizer()?.open())
+        Ok(Box::new(LocalSession { inner: self.recognizer()?.open(), model: self.entry.name }))
     }
 
     fn warm(&self) {
@@ -157,7 +201,6 @@ impl StreamingTranscriber for LocalStreamingTranscriber {
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
-    use voltip_core::dictation::{StreamEvent, StreamFinal};
 
     struct FakeLoader {
         loads: AtomicUsize,
@@ -278,5 +321,28 @@ mod tests {
         wait_until(|| !failing.warming.load(Ordering::SeqCst));
         assert!(!failing.is_loaded());
         assert_eq!(STREAMING_THREADS, 2);
+    }
+
+    /// A take whose text the local streaming model wrote names that model and this computer
+    /// (docs/dictation.md §3.5). Regression, 2026-11-23 on windows-local: 边说边识别 takes whose
+    /// text came from zipformer-stream-zh-en showed Qwen/Qwen3-ASR-1.7B · 内置服务 in the history,
+    /// a model that never heard them: the session reported no receipt, and the take fell back to
+    /// the configured model.
+    #[test]
+    fn regression_a_streamed_take_of_the_local_model_names_it_and_this_computer() {
+        let dir = tempfile::tempdir().unwrap();
+        let entry = crate::catalogue::streaming_entry();
+        install(dir.path(), entry);
+        let t = LocalStreamingTranscriber::with_loader(dir.path(), entry, Arc::new(FakeLoader { loads: AtomicUsize::new(0), fail: false }));
+        let mut s = t.open(None).unwrap();
+        // Read before the end too: a session that degrades is asked what wrote its text so far.
+        assert_eq!(s.model().as_deref(), Some("实时预览"));
+        assert_eq!(s.served(), (Some(ProviderId::Local), None));
+        assert_eq!(s.glossary_sent(), Some(false), "an on-device model takes no glossary");
+        s.feed(&[0.0; 1600]);
+        assert_eq!(s.poll(), StreamEvent::Partial { current: "zipformer-stream-zh-en:1600".into() });
+        let fin = s.finish().unwrap();
+        assert_eq!(fin.tail, "zipformer-stream-zh-en:1600");
+        assert_eq!((fin.model.as_deref(), fin.provider, fin.fallback, fin.glossary_sent), (Some("实时预览"), Some(ProviderId::Local), None, Some(false)));
     }
 }

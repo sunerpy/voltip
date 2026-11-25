@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { asrStreams, glossaryRoute, isDashscope, keyEntry, resolveEngineStatus } from "./providers";
-import { defaultEngineSettings } from "./schema";
+import {
+  asrStreams,
+  glossaryRoute,
+  isDashscope,
+  keyEntry,
+  livePlan,
+  resolveEngineStatus,
+} from "./providers";
+import { type EngineStatus, type OutputMode, defaultEngineSettings } from "./schema";
 
 describe("Model Studio's recognition protocols (docs/dictation.md §3.4)", () => {
   it("a realtime model at a Model Studio address streams, like `AsrProtocol::streams`", () => {
@@ -150,53 +157,55 @@ describe("Model Studio's recognition protocols (docs/dictation.md §3.4)", () =>
         localPreviewReady: local_preview && installed,
       });
     const cases = [
-      // [provider, model, 服务商的实时文字, 本地模型预览, model installed] → [live_source, preview_source, preview_provider, effective]
+      // [provider, model, 服务商的实时文字, 本地模型预览, model installed] → [live_source, preview_source, preview_provider, effective, live_ready]
       [
         ["aliyun", REALTIME, true, true, true],
-        ["stream", "stream", "aliyun", "streaming_final"],
+        ["stream", "stream", "aliyun", "streaming_final", true],
       ],
       [
         ["aliyun", REALTIME, false, true, true],
-        ["stream", "local", undefined, "streaming_final"],
+        ["stream", "local", undefined, "streaming_final", true],
       ],
       [
         ["aliyun", REALTIME, false, false, true],
-        ["stream", undefined, undefined, "streaming_final"],
+        ["stream", undefined, undefined, "streaming_final", true],
       ],
       [
         ["aliyun", REALTIME, false, true, false],
-        ["stream", undefined, undefined, "streaming_final"],
+        ["stream", undefined, undefined, "streaming_final", true],
       ],
       [
         ["aliyun", REALTIME, true, false, false],
-        ["stream", "stream", "aliyun", "streaming_final"],
+        ["stream", "stream", "aliyun", "streaming_final", true],
       ],
       [
         ["aliyun", WHOLE, true, true, true],
-        ["local", "local", undefined, "whole_take"],
+        ["local", "local", undefined, "whole_take", true],
       ],
       [
         ["aliyun", WHOLE, true, false, true],
-        [undefined, undefined, undefined, "whole_take"],
+        [undefined, undefined, undefined, "whole_take", false],
       ],
       [
         ["builtin", "", true, true, true],
-        ["cloud", "cloud", "builtin", "whole_take"],
+        ["cloud", "cloud", "builtin", "whole_take", true],
       ],
       [
         ["builtin", "", false, true, true],
-        ["local", "local", undefined, "whole_take"],
+        ["local", "local", undefined, "whole_take", true],
       ],
+      // Changed on purpose 2026-11-23: nothing recognises a whole take while it is spoken, but the
+      // streaming modes would still take effect, the built-in service writing their text.
       [
         ["builtin", "", false, false, true],
-        [undefined, undefined, undefined, "whole_take"],
+        [undefined, undefined, undefined, "whole_take", true],
       ],
       [
         ["custom", "whisper", true, true, true],
-        ["local", "local", undefined, "whole_take"],
+        ["local", "local", undefined, "whole_take", true],
       ],
     ] as const;
-    for (const [[provider, model, pp, lp, installed], [live, shown, by, effective]] of cases) {
+    for (const [[provider, model, pp, lp, installed], expected] of cases) {
       const st = resolve(provider, model, pp, lp, installed);
       expect(
         [
@@ -207,7 +216,234 @@ describe("Model Studio's recognition protocols (docs/dictation.md §3.4)", () =>
           st.live_ready,
         ],
         `${provider} ${model} provider_preview=${pp} local_preview=${lp} installed=${installed}`,
-      ).toEqual([live, shown, by, effective, live !== undefined]);
+      ).toEqual(expected);
     }
+  });
+
+  it("regression: in 边说边识别 and 边说边输入 the built-in service writes the text whatever 服务商的实时文字 says; the switch only decides whether its words show (docs/dictation.md §11.10, §12)", () => {
+    // User report 2026-11-23 (Windows): 边说边识别 on the built-in service with 服务商的实时文字
+    // off took its text from the small on-device streaming model (实时预览, Zipformer): poor
+    // accuracy, and the last words of a take were lost. As the core now resolves it
+    // (engines.rs `the_built_in_service_writes_the_streaming_text_whatever_its_words_switch_says`):
+    // a streaming take's text is the built-in service's, sentence by sentence; with its words off
+    // the pill shows the local model's words when it can, else none; 整段输出 is unchanged.
+    const resolve = (output_mode: OutputMode, provider_preview: boolean, local: boolean) =>
+      resolveEngineStatus({
+        settings: {
+          ...defaultEngineSettings(),
+          output_mode,
+          provider_preview,
+          local_preview: local,
+        },
+        userKeys: new Set(),
+        builtIn: { asr: { model: "Qwen/Qwen3-ASR-1.7B", key: true, preview: true } },
+        local: { id: "qwen3-asr-0.6b", name: "均衡", installed: false },
+        localPreviewReady: local,
+      });
+    const row = (st: EngineStatus) => [
+      st.live_source,
+      st.preview_source,
+      st.preview_provider,
+      st.effective_output_mode,
+      st.live_ready,
+    ];
+    const cases = [
+      // [output mode, 服务商的实时文字, 本地模型预览 ready] → [live_source, preview_source, preview_provider, effective, live_ready]
+      [
+        ["streaming_final", false, true],
+        ["cloud", "local", undefined, "streaming_final", true],
+      ],
+      [
+        ["streaming_final", false, false],
+        ["cloud", undefined, undefined, "streaming_final", true],
+      ],
+      [
+        ["live_inject", false, true],
+        ["cloud", "local", undefined, "live_inject", true],
+      ],
+      [
+        ["live_inject", false, false],
+        ["cloud", undefined, undefined, "live_inject", true],
+      ],
+      // Its words on: they show, in every mode, as before.
+      [
+        ["streaming_final", true, true],
+        ["cloud", "cloud", "builtin", "streaming_final", true],
+      ],
+      [
+        ["live_inject", true, false],
+        ["cloud", "cloud", "builtin", "live_inject", true],
+      ],
+      [
+        ["whole_take", true, false],
+        ["cloud", "cloud", "builtin", "whole_take", true],
+      ],
+      // 整段输出 with its words off sends nothing while the take is spoken; the local model shows
+      // its own words when it can.
+      [
+        ["whole_take", false, true],
+        ["local", "local", undefined, "whole_take", true],
+      ],
+      [
+        ["whole_take", false, false],
+        [undefined, undefined, undefined, "whole_take", true],
+      ],
+    ] as const;
+    for (const [[mode, pp, local], expected] of cases)
+      expect(
+        row(resolve(mode, pp, local)),
+        `${mode} provider_preview=${pp} local=${local}`,
+      ).toEqual(expected);
+    // `LiveSources::plan`: the built-in service recognises a streaming take, shown or not; a whole
+    // take only with its words on. Other sources do not depend on the mode.
+    const cloud = { cloud: true, stream: false, providerShown: false, local: true };
+    expect(livePlan(cloud, true, true, true)).toEqual({ text: "cloud", shown: "local" });
+    expect(livePlan({ ...cloud, local: false }, true, true, true)).toEqual({ text: "cloud" });
+    expect(livePlan(cloud, true, true, false)).toEqual({ text: "local", shown: "local" });
+    expect(livePlan({ ...cloud, local: false }, true, true, false)).toEqual({});
+    expect(livePlan({ ...cloud, providerShown: true }, true, true, false)).toEqual({
+      text: "cloud",
+      shown: "cloud",
+    });
+    const stream = { cloud: false, stream: true, providerShown: false, local: true };
+    for (const streaming of [true, false])
+      expect(livePlan(stream, true, true, streaming)).toEqual({ text: "stream", shown: "local" });
+    // A model taking whole recordings stands in for the realtime one (`stream_now` false): a whole
+    // take previews with the local model; a streaming take has no live source since 2026-11-23 (it
+    // took the local model's words before, the rule changed on purpose, see the next test).
+    expect(livePlan(stream, false, true, false)).toEqual({ text: "local", shown: "local" });
+    expect(livePlan(stream, false, true, true)).toEqual({});
+    // A fallback model standing in for the built-in service (2026-11-24): a streaming take has no
+    // source (it runs whole); a whole take previews on the local model.
+    expect(livePlan(cloud, true, false, true)).toEqual({});
+    expect(livePlan({ ...cloud, providerShown: true }, true, false, false)).toEqual({
+      text: "local",
+      shown: "local",
+    });
+  });
+
+  it("regression: while a fallback model stands in for the built-in service, 边说边识别 and 边说边输入 run as a whole take and the local model only previews (docs/dictation.md §3.5, §11.10, §12)", () => {
+    // The user's decision of 2026-11-24 (「候补模型顶替时可以修改为整段识别」): with the built-in
+    // service's day used up, its sentence-by-sentence recognition went on through the chain, a
+    // request a sentence to the fallback service. As the core resolves it now (engines.rs
+    // `regression_a_fallback_standing_in_for_the_built_in_service_makes_the_streaming_modes_whole`).
+    const resolve = (output_mode: OutputMode, out: boolean, localReady = true) =>
+      resolveEngineStatus({
+        settings: {
+          ...defaultEngineSettings(),
+          output_mode,
+          asr_fallback: {
+            enabled: true,
+            models: [{ provider: "groq", model: "whisper-large-v3" }],
+          },
+        },
+        userKeys: new Set(["provider-key.groq"]),
+        builtIn: { asr: { model: "Qwen/Qwen3-ASR-1.7B", key: true, preview: true } },
+        local: { id: "qwen3-asr-0.6b", name: "均衡", installed: false },
+        localPreviewReady: localReady,
+        ...(out ? { quotaOut: { asr: 99 } } : {}),
+      });
+    const row = (st: EngineStatus) => [
+      st.effective_output_mode,
+      st.live_ready,
+      st.live_source,
+      st.preview_source,
+      st.preview_provider,
+    ];
+    for (const mode of ["streaming_final", "live_inject"] as const) {
+      expect(row(resolve(mode, false)), `${mode}: the built-in service`).toEqual([
+        mode,
+        true,
+        "cloud",
+        "cloud",
+        "builtin",
+      ]);
+      expect(row(resolve(mode, true)), `${mode}: a whole take through the chain`).toEqual([
+        "whole_take",
+        false,
+        "local",
+        "local",
+        undefined,
+      ]);
+      // Without the local model nothing previews and the live source stays the built-in service,
+      // so the settings page names the fallback model, not a switch or a download, as the reason.
+      expect(row(resolve(mode, true, false)), `${mode}: no local model`).toEqual([
+        "whole_take",
+        false,
+        "cloud",
+        undefined,
+        undefined,
+      ]);
+    }
+  });
+
+  it("regression: while a fallback model that takes whole recordings stands in for the realtime model, 边说边识别 and 边说边输入 run as a whole take and the local model only previews (docs/dictation.md §3.5, §11.10, §12)", () => {
+    // The user's decision after the review of 边说边输入 on realtime models, 2026-11-23: with the
+    // realtime model's day used up and Model Studio's whole-file model standing in, the local
+    // streaming model wrote the streaming modes' text (poor words, the ends lost on windows-local
+    // that day). As the core resolves it now (engines.rs
+    // `regression_a_whole_take_fallback_standing_in_makes_the_streaming_modes_whole`): the
+    // streaming modes run as a whole take through the fallback chain (`live_ready` false, the
+    // settings page's 候补模型 notice), and the sources are a whole take's: the local model shows
+    // its words when it can.
+    const resolve = (output_mode: OutputMode, localReady: boolean, out: boolean) =>
+      resolveEngineStatus({
+        settings: {
+          ...defaultEngineSettings(),
+          asr_provider: "aliyun",
+          output_mode,
+          local_preview: localReady,
+          providers: { aliyun: { asr_model: "qwen-audio-3.1-asr-flash-streaming" } },
+          asr_fallback: {
+            enabled: true,
+            models: [{ provider: "aliyun", model: "qwen-audio-3.1-asr-flash" }],
+          },
+        },
+        userKeys: new Set(["provider-key.aliyun"]),
+        builtIn: { asr: { model: "Qwen/Qwen3-ASR-1.7B", key: true, preview: true } },
+        local: { id: "qwen3-asr-0.6b", name: "均衡", installed: false },
+        localPreviewReady: localReady,
+        ...(out ? { quotaOut: { asr: 99 } } : {}),
+      });
+    const row = (st: EngineStatus) => [
+      st.effective_output_mode,
+      st.live_ready,
+      st.live_source,
+      st.preview_source,
+      st.preview_provider,
+    ];
+    for (const mode of ["streaming_final", "live_inject"] as const) {
+      // The realtime model has quota left: it streams the take.
+      expect(row(resolve(mode, true, false)), `${mode}: the realtime model`).toEqual([
+        mode,
+        true,
+        "stream",
+        "stream",
+        "aliyun",
+      ]);
+      expect(row(resolve(mode, true, true)), `${mode}: a whole take through the chain`).toEqual([
+        "whole_take",
+        false,
+        "local",
+        "local",
+        undefined,
+      ]);
+      // Without the local model nothing previews; the live source stays the realtime model.
+      expect(row(resolve(mode, false, true)), `${mode}: no local model`).toEqual([
+        "whole_take",
+        false,
+        "stream",
+        undefined,
+        undefined,
+      ]);
+    }
+    // 整段输出 previews the same way; its `live_ready` reads the streaming modes', paused too.
+    expect(row(resolve("whole_take", true, true))).toEqual([
+      "whole_take",
+      false,
+      "local",
+      "local",
+      undefined,
+    ]);
   });
 });

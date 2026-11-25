@@ -853,7 +853,8 @@
         ],
         "current": "然后加上错误",
         "injected": 0,
-        "source": "local"
+        "source": "local",
+        "streaming": true
       },
       "locked": false
     },
@@ -882,7 +883,8 @@
         "current": "然后加上错误",
         "degraded": "live tap overrun: the decoder fell behind the microphone",
         "injected": 0,
-        "source": "local"
+        "source": "local",
+        "streaming": true
       },
       "locked": false
     },
@@ -917,7 +919,8 @@
         "current": "然后加上错误",
         "injected": 1,
         "source": "stream",
-        "provider": "aliyun"
+        "provider": "aliyun",
+        "streaming": true
       },
       "locked": false
     },
@@ -1711,10 +1714,9 @@
     "asr_model": "Qwen/Qwen3-ASR-1.7B",
     "asr_host": "",
     "local_ready": false,
-    "live_ready": true,
-    "live_source": "cloud",
-    "preview_source": "cloud",
-    "preview_provider": "local",
+    "live_ready": false,
+    "live_source": "local",
+    "preview_source": "local",
     "effective_output_mode": "whole_take",
     "language": "zh",
     "refine_enabled": true,
@@ -3103,14 +3105,10 @@
     "asr_fallback": {
       "enabled": true,
       "in_use": true,
-      "selected_retry_at_ms": 1758787000000,
-      "selected_retry_reason": "quota",
       "models": [
         {
           "provider": "custom",
-          "model": "qwen3-asr-flash",
-          "retry_at_ms": 1758700660000,
-          "retry_reason": "outage"
+          "model": "qwen3-asr-flash"
         },
         {
           "provider": "builtin",
@@ -3139,7 +3137,7 @@
         }
       ]
     },
-    "glossary": "not_supported"
+    "glossary": "prompt"
   },
   {
     "type": "engines",
@@ -3822,14 +3820,10 @@
     "asr_fallback": {
       "enabled": true,
       "in_use": true,
-      "selected_retry_at_ms": 1758787000000,
-      "selected_retry_reason": "quota",
       "models": [
         {
           "provider": "custom",
-          "model": "qwen3-asr-flash",
-          "retry_at_ms": 1758700660000,
-          "retry_reason": "outage"
+          "model": "qwen3-asr-flash"
         },
         {
           "provider": "builtin",
@@ -3858,7 +3852,7 @@
         }
       ]
     },
-    "glossary": "not_supported"
+    "glossary": "prompt"
   },
   {
     "type": "engines",
@@ -3870,7 +3864,7 @@
     "live_ready": true,
     "live_source": "cloud",
     "preview_source": "cloud",
-    "preview_provider": "local",
+    "preview_provider": "builtin",
     "effective_output_mode": "live_inject",
     "language": "zh",
     "refine_enabled": true,
@@ -4542,14 +4536,10 @@
     "asr_fallback": {
       "enabled": true,
       "in_use": true,
-      "selected_retry_at_ms": 1758787000000,
-      "selected_retry_reason": "quota",
       "models": [
         {
           "provider": "custom",
-          "model": "qwen3-asr-flash",
-          "retry_at_ms": 1758700660000,
-          "retry_reason": "outage"
+          "model": "qwen3-asr-flash"
         },
         {
           "provider": "builtin",
@@ -4578,7 +4568,7 @@
         }
       ]
     },
-    "glossary": "not_supported"
+    "glossary": "prompt"
   },
   {
     "type": "engines",
@@ -6555,7 +6545,7 @@
         "capabilities": ["streaming"],
         "languages": ["zh", "en"],
         "size_bytes": 169347218,
-        "description": "边说边出字的预览模型（Zipformer 流式，中英混读，自带标点）；最终文本仍由所选引擎识别；169 MB",
+        "description": "边说边出字的预览模型（Zipformer 流式，中英混读，自带标点）；使用内置服务、实时识别模型或「整段输出」时只用于显示；169 MB",
         "recommended": false,
         "repo": "csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05",
         "dir": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models\\zipformer-stream-zh-en",
@@ -6712,7 +6702,7 @@
         "capabilities": ["streaming"],
         "languages": ["zh", "en"],
         "size_bytes": 169347218,
-        "description": "边说边出字的预览模型（Zipformer 流式，中英混读，自带标点）；最终文本仍由所选引擎识别；169 MB",
+        "description": "边说边出字的预览模型（Zipformer 流式，中英混读，自带标点）；使用内置服务、实时识别模型或「整段输出」时只用于显示；169 MB",
         "recommended": false,
         "repo": "csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05",
         "dir": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models\\zipformer-stream-zh-en",
@@ -6770,7 +6760,7 @@
         "capabilities": ["streaming"],
         "languages": ["zh", "en"],
         "size_bytes": 169347218,
-        "description": "边说边出字的预览模型（Zipformer 流式，中英混读，自带标点）；最终文本仍由所选引擎识别；169 MB",
+        "description": "边说边出字的预览模型（Zipformer 流式，中英混读，自带标点）；使用内置服务、实时识别模型或「整段输出」时只用于显示；169 MB",
         "recommended": false,
         "repo": "csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05",
         "dir": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models\\zipformer-stream-zh-en",
@@ -6824,7 +6814,7 @@
         "capabilities": ["streaming"],
         "languages": ["zh", "en"],
         "size_bytes": 169347218,
-        "description": "边说边出字的预览模型（Zipformer 流式，中英混读，自带标点）；最终文本仍由所选引擎识别；169 MB",
+        "description": "边说边出字的预览模型（Zipformer 流式，中英混读，自带标点）；使用内置服务、实时识别模型或「整段输出」时只用于显示；169 MB",
         "recommended": false,
         "repo": "csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05",
         "dir": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models\\zipformer-stream-zh-en",
@@ -6879,7 +6869,7 @@
         "capabilities": ["streaming"],
         "languages": ["zh", "en"],
         "size_bytes": 169347218,
-        "description": "边说边出字的预览模型（Zipformer 流式，中英混读，自带标点）；最终文本仍由所选引擎识别；169 MB",
+        "description": "边说边出字的预览模型（Zipformer 流式，中英混读，自带标点）；使用内置服务、实时识别模型或「整段输出」时只用于显示；169 MB",
         "recommended": false,
         "repo": "csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05",
         "dir": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models\\zipformer-stream-zh-en",
@@ -7036,7 +7026,7 @@
         "capabilities": ["streaming"],
         "languages": ["zh", "en"],
         "size_bytes": 169347218,
-        "description": "边说边出字的预览模型（Zipformer 流式，中英混读，自带标点）；最终文本仍由所选引擎识别；169 MB",
+        "description": "边说边出字的预览模型（Zipformer 流式，中英混读，自带标点）；使用内置服务、实时识别模型或「整段输出」时只用于显示；169 MB",
         "recommended": false,
         "repo": "csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05",
         "dir": "C:\\Users\\me\\AppData\\Roaming\\dev.voltip.desktop\\models\\zipformer-stream-zh-en",
@@ -7658,6 +7648,24 @@
       "clipboard_code": "remote_unavailable"
     },
     "session": 26,
+    "kind": "dictation"
+  },
+  {
+    "type": "dictation",
+    "phase": {
+      "phase": "done",
+      "text": "你好，世界。今天天气很好。",
+      "raw_text": "你好，世界。今天天气很好。",
+      "chars": 13,
+      "via": "clipboard",
+      "refined": false,
+      "duration_ms": 3200,
+      "asr_ms": 120,
+      "mode": "live_inject",
+      "clipboard_code": "target_changed",
+      "rest": "今天天气很好。"
+    },
+    "session": 8,
     "kind": "dictation"
   },
   {

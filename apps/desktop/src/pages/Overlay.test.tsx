@@ -33,8 +33,10 @@ import {
   isOverlayWindowState,
   isPillState,
   pillLiveCaption,
+  pillLiveNotice,
   pillStateFor,
   resultCardFor,
+  resultCardText,
   stageStart,
 } from "./Overlay";
 import { fakeLevels } from "./OverlaySheet";
@@ -928,6 +930,99 @@ describe("Overlay live window (state=live follows the core's dictation)", () => 
     }
   });
 
+  it("regression: the listening pill says what happens to the rest of the text: another window in front under 边说边输入, the live session of a streaming take stopping; a whole take's preview says nothing (docs/dictation.md §12, §14.3)", async () => {
+    // The review of 边说边输入 on realtime models, 2026-11-23: once a sentence found another window
+    // in front, or the session writing a streaming take's text failed, the pill went on as if the
+    // text still arrived (`LiveText.switched` / `streaming`, engine.rs
+    // `regression_live_inject_stops_pasting_after_a_window_switch_and_copies_the_rest`).
+    expect(pillLiveNotice(undefined)).toBeUndefined();
+    const base = { committed: [], current: "你好", injected: 0, streaming: false, switched: false };
+    expect(pillLiveNotice(base)).toBeUndefined();
+    expect(pillLiveNotice({ ...base, degraded: "tap overrun" })).toBeUndefined();
+    expect(pillLiveNotice({ ...base, degraded: "tap overrun", streaming: true })).toBe(
+      "overlay.live.streamDegradedNotice",
+    );
+    expect(pillLiveNotice({ ...base, streaming: true, switched: true })).toBe(
+      "overlay.live.switchedNotice",
+    );
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const streamingModel = {
+        [MOCK_STREAMING_MODEL_ID]: {
+          kind: "installed" as const,
+          path: `~/.local/share/voltip/models/${MOCK_STREAMING_MODEL_ID}`,
+          installed_at: 1_758_600_000,
+        },
+      };
+      const backend = new MockBackend({
+        now: () => Date.now(),
+        settings: {
+          engines: {
+            ...defaultEngineSettings(),
+            output_mode: "live_inject",
+            refine_enabled: false,
+          },
+        },
+        models: streamingModel,
+      });
+      renderApp({ path: "/overlay?state=live", backend });
+      await screen.findByTestId("overlay-window");
+      await act(async () => {
+        await backend.invoke("dictation_start");
+        await vi.advanceTimersByTimeAsync(MOCK_MIC_READY_MS + MOCK_LIVE_STEP_MS * 2 + 10);
+      });
+      expect(screen.queryByTestId("pill-live-notice")).toBeNull();
+      // Another window comes to the front before the first sentence is typed.
+      act(() => {
+        backend.simulateWindowSwitch(true);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MOCK_LIVE_STEP_MS * 2);
+      });
+      expect(screen.getByTestId("pill-live-notice")).toHaveTextContent(
+        "窗口已切换，余下的文字松开后复制",
+      );
+      await act(async () => {
+        await backend.invoke("dictation_cancel");
+        await vi.advanceTimersByTimeAsync(MOCK_DICTATION_DWELL_MS);
+      });
+      backend.simulateWindowSwitch(false);
+      // 边说边识别 whose live session fails: the rest comes after the release.
+      await act(async () => {
+        await backend.invoke("settings_set_engines", {
+          engines: { ...backend.peek().settings.engines, output_mode: "streaming_final" },
+        });
+        await backend.invoke("dictation_start");
+        await vi.advanceTimersByTimeAsync(MOCK_MIC_READY_MS + MOCK_LIVE_STEP_MS * 2 + 10);
+      });
+      act(() => {
+        backend.simulateLiveDegraded("live tap overrun");
+      });
+      expect(screen.getByTestId("pill-live-notice")).toHaveTextContent(
+        "实时识别中断，松开后补齐其余文字",
+      );
+      await act(async () => {
+        await backend.invoke("dictation_cancel");
+        await vi.advanceTimersByTimeAsync(MOCK_DICTATION_DWELL_MS);
+      });
+      // A whole take's preview that stops: the final text is unaffected, the pill says nothing.
+      await act(async () => {
+        await backend.invoke("settings_set_engines", {
+          engines: { ...backend.peek().settings.engines, output_mode: "whole_take" },
+        });
+        await backend.invoke("dictation_start");
+        await vi.advanceTimersByTimeAsync(MOCK_MIC_READY_MS + MOCK_LIVE_STEP_MS * 2 + 10);
+      });
+      act(() => {
+        backend.simulateLiveDegraded("live tap overrun");
+      });
+      expect(screen.getByTestId("pill-live")).toBeInTheDocument();
+      expect(screen.queryByTestId("pill-live-notice")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("regression: the live pill names the scene the take runs under next to the mode tag while listening and processing; a take without a scene shows no tag (docs/dictation.md section 18.6)", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
@@ -1227,6 +1322,62 @@ describe("Overlay result cards (docs/dictation.md §28)", () => {
       "overlay.live.editDoneRemoteUnavailable",
     );
     expect(doneLabelKey(done("remote_denied"), true)).toBe("overlay.live.editDoneRemoteDenied");
+  });
+
+  it("regression: after a window switch under 边说边输入 the card says how much was copied and its 粘贴 and 复制 take only the rest (docs/dictation.md §12, §14.3)", async () => {
+    // The review of 边说边输入 on realtime models, 2026-11-23: the card offered `done.text`, the
+    // whole take, whose first sentence was in the application already; the core sends what went
+    // to the clipboard as `done.rest`.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const backend = new MockBackend({
+        now: () => Date.now(),
+        settings: { engines: { ...defaultEngineSettings(), output_mode: "live_inject" } },
+        models: {
+          [MOCK_STREAMING_MODEL_ID]: {
+            kind: "installed",
+            path: `~/.local/share/voltip/models/${MOCK_STREAMING_MODEL_ID}`,
+            installed_at: 1_758_600_000,
+          },
+        },
+      });
+      renderApp({ path: "/overlay?state=live", backend });
+      await screen.findByTestId("overlay-window");
+      // The first sentence is typed, then another window comes to the front.
+      await act(async () => {
+        await backend.invoke("dictation_start");
+        await vi.advanceTimersByTimeAsync(MOCK_MIC_READY_MS + MOCK_LIVE_STEP_MS * 4 + 10);
+      });
+      act(() => {
+        backend.simulateWindowSwitch(true);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MOCK_LIVE_STEP_MS * 2);
+        await backend.invoke("dictation_stop");
+        await vi.advanceTimersByTimeAsync(MOCK_FINALIZE_MS * 2);
+      });
+      const phase = backend.peek().dictation.phase;
+      if (phase.phase !== "done" || phase.rest === undefined) throw new Error("no rest");
+      const rest = phase.rest;
+      expect(phase.text.endsWith(rest)).toBe(true);
+      const card = screen.getByRole("status");
+      expect(card).toHaveTextContent(`窗口已切换，余下 ${Array.from(rest).length} 字已复制`);
+      expect(buttons()).toEqual(["粘贴", "复制", "关闭"]);
+      await user.click(screen.getByRole("button", { name: "复制" }));
+      expect(backend.overlayCopies).toEqual([rest]);
+      await user.click(screen.getByRole("button", { name: "粘贴" }));
+      expect(backend.overlayPastes).toEqual([rest]);
+      // Without a rest (nothing typed before the switch) the card keeps its sentence and the text.
+      expect(doneLabelKey({ ...phase, rest: undefined }, false)).toBe(
+        "overlay.live.doneTargetChanged",
+      );
+      expect(doneLabelKey(phase, false)).toBe("overlay.live.doneTargetChangedRest");
+      expect(resultCardText({ ...phase, rest: undefined })).toBe(phase.text);
+      expect(resultCardText(phase)).toBe(rest);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("粘贴 pastes and closes the card; when it could only copy, the card stays and says why", async () => {

@@ -105,6 +105,11 @@ export interface PillProps {
   /** `processing` only: the live preview's text, shown dimmed in place of the stage caption
    *  until the final text arrives. */
   preview?: string;
+  /** `listening` only (docs/dictation.md §12, §14.3): what happens to the rest of the text — a
+   *  sentence of 边说边输入 found another window in front, or the live session writing a streaming
+   *  take's text stopped — a warning tag on the row above the waveform, after the caption in place
+   *  of its preview tag, or on its own. */
+  notice?: string;
   /** 0..1 levels for the waveform states. */
   levels?: readonly number[];
   /** Mode tag: `本地` / `云端 openai` / `LLM`. */
@@ -237,14 +242,15 @@ const TAGGED_STATES: ReadonlySet<PillState> = new Set<PillState>([
   "cancel-armed",
 ]);
 
-/** Why the inserted text is not polished: a warning lamp and the reason, in the pill's own
- *  colours (the warning colour alone is too faint for 10 px text on the light pill). */
-function NoteTag({ text }: { text: string | undefined }) {
+/** Why the inserted text is not polished, or what happens to the rest of a take's text: a warning
+ *  lamp and the reason, in the pill's own colours (the warning colour alone is too faint for 10 px
+ *  text on the light pill). */
+function NoteTag({ text, testId = "pill-note" }: { text: string | undefined; testId?: string }) {
   if (text === undefined || text.length === 0) return null;
   return (
     <span
       className="inline-flex shrink-0 items-center gap-1 rounded-6 border border-warning px-1.5 py-0.5 text-[10px] text-pill-fg"
-      data-testid="pill-note">
+      data-testid={testId}>
       <Lamp tone="warn" size={6} />
       {text}
     </span>
@@ -335,6 +341,7 @@ export function Pill({
   waiting = false,
   locked = false,
   preview,
+  notice,
   levels = [],
   mode,
   scene,
@@ -362,7 +369,11 @@ export function Pill({
   const accentRing = state === "inserted";
   // The live caption sits above the waveform row: the capsule grows to two rows (56 px, the
   // overlay window's 64 px minus its 8 px top inset) and shrinks back once the preview is gone.
+  // A notice about the rest of the text takes the same row, after the caption or on its own.
   const caption = state === "listening" && live !== undefined ? clipLiveCaption(live) : undefined;
+  const liveNotice =
+    state === "listening" && notice !== undefined && notice.length > 0 ? notice : undefined;
+  const twoRows = caption !== undefined || liveNotice !== undefined;
   const listeningRow = (
     <>
       {locked ? (
@@ -401,7 +412,7 @@ export function Pill({
       tabIndex={-1}
       className={cx(
         "inline-flex min-w-[52px] max-w-[464px] items-center gap-2.5 rounded-pill border bg-pill-bg pr-3.5 pl-3.5 text-[13px] font-medium whitespace-nowrap text-pill-fg shadow-pill select-none",
-        caption ? "h-14" : "h-10",
+        twoRows ? "h-14" : "h-10",
         danger ? "border-danger" : accentRing ? "border-accent" : "border-pill-border",
         className,
       )}>
@@ -420,45 +431,54 @@ export function Pill({
         </span>
       )}
       {state === "listening" &&
-        (caption ? (
+        (twoRows ? (
           <span className="flex min-w-0 flex-col gap-1">
-            <span
-              className="flex items-center gap-1.5 text-[12px] leading-4"
-              data-testid="pill-live"
-              data-clipped={caption.clipped ? "true" : undefined}>
-              {/* End-aligned inside a clipped box: when 40 CJK characters are wider than the
-                  window, the *start* of the line is what gets cut, so the words being spoken stay
-                  on screen (a plain `truncate` would hide the tail instead). */}
-              <span className="flex min-w-0 max-w-[400px] justify-end overflow-hidden">
-                <span className="shrink-0 whitespace-nowrap">
-                  {caption.injected !== undefined && caption.injected.length > 0 && (
-                    <span
-                      className="text-pill-muted opacity-60"
-                      data-testid="pill-live-injected"
-                      title={t("ui.pill.injectedTitle")}>
-                      {caption.injected}
-                    </span>
-                  )}
-                  <span data-testid="pill-live-committed">
-                    {liveTextGap(caption.injected ?? "", caption.committed)}
-                    {caption.committed}
-                  </span>
-                  {caption.current.length > 0 && (
-                    <span className="text-pill-muted" data-testid="pill-live-current">
-                      {liveTextGap(
-                        `${caption.injected ?? ""}${caption.committed}`,
-                        caption.current,
+            <span className="flex min-w-0 items-center gap-1.5">
+              {caption && (
+                <span
+                  className="flex min-w-0 items-center gap-1.5 text-[12px] leading-4"
+                  data-testid="pill-live"
+                  data-clipped={caption.clipped ? "true" : undefined}>
+                  {/* End-aligned inside a clipped box: when 40 CJK characters are wider than the
+                      window, the *start* of the line is what gets cut, so the words being spoken
+                      stay on screen (a plain `truncate` would hide the tail instead). */}
+                  <span className="flex min-w-0 max-w-[400px] justify-end overflow-hidden">
+                    <span className="shrink-0 whitespace-nowrap">
+                      {caption.injected !== undefined && caption.injected.length > 0 && (
+                        <span
+                          className="text-pill-muted opacity-60"
+                          data-testid="pill-live-injected"
+                          title={t("ui.pill.injectedTitle")}>
+                          {caption.injected}
+                        </span>
                       )}
-                      {caption.current}
+                      <span data-testid="pill-live-committed">
+                        {liveTextGap(caption.injected ?? "", caption.committed)}
+                        {caption.committed}
+                      </span>
+                      {caption.current.length > 0 && (
+                        <span className="text-pill-muted" data-testid="pill-live-current">
+                          {liveTextGap(
+                            `${caption.injected ?? ""}${caption.committed}`,
+                            caption.current,
+                          )}
+                          {caption.current}
+                        </span>
+                      )}
+                    </span>
+                  </span>
+                  {/* A notice takes the tag's place: in English the two together leave no room
+                      for the words. */}
+                  {liveNotice === undefined && (
+                    <span
+                      className="mono shrink-0 rounded-6 bg-inset px-1.5 py-0.5 text-[10px] text-fg-subtle"
+                      data-testid="pill-live-tag">
+                      {caption.tag ?? t("ui.pill.livePreview")}
                     </span>
                   )}
                 </span>
-              </span>
-              <span
-                className="mono shrink-0 rounded-6 bg-inset px-1.5 py-0.5 text-[10px] text-fg-subtle"
-                data-testid="pill-live-tag">
-                {caption.tag ?? t("ui.pill.livePreview")}
-              </span>
+              )}
+              <NoteTag text={liveNotice} testId="pill-live-notice" />
             </span>
             <span className="flex items-center gap-2.5">{listeningRow}</span>
           </span>

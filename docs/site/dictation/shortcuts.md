@@ -54,19 +54,24 @@ These can still cover the overlay:
 
 The words the overlay shows while you record come from the provider's real-time recognition or from the local model on this computer, and a tag names where they come from, such as **Preview · Doubao Speech**, **Preview · Built-in** or **Preview · Local model**. They are a preview only; the final text follows the [output mode](/dictation/output#output-modes).
 
+Two notices can appear above the waveform while you record:
+
+- **Live transcription stopped · the rest is added when you release**: with **While you speak** or **Type as you speak**, recognition while you speak stopped, for example because the connection dropped. When you release, Voltip completes the text by recognising the recording as a whole (with **Type as you speak**, only the part not typed yet); the home page says so too. With **Provider's live text** off, the built-in service or the realtime model still recognises the dictation: when that stops, the overlay shows this notice too, and the local model's words on the overlay stop changing; when only the local model's preview stops, the result is not affected and the overlay shows no notice. With **All at once** (except on a realtime model, where it runs as **While you speak**), a stopped preview does not change the result, and the overlay shows no notice.
+- **Window changed · the rest is copied when you release**: with **Type as you speak**, another window came to the front, so the next sentences are not typed; they are copied when you release. See [Switching windows while it processes](/dictation/output#switching-windows-while-it-processes).
+
 <ScreenFigure src="/screens/overlay-live-en-light.webp" dark="/screens/overlay-live-en-dark.webp" width="1376" height="178"
   alt="The overlay while recording: the top line shows the words being spoken, Pull this logic out into a helper, followed by the tag Preview · Built-in; the bottom line shows the waveform, the timer, Microphone, Cloud and Esc Cancel."
   caption="With the built-in service, the overlay's tag reads Preview · Built-in." />
 
 **Live preview** on the Recognition tab of the **Speech models** page has two switches, both on by default:
 
-- **Provider's live text**: shows the built-in service's preview and a realtime model's words. With it off, the overlay shows none of them: a realtime model still recognises while you speak, with the same result and speed, and the built-in service sends no preview requests.
-- **Local model preview**: when the provider gives no live text, or **Provider's live text** is off, the live transcription model on this computer shows the words; download it first (169 MB, see [Local recognition](/recognition/local)).
+- **Provider's live text**: shows the built-in service's preview and a realtime model's words. With it off, the overlay shows none of them, and the text you get stays the same: a realtime model still recognises while you speak, at the same speed; the built-in service sends no preview requests, and with **While you speak** or **Type as you speak** it still recognises each sentence once you finish it.
+- **Local model preview**: when the provider gives no live text, or **Provider's live text** is off, the Live preview model on this computer shows the words; download it first (169 MB, see [Local recognition](/recognition/local)).
 
 With both on, the provider's words are shown. The status line of **Live preview** names the source in use.
 
 <ScreenFigure src="/screens/live-preview-en-light.webp" width="1440" height="900"
-  alt="Live preview on the Recognition tab of the Speech models page: the status line reads In use · Built-in service, with the Provider's live text and Local model preview switches and the live transcription model's card below."
+  alt="Live preview on the Recognition tab of the Speech models page: the status line reads In use · Built-in service, with the Provider's live text and Local model preview switches and the Live preview model's card below."
   caption="Live preview under Speech models → Recognition, with the built-in service." />
 
 ## Cancelling

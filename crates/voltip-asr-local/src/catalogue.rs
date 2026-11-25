@@ -309,7 +309,7 @@ pub const CATALOGUE: &[ModelEntry] = &[
         tier: Tier::Streaming,
         capabilities: STREAMING,
         languages: &["zh", "en"],
-        description: "边说边出字的预览模型（Zipformer 流式，中英混读，自带标点）；最终文本仍由所选引擎识别；169 MB",
+        description: "边说边出字的预览模型（Zipformer 流式，中英混读，自带标点）；使用内置服务、实时识别模型或「整段输出」时只用于显示；169 MB",
         recommended: false,
         repo: "csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05",
         // The Hugging Face repository is gone (huggingface.co answers 401, checked 2026-10-30); the

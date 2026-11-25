@@ -446,6 +446,7 @@ mod tests {
             clipboard_code: None,
             check: None,
             timing: None,
+            rest: None,
         };
         assert_eq!(take_state_for(&done), Some(TakeState::Done { text: "你好".into(), pasted: false }));
         let silent = DictationPhase::Failed { code: FailureCode::NoSpeech, message: "没有听到声音".into(), text: None };

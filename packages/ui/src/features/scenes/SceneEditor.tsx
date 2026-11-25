@@ -10,6 +10,7 @@ import {
   hasSceneProblems,
   isStreamingOutputMode,
   normalizeAppId,
+  realtimeStreamsNow,
   sceneDraftOf,
   sceneEditorDraftFrom,
   sceneEditorProblems,
@@ -20,6 +21,8 @@ import {
   scenePromptChars,
   sceneRefineChoices,
   sceneScriptChoices,
+  standInTakesWhole,
+  standsInForBuiltIn,
 } from "@voltip/shared";
 import { type KeyboardEvent, useEffect, useId, useState } from "react";
 import { useBackend, useUiState } from "../../backend/BackendProvider";
@@ -188,8 +191,23 @@ export function SceneEditor({
       },
     });
   };
+  // docs/dictation.md §12, §18.4: what the scene's output mode does with these engines — a
+  // streaming mode runs whole while nothing recognises the take as it is spoken or a fallback
+  // model taking whole recordings stands in (§3.5); 整段输出 on a realtime model runs as 边说边识别
+  // (§11.9); 边说边输入 is never polished, so the polish the scene sets, or follows, has no effect
+  // there (said when the scene sets one of the two).
+  const engines = state.engines;
   const streamingNotReady =
-    draft.outputMode !== "" && isStreamingOutputMode(draft.outputMode) && !state.engines.live_ready;
+    draft.outputMode !== "" && isStreamingOutputMode(draft.outputMode) && !engines.live_ready;
+  const streamed = draft.outputMode === "whole_take" && realtimeStreamsNow(engines);
+  const liveInject =
+    draft.outputMode === "live_inject"
+      ? engines.live_ready
+      : draft.outputMode === "" && engines.effective_output_mode === "live_inject";
+  const polishes =
+    draft.refine === "on" || (draft.refine === "" && state.settings.engines.refine_enabled);
+  const polishDropped =
+    liveInject && polishes && (draft.outputMode === "live_inject" || draft.refine === "on");
   const chars = scenePromptChars(draft.prompt);
 
   return (
@@ -410,7 +428,23 @@ export function SceneEditor({
                 />
                 {streamingNotReady && (
                   <span className="text-[12px] text-warning" data-testid="scene-streaming-note">
-                    {t("sceneEditor.streamingNotReady")}
+                    {standInTakesWhole(engines)
+                      ? t(
+                          standsInForBuiltIn(engines)
+                            ? "outputMode.fallbackBuiltIn"
+                            : "outputMode.fallbackPaused",
+                        )
+                      : t("sceneEditor.streamingNotReady")}
+                  </span>
+                )}
+                {streamed && (
+                  <span className="text-[12px] text-fg-muted" data-testid="scene-streamed-note">
+                    {t("outputMode.streamed")}
+                  </span>
+                )}
+                {polishDropped && (
+                  <span className="text-[12px] text-warning" data-testid="scene-refine-note">
+                    {t("sceneEditor.liveInjectRefine")}
                   </span>
                 )}
               </div>

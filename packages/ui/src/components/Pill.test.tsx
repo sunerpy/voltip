@@ -163,6 +163,44 @@ describe("Pill live preview (docs/dictation.md §11)", () => {
     expect(screen.queryByTestId("pill-live")).toBeNull();
   });
 
+  it("regression: while listening a notice with a warning lamp says what happens to the rest of the text, above the waveform, also before any words (docs/dictation.md §12, §14.3)", () => {
+    // The review of 边说边输入 on realtime models, 2026-11-23: after a window switch, or when the
+    // live session of a streaming take stopped, the pill went on as if nothing had happened.
+    const { rerender } = render(
+      <Pill
+        state="listening"
+        readout="00:05"
+        live={{ committed: "你好，世界。", current: "今天" }}
+        notice="窗口已切换，余下的文字松开后复制"
+      />,
+    );
+    const pill = screen.getByRole("status");
+    expect(pill).toHaveClass("h-14");
+    expect(screen.getByTestId("pill-live-notice")).toHaveTextContent(
+      "窗口已切换，余下的文字松开后复制",
+    );
+    // The words stay, the notice takes the preview tag's place (in English the two leave no room
+    // for the words), and the waveform row is unchanged.
+    expect(screen.getByTestId("pill-live")).toHaveTextContent(/^你好，世界。今天$/);
+    expect(screen.queryByTestId("pill-live-tag")).toBeNull();
+    expect(pill).toHaveTextContent("00:05");
+    // No words yet: the notice alone above the waveform.
+    rerender(<Pill state="listening" readout="00:01" notice="实时识别中断，松开后补齐其余文字" />);
+    expect(screen.getByRole("status")).toHaveClass("h-14");
+    expect(screen.queryByTestId("pill-live")).toBeNull();
+    expect(screen.getByTestId("pill-live-notice")).toHaveTextContent(
+      "实时识别中断，松开后补齐其余文字",
+    );
+    // Without one the pill is as before: the words with their tag; other states draw none.
+    rerender(<Pill state="listening" live={{ committed: "你好，世界。", current: "今天" }} />);
+    expect(screen.getByTestId("pill-live-tag")).toHaveTextContent("预览");
+    rerender(<Pill state="listening" readout="00:01" />);
+    expect(screen.getByRole("status")).toHaveClass("h-10");
+    expect(screen.queryByTestId("pill-live-notice")).toBeNull();
+    rerender(<Pill state="processing" notice="实时识别中断，松开后补齐其余文字" />);
+    expect(screen.queryByTestId("pill-live-notice")).toBeNull();
+  });
+
   it("regression: a long live caption keeps its tail — a leading ellipsis, at most 40 characters, the current sentence always visible", () => {
     const committed = "一二三四五六七八九十".repeat(4); // 40 chars
     render(<Pill state="listening" live={{ committed, current: "正在说的这句" }} />);

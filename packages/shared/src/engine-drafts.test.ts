@@ -768,4 +768,98 @@ describe("what a recognition model does with a take and the dictionary (docs/dic
       t("engines.ability.promptHelp"),
     ]);
   });
+
+  it("regression: iFlytek dictation's drawer says it settles one sentence per session, so 边说边输入 types at the release (docs/dictation.md §3.15, §12)", () => {
+    // The review of 边说边输入 on realtime models, 2026-11-23: iFlytek's 语音听写 (`iat`) settles its
+    // words only when a session ends — a pause of `vad_eos` (10 s) or 55 seconds of speech
+    // (voltip-asr iflytek.rs `VAD_EOS_MS`, `SESSION_MS`) — so 边说边输入 typed nothing until the
+    // release, and nothing said so.
+    const desktop = { previews: true, providerPreview: true, localPreview: "missing" as const };
+    expect(asrAbilityHelp("iflytek", "", "iat", desktop, t)).toEqual([
+      t("engines.ability.realtimeHelp"),
+      t("engines.ability.noGlossaryHelp"),
+      "讯飞语音听写一次只确定一句话（停顿 10 秒或说满 55 秒）：「边说边输入」要等松开后才输入。",
+    ]);
+    expect(asrAbilityHelp("iflytek", "", "iat", desktop, en)[2]).toBe(
+      "iFlytek dictation settles one sentence at a time (after a 10-second pause or 55 seconds of speech): “Type as you speak” types it when you release.",
+    );
+    // Its realtime transcription settles sentences as they end, and the phone types nothing.
+    expect(asrAbilityHelp("iflytek_rtasr", "", "rtasr", desktop, t)).toHaveLength(2);
+    expect(
+      asrAbilityHelp(
+        "iflytek",
+        "",
+        "iat",
+        { previews: false, providerPreview: true, localPreview: "none" },
+        t,
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("regression: in 边说边识别 and 边说边输入 the built-in service's line says it recognises each sentence, and what shows while you speak follows the switches (docs/dictation.md §3.15, §11.10)", () => {
+    // Review of the 2026-11-23 change (the built-in service writes the text of the streaming
+    // output modes whatever 服务商的实时文字 says): its drawer still said 「松开后识别整段录音」 in
+    // those modes, where each sentence goes to it once finished and only the last one after release.
+    const desktop = { previews: true, providerPreview: true, localPreview: "missing" as const };
+    const line = (shell: Parameters<typeof asrAbilityHelp>[3]) =>
+      asrAbilityHelp("builtin", "", "Qwen/Qwen3-ASR-1.7B", shell, t)[0];
+    for (const outputMode of ["streaming_final", "live_inject"] as const) {
+      expect(line({ ...desktop, outputMode })).toBe(
+        "使用「边说边识别」或「边说边输入」时，每句话说完由内置服务识别，松开后只识别最后一句；说话时由内置服务显示预览，约每 2 秒更新一次。",
+      );
+      // 服务商的实时文字 off: the built-in service still writes the text; the pill shows the Live
+      // preview model's words while it can, none otherwise.
+      expect(
+        line({ ...desktop, outputMode, providerPreview: false, localPreview: "installed" }),
+      ).toBe(
+        "使用「边说边识别」或「边说边输入」时，每句话说完由内置服务识别，松开后只识别最后一句；说话时由本机的「实时预览」模型显示预览。",
+      );
+      for (const localPreview of ["missing", "off"] as const)
+        expect(line({ ...desktop, outputMode, providerPreview: false, localPreview })).toBe(
+          "使用「边说边识别」或「边说边输入」时，每句话说完由内置服务识别，松开后只识别最后一句；说话时不显示文字。",
+        );
+    }
+    // 整段输出, and a caller that names no mode: the whole-take lines, as before.
+    expect(line({ ...desktop, outputMode: "whole_take" })).toBe(t("engines.ability.previewHelp"));
+    expect(line(desktop)).toBe(t("engines.ability.previewHelp"));
+    expect(
+      line({
+        ...desktop,
+        outputMode: "whole_take",
+        providerPreview: false,
+        localPreview: "installed",
+      }),
+    ).toBe(t("engines.ability.wholeLocalHelp"));
+    // The phone shows no preview, so its built-in service recognises the whole recording.
+    expect(
+      line({
+        previews: false,
+        providerPreview: true,
+        localPreview: "none",
+        outputMode: "streaming_final",
+      }),
+    ).toBe(t("engines.ability.wholeHelp"));
+    // The terms line does not change with the mode.
+    expect(
+      asrAbilityHelp(
+        "builtin",
+        "",
+        "Qwen/Qwen3-ASR-1.7B",
+        { ...desktop, outputMode: "live_inject" },
+        t,
+      )[1],
+    ).toBe(t("engines.ability.promptHelp"));
+    // The English lines name the modes as the output mode cards do.
+    expect(
+      asrAbilityHelp(
+        "builtin",
+        "",
+        "Qwen/Qwen3-ASR-1.7B",
+        { ...desktop, outputMode: "streaming_final" },
+        en,
+      )[0],
+    ).toBe(
+      "In “While you speak” and “Type as you speak”, the built-in service recognises each sentence once you finish it, so only the last one is left after you let go; it shows a preview while you speak, updated about every 2 seconds.",
+    );
+  });
 });

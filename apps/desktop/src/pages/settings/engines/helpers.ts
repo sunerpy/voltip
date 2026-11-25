@@ -175,17 +175,22 @@ export function streamingModel(models: readonly ModelState[]): ModelState | unde
 }
 
 /** What the 实时预览 block says (docs/dictation.md §11.10): whose words the pill shows (`showing`,
- *  with the service standing in when one does, §3.5); nothing shown while a realtime model still
- *  recognises the take (`hidden`: the provider's words are off); nothing while a fallback model
- *  taking whole recordings stands in for the realtime model (`paused`); 本地模型预览 waiting for its
- *  model (`missing`); or off. */
+ *  with the service standing in when one does, §3.5); nothing shown while a realtime model or the
+ *  built-in service in a streaming mode still recognises the take (`hidden`: the provider's words
+ *  are off); nothing while a fallback model taking whole recordings stands in for the realtime
+ *  model, or any fallback model for the built-in service (`paused`, `builtIn` saying which, except
+ *  for the built-in service in 整段输出 with its words off, which previews nothing anyway);
+ *  本地模型预览 waiting for its model (`missing`); or off. */
 export type LivePreviewState =
   | { kind: "showing"; source: LiveSource; provider?: ProviderId }
-  | { kind: "hidden" | "paused" | "missing" | "off" };
+  | { kind: "paused"; builtIn?: true }
+  | { kind: "hidden" | "missing" | "off" };
 
 export function livePreviewState(
-  settings: Pick<EngineSettings, "local_preview">,
-  status: Pick<EngineStatus, "live_ready" | "live_source" | "preview_source" | "preview_provider">,
+  settings: Pick<EngineSettings, "local_preview"> &
+    Partial<Pick<EngineSettings, "provider_preview" | "output_mode">>,
+  status: Pick<EngineStatus, "live_ready" | "live_source" | "preview_source" | "preview_provider"> &
+    Partial<Pick<EngineStatus, "asr_provider">>,
 ): LivePreviewState {
   if (status.preview_source !== undefined)
     return {
@@ -193,12 +198,25 @@ export function livePreviewState(
       source: status.preview_source,
       ...(status.preview_provider === undefined ? {} : { provider: status.preview_provider }),
     };
-  // §3.5: the realtime model ran out and a model taking whole recordings only stands in for it;
-  // downloading a model would not help.
-  if (status.live_source === "stream" && !status.live_ready) return { kind: "paused" };
+  // §3.5: the realtime model ran out and a model taking whole recordings only stands in for it,
+  // or a fallback model stands in for the built-in service (2026-11-24); downloading a model would
+  // not help. The built-in service in 整段输出 with its words off previews nothing anyway: the
+  // switches say why (the review of 2026-11-24).
+  const builtIn = status.live_source === "cloud";
+  const idle =
+    builtIn && settings.output_mode === "whole_take" && settings.provider_preview === false;
+  if ((status.live_source === "stream" || builtIn) && !status.live_ready) {
+    if (!idle)
+      return status.asr_provider === "builtin"
+        ? { kind: "paused", builtIn: true }
+        : { kind: "paused" };
+    return { kind: settings.local_preview ? "missing" : "off" };
+  }
   // Nothing shows although 本地模型预览 is on: its model is not downloaded.
   if (settings.local_preview) return { kind: "missing" };
-  return { kind: status.live_source === "stream" ? "hidden" : "off" };
+  // A realtime model, or the built-in service writing a streaming take, recognises unseen.
+  const unseen = status.live_source === "stream" || status.live_source === "cloud";
+  return { kind: unseen ? "hidden" : "off" };
 }
 
 /** The 实时预览 status line's text for `state`. */
@@ -211,7 +229,9 @@ export function livePreviewStateText(
     ? t("engines.livePreview.state.showing", {
         source: previewSourceName(state.source, state.provider, locale),
       })
-    : t(`engines.livePreview.state.${state.kind}`);
+    : state.kind === "paused" && state.builtIn
+      ? t("engines.livePreview.state.pausedBuiltIn")
+      : t(`engines.livePreview.state.${state.kind}`);
 }
 
 /** `Settings.engines` after picking a local model: on-device recognition with that model. */

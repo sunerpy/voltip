@@ -827,6 +827,37 @@ mod tests {
         assert!((i32::from(middle) + 16_384).abs() <= 2, "{middle}");
     }
 
+    /// The live tap ends where the take ends: once the recorder stops, the tap has carried as many
+    /// 16 kHz samples as the recording has. Regression, 2026-11-23 (the 边说边识别 takes on
+    /// windows-local lost their last words; the investigation of the tail found this besides the
+    /// streaming model's own padding): the tap's resampler kept the input that did not fill a step
+    /// and its filter's look-ahead, up to 127 samples (8 ms) from a 48 kHz device, and dropped them
+    /// with the producer instead of flushing them into the tap.
+    #[test]
+    fn regression_the_live_tap_ends_where_the_take_ends() {
+        let backend = FakeBackend::new().with_signal(Signal::Sine { frequency_hz: 1000.0, amplitude: 0.5 });
+        // A ring for the longest take (the fake runs about ten times faster than real time): the
+        // tap is read only after the stop, however late a busy machine gets to it.
+        let tap = LiveTapConfig { buffer_ms: 130_000, ..LiveTapConfig::default() };
+        let config = RecorderConfig { live_tap: Some(tap), ..RecorderConfig::default() };
+        let recorder = Recorder::start_with_ready(&backend, config, |_| {}, || {}).unwrap();
+        let mut tap = recorder.live_consumer().expect("the tap was requested");
+        wait_until(|| recorder.elapsed() >= Duration::from_millis(500));
+        let recording = recorder.stop().unwrap();
+        assert!(tap.is_closed(), "stop drops the producer");
+        let mut live = Vec::new();
+        let mut buf = vec![0.0_f32; 4096];
+        loop {
+            let n = tap.read(&mut buf);
+            if n == 0 {
+                break;
+            }
+            live.extend_from_slice(&buf[..n]);
+        }
+        assert!(!tap.overrun());
+        assert_eq!(live.len(), recording.samples.len(), "the tap carries the whole take");
+    }
+
     /// The live tap (docs/dictation.md §11): `on_ready` fires with the first samples, the consumer
     /// is handed out once, it carries the same audio as the take at 16 kHz mono, and it closes when
     /// the recorder stops. No tap requested → no consumer, and `on_ready` still fires.

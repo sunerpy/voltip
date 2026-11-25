@@ -6,7 +6,8 @@
 //! and that answer is final for it (`Endpoint`). This is the way Qwen3-ASR's own streaming works
 //! (the audio so far goes in again), driven from the client against the endpoint every take
 //! already uses. Measured 2026-10-02 against the built-in service: 1.2–2.5 s per answer for 2–8 s
-//! of audio.
+//! of audio. Without the preview ([`RedecodeStreaming::previewing`], 服务商的实时文字 off, §11.10)
+//! only the closed sentences and, at the end, the last one go out: a streaming take's text.
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -31,7 +32,9 @@ const PAUSING: Duration = Duration::from_millis(200);
 pub struct RedecodeParams {
     /// New audio in the sentence before it is decoded again.
     pub step: Duration,
-    /// Silence after speech that closes the sentence.
+    /// Silence after speech that closes the sentence. 1.2 s since 2026-11-23 (0.8 s before): a
+    /// thinking pause cut dictated sentences in two, each half recognised without the other; the
+    /// last sentence goes out at the release anyway, so the wait after it stays the same.
     pub pause: Duration,
     /// A sentence this long is closed even without a pause, so no request grows without end.
     pub longest: Duration,
@@ -47,7 +50,7 @@ impl Default for RedecodeParams {
     fn default() -> Self {
         Self {
             step: Duration::from_secs(1),
-            pause: Duration::from_millis(800),
+            pause: Duration::from_millis(1200),
             longest: Duration::from_secs(20),
             pre_roll: Duration::from_millis(300),
             silence_rms: 0.01,
@@ -76,6 +79,7 @@ pub struct RedecodeStreaming {
     glossary: Arc<Vec<String>>,
     params: RedecodeParams,
     flush: bool,
+    previews: bool,
     origin: Option<UsageOrigin>,
 }
 
@@ -85,6 +89,7 @@ impl std::fmt::Debug for RedecodeStreaming {
             .field("params", &self.params)
             .field("glossary", &self.glossary.len())
             .field("flush", &self.flush)
+            .field("previews", &self.previews)
             .finish_non_exhaustive()
     }
 }
@@ -97,7 +102,7 @@ impl RedecodeStreaming {
 
     /// [`RedecodeStreaming::new`] with other timings (tests).
     pub fn with_params(transcriber: Arc<dyn Transcriber>, glossary: Vec<String>, params: RedecodeParams) -> Self {
-        Self { transcriber, glossary: Arc::new(glossary), params, flush: true, origin: None }
+        Self { transcriber, glossary: Arc::new(glossary), params, flush: true, previews: true, origin: None }
     }
 
     /// Where the take comes from, for the usage record (docs/dictation.md §27).
@@ -114,6 +119,14 @@ impl RedecodeStreaming {
         self
     }
 
+    /// Whether the growing sentence is decoded again for the pill (on by default). Off when the
+    /// pill does not show the service's words (服务商的实时文字 off, docs/dictation.md §11.10):
+    /// only the closed sentences and, at the end, the last one are sent, the streaming modes' text.
+    pub fn previewing(mut self, previews: bool) -> Self {
+        self.previews = previews;
+        self
+    }
+
     fn session(&self, rt: tokio::runtime::Handle, language: Option<&str>) -> RedecodeSession {
         RedecodeSession {
             rt,
@@ -122,6 +135,7 @@ impl RedecodeStreaming {
             language: language.map(str::to_owned),
             params: self.params,
             flush: self.flush,
+            previews: self.previews,
             origin: self.origin.clone(),
             fed: 0,
             frame_energy: 0.0,
@@ -191,6 +205,8 @@ struct RedecodeSession {
     language: Option<String>,
     params: RedecodeParams,
     flush: bool,
+    /// [`RedecodeStreaming::previewing`].
+    previews: bool,
     origin: Option<UsageOrigin>,
     /// Stream samples so far.
     fed: usize,
@@ -257,6 +273,9 @@ impl RedecodeSession {
         }
         if let Some((job, wav)) = self.closing.pop_front() {
             self.send(job, wav);
+            return;
+        }
+        if !self.previews {
             return;
         }
         let s = &mut self.current;
@@ -495,7 +514,7 @@ mod tests {
                 let mut s = streaming.session(tokio::runtime::Handle::current(), None);
                 let mut events = Vec::new();
                 drive(&mut s, &tone(2.5), &mut events);
-                drive(&mut s, &quiet(1.0), &mut events);
+                drive(&mut s, &quiet(1.5), &mut events);
             })
             .await;
             let close = if flush { AsrCall::take(Some(phone.clone())) } else { AsrCall::preview(Some(phone.clone())) };
@@ -531,10 +550,11 @@ mod tests {
         let (events, fin) = on_decode_thread(move || {
             let mut s = session(&t, RedecodeParams::default());
             let mut events = Vec::new();
-            // 0.5 s of silence (only the pre-roll is kept), 2.5 s of speech, 1 s of silence, 1.4 s more.
+            // 0.5 s of silence (only the pre-roll is kept), 2.5 s of speech, 1.5 s of silence (past the
+            // 1.2 s pause), 1.4 s more.
             drive(&mut s, &quiet(0.5), &mut events);
             drive(&mut s, &tone(2.5), &mut events);
-            drive(&mut s, &quiet(1.0), &mut events);
+            drive(&mut s, &quiet(1.5), &mut events);
             drive(&mut s, &tone(1.4), &mut events);
             (events, Box::new(s).finish().unwrap())
         })
@@ -565,10 +585,61 @@ mod tests {
             }
         );
         // The previews grew by a second from the pre-roll on; the close carried the sentence with
-        // its pause; the second sentence starts with the 0.2 s of silence before it.
-        assert_eq!(transcriber.durations_ms(), [1000, 2000, 3600, 1000, 1600]);
+        // its 1.2 s pause; the second sentence starts with the 0.3 s of silence before it.
+        assert_eq!(transcriber.durations_ms(), [1000, 2000, 4000, 1000, 1700]);
         assert!(transcriber.languages().iter().all(|l| l.as_deref() == Some("zh")));
         assert!(transcriber.glossaries().iter().all(|g| g == &["Voltip".to_owned()]));
+    }
+
+    /// docs/dictation.md §11.8, §11.10 (2026-11-23): with 服务商的实时文字 off the built-in service
+    /// still writes a streaming take's text, without the preview requests: only a closed sentence
+    /// and, at the end, the last one go out, each once and whole, as the take's text.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn without_previews_only_the_closed_sentences_are_sent() {
+        let transcriber = Arc::new(FakeTranscriber::numbered(0, &[], Duration::ZERO));
+        let t = transcriber.clone();
+        let (events, fin) = on_decode_thread(move || {
+            let streaming = RedecodeStreaming::with_params(t, vec!["Voltip".into()], RedecodeParams::default()).previewing(false);
+            assert!(format!("{streaming:?}").contains("previews: false"));
+            let mut s = streaming.session(tokio::runtime::Handle::current(), Some("zh"));
+            let mut events = Vec::new();
+            // The same take as the_sentence_is_decoded_again_as_it_grows_and_a_pause_closes_it.
+            drive(&mut s, &quiet(0.5), &mut events);
+            drive(&mut s, &tone(2.5), &mut events);
+            drive(&mut s, &quiet(1.5), &mut events);
+            drive(&mut s, &tone(1.4), &mut events);
+            (events, Box::new(s).finish().unwrap())
+        })
+        .await;
+        assert_eq!(events, [StreamEvent::Endpoint { text: "第1段。".into(), start_ms: 200, end_ms: 3000 }], "no preview while it was spoken");
+        assert_eq!(fin.committed, vec![Segment { text: "第1段。".into(), refined: None, start_ms: 200, end_ms: 3000 }]);
+        assert_eq!(fin.tail, "第2段。");
+        // The closed sentence with its pause, then the last one, whole; both are the take's text.
+        assert_eq!(transcriber.durations_ms(), [4000, 1700]);
+        assert_eq!(transcriber.usage_calls(), [AsrCall::take(None), AsrCall::take(None)]);
+    }
+
+    /// A thinking pause of a second does not cut the sentence any more; a pause past 1.2 s does.
+    /// Regression, 2026-11-23 (the user's request after 边说边识别 cut sentences in two at 0.8 s,
+    /// each half recognised without the other): the pause was 0.8 s.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn regression_a_one_second_pause_keeps_the_sentence_whole() {
+        assert_eq!(RedecodeParams::default().pause, Duration::from_millis(1200));
+        for (gap, closed) in [(1.0, false), (1.5, true)] {
+            let transcriber = Arc::new(FakeTranscriber::numbered(0, &[], Duration::ZERO));
+            let t = transcriber.clone();
+            let (events, fin) = on_decode_thread(move || {
+                let streaming = RedecodeStreaming::new(t, Vec::new()).previewing(false);
+                let mut s = streaming.session(tokio::runtime::Handle::current(), None);
+                let mut events = Vec::new();
+                drive(&mut s, &[tone(1.5), quiet(gap), tone(1.5)].concat(), &mut events);
+                (events, Box::new(s).finish().unwrap())
+            })
+            .await;
+            assert_eq!(!events.is_empty(), closed, "a {gap} s pause: {events:?}");
+            assert_eq!(fin.committed.len(), usize::from(closed), "a {gap} s pause: {fin:?}");
+            assert_eq!(transcriber.calls(), 1 + usize::from(closed), "a {gap} s pause");
+        }
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -580,7 +651,7 @@ mod tests {
             let mut events = Vec::new();
             // Fed far faster than the recogniser answers: the first preview is the only request
             // out until it is back, and the pause closes the sentence meanwhile.
-            for chunk in [tone(1.5), quiet(1.0)].concat().chunks(1600) {
+            for chunk in [tone(1.5), quiet(1.5)].concat().chunks(1600) {
                 s.feed(chunk);
                 if let event @ (StreamEvent::Partial { .. } | StreamEvent::Endpoint { .. } | StreamEvent::Error(_)) = s.poll() {
                     events.push(event);
@@ -603,7 +674,7 @@ mod tests {
         assert_eq!(events, [StreamEvent::Endpoint { text: "你好。".into(), start_ms: 0, end_ms: 1500 }]);
         assert_eq!(fin.committed.len(), 1);
         assert!(fin.tail.is_empty(), "nothing was said after the pause");
-        assert_eq!(transcriber.durations_ms(), [1000, 2300]);
+        assert_eq!(transcriber.durations_ms(), [1000, 2700]);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -625,7 +696,7 @@ mod tests {
         let (events, fin) = on_decode_thread(move || {
             let mut s = session(&t, RedecodeParams::default());
             let mut events = Vec::new();
-            drive(&mut s, &[tone(1.0), quiet(1.0), tone(1.0)].concat(), &mut events);
+            drive(&mut s, &[tone(1.0), quiet(1.5), tone(1.0)].concat(), &mut events);
             (events, Box::new(s).finish())
         })
         .await;

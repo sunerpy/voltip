@@ -2252,11 +2252,23 @@ impl Runtime {
         if chorded {
             let intents = self.activation.machine(purpose).chorded(phase);
             tracing::info!(purpose = purpose.as_str(), ?intents, "the trigger key became a chord");
+            if purpose == TakeKind::Dictation
+                && let Some(held) = key_hold(edge, true, false)
+            {
+                self.dictation.set_key_held(held);
+            }
             return self.apply_intents(intents, purpose, edge.source);
         }
         let intents = self.activation.machine(purpose).feed(edge, phase);
         self.arm_grace();
+        let hold = (purpose == TakeKind::Dictation).then(|| key_hold(edge, false, intents.contains(&Intent::Start))).flatten();
+        if hold == Some(false) {
+            self.dictation.set_key_held(false);
+        }
         let result = self.apply_intents(intents, purpose, edge.source);
+        if hold == Some(true) && result.is_ok() {
+            self.dictation.set_key_held(true);
+        }
         if purpose == TakeKind::Edit {
             self.edit_key_edge(edge);
         }
@@ -4068,10 +4080,41 @@ enum JoinSpec {
     Ticket(String),
 }
 
+/// What a dictation hotkey edge says about the key holding back 边说边输入's pastes
+/// (docs/dictation.md §12; on X11 the hotkey's grab takes every key event while it is down):
+/// `Some(false)` when the key is up — a release, or a chord, after which the shell reports no
+/// release; `Some(true)` when the press starts the take; `None` otherwise: a press for the next
+/// take, while this one finishes, must not hold back the end of this one (2026-11-24). Only the
+/// global hotkey has a key; a CLI or UI edge says nothing.
+fn key_hold(edge: Edge, chorded: bool, starts: bool) -> Option<bool> {
+    if edge.source != EdgeSource::Hotkey {
+        return None;
+    }
+    if chorded || !edge.pressed {
+        return Some(false);
+    }
+    starts.then_some(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use voltip_pairing::FailureReason;
+
+    /// docs/dictation.md §12: which hotkey edges hold 边说边输入's pastes back on X11. Regression,
+    /// 2026-11-24 (the review of the round): every press held them, so a press for the next take
+    /// kept the take still typing from finishing — and the next one from starting — while the key
+    /// was down; and a chord, after which the shell reports no release, left them held for good.
+    #[test]
+    fn regression_only_the_press_that_starts_a_take_holds_its_pastes_and_a_chord_lets_go() {
+        let edge = |pressed: bool, source: EdgeSource| Edge { pressed, at_ms: 0, source };
+        assert_eq!(key_hold(edge(true, EdgeSource::Hotkey), false, true), Some(true), "the press that starts the take");
+        assert_eq!(key_hold(edge(true, EdgeSource::Hotkey), false, false), None, "a press for the next take, or a toggle's stop");
+        assert_eq!(key_hold(edge(false, EdgeSource::Hotkey), false, false), Some(false), "the release");
+        assert_eq!(key_hold(edge(false, EdgeSource::Hotkey), true, false), Some(false), "a chord: no release follows");
+        assert_eq!(key_hold(edge(true, EdgeSource::Cli), false, true), None, "`voltip --toggle` holds no key");
+        assert_eq!(key_hold(edge(false, EdgeSource::Ui), false, false), None);
+    }
 
     /// A relay on an ephemeral loopback port, and a runtime on a temporary directory that uses
     /// it, built but not running: the test hands it its link events itself.

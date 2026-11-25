@@ -491,7 +491,9 @@ function phaseLabel(
             locale,
             phase.via === "paste" ? "dictation.donePaste" : "dictation.doneClipboard",
             {
-              n: phase.chars,
+              // §12, §14.3: after 边说边输入 typed sentences, only the rest was copied; the pill
+              // counts it too (`doneChars`).
+              n: phase.rest === undefined ? phase.chars : Array.from(phase.rest).length,
               via: viaLabel(phase.via, locale),
             },
           ) +
@@ -607,13 +609,29 @@ export function activationHint(
 const CJK_CHAR =
   /[\u2E80-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFFEF\u{20000}-\u{3134F}]/u;
 
-/** What goes between two spoken pieces: a space when both boundary characters are Latin (and the
- *  left one is not already whitespace), nothing at a CJK boundary or next to an empty side. */
+/** The marks `voltip_core::dictation::needs_space` reads through: the em dash, the curly quotes
+ *  and the ellipsis take the script of the character in front of them (`他说“你好”` ends in CJK). */
+const BORROWED_SCRIPT = /[\u2014\u2018-\u201F\u2026]/u;
+
+/** What goes between two spoken pieces (`needs_space`, the core's one join rule for the preview
+ *  and for what 边说边输入 types, docs/dictation.md §12): a space when both boundary characters are
+ *  non-CJK and the left one is not already whitespace; nothing at a CJK boundary or next to an
+ *  empty side. A closing quote, an ellipsis or a dash at the end of `left` counts as the character
+ *  in front of it. */
 export function liveTextGap(left: string, right: string): "" | " " {
-  const last = Array.from(left).at(-1);
+  const chars = Array.from(left);
+  const end = chars.at(-1);
   const first = Array.from(right)[0];
-  if (last === undefined || first === undefined) return "";
-  return !/\s/.test(last) && !CJK_CHAR.test(last) && !CJK_CHAR.test(first) ? " " : "";
+  if (end === undefined || first === undefined || /\s/.test(end)) return "";
+  let last = end;
+  for (let i = chars.length - 1; i >= 0; i--) {
+    const c = chars[i];
+    if (c !== undefined && !BORROWED_SCRIPT.test(c)) {
+      last = c;
+      break;
+    }
+  }
+  return !CJK_CHAR.test(last) && !CJK_CHAR.test(first) ? " " : "";
 }
 
 /** Join spoken pieces the way `LiveText::preview()` does: trimmed, Latin neighbours separated by a

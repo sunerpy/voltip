@@ -279,14 +279,15 @@ describe("Settings · 场景 (docs/dictation.md section 18)", () => {
       );
     }
     await user.selectOptions(within(overrides).getByRole("combobox", { name: "AI 润色" }), "关");
-    // A streaming mode without the streaming model runs whole takes, and the editor says so.
+    // A streaming mode without the streaming model runs whole takes, and the editor says so, in
+    // the words the settings page uses (2026-11-23: the 169 MB model is the 「实时预览」 model).
     expect(within(editor).queryByTestId("scene-streaming-note")).toBeNull();
     await user.selectOptions(
       within(overrides).getByRole("combobox", { name: "输出方式" }),
       "边说边识别",
     );
     expect(within(editor).getByTestId("scene-streaming-note")).toHaveTextContent(
-      "实时识别模型未下载时，本场景按整段输出运行",
+      "说话时没有识别结果（「实时预览」模型未下载或实时预览已关闭）时，本场景按整段输出运行",
     );
     const prompt = within(editor).getByRole("textbox", { name: "给 AI 的补充要求" });
     await user.type(prompt, "保留英文标识符");
