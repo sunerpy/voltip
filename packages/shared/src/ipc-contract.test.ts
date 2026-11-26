@@ -8,6 +8,7 @@ import { z } from "zod";
 import {
   ACTIVATIONS,
   type CommandArgs,
+  type EngineStatus,
   EDGE_SOURCES,
   type MutationCommand,
   OUTPUT_MODES,
@@ -17,6 +18,7 @@ import {
   activationSchema,
   backtestDraftSchema,
   builtinSceneSchema,
+  dictationPhaseSchema,
   dictionaryDraftSchema,
   engineSettingsSchema,
   hexKeySchema,
@@ -63,7 +65,7 @@ import {
   undoOutcomeSchema,
 } from "./schema";
 import { translate } from "./i18n";
-import { PROVIDER_CATALOGUE, resolveEngineStatus } from "./providers";
+import { type EngineResolveInput, PROVIDER_CATALOGUE, resolveEngineStatus } from "./providers";
 import { TauriBackend } from "./tauri-backend";
 
 const FIXTURES = new URL("./fixtures/ipc/", import.meta.url);
@@ -896,8 +898,13 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       "把 fetchUser 改成 async，然后加上错误",
     );
     // `done` names its mode; a streaming take carries the sentences, a degraded one the reason.
+    // The fixtures gained a 边说边输入 take after a window switch on purpose (2026-11-23, `rest`),
+    // so `live_inject` is among the modes, one more `check` is absent and one more
+    // `target_changed` is on the list below.
     const done = dictation.flatMap((p) => (p.phase === "done" ? [p] : []));
-    expect(new Set(done.map((p) => p.mode))).toEqual(new Set(["whole_take", "streaming_final"]));
+    expect(new Set(done.map((p) => p.mode))).toEqual(
+      new Set(["whole_take", "streaming_final", "live_inject"]),
+    );
     const streamed = done.find((p) => p.mode === "streaming_final");
     expect(streamed?.segments?.map((s) => s.text)).toEqual([
       "把 fetchUser 改成 async，",
@@ -917,11 +924,12 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
       undefined,
       undefined,
       undefined,
+      undefined,
     ]);
     // §14.3 and §14.9: why a requested paste left the text on the clipboard; an unknown code is
     // refused.
     expect(done.flatMap((p) => (p.clipboard_code === undefined ? [] : [p.clipboard_code]))).toEqual(
-      ["target_changed", "remote_denied", "remote_unavailable"],
+      ["target_changed", "remote_denied", "remote_unavailable", "target_changed"],
     );
     const refused = events.find((raw) =>
       JSON.stringify(raw).includes('"clipboard_code":"remote_denied"'),
@@ -979,6 +987,64 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     expect(uiEventSchema.safeParse(mutate(settingsRaw, ["hold_threshold_ms"], -5)).success).toBe(
       false,
     );
+  });
+
+  it("regression: 边说边输入's copied rest and the live text's streaming and switched flags survive parsing (docs/dictation.md §12, §14.3)", () => {
+    // The review of 边说边输入 on realtime models, 2026-11-23: after a window switch the result
+    // card pasted and copied `done.text`, the whole take, whose start was typed already; the core
+    // now sends what went to the clipboard as `rest`, and tells the pill that a take streams
+    // (`live.streaming`) and that the window changed (`live.switched`).
+    const parsed = events.flatMap((raw) => {
+      const r = uiEventSchema.safeParse(raw);
+      return r.success ? [r.data] : [];
+    });
+    const dictation = parsed.flatMap((e) => (e.type === "dictation" ? [e.phase] : []));
+    const done = dictation.flatMap((p) => (p.phase === "done" ? [p] : []));
+    const copied = done.filter((p) => p.rest !== undefined);
+    expect(copied.map((p) => [p.mode, p.clipboard_code, p.text, p.rest])).toEqual([
+      ["live_inject", "target_changed", "你好，世界。今天天气很好。", "今天天气很好。"],
+    ]);
+    // Every streaming take's live text says so; `switched` is omitted while false. A voice edit is
+    // one whole take, and its sample's live text says it does not stream: the fixtures changed on
+    // purpose in the review of 2026-11-24 (`streaming` only where the pill shows the take's text),
+    // so the dictation takes, the fixtures' streaming takes, are the ones that count here.
+    const lives = (kind: "dictation" | "edit") =>
+      parsed.flatMap((e) =>
+        e.type === "dictation" &&
+        e.kind === kind &&
+        e.phase.phase === "listening" &&
+        e.phase.live !== undefined
+          ? [e.phase.live]
+          : [],
+      );
+    const live = lives("dictation");
+    expect(live.length).toBeGreaterThan(0);
+    expect(live.every((l) => l.streaming && !l.switched)).toBe(true);
+    expect(lives("edit").map((l) => l.streaming)).toEqual([false]);
+    const flagged = dictationPhaseSchema.parse({
+      phase: "listening",
+      started_at: 1,
+      live: { committed: [], current: "", injected: 1, streaming: true, switched: true },
+    });
+    expect(
+      flagged.phase === "listening" && [flagged.live?.streaming, flagged.live?.switched],
+    ).toEqual([true, true]);
+    const older = dictationPhaseSchema.parse({
+      phase: "listening",
+      started_at: 1,
+      live: { committed: [], current: "a" },
+    });
+    expect(older.phase === "listening" && [older.live?.streaming, older.live?.switched]).toEqual([
+      false,
+      false,
+    ]);
+    const restRaw = events.find((raw) => JSON.stringify(raw).includes('"rest":'));
+    expect(uiEventSchema.safeParse(restRaw).success).toBe(true);
+    expect(uiEventSchema.safeParse(mutate(restRaw, ["phase", "rest"], 7)).success).toBe(false);
+    const streamingRaw = events.find((raw) => JSON.stringify(raw).includes('"streaming":true'));
+    expect(
+      uiEventSchema.safeParse(mutate(streamingRaw, ["phase", "live", "streaming"], "yes")).success,
+    ).toBe(false);
   });
 
   it("regression: the dictionary and rules events and the history hits and chinese_script survive parsing from the Rust fixtures", () => {
@@ -1460,7 +1526,7 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     const fixture = uiStateSchema.parse(loadFixture("state.json"));
     const local = fixture.models.find((m) => m.id === "qwen3-asr-0.6b");
     expect(local).toBeDefined();
-    const resolved = resolveEngineStatus({
+    const input: EngineResolveInput = {
       settings: fixture.settings.engines,
       userKeys: new Set(["provider-key.groq"]),
       builtIn: {
@@ -1479,7 +1545,8 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
           models: ["openai/gpt-oss-120b", "qwen/qwen3.8-27b"],
         },
       },
-    });
+    };
+    const resolved = resolveEngineStatus(input);
     // docs/dictation.md §3.5, §3.14: the core's ledger says when and why a model that ran out or
     // failed is tried again; the preview keeps none. Everything else about the fallback models is
     // resolved the same way.
@@ -1507,18 +1574,36 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     // the local model, the custom one being out after its outage. Without one the preview reports
     // the selected model's (the built-in service's prompt).
     expect(fixture.engines.glossary).toBe("not_supported");
-    // §11.10: the pill names the service whose words it shows — the model standing in, which the
-    // ledger picks (here this device's model); without one, the built-in service.
-    expect([fixture.engines.preview_source, fixture.engines.preview_provider]).toEqual([
-      "cloud",
-      "local",
-    ]);
+    // §3.5, §11.10: while a model stands in for the built-in service (the ledger picks it; here
+    // this device's model), the streaming modes run whole and the built-in service does not
+    // preview: the installed streaming model shows its words. Changed on purpose 2026-11-24 (the
+    // user's decision 「候补模型顶替时可以修改为整段识别」): the built-in service's preview went on
+    // through the chain, and the pill named the model standing in. Without a ledger the built-in
+    // service previews and is named.
+    const live = (st: EngineStatus) => [
+      st.live_ready,
+      st.live_source,
+      st.preview_source,
+      st.preview_provider,
+      st.effective_output_mode,
+    ];
+    expect(live(fixture.engines)).toEqual([false, "local", "local", undefined, "whole_take"]);
     expect(resolved).toEqual({
       ...fixture.engines,
       asr_fallback: withoutLedger,
       glossary: "prompt",
+      live_ready: true,
+      live_source: "cloud",
+      preview_source: "cloud",
       preview_provider: "builtin",
     });
+    // With the built-in service's quota marked used up, the preview resolves the same live fields
+    // as the core: which fallback model stands in does not change them.
+    const standingIn = resolveEngineStatus({
+      ...input,
+      quotaOut: { asr: sample?.selected_retry_at_ms ?? 0 },
+    });
+    expect(live(standingIn)).toEqual(live(fixture.engines));
     expect(resolved.asr_fallback?.models.map((m) => m.skip ?? m.issue ?? "ready")).toEqual([
       "ready",
       "same_as_selected",

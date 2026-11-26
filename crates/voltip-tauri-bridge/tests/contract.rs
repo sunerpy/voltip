@@ -516,7 +516,8 @@ fn done_phase() -> DictationPhase {
         clipboard_code: None,
         // docs/dictation.md §28: the insert check saw the text at the caret.
         check: Some(InsertCheck::Written),
-        timing: Some(take_timing()),
+        timing: Some(Box::new(take_timing())),
+        rest: None,
     }
 }
 
@@ -540,6 +541,7 @@ fn streamed_done_phase() -> DictationPhase {
         clipboard_code: None,
         check: None,
         timing: None,
+        rest: None,
     }
 }
 
@@ -565,6 +567,7 @@ fn fallen_back_done_phase() -> DictationPhase {
                 clipboard_code: None,
                 check: None,
                 timing: None,
+                rest: None,
             }
         }
         other => other,
@@ -1095,7 +1098,7 @@ fn models_installed_and_downloading() -> Vec<ModelState> {
             capabilities: vec![CAPABILITY_STREAMING.to_owned()],
             languages: ["zh", "en"].map(String::from).to_vec(),
             size_bytes: STREAMING_BYTES,
-            description: "边说边出字的预览模型（Zipformer 流式，中英混读，自带标点）；最终文本仍由所选引擎识别；169 MB".into(),
+            description: "边说边出字的预览模型（Zipformer 流式，中英混读，自带标点）；使用内置服务、实时识别模型或「整段输出」时只用于显示；169 MB".into(),
             recommended: false,
             repo: "csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05".into(),
             dir: format!("{MODELS_DIR}\\{STREAMING_ID}"),
@@ -1176,6 +1179,9 @@ fn live_text() -> LiveText {
         // docs/dictation.md §11.10: the library's model shows these words.
         source: Some(LiveSource::Local),
         provider: None,
+        // §12: a streaming take's live text (its notices on the pill); no window switch yet.
+        streaming: true,
+        switched: false,
     }
 }
 
@@ -1187,13 +1193,26 @@ fn engine_status() -> EngineStatus {
     let resolved = ResolvedEngines::resolve_with_models(&engine_settings(), &user_keys(), &BUILT, &models_installed_and_downloading());
     // docs/dictation.md §3.5: the built-in recognition ran out of quota at the sample's time, so it
     // is tried again a day later; §3.14: the first fallback model failed and is skipped for a
-    // minute, so the model of this device is in use.
+    // minute, so the model of this device is in use. While it stands in, the streaming modes run
+    // whole and the built-in service does not preview (2026-11-24): the Live preview model shows
+    // its words.
     let ledger = voltip_core::dictation::QuotaLedger::with_clock(|| AT_MS);
     ledger.mark(resolved.asr_fallback.selected.as_ref().expect("the sample's fallback models run"), voltip_core::dictation::SwitchReason::Quota);
     let custom = resolved.asr_fallback.targets().find(|t| t.provider == ProviderId::Custom).expect("the custom fallback model is ready");
     ledger.mark(&custom.key, voltip_core::dictation::SwitchReason::Outage);
     let mut status = resolved.status_with(&ledger);
     // docs/dictation.md §3.3: the models Groq listed for its saved key.
+    let groq = status.providers.iter_mut().find(|p| p.id == ProviderId::Groq).and_then(|p| p.llm.as_mut()).expect("Groq offers clean-up");
+    groq.listed = vec!["openai/gpt-oss-120b".into(), "qwen/qwen3.8-27b".into()];
+    status
+}
+
+/// [`engine_status`] without the ledger's marks: the built-in service has its day, so it previews
+/// and writes the text of the streaming modes; the engines events derived from it are states the
+/// core resolves (the review of 2026-11-24: on the marked status they were not).
+fn engine_status_unmarked() -> EngineStatus {
+    let resolved = ResolvedEngines::resolve_with_models(&engine_settings(), &user_keys(), &BUILT, &models_installed_and_downloading());
+    let mut status = resolved.status();
     let groq = status.providers.iter_mut().find(|p| p.id == ProviderId::Groq).and_then(|p| p.llm.as_mut()).expect("Groq offers clean-up");
     groq.listed = vec!["openai/gpt-oss-120b".into(), "qwen/qwen3.8-27b".into()];
     status
@@ -1949,6 +1968,7 @@ fn all_events() -> Vec<UiEvent> {
                 clipboard_code: Some(ClipboardCode::TargetChanged),
                 check: None,
                 timing: None,
+                rest: None,
             },
             session: 8,
             context: None,
@@ -1980,6 +2000,7 @@ fn all_events() -> Vec<UiEvent> {
                 clipboard_code: Some(ClipboardCode::RemoteDenied),
                 check: None,
                 timing: None,
+                rest: None,
             },
             session: 8,
             context: None,
@@ -2010,6 +2031,7 @@ fn all_events() -> Vec<UiEvent> {
                 clipboard_code: None,
                 check: Some(InsertCheck::NotWritten),
                 timing: None,
+                rest: None,
             },
             session: 9,
             context: None,
@@ -2171,7 +2193,7 @@ fn all_events() -> Vec<UiEvent> {
         }]),
         history_event(Vec::new()),
         UiEvent::Engines(engine_status()),
-        UiEvent::Engines(EngineStatus { live_ready: false, live_source: None, preview_source: None, preview_provider: None, ..engine_status() }),
+        UiEvent::Engines(EngineStatus { live_ready: false, live_source: None, preview_source: None, preview_provider: None, ..engine_status_unmarked() }),
         // docs/dictation.md §11.10: a realtime model recognises while its words are hidden, and the
         // local model shows its own.
         UiEvent::Engines(EngineStatus {
@@ -2179,10 +2201,11 @@ fn all_events() -> Vec<UiEvent> {
             preview_source: Some(LiveSource::Local),
             preview_provider: None,
             effective_output_mode: OutputMode::StreamingFinal,
-            ..engine_status()
+            ..engine_status_unmarked()
         }),
-        // A streaming output mode in effect (§12): the preview is ready and the setting asks for it.
-        UiEvent::Engines(EngineStatus { effective_output_mode: OutputMode::LiveInject, ..engine_status() }),
+        // A streaming output mode in effect (§12): the built-in service recognises the take sentence
+        // by sentence and the pill shows its words, naming it.
+        UiEvent::Engines(EngineStatus { effective_output_mode: OutputMode::LiveInject, ..engine_status_unmarked() }),
         UiEvent::Engines(EngineStatus::default()),
         // Local mode: `asr_host` reads `local`, the token is absent, readiness comes from the library.
         UiEvent::Engines(local_engine_status(true)),
@@ -2340,7 +2363,8 @@ fn all_events() -> Vec<UiEvent> {
             phase: DictationPhase::Listening {
                 started_at: AT_MS + 180,
                 ready: true,
-                live: Some(LiveText { committed: Vec::new(), current: EDIT_INSTRUCTION.into(), ..live_text() }),
+                // A voice edit is always a whole take: its live text is a preview.
+                live: Some(LiveText { committed: Vec::new(), current: EDIT_INSTRUCTION.into(), streaming: false, ..live_text() }),
                 locked: false,
             },
             session: 20,
@@ -2388,6 +2412,7 @@ fn all_events() -> Vec<UiEvent> {
                 clipboard_code: None,
                 check: None,
                 timing: None,
+                rest: None,
             },
             session: 20,
             context: Some(TakeContext { app: AppRef { id: "slack".into(), name: "Slack".into() }, scene: None }),
@@ -2490,8 +2515,41 @@ fn all_events() -> Vec<UiEvent> {
                 clipboard_code: Some(ClipboardCode::RemoteUnavailable),
                 check: None,
                 timing: None,
+                rest: None,
             },
             session: 26,
+            context: None,
+            kind: TakeKind::Dictation,
+            remote: None,
+            preset: None,
+            source: None,
+            segments: None,
+            recording: None,
+            retake: false,
+        }),
+        // docs/dictation.md §12, §14.3: 边说边输入 typed the first sentence, then another window came
+        // to the front; the rest was copied, and the card offers only that (`rest`).
+        UiEvent::Dictation(DictationStatus {
+            phase: DictationPhase::Done {
+                text: "你好，世界。今天天气很好。".into(),
+                raw_text: "你好，世界。今天天气很好。".into(),
+                chars: "你好，世界。今天天气很好。".chars().count(),
+                via: Via::Clipboard,
+                refined: false,
+                duration_ms: 3200,
+                asr_ms: 120,
+                refine_ms: None,
+                refine_failure: None,
+                refine_error: None,
+                mode: OutputMode::LiveInject,
+                segments: None,
+                live_error: None,
+                clipboard_code: Some(ClipboardCode::TargetChanged),
+                check: None,
+                timing: None,
+                rest: Some("今天天气很好。".into()),
+            },
+            session: 8,
             context: None,
             kind: TakeKind::Dictation,
             remote: None,
@@ -3073,12 +3131,15 @@ fn state_fixture_matches_serde_output() {
     assert_eq!(json["update"]["state"], "available");
     assert_eq!(json["settings"]["engines"]["asr_provider"], "builtin");
     assert_eq!(json["engines"]["local_ready"], false);
-    assert_eq!(json["engines"]["live_ready"], true, "remote ASR with the streaming model installed previews");
-    // docs/dictation.md §11.10: both switches on, the built-in service's preview comes first; with
-    // the sample's ledger (§3.5, §3.14) this device's model stands in, and the status names it.
+    // docs/dictation.md §3.5, §11.10: with the sample's ledger (§3.14) this device's model stands
+    // in for the built-in service, so the streaming modes run whole and the built-in service does
+    // not preview (2026-11-24, the user's decision); the installed streaming model shows its words.
+    // Before, the built-in service's preview went on through the chain and named the stand-in;
+    // changed on purpose, `preview_provider` stays on the wire in the events fixture.
+    assert_eq!(json["engines"]["live_ready"], false, "a fallback model standing in for the built-in service pauses the streaming modes");
     assert_eq!(
-        (json["engines"]["live_source"].as_str(), json["engines"]["preview_source"].as_str(), json["engines"]["preview_provider"].as_str()),
-        (Some("cloud"), Some("cloud"), Some("local"))
+        (json["engines"]["live_source"].as_str(), json["engines"]["preview_source"].as_str(), json["engines"].get("preview_provider")),
+        (Some("local"), Some("local"), None)
     );
     assert_eq!((json["settings"]["engines"]["provider_preview"].as_bool(), json["settings"]["engines"]["local_preview"].as_bool()), (Some(true), Some(true)));
     assert!(json["settings"]["engines"].get("live_preview").is_none(), "the single switch is not written any more");
@@ -3210,7 +3271,10 @@ fn events_fixture_covers_every_variant_and_matches_serde_output() {
         events.iter().filter_map(|e| if let UiEvent::Dictation(s) = e { Some(serde_json::to_value(s).unwrap()["phase"].clone()) } else { None }).collect();
     assert!(phases.iter().any(|p| p["phase"] == "processing" && p["stage"] == "finalizing"), "{phases:?}");
     let dones: Vec<&Value> = phases.iter().filter(|p| p["phase"] == "done").collect();
-    assert_eq!(dones.len(), 8);
+    assert_eq!(dones.len(), 9);
+    // §12, §14.3 (2026-11-23): 边说边输入 after a window switch carries what was copied; others omit it.
+    assert_eq!(dones.iter().filter(|d| d.get("rest").is_some()).count(), 1);
+    assert!(dones.iter().any(|d| d["mode"] == "live_inject" && d["rest"] == "今天天气很好。"), "{dones:?}");
     assert_eq!(dones[0]["mode"], "whole_take");
     assert!(dones[0].get("segments").is_none() && dones[0].get("live_error").is_none(), "None is omitted: {}", dones[0]);
     // docs/dictation.md §28: the insert check rides on `done`, and an unchecked take omits it.

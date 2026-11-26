@@ -484,13 +484,14 @@ export const en: Messages = {
       live_inject:
         "Each sentence is typed into the current window once it settles. Polish is not available in this mode, and cancelling does not remove text already typed.",
     },
-    fallback: "Live transcription model not downloaded · running as All at once",
+    fallback: "Live preview model not downloaded · running as All at once",
     fallbackPaused:
       "The fallback model in use does not transcribe in real time · running as All at once",
+    fallbackBuiltIn: "A fallback model stands in for the built-in service · running as All at once",
     fallbackOff: "Live preview is off · running as All at once",
     previewOff: "Live preview off",
     streamed:
-      "The selected model is a realtime model: it transcribes while you speak, so takes run as “While you speak”, and the text is still inserted once on release.",
+      "The selected model is a realtime model: it transcribes while you speak, as in “While you speak”; while a fallback model that only takes whole recordings is in use, takes run as “All at once”.",
     effective: "In effect",
     liveError: "Live transcription stopped; the whole recording was transcribed instead: {reason}",
   },
@@ -704,6 +705,8 @@ export const en: Messages = {
       privacyText: " · text goes to {target}",
       livePreview: "Live preview",
       liveDegraded: "Live preview stopped · the final text is unaffected",
+      liveDegradedStreaming:
+        "Live transcription stopped · the rest is transcribed all at once after you release",
     },
     session: {
       saved: "Time saved",
@@ -1745,10 +1748,18 @@ export const en: Messages = {
         "Recognises the whole recording after you let go; to see words while you speak, turn on “Local model preview” under Live preview in Recognition and download its model.",
       wholeLocalHelp:
         "Recognises the whole recording after you let go; the Live preview model on this computer shows a preview while you speak.",
+      streamingPreviewHelp:
+        "In “While you speak” and “Type as you speak”, the built-in service recognises each sentence once you finish it, so only the last one is left after you let go; it shows a preview while you speak, updated about every 2 seconds.",
+      streamingLocalHelp:
+        "In “While you speak” and “Type as you speak”, the built-in service recognises each sentence once you finish it, so only the last one is left after you let go; the Live preview model on this computer shows a preview while you speak.",
+      streamingHiddenHelp:
+        "In “While you speak” and “Type as you speak”, the built-in service recognises each sentence once you finish it, so only the last one is left after you let go; no words are shown while you speak.",
       hotwordsHelp: "The dictionary's terms go to the service as hot words.",
       promptHelp: "The dictionary's terms go to the service as a prompt.",
       noGlossaryHelp:
         "This service takes no terms: the dictionary corrects the text after recognition, and AI polish gets the terms when it is on.",
+      iflytekSentenceHelp:
+        "iFlytek dictation settles one sentence at a time (after a 10-second pause or 55 seconds of speech): “Type as you speak” types it when you release.",
     },
     field: {
       model: "Model",
@@ -2042,22 +2053,23 @@ export const en: Messages = {
       note: "While you hold the shortcut, the overlay shows the words as you speak, with a tag saying where they come from. With both switches on, the provider's words come first; the local model is used only when the provider gives none.",
       provider: "Provider's live text",
       providerHelp:
-        "With the built-in service, the preview updates about every 2 seconds and the whole recording is still transcribed on release; with a realtime model (such as Model Studio's qwen-audio-3.1-asr-flash-streaming) the words are transcribed as you speak and release only finishes the last sentence. Off, these words are not shown: a realtime model still transcribes as you speak, with the same result and speed, and the built-in service sends no preview requests.",
+        "With the built-in service, the preview updates about every 2 seconds; with a realtime model (such as Model Studio's qwen-audio-3.1-asr-flash-streaming) the words are transcribed as you speak and release only finishes the last sentence. Off, these words are not shown and the result does not change: a realtime model still transcribes as you speak, and the built-in service sends no preview requests but still transcribes each sentence in “While you speak” and “Type as you speak”.",
       local: "Local model preview",
       localHelp:
-        "When the provider gives no live text, the Live preview model below transcribes on this computer and shows the words; download it first. The preview does not change the final text.",
+        "When the provider gives no live text, or “Provider's live text” is off, the Live preview model below transcribes on this computer and shows the words; download it first. With the built-in service or a realtime model, it is only shown and does not change the final text.",
       localModel: "Local model",
       state: {
         showing: "In use · {source}",
         hidden: "Not shown · real-time transcription continues",
         paused: "Unavailable · the fallback model does not transcribe in real time",
+        pausedBuiltIn: "Unavailable · a fallback model stands in for the built-in service",
         missing: "Model not downloaded",
         off: "Off",
       },
     },
     outputMode: {
       title: "Output mode",
-      note: "How the final text is produced and when it is inserted. The last two modes need words while you speak: a realtime model has them already; the built-in service needs “Provider's live text” on; otherwise turn on “Local model preview” and download the Live preview model. Without them they run as “All at once”.",
+      note: "How the final text is produced and when it is inserted. The last two modes need words while you speak: a realtime model and the built-in service have them already; otherwise turn on “Local model preview” and download the Live preview model. Without them they run as “All at once”.",
       label: "Output mode",
     },
     vadTrim: {
@@ -2187,7 +2199,7 @@ export const en: Messages = {
       "paraformer-zh":
         "Paraformer, more accurate for Chinese (dialects included), mixed Chinese and English; no punctuation, turn on AI polish to add it; 227 MB",
       "zipformer-stream-zh-en":
-        "Preview model that shows words as you speak (streaming Zipformer, mixed Chinese and English, punctuation built in); the final text still comes from the selected speech model; 169 MB",
+        "Preview model that shows words as you speak (streaming Zipformer, mixed Chinese and English, punctuation built in); with the built-in service, a realtime model or “All at once” it only shows the words; 169 MB",
     },
     languages: "Languages {languages}",
     size: "{size}",
@@ -2613,6 +2625,9 @@ export const en: Messages = {
       editDoneClipboard: "Rewrite copied, {n} chars",
       /** docs/dictation.md §14.3: the window changed while the take was processed. */
       doneTargetChanged: "Window changed · text copied",
+      doneTargetChangedRest: "Window changed · remaining {n} chars copied",
+      switchedNotice: "Window changed · the rest is copied when you release",
+      streamDegradedNotice: "Live transcription stopped · the rest is added when you release",
       editDoneTargetChanged: "Window changed · rewrite copied",
       /** docs/dictation.md §14.9: GNOME's Remote Desktop window was cancelled or closed. */
       doneRemoteDenied: "Remote interaction not allowed · text copied",
@@ -3722,7 +3737,10 @@ export const en: Messages = {
     promptHelp:
       "Sent only with AI polish, for example “This is a chat message: casual, no full stop at the end”.",
     promptCount: "{n} / {max}",
-    streamingNotReady: "Without the live transcription model this scene runs as All at once",
+    streamingNotReady:
+      "With no words while you speak (the Live preview model not downloaded or Live preview off), this scene runs as All at once",
+    liveInjectRefine:
+      "“Type as you speak” is never polished, so this scene's AI polish has no effect",
     saved: "Scene saved · {name}",
     error: {
       name: "Enter a name",

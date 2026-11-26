@@ -385,7 +385,14 @@ describe("locale", () => {
             phase: "listening",
             started_at: NOW,
             ready: true,
-            live: { committed: [], current: "hello", degraded: "open failed", injected: 0 },
+            live: {
+              committed: [],
+              current: "hello",
+              degraded: "open failed",
+              injected: 0,
+              streaming: false,
+              switched: false,
+            },
             locked: false,
           },
         });

@@ -377,6 +377,32 @@ describe("labels", () => {
     });
   });
 
+  it("regression: a finished 边说边输入 take that copied only its rest counts the copied characters, as the pill does (docs/dictation.md §12, §14.3)", () => {
+    // The review of 2026-11-24: after a window switch the pill said 「窗口已切换，余下 7 字已复制」
+    // (`doneChars` counts `rest`), while the home card's line, from this label, said 「已复制 13
+    // 字」: the whole take's `chars`, whose start was typed already.
+    const whole = {
+      phase: "done" as const,
+      text: "你好，世界。今天天气很好。",
+      raw_text: "你好，世界。今天天气很好。",
+      chars: 13,
+      via: "clipboard" as const,
+      refined: false,
+      duration_ms: 2400,
+      asr_ms: 120,
+      mode: "live_inject" as const,
+      clipboard_code: "target_changed" as const,
+    };
+    const copied = { ...whole, rest: "今天天气很好。" };
+    expect(takePhaseLabel({ phase: copied, kind: "dictation" }, 0)).toEqual({
+      text: "已复制 7 字 · 剪贴板",
+      tone: "ok",
+    });
+    expect(dictationPhaseLabel(copied, 0, "en").text).toBe("Copied 7 chars · Clipboard");
+    // Without a rest the whole take counts, as before.
+    expect(dictationPhaseLabel(whole, 0).text).toBe("已复制 13 字 · 剪贴板");
+  });
+
   it("labels history outcomes, secrets, routes and formats durations", () => {
     expect(outcomeLabel({ kind: "inserted", via: "paste" })).toEqual({
       text: "已插入 · 粘贴",
@@ -539,6 +565,28 @@ describe("labels in English", () => {
 });
 
 describe("live preview text (docs/dictation.md §11)", () => {
+  it("regression: a closing quote, an ellipsis or a dash takes the script of the character in front of it, as the core's join rule (docs/dictation.md §12)", () => {
+    // The review of 边说边输入, 2026-11-23: a Chinese sentence closing on ” or …… got a space after
+    // it in front of Latin text, and 边说边输入 typed one after it in front of Chinese too (they are
+    // not CJK code points; 」 is, and never got one). The core joins and types with one rule now
+    // (`needs_space`, mod.rs `inject_prefix_follows_the_join_rule`); the pill, the preview and the
+    // mock's counts join the same way.
+    expect(liveTextGap("他说“你好”", "Hello")).toBe("");
+    expect(liveTextGap("等一下……", "OK")).toBe("");
+    expect(liveTextGap("就这样——", "Go")).toBe("");
+    expect(liveTextGap("He said “hi”", "Then")).toBe(" ");
+    expect(liveTextGap("wait…", "then")).toBe(" ");
+    // Nothing but such marks: the mark itself decides.
+    expect(liveTextGap("“", "a")).toBe(" ");
+    expect(joinLiveText(["他说“你好”", "Hello", "world."])).toBe("他说“你好”Hello world.");
+    // As `inject_prefix`: nothing in front of the first sentence or next to CJK, one space
+    // between Latin sentences.
+    expect(liveTextGap("你好 Rust", "很好")).toBe("");
+    expect(liveTextGap("你好 Rust", "and Go")).toBe(" ");
+    expect(liveTextGap("Rust 很好", "Next")).toBe("");
+    expect(liveTextGap("123", "456")).toBe(" ");
+  });
+
   it("regression: joinLiveText mirrors LiveText::preview — no space at CJK boundaries, one space between Latin words", () => {
     expect(joinLiveText(["你好。", "hello world.", "今天"])).toBe("你好。hello world.今天");
     expect(joinLiveText(["Hello.", "How are"])).toBe("Hello. How are");
@@ -618,7 +666,11 @@ describe("local model names (docs/dictation.md §10)", () => {
       "推荐；Qwen3-ASR 0.6B，30 语种自动识别，自带标点；690 MB",
     );
     expect(modelDescription("qwen3-asr-1.7b", "core text", "en")).toMatch(/^Qwen3-ASR 1\.7B/);
-    expect(modelDescription("zipformer-stream-zh-en", "core text", "en")).toMatch(/final text/);
+    // The words changed on purpose on 2026-11-23 (in 边说边识别 / 边说边输入 with another provider
+    // the model's sentences are the text); the English is still looked up by id.
+    expect(modelDescription("zipformer-stream-zh-en", "core text", "en")).toMatch(
+      /only shows the words/,
+    );
     expect(modelDescription("future-model", "core text", "en")).toBe("core text");
     expect(modelTierLabel("balanced")).toBe("均衡");
     expect(modelTierLabel("accurate")).toBe("高精度");

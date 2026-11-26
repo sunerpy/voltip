@@ -188,9 +188,11 @@ export function Home() {
   const asrModel = local
     ? modelDisplayName(engines.local_model ?? "", engines.asr_model, locale)
     : shortModel(engines.asr_model);
-  // docs/dictation.md §11: the streaming path stopped following the audio this take; the final
-  // text is unaffected, so this is a one-line note, not an error.
-  const liveDegraded = phase.phase === "listening" ? phase.live?.degraded : undefined;
+  // docs/dictation.md §11: the streaming path stopped following the audio this take: a one-line
+  // note, not an error. A whole take's text is unaffected; a streaming take's (§12) is recognised
+  // whole from there after the release.
+  const live = phase.phase === "listening" ? phase.live : undefined;
+  const liveDegraded = live?.degraded;
   const blockedReason = !engineReady
     ? !reported
       ? t("home.blocked.waitingCore")
@@ -583,7 +585,9 @@ export function Home() {
                   className="truncate text-[11px] text-warning"
                   title={liveDegraded}
                   data-testid="home-live-degraded">
-                  {t("home.engine.liveDegraded")}
+                  {live?.streaming === true
+                    ? t("home.engine.liveDegradedStreaming")
+                    : t("home.engine.liveDegraded")}
                 </div>
               )}
             </div>

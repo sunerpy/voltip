@@ -7,6 +7,8 @@ import {
   fallbackStatusOf,
   localFallbackModels,
   moveFallback,
+  realtimeStreamsNow,
+  standInTakesWhole,
   withFallback,
 } from "./fallback";
 import { MockBackend } from "./mock-backend";
@@ -301,6 +303,54 @@ describe("fallback models (docs/dictation.md §3.5)", () => {
       "stream",
       "aliyun",
     ]);
+  });
+
+  it("regression: the pages tell a fallback model that takes whole recordings standing in from a missing preview, and a realtime model that streams (docs/dictation.md §3.5, §11.9, §12)", () => {
+    // The review of 边说边输入 on realtime models, 2026-11-23: with the Live preview model there,
+    // a stand-in taking whole recordings made the streaming modes whole (`live_ready` false) while
+    // the pill still previewed (`live_source` local), and the pages blamed the preview.
+    const wholeFirst: EngineSettings = {
+      ...studio(),
+      asr_fallback: { enabled: true, models: [entry("aliyun", "qwen-audio-3.1-asr-flash")] },
+    };
+    const withLocal = (settings: EngineSettings, quotaOut?: { asr?: number }) =>
+      resolveEngineStatus({
+        settings,
+        userKeys: new Set(["provider-key.aliyun"]),
+        builtIn: { asr: { model: "Qwen/Qwen3-ASR-1.7B", key: true } },
+        local: { id: "qwen3-asr-0.6b", name: "Qwen3-ASR 0.6B", installed: true },
+        localPreviewReady: true,
+        ...(quotaOut === undefined ? {} : { quotaOut }),
+      });
+    const both = (s: EngineStatus) => [standInTakesWhole(s), realtimeStreamsNow(s)];
+    expect(both(resolve(wholeFirst))).toEqual([false, true]);
+    expect(both(resolve(wholeFirst, undefined, { asr: 99 }))).toEqual([true, false]);
+    expect(both(withLocal(wholeFirst, { asr: 99 }))).toEqual([true, false]);
+    expect(both(withLocal(wholeFirst))).toEqual([false, true]);
+    // A model standing in that streams itself keeps the take streaming.
+    const stepFirst: EngineSettings = {
+      ...wholeFirst,
+      asr_fallback: { enabled: true, models: [entry("stepfun", "step-asr-1-stream")] },
+    };
+    expect(
+      both(resolve(stepFirst, ["provider-key.aliyun", "provider-key.stepfun"], { asr: 99 })),
+    ).toEqual([false, true]);
+    // Nothing recognises while the take is spoken: neither.
+    const whole: EngineSettings = {
+      ...wholeFirst,
+      providers: { aliyun: { asr_model: "qwen-audio-3.1-asr-flash" } },
+      asr_fallback: { enabled: false, models: [] },
+    };
+    expect(both(resolve(whole))).toEqual([false, false]);
+    // The built-in service writes a streaming take's text itself: not a realtime model.
+    const builtin = resolveEngineStatus({
+      settings: { ...defaultEngineSettings(), output_mode: "streaming_final" },
+      userKeys: new Set(),
+      builtIn: { asr: { model: "Qwen/Qwen3-ASR-1.7B", key: true, preview: true } },
+      local: { id: "qwen3-asr-0.6b", name: "Qwen3-ASR 0.6B", installed: true },
+      localPreviewReady: true,
+    });
+    expect([builtin.live_source, ...both(builtin)]).toEqual(["cloud", false, false]);
   });
 
   it("models of this device join a recognition chain and a local primary never moves on to a service (§3.14)", () => {

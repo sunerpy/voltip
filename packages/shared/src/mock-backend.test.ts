@@ -68,6 +68,7 @@ import {
   MOCK_NO_SPEECH,
   MOCK_SCENE_MODE_NOT_READY,
   MOCK_STREAMING_MODEL_ID,
+  mockSceneModeFallback,
   MockBackend as RealMockBackend,
   type MockBackendOptions,
   mockSameChord,
@@ -100,10 +101,12 @@ import {
   type EngineSettings,
   type HistoryEntry,
   type LearnNotice,
+  type OutputMode,
   type ProviderId,
   type ServiceKind,
   MAX_BACKTEST_LIMIT,
   NIL_ID,
+  type ReplacementRule,
   type RuleDraft,
   type SceneDraft,
   type LevelFrame,
@@ -1487,10 +1490,19 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
           preview_provider: provider,
           effective_output_mode: "streaming_final",
         },
+        // The take runs as 边说边识别: the pill's words say it streams where they are the stream's
+        // (`LiveText.streaming`, added 2026-11-23 for the pill's notices). Next to the hidden
+        // stream the local model's words are a preview only, so they do not: changed on purpose in
+        // the review of 2026-11-24, as the core's `on_live`; the rule of this test is unchanged.
         live:
           source === undefined
             ? undefined
-            : { ...last, source, ...(provider === undefined ? {} : { provider }) },
+            : {
+                ...last,
+                source,
+                streaming: source === "stream",
+                ...(provider === undefined ? {} : { provider }),
+              },
         preview: source !== undefined,
         done: { text: livePreviewText(last), mode: "streaming_final", live_error: undefined },
       })),
@@ -2322,7 +2334,7 @@ describe("MockBackend locale, auto-update and updater (docs/frontend.md §7)", (
     store.destroy();
   });
 
-  it("the built-in service previews itself when it says so (docs/dictation.md section 11.8): live_source cloud without the model, and the streaming modes take effect; other providers and the switch follow the old rule", async () => {
+  it("the built-in service previews itself when it says so (docs/dictation.md section 11.8): live_source cloud without the model, and the streaming modes take effect; with the switch off it shows nothing and still writes the streaming modes' text; other providers follow the old rule", async () => {
     const builtIn = {
       asr: { model: MOCK_ENGINE_BUILTIN.asr_model, key: true, preview: true },
       llm: { model: MOCK_ENGINE_BUILTIN.refine_model, key: true },
@@ -2339,12 +2351,28 @@ describe("MockBackend locale, auto-update and updater (docs/frontend.md §7)", (
       engines: { ...engines, output_mode: "live_inject" },
     });
     expect(backend.peek().engines.effective_output_mode).toBe("live_inject");
-    // docs/dictation.md §11.10: the provider's words off, the built-in service previews nothing.
+    // docs/dictation.md §11.10: the provider's words off, the built-in service previews nothing
+    // while a whole take is spoken. The rule for live_ready changed on purpose (user report
+    // 2026-11-23: 边说边识别 with the switch off wrote the on-device model's text): the built-in
+    // service writes the streaming modes' text whatever the switch says, so they still take effect.
     await backend.invoke("settings_set_engines", {
       engines: { ...engines, provider_preview: false },
     });
-    expect(backend.peek().engines.live_ready).toBe(false);
+    expect(backend.peek().engines.live_ready).toBe(true);
     expect(backend.peek().engines.live_source).toBeUndefined();
+    expect(backend.peek().engines.preview_source).toBeUndefined();
+    expect(backend.peek().engines.effective_output_mode).toBe("whole_take");
+    // In a streaming mode the built-in service recognises the take as it is spoken, unseen.
+    await backend.invoke("settings_set_engines", {
+      engines: { ...engines, provider_preview: false, output_mode: "streaming_final" },
+    });
+    expect(backend.peek().engines).toMatchObject({
+      live_ready: true,
+      live_source: "cloud",
+      effective_output_mode: "streaming_final",
+    });
+    expect(backend.peek().engines.preview_source).toBeUndefined();
+    expect(backend.peek().engines.preview_provider).toBeUndefined();
     // Another provider does not preview by decoding again: without the model, no source.
     await backend.invoke("settings_set_engines", {
       engines: {
@@ -2655,6 +2683,11 @@ describe("MockBackend output modes (docs/dictation.md §12)", () => {
   const last = MOCK_LIVE_SCRIPT.at(-1);
   if (!last) throw new Error("script");
   const preview = livePreviewText(last);
+  /** A release build's built-in service, which previews itself (docs/dictation.md §11.8). */
+  const PREVIEWING = {
+    asr: { model: MOCK_ENGINE_BUILTIN.asr_model, key: true, preview: true },
+    llm: { model: MOCK_ENGINE_BUILTIN.refine_model, key: true },
+  };
 
   it("regression: effective_output_mode is the requested mode once the streaming model is installed and whole_take until then; it follows the install state and the 本地模型预览 switch", async () => {
     const backend = new MockBackend({
@@ -2870,6 +2903,561 @@ describe("MockBackend output modes (docs/dictation.md §12)", () => {
       text: MOCK_DICTATION_TEXT,
     });
     degraded.destroy();
+  });
+
+  it("regression: with 服务商的实时文字 off the built-in service still writes the text of a 边说边识别 take; the pill shows the local model's words with 本地模型预览 on and none with it off (docs/dictation.md §11.10)", async () => {
+    // User report 2026-11-23 (Windows): 边说边识别 on the built-in service with 服务商的实时文字
+    // off took its text from the on-device streaming model (实时预览, Zipformer): poor accuracy,
+    // the last words of a take lost (the core's
+    // `regression_with_its_words_off_the_built_in_service_still_writes_the_streaming_text`).
+    for (const local_preview of [true, false]) {
+      const backend = new MockBackend({
+        now: () => clock,
+        history: [],
+        builtIn: PREVIEWING,
+        models: installed,
+        settings: {
+          engines: {
+            ...defaultEngineSettings(),
+            provider_preview: false,
+            local_preview,
+            output_mode: "streaming_final",
+            refine_enabled: false,
+          },
+        },
+      });
+      const engines = backend.peek().engines;
+      await backend.invoke("dictation_start");
+      tick(MOCK_MIC_READY_MS + MOCK_LIVE_STEP_MS * MOCK_LIVE_SCRIPT.length);
+      const listening = backend.peek().dictation.phase;
+      await backend.invoke("dictation_stop");
+      const stopped = backend.peek().dictation.phase;
+      tick(MOCK_FINALIZE_MS);
+      const done = backend.peek().dictation.phase;
+      backend.destroy();
+      expect(
+        {
+          engines: [
+            engines.live_ready,
+            engines.live_source,
+            engines.preview_source,
+            engines.preview_provider,
+            engines.effective_output_mode,
+          ],
+          // The pill: the local model's words with its switch on, none with it off.
+          shown:
+            listening.phase === "listening" ? (listening.live?.source ?? "none") : listening.phase,
+          stage: stopped.phase === "processing" ? stopped.stage : stopped.phase,
+          done:
+            done.phase === "done"
+              ? [done.mode, done.raw_text, done.text, done.live_error]
+              : done.phase,
+        },
+        `本地模型预览 ${local_preview ? "on" : "off"}`,
+      ).toEqual({
+        engines: [true, "cloud", local_preview ? "local" : undefined, undefined, "streaming_final"],
+        shown: local_preview ? "local" : "none",
+        stage: "finalizing",
+        done: ["streaming_final", preview, preview, undefined],
+      });
+    }
+  });
+
+  it("regression: a streaming take's live text says it streams, a whole take's does not (docs/dictation.md §12)", async () => {
+    // The review of 边说边输入, 2026-11-23: the pill could not tell a whole take's preview from the
+    // live session that writes a streaming take's text, so it said nothing when that session
+    // stopped. The core marks it (`LiveText.streaming`).
+    const live = async (output_mode: OutputMode) => {
+      const backend = new MockBackend({
+        now: () => clock,
+        history: [],
+        models: installed,
+        settings: { engines: { ...defaultEngineSettings(), output_mode, refine_enabled: false } },
+      });
+      await backend.invoke("dictation_start");
+      tick(MOCK_MIC_READY_MS + MOCK_LIVE_STEP_MS * 2);
+      const phase = backend.peek().dictation.phase;
+      backend.destroy();
+      return phase.phase === "listening" ? [phase.live?.streaming, phase.live?.switched] : [];
+    };
+    expect(await live("whole_take")).toEqual([false, false]);
+    expect(await live("streaming_final")).toEqual([true, false]);
+    expect(await live("live_inject")).toEqual([true, false]);
+  });
+
+  it("regression: 边说边输入 types nothing more once another window is in front: the pill says so, and the end copies what was not typed, offered on its own when sentences were (docs/dictation.md §12, §14.3)", async () => {
+    // The review of 边说边输入 on realtime models, 2026-11-23: after a window switch the result card
+    // offered the whole take, whose start was typed already; the core copies the rest and sends it
+    // as `done.rest` (engine.rs
+    // `regression_live_inject_stops_pasting_after_a_window_switch_and_copies_the_rest`).
+    const backend = new MockBackend({
+      now: () => clock,
+      history: [],
+      models: installed,
+      settings: { engines: { ...defaultEngineSettings(), output_mode: "live_inject" } },
+    });
+    const listening = () => {
+      const phase = backend.peek().dictation.phase;
+      return phase.phase === "listening" ? phase.live : undefined;
+    };
+    const finish = async () => {
+      await backend.invoke("dictation_stop");
+      tick(MOCK_FINALIZE_MS * 2);
+      return backend.peek().dictation.phase;
+    };
+    // The window changes before the first sentence: nothing is typed, the pill says so once a
+    // sentence is due, and the whole text is copied (no `rest`: nothing of it is in the window).
+    await backend.invoke("dictation_start");
+    tick(MOCK_MIC_READY_MS + MOCK_LIVE_STEP_MS * 2);
+    backend.simulateWindowSwitch(true);
+    expect(listening()?.switched).toBe(false);
+    tick(MOCK_LIVE_STEP_MS * 2);
+    expect([listening()?.injected, listening()?.switched, listening()?.streaming]).toEqual([
+      0,
+      true,
+      true,
+    ]);
+    // The rest of the script: the second sentence grows.
+    tick(MOCK_LIVE_STEP_MS * 2);
+    let done = await finish();
+    expect(done).toMatchObject({
+      phase: "done",
+      mode: "live_inject",
+      via: "clipboard",
+      clipboard_code: "target_changed",
+      text: preview,
+    });
+    expect(done).not.toHaveProperty("rest");
+    expect(backend.peek().history_recent[0]?.outcome).toMatchObject({ code: "target_changed" });
+    await backend.invoke("dictation_dismiss", { session: backend.peek().dictation.session });
+    // The window changes after the first sentence was typed: it stays typed, and only the rest is
+    // copied; the text is still the whole take.
+    backend.simulateWindowSwitch(false);
+    await backend.invoke("dictation_start");
+    tick(MOCK_MIC_READY_MS + MOCK_LIVE_STEP_MS * 4);
+    expect(listening()?.injected).toBe(1);
+    backend.simulateWindowSwitch(true);
+    tick(MOCK_LIVE_STEP_MS * 2);
+    // No sentence was due since: the pill learns of the switch only when one is.
+    expect([listening()?.injected, listening()?.switched]).toEqual([1, false]);
+    done = await finish();
+    expect(done).toMatchObject({
+      phase: "done",
+      via: "clipboard",
+      clipboard_code: "target_changed",
+      text: preview,
+      rest: last.current,
+    });
+    await backend.invoke("dictation_dismiss", { session: backend.peek().dictation.session });
+    // Switched while a later sentence is due: a cancel keeps only what was typed.
+    backend.simulateWindowSwitch(false);
+    await backend.invoke("dictation_start");
+    tick(MOCK_MIC_READY_MS + MOCK_LIVE_STEP_MS);
+    backend.simulateWindowSwitch(true);
+    tick(MOCK_LIVE_STEP_MS * 3);
+    await backend.invoke("dictation_cancel");
+    expect(backend.peek().dictation.phase).toEqual({ phase: "cancelled", injected_chars: 0 });
+    backend.destroy();
+  });
+
+  it("regression: next to text the built-in service writes unseen, the pill shows the local model's words without 已输入 marks, as a preview only, and the service's failure as the notice that the rest comes after the release (docs/dictation.md §11.10, §12)", async () => {
+    // Review of the 2026-11-23 change: with 服务商的实时文字 off, the mock marked the local model's
+    // sentences 已输入 on the pill of a 边说边输入 take the built-in service wrote; the core does not
+    // (`on_live_injected`: "no pasted marks there"). The review of 2026-11-24 changed two rules of
+    // this test on purpose, as the core did: the local model's words there are a preview, so they
+    // do not say the take streams and a failure of theirs is no notice (`on_live`,
+    // `regression_the_local_previews_failure_next_to_a_hidden_text_session_is_no_streaming_notice`);
+    // the service's failure stops the take's text, so the pill says the rest comes after the
+    // release in place of the local model's words, which stop (`on_hidden_degraded`). Before, the
+    // pill named no reason and went on with them.
+    const committed = last.committed[0];
+    if (!committed) throw new Error("script");
+    const take = (output_mode: "streaming_final" | "live_inject", local_preview = true) =>
+      new MockBackend({
+        now: () => clock,
+        history: [],
+        builtIn: PREVIEWING,
+        models: installed,
+        settings: {
+          engines: {
+            ...defaultEngineSettings(),
+            provider_preview: false,
+            local_preview,
+            output_mode,
+            refine_enabled: false,
+          },
+        },
+      });
+    const pill = (backend: MockBackend) => {
+      const phase = backend.peek().dictation.phase;
+      return phase.phase === "listening" ? phase.live : undefined;
+    };
+    // 边说边输入: the service pastes the first sentence; the pill shows the local model's words
+    // unmarked, as a preview, and a cancel still reports what was pasted.
+    const inject = take("live_inject");
+    await inject.invoke("dictation_start");
+    tick(MOCK_MIC_READY_MS + MOCK_LIVE_STEP_MS * 4);
+    expect(pill(inject)).toEqual({ ...MOCK_LIVE_SCRIPT[3], source: "local", injected: 0 });
+    await inject.invoke("dictation_cancel");
+    expect(inject.peek().dictation.phase).toEqual({
+      phase: "cancelled",
+      injected_chars: Array.from(committed.text).length,
+    });
+    inject.destroy();
+    // 边说边识别: the service fails; the pill keeps the local model's words with the notice, they
+    // stop there, and the take's text falls back to the whole recording with the reason.
+    const stream = take("streaming_final");
+    await stream.invoke("dictation_start");
+    tick(MOCK_MIC_READY_MS + MOCK_LIVE_STEP_MS * 2);
+    expect(pill(stream)).toEqual({ ...MOCK_LIVE_SCRIPT[1], source: "local" });
+    stream.simulateLiveDegraded("live tap overrun");
+    const notice = {
+      ...MOCK_LIVE_SCRIPT[1],
+      source: "local",
+      degraded: "live tap overrun",
+      streaming: true,
+    };
+    expect(pill(stream)).toEqual(notice);
+    tick(MOCK_LIVE_STEP_MS * (MOCK_LIVE_SCRIPT.length - 2));
+    expect(pill(stream)).toEqual(notice);
+    await stream.invoke("dictation_stop");
+    tick(MOCK_ASR_MS);
+    expect(stream.peek().dictation.phase).toMatchObject({
+      phase: "done",
+      mode: "whole_take",
+      live_error: "live tap overrun",
+      text: MOCK_DICTATION_RAW,
+    });
+    stream.destroy();
+    // With 本地模型预览 off the pill has no words: the notice comes on its own.
+    const unseen = take("streaming_final", false);
+    await unseen.invoke("dictation_start");
+    tick(MOCK_MIC_READY_MS + MOCK_LIVE_STEP_MS * 2);
+    expect(pill(unseen)).toBeUndefined();
+    unseen.simulateLiveDegraded("live tap overrun");
+    expect(pill(unseen)).toEqual({
+      committed: [],
+      current: "",
+      injected: 0,
+      degraded: "live tap overrun",
+      streaming: true,
+      switched: false,
+    });
+    unseen.destroy();
+  });
+
+  it("regression: with no words on the pill, 边说边输入's window switch still brings a live text that says so, and a plain paste brings none (docs/dictation.md §12, §14.3)", async () => {
+    // The review of 2026-11-24: next to text the built-in service writes unseen, with 本地模型预览
+    // off, the mock sent the pill nothing, so it never said that the window had changed; the core
+    // sends a live text that only says so (`on_live_injected`), and none for a plain paste (engine.rs
+    // `regression_with_its_words_off_the_built_in_service_still_writes_the_streaming_text`: "a plain
+    // paste with nothing on the pill made an empty live text").
+    const committed = last.committed[0];
+    if (!committed) throw new Error("script");
+    const backend = new MockBackend({
+      now: () => clock,
+      history: [],
+      builtIn: PREVIEWING,
+      models: installed,
+      settings: {
+        engines: {
+          ...defaultEngineSettings(),
+          provider_preview: false,
+          local_preview: false,
+          output_mode: "live_inject",
+          refine_enabled: false,
+        },
+      },
+    });
+    const pill = () => {
+      const phase = backend.peek().dictation.phase;
+      return phase.phase === "listening" ? phase.live : undefined;
+    };
+    // The first sentence is pasted: nothing on the pill, and a cancel reports it.
+    await backend.invoke("dictation_start");
+    tick(MOCK_MIC_READY_MS + MOCK_LIVE_STEP_MS * 4);
+    expect(pill()).toBeUndefined();
+    await backend.invoke("dictation_cancel");
+    expect(backend.peek().dictation.phase).toEqual({
+      phase: "cancelled",
+      injected_chars: Array.from(committed.text).length,
+    });
+    tick(MOCK_DICTATION_DWELL_MS);
+    // Another window is in front when the first sentence is due: the live text says so, without
+    // words or 已输入 marks, and stays as it is.
+    await backend.invoke("dictation_start");
+    tick(MOCK_MIC_READY_MS + MOCK_LIVE_STEP_MS * 2);
+    backend.simulateWindowSwitch(true);
+    tick(MOCK_LIVE_STEP_MS * 2);
+    const switched = { committed: [], current: "", injected: 0, streaming: false, switched: true };
+    expect(pill()).toEqual(switched);
+    tick(MOCK_LIVE_STEP_MS * 2);
+    expect(pill()).toEqual(switched);
+    await backend.invoke("dictation_stop");
+    tick(MOCK_FINALIZE_MS * 2);
+    const done = backend.peek().dictation.phase;
+    expect(done).toMatchObject({
+      phase: "done",
+      mode: "live_inject",
+      via: "clipboard",
+      clipboard_code: "target_changed",
+      text: preview,
+    });
+    expect(done).not.toHaveProperty("rest");
+    backend.destroy();
+  });
+
+  it("regression: while a fallback model taking whole recordings stands in for the realtime model, the Live preview model's words show while the take is spoken (docs/dictation.md §3.5, §11.10)", async () => {
+    // The review of 2026-11-24: the mock's live text loop waited for `live_ready`, which says
+    // whether the streaming modes take effect. While the stand-in runs the take whole it is false,
+    // and the Live preview model still previews it (`preview_source: local`), but the pill showed
+    // nothing. The loop follows the take's own sources now.
+    const backend = new MockBackend({
+      now: () => clock,
+      history: [],
+      providerKeys: [{ provider: "aliyun", kind: "asr" }],
+      models: installed,
+      settings: {
+        engines: {
+          ...defaultEngineSettings(),
+          asr_provider: "aliyun",
+          asr_fallback: {
+            enabled: true,
+            models: [{ provider: "aliyun", model: "qwen-audio-3.1-asr-flash" }],
+          },
+          output_mode: "streaming_final",
+          refine_enabled: false,
+        },
+      },
+    });
+    backend.simulateQuotaExhausted("asr", clock + 86_400_000);
+    expect(backend.peek().engines).toMatchObject({
+      live_ready: false,
+      live_source: "local",
+      preview_source: "local",
+      effective_output_mode: "whole_take",
+    });
+    await backend.invoke("dictation_start");
+    tick(MOCK_MIC_READY_MS + MOCK_LIVE_STEP_MS * MOCK_LIVE_SCRIPT.length);
+    const listening = backend.peek().dictation.phase;
+    expect(listening.phase === "listening" ? listening.live : listening.phase).toEqual({
+      ...last,
+      source: "local",
+    });
+    // The take itself runs whole, through the fallback chain.
+    await backend.invoke("dictation_stop");
+    tick(MOCK_ASR_MS);
+    expect(backend.peek().dictation.phase).toMatchObject({
+      phase: "done",
+      mode: "whole_take",
+      text: MOCK_DICTATION_RAW,
+    });
+    backend.destroy();
+  });
+
+  it("regression: 边说边输入 stops pasting at a paste the system refuses: the rest is copied at the end, offered on its own after typed sentences with the separator in front, and the whole text when the first sentence was refused (docs/dictation.md §12, §14.9)", async () => {
+    // The review of 2026-11-24: with the paste refused (GNOME's remote interaction not allowed, or
+    // its portal unavailable), the mock went on counting every sentence as typed, on the pill and
+    // in a cancel's count, and offered what came after them. The core stops at the paste that fell
+    // back to the clipboard and writes everything from there once at the end (engine.rs
+    // `live_inject_clipboard_fallback_accumulates_the_rest`); `Done.rest`, the part copied after
+    // typed sentences, keeps the separator in front when the window did not change, so the card's
+    // 粘贴 continues the typed text (`finish_live_inject`).
+    const committed = last.committed[0];
+    if (!committed) throw new Error("script");
+    const take = (rules: ReplacementRule[] = []) =>
+      new MockBackend({
+        now: () => clock,
+        history: [],
+        models: installed,
+        rules,
+        settings: { engines: { ...defaultEngineSettings(), output_mode: "live_inject" } },
+      });
+    const pill = (backend: MockBackend) => {
+      const phase = backend.peek().dictation.phase;
+      return phase.phase === "listening" ? phase.live : undefined;
+    };
+    const finish = async (backend: MockBackend) => {
+      await backend.invoke("dictation_stop");
+      tick(MOCK_FINALIZE_MS * 2);
+      const done = backend.peek().dictation.phase;
+      await backend.invoke("dictation_dismiss", { session: backend.peek().dictation.session });
+      return done;
+    };
+    // Refused from the first sentence: nothing is typed, and the whole text is copied (no `rest`).
+    const refused = take();
+    refused.simulatePasteRefused(true);
+    await refused.invoke("dictation_start");
+    tick(MOCK_MIC_READY_MS + MOCK_LIVE_STEP_MS * 4);
+    expect([pill(refused)?.committed.length, pill(refused)?.injected]).toEqual([1, 0]);
+    await refused.invoke("dictation_cancel");
+    expect(refused.peek().dictation.phase).toEqual({ phase: "cancelled", injected_chars: 0 });
+    tick(MOCK_DICTATION_DWELL_MS);
+    await refused.invoke("dictation_start");
+    tick(MOCK_MIC_READY_MS + MOCK_LIVE_STEP_MS * MOCK_LIVE_SCRIPT.length);
+    expect([pill(refused)?.injected, pill(refused)?.switched]).toEqual([0, false]);
+    let done = await finish(refused);
+    expect(done).toMatchObject({
+      phase: "done",
+      mode: "live_inject",
+      via: "clipboard",
+      clipboard_code: "remote_denied",
+      text: preview,
+    });
+    expect(done).not.toHaveProperty("rest");
+    expect(refused.peek().history_recent[0]?.outcome).toMatchObject({ code: "remote_denied" });
+    // Refused after the first sentence was typed: it stays typed, and the rest is offered on its
+    // own (the sample joins without a separator: CJK text).
+    refused.simulatePasteRefused(false);
+    await refused.invoke("dictation_start");
+    tick(MOCK_MIC_READY_MS + MOCK_LIVE_STEP_MS * 4);
+    expect(pill(refused)?.injected).toBe(1);
+    refused.simulatePasteRefused(true);
+    tick(MOCK_LIVE_STEP_MS * 2);
+    done = await finish(refused);
+    expect(done).toMatchObject({
+      via: "clipboard",
+      clipboard_code: "remote_denied",
+      text: preview,
+      rest: last.current,
+    });
+    // Refused at the first sentence and allowed again before the end: the final write pastes the
+    // whole text.
+    await refused.invoke("dictation_start");
+    tick(MOCK_MIC_READY_MS + MOCK_LIVE_STEP_MS * 4);
+    refused.simulatePasteRefused(false);
+    tick(MOCK_LIVE_STEP_MS * 2);
+    expect(pill(refused)?.injected).toBe(0);
+    done = await finish(refused);
+    expect(done).toMatchObject({ phase: "done", via: "paste", text: preview });
+    expect(done).not.toHaveProperty("rest");
+    expect(done).not.toHaveProperty("clipboard_code");
+    refused.destroy();
+    // GNOME's portal unavailable from the first sentence: the same, with its reason.
+    const portal = take();
+    portal.simulatePortalUnavailable(true);
+    await portal.invoke("dictation_start");
+    tick(MOCK_MIC_READY_MS + MOCK_LIVE_STEP_MS * MOCK_LIVE_SCRIPT.length);
+    expect(pill(portal)?.injected).toBe(0);
+    done = await finish(portal);
+    expect(done).toMatchObject({ via: "clipboard", clipboard_code: "remote_unavailable" });
+    expect(done).not.toHaveProperty("rest");
+    portal.destroy();
+    // Latin text on both sides of the cut (rules make it so): after a refused paste the copied
+    // rest starts with the separator, after a window switch it does not. Only `rest` is compared:
+    // the mock runs the rules on the whole text, where the core runs them on each sentence.
+    const rule = (id: string, pattern: string, replacement: string): ReplacementRule => ({
+      id,
+      name: pattern,
+      kind: "literal",
+      pattern,
+      replacement,
+      case_sensitive: true,
+      enabled: true,
+      created_at_ms: 1,
+      updated_at_ms: 1,
+      source: { kind: "manual" },
+      pending: false,
+    });
+    const latin = take([
+      rule("1b4e28ba-2fa1-4d2e-9f6a-0c1d2e3f4a5b", "helper，", "helper."),
+      rule("2c5f39cb-3ab2-4e3f-8a7b-1d2e3f4a5b6c", "然后在", "then in"),
+    ]);
+    const tail = "then in session assembly 里复用";
+    for (const [cut, rest] of [
+      ["refused", ` ${tail}`],
+      ["switched", tail],
+    ] as const) {
+      latin.simulatePasteRefused(false);
+      latin.simulateWindowSwitch(false);
+      await latin.invoke("dictation_start");
+      tick(MOCK_MIC_READY_MS + MOCK_LIVE_STEP_MS * 4);
+      if (cut === "refused") latin.simulatePasteRefused(true);
+      else latin.simulateWindowSwitch(true);
+      tick(MOCK_LIVE_STEP_MS * 2);
+      const finished = await finish(latin);
+      expect([cut, finished.phase === "done" ? finished.rest : finished.phase]).toEqual([
+        cut,
+        rest,
+      ]);
+    }
+    latin.destroy();
+  });
+
+  it("regression: the history row of a 边说边识别 take names what wrote its text: 实时预览 on this computer for the local streaming model, the built-in model for the built-in service, also when a scene asks for the mode (docs/dictation.md §3.14, §11.10)", async () => {
+    // With the 2026-11-23 report (Windows): a take the on-device 实时预览 model wrote was recorded
+    // under the configured model (the core's
+    // `regression_a_streamed_take_of_the_local_model_names_it_and_this_computer`).
+    const engines = { ...defaultEngineSettings(), refine_enabled: false };
+    const streaming = { ...engines, output_mode: "streaming_final" as const };
+    const wordsOff = { ...engines, provider_preview: false };
+    /** One take, in Slack under a scene asking for 边说边识别 when `scene`: its history row. */
+    const row = async (options: MockBackendOptions, scene = false) => {
+      const backend = new MockBackend({
+        now: () => clock,
+        history: [],
+        models: installed,
+        ...options,
+      });
+      if (scene) {
+        await backend.invoke("scenes_add", {
+          scene: {
+            name: "流式",
+            enabled: true,
+            match: { apps: ["slack"], title_contains: [] },
+            overrides: { output_mode: "streaming_final" },
+          },
+        });
+        backend.setForegroundApp({ id: "slack", name: "Slack" });
+      }
+      await backend.invoke("dictation_start");
+      tick(MOCK_MIC_READY_MS + MOCK_LIVE_STEP_MS * MOCK_LIVE_SCRIPT.length);
+      await backend.invoke("dictation_stop");
+      tick(MOCK_ASR_MS + MOCK_FINALIZE_MS);
+      const entry = backend.peek().history_recent[0];
+      backend.destroy();
+      return {
+        mode: entry?.mode,
+        raw_text: entry?.raw_text,
+        asr_model: entry?.asr_model,
+        asr_provider: entry?.asr_provider,
+      };
+    };
+    const byLocal = {
+      mode: "streaming_final",
+      raw_text: preview,
+      asr_model: "实时预览",
+      asr_provider: "local",
+    };
+    // The built-in service's takes name its model. The mock records no provider for them, as for
+    // its other takes, while the core records `builtin` (§3.14), so the provider is left out here.
+    const byBuiltIn = {
+      mode: "streaming_final",
+      raw_text: preview,
+      asr_model: MOCK_ENGINE_BUILTIN.asr_model,
+    };
+    // A built-in service without a preview of its own: the local streaming model writes the take.
+    expect(await row({ settings: { engines: streaming } })).toEqual(byLocal);
+    expect(await row({ settings: { engines } }, true)).toEqual(byLocal);
+    // The built-in service previewing itself writes it, also with its words off.
+    expect(await row({ builtIn: PREVIEWING, settings: { engines: streaming } })).toMatchObject(
+      byBuiltIn,
+    );
+    expect(
+      await row({
+        builtIn: PREVIEWING,
+        settings: { engines: { ...wordsOff, output_mode: "streaming_final" } },
+      }),
+    ).toMatchObject(byBuiltIn);
+    expect(await row({ builtIn: PREVIEWING, settings: { engines: wordsOff } }, true)).toMatchObject(
+      byBuiltIn,
+    );
+    // A whole take names the configured model, as before.
+    expect(await row({ settings: { engines } })).toMatchObject({
+      mode: "whole_take",
+      raw_text: MOCK_DICTATION_RAW,
+      asr_model: MOCK_ENGINE_BUILTIN.asr_model,
+    });
   });
 });
 
@@ -3185,6 +3773,86 @@ describe("MockBackend scenes and context (docs/dictation.md section 18)", () => 
     tick(MOCK_ASR_MS);
     tick(MOCK_REFINE_MS);
   };
+
+  it("regression: a scene's streaming mode that cannot stream names the mode it asks for and why (docs/dictation.md §18.4)", async () => {
+    // The review of 边说边输入, 2026-11-23: every note said 「场景要求边说边识别」, also for 边说边输入,
+    // and a fallback model standing in read 「实时预览未就绪」. As the core writes it now
+    // (engine.rs `regression_a_scenes_fallback_names_its_mode_and_the_stand_in`).
+    expect(MOCK_SCENE_MODE_NOT_READY).toBe(
+      "场景要求「边说边识别」，但说话时没有识别结果（实时预览已关闭或「实时预览」模型未下载），本次按整段输出处理",
+    );
+    expect(mockSceneModeFallback("live_inject", "stand_in")).toBe(
+      "场景要求「边说边输入」，但当前使用的候补模型只能整段识别，本次按整段输出处理",
+    );
+    expect(mockSceneModeFallback("live_inject", "no_streaming")).toBe(
+      "场景要求「边说边输入」，但此设备不支持实时识别，本次按整段输出处理",
+    );
+    const noteOf = async (backend: MockBackend, output_mode: "streaming_final" | "live_inject") => {
+      await backend.invoke("scenes_add", { scene: scene("流式", ["slack"], { output_mode }) });
+      backend.setForegroundApp({ id: "slack", name: "Slack" });
+      await take(backend);
+      const done = backend.peek().dictation.phase;
+      backend.destroy();
+      return done.phase === "done" ? [done.mode, done.live_error] : done.phase;
+    };
+    // Nothing recognises the take while it is spoken: the mode the scene asks for, and why.
+    expect(await noteOf(new MockBackend({ now: () => clock, history: [] }), "live_inject")).toEqual(
+      ["whole_take", mockSceneModeFallback("live_inject", "not_ready")],
+    );
+    // The realtime model's quota is used up and a model taking whole recordings stands in: the
+    // Live preview model being there changes nothing.
+    const standIn = new MockBackend({
+      now: () => clock,
+      history: [],
+      providerKeys: [{ provider: "aliyun", kind: "asr" }],
+      models: {
+        [MOCK_STREAMING_MODEL_ID]: {
+          kind: "installed",
+          path: `${MOCK_MODELS_ROOT}/${MOCK_STREAMING_MODEL_ID}`,
+          installed_at: 1_758_600_000,
+        },
+      },
+      settings: {
+        engines: {
+          ...defaultEngineSettings(),
+          asr_provider: "aliyun",
+          asr_fallback: {
+            enabled: true,
+            models: [{ provider: "aliyun", model: "qwen-audio-3.1-asr-flash" }],
+          },
+        },
+      },
+    });
+    standIn.simulateQuotaExhausted("asr", clock + 86_400_000);
+    expect(standIn.peek().engines).toMatchObject({ live_ready: false, live_source: "local" });
+    expect(await noteOf(standIn, "live_inject")).toEqual([
+      "whole_take",
+      "场景要求「边说边输入」，但当前使用的候补模型只能整段识别，本次按整段输出处理",
+    ]);
+    // A fallback model stands in for the built-in service (2026-11-24) and nothing previews: the
+    // note names the fallback model too, not the preview (the core's `SceneFallback::StandIn`).
+    const builtIn = new MockBackend({
+      now: () => clock,
+      history: [],
+      providerKeys: [{ provider: "groq", kind: "asr" }],
+      builtIn: { asr: { model: "Qwen/Qwen3-ASR-1.7B", key: true, preview: true } },
+      settings: {
+        engines: {
+          ...defaultEngineSettings(),
+          asr_fallback: {
+            enabled: true,
+            models: [{ provider: "groq", model: "whisper-large-v3" }],
+          },
+        },
+      },
+    });
+    builtIn.simulateQuotaExhausted("asr", clock + 86_400_000);
+    expect(builtIn.peek().engines).toMatchObject({ live_ready: false, live_source: "cloud" });
+    expect(await noteOf(builtIn, "streaming_final")).toEqual([
+      "whole_take",
+      "场景要求「边说边识别」，但当前由候补模型代替内置服务，本次按整段输出处理",
+    ]);
+  });
 
   it("regression: scene commands behave like the core: drafts wrong on their own reject the call and list clashes are error events with the list kept", async () => {
     const backend = new MockBackend({ now: () => clock, history: [] });

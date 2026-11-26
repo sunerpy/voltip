@@ -16,7 +16,7 @@ import type { Backend, DropListener, EventListener, FrameListener, Unsubscribe }
 import { type SampleHistoryRow, historyEntries } from "./fixtures/history";
 import builtinPresetTexts from "./fixtures/ipc/presets-builtin.json";
 import builtinSceneRows from "./fixtures/ipc/scenes-builtin.json";
-import { joinLiveText, livePreviewText, relayTooOld } from "./labels";
+import { joinLiveText, liveTextGap, livePreviewText, relayTooOld } from "./labels";
 import {
   type BuiltInService,
   type ListedModels,
@@ -91,7 +91,9 @@ import {
   type PasteFailure,
   type PasteOutcome,
   type LiveSegment,
+  type LiveSource,
   type LiveText,
+  isStreamingOutputMode,
   type ModelInstallState,
   type PackageProblem,
   type ModelState,
@@ -706,7 +708,7 @@ const MOCK_MODEL_ROWS: readonly Omit<ModelState, "active" | "state" | "dir" | "f
     languages: ["zh", "en"],
     size_bytes: 169_347_218,
     description:
-      "边说边出字的预览模型（Zipformer 流式，中英混读，自带标点）；最终文本仍由所选引擎识别；169 MB",
+      "边说边出字的预览模型（Zipformer 流式，中英混读，自带标点）；使用内置服务、实时识别模型或「整段输出」时只用于显示；169 MB",
     recommended: false,
     repo: "csukuangfj/sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05",
   },
@@ -831,10 +833,29 @@ export const MCP_UNAVAILABLE = "mcp: AI 工具接入仅在电脑上提供";
 export const MOCK_PHONE_CLIPBOARD = "https://example.test/voltip";
 /** `voltip_desktop_lib::PHONE_TEXT_UNAVAILABLE`: the desktop inserts phones' texts, it sends none. */
 export const PHONE_TEXT_UNAVAILABLE = "phone_text: 电脑接收手机发来的文字，不向其他设备发送";
-/** `live_error` of a take whose scene asked for a streaming mode the live preview cannot serve
- *  (the core's `SCENE_MODE_NOT_READY`, §18.4). */
-export const MOCK_SCENE_MODE_NOT_READY =
-  "场景要求边说边识别，但实时预览未就绪（已关闭或实时识别模型未下载），本次按整段输出处理";
+/** Why a scene's streaming output mode could not be honoured (the core's `SceneFallback`,
+ *  docs/dictation.md §18.4): nothing recognises the take while it is spoken, a fallback model
+ *  taking whole recordings stands in for the realtime model (§3.5), or the shell has no streaming
+ *  recogniser. */
+export type MockSceneFallback = "not_ready" | "stand_in" | "builtin_stand_in" | "no_streaming";
+
+/** `live_error` of a take whose scene asked for a streaming mode it could not run in (the core's
+ *  `scene_mode_fallback`, §18.4): the mode the scene asks for, and why. */
+export function mockSceneModeFallback(requested: OutputMode, why: MockSceneFallback): string {
+  const mode = requested === "live_inject" ? "「边说边输入」" : "「边说边识别」";
+  const reason =
+    why === "not_ready"
+      ? "说话时没有识别结果（实时预览已关闭或「实时预览」模型未下载）"
+      : why === "stand_in"
+        ? "当前使用的候补模型只能整段识别"
+        : why === "builtin_stand_in"
+          ? "当前由候补模型代替内置服务"
+          : "此设备不支持实时识别";
+  return `场景要求${mode}，但${reason}，本次按整段输出处理`;
+}
+
+/** The note of a scene asking for 边说边识别 while nothing recognises the take as it is spoken. */
+export const MOCK_SCENE_MODE_NOT_READY = mockSceneModeFallback("streaming_final", "not_ready");
 
 /** The core's text for a take with nothing left to insert (`FailureCode::NoSpeech`). */
 export const MOCK_NO_SPEECH = "没有听到声音";
@@ -881,23 +902,35 @@ export const MOCK_LIVE_STEP_MS = 400;
  *  times, an endpoint commits it (with punctuation, as the streaming model emits it), then the
  *  second sentence grows. Each step is one `LiveText` the pill renders. */
 export const MOCK_LIVE_SCRIPT: readonly LiveText[] = [
-  { committed: [], current: "把这段", injected: 0 },
-  { committed: [], current: "把这段逻辑抽成", injected: 0 },
-  { committed: [], current: "把这段逻辑抽成一个 helper", injected: 0 },
+  { committed: [], current: "把这段", injected: 0, streaming: false, switched: false },
+  { committed: [], current: "把这段逻辑抽成", injected: 0, streaming: false, switched: false },
+  {
+    committed: [],
+    current: "把这段逻辑抽成一个 helper",
+    injected: 0,
+    streaming: false,
+    switched: false,
+  },
   {
     committed: [{ text: "把这段逻辑抽成一个 helper，", start_ms: 0, end_ms: 1600 }],
     current: "",
     injected: 0,
+    streaming: false,
+    switched: false,
   },
   {
     committed: [{ text: "把这段逻辑抽成一个 helper，", start_ms: 0, end_ms: 1600 }],
     current: "然后在 session",
     injected: 0,
+    streaming: false,
+    switched: false,
   },
   {
     committed: [{ text: "把这段逻辑抽成一个 helper，", start_ms: 0, end_ms: 1600 }],
     current: "然后在 session assembly 里复用",
     injected: 0,
+    streaming: false,
+    switched: false,
   },
 ];
 
@@ -1141,9 +1174,24 @@ export class MockBackend implements Backend {
    *  characters `live_inject` has pasted so far (what a cancel reports). */
   private takeMode: OutputMode = "whole_take";
   private injectedChars = 0;
+  /** `live_inject` (§12, §14.3): the committed sentences typed so far, and whether a sentence
+   *  found another window in front — from then on nothing more is typed and the rest is copied
+   *  at the end. */
+  private takeTyped = 0;
+  private takeSwitched = false;
+  /** `live_inject` (§12, §14.9): a sentence's paste was refused (`simulatePasteRefused`,
+   *  `simulatePortalUnavailable`) and fell back to the clipboard; from then on nothing more is
+   *  typed, and the rest is written once at the end (the core's accumulated `rest`). */
+  private takeFellBack = false;
+  /** The take runs in a streaming mode, until its text session fails and the take goes whole (the
+   *  core's `degrade`). `LiveText.streaming` says so where the pill shows that session's words. */
+  private takeStreams = false;
   /** What recognises the current take while it is spoken, also when the pill shows none of it
    *  (docs/dictation.md §11.10): a streaming take's text comes from it. */
   private takeLive: LiveText | undefined;
+  /** Whose sentences a streaming take's text is (§11.10), decided at its start; absent for a whole
+   *  take. */
+  private takeTextSource: LiveSource | undefined;
   /** Voice edit (docs/dictation.md §19): what the kind of the current (or last) take is, the text
    *  the foreground application has selected (`setSelection`), and the selection the current
    *  edit take copied at its press. */
@@ -5569,8 +5617,9 @@ export class MockBackend implements Backend {
 
   /** A new session interrupts any dwell and starts listening at once — `ready: false` until the
    *  simulated device delivers its first samples (`MOCK_MIC_READY_MS`), then `ready: true` with a
-   *  fresh `started_at`; with `live_ready` the streaming partials follow (§11), shown in the pill
-   *  while `preview_source` names whose words they are (§11.10). */
+   *  fresh `started_at`; when something recognises this take while it is spoken the streaming
+   *  partials follow (§11), shown in the pill while `preview_source` names whose words they are
+   *  (§11.10). */
   private startDictation(kind: TakeKind) {
     this.clearDictationTimers();
     this.pinned = undefined;
@@ -5586,7 +5635,11 @@ export class MockBackend implements Backend {
     // (§19) is always one whole take and matches no scene; it keeps the app as its context.
     this.takeMode = kind === "edit" ? "whole_take" : this.state.engines.effective_output_mode;
     this.injectedChars = 0;
+    this.takeTyped = 0;
+    this.takeSwitched = false;
+    this.takeFellBack = false;
     this.takeLive = undefined;
+    this.takeTextSource = undefined;
     this.takeContext = undefined;
     this.takeScene = undefined;
     this.takeModeError = undefined;
@@ -5656,8 +5709,30 @@ export class MockBackend implements Backend {
     if (mode != null) {
       const serviceable = mode === "whole_take" || this.state.engines.live_ready;
       this.takeMode = serviceable ? mode : "whole_take";
-      if (!serviceable) this.takeModeError = MOCK_SCENE_MODE_NOT_READY;
+      // The core's `apply_scene`: with `live_ready` false, nothing recognises the take while it
+      // is spoken (no live source at all), or a fallback model stands in for the selected service
+      // (§3.5: one taking whole recordings for the realtime model, any for the built-in service;
+      // the live source then stays the selected service or is the local model's preview).
+      if (!serviceable)
+        this.takeModeError = mockSceneModeFallback(
+          mode,
+          this.state.engines.live_source === undefined
+            ? "not_ready"
+            : this.state.engines.asr_provider === "builtin"
+              ? "builtin_stand_in"
+              : "stand_in",
+        );
     }
+    // §11.10: whose sentences a streaming take's text is. The status resolved the configured output
+    // mode; a streaming take while the settings say 整段输出 (a scene's mode, a realtime model's
+    // stream) resolves its own: the built-in service writes a streaming take's text whether its
+    // words show or not, but recognises a whole take as it is spoken only while they do.
+    const configured = this.state.settings.engines;
+    this.takeStreams = isStreamingOutputMode(this.takeMode);
+    if (isStreamingOutputMode(this.takeMode))
+      this.takeTextSource = isStreamingOutputMode(configured.output_mode)
+        ? this.state.engines.live_source
+        : this.resolveEngines({ ...configured, output_mode: this.takeMode }).live_source;
     this.emitPhase(
       {
         phase: "listening",
@@ -5679,11 +5754,16 @@ export class MockBackend implements Backend {
         locked,
       });
       const engines = this.state.engines;
-      if (!engines.live_ready) return;
-      const injecting = this.takeMode === "live_inject";
       // §11.10: the pill shows the words of `preview_source`, tagged with it; with the provider's
-      // words off, a realtime model's stream still makes the take's text, unseen.
+      // words off, a realtime model's stream or the built-in service still makes the take's text,
+      // unseen, while the pill shows the local model's words (the same script here) or none.
       const shown = engines.preview_source;
+      const hidden = this.takeTextHidden();
+      // The take's own sources decide, not `live_ready`, which says whether the streaming modes
+      // would take effect: while a fallback model taking whole recordings stands in for the
+      // realtime model it is false, and the Live preview model still previews the whole take.
+      if (shown === undefined && this.takeTextSource === undefined) return;
+      const injecting = this.takeMode === "live_inject";
       const tag = {
         ...(shown === undefined ? {} : { source: shown }),
         ...(engines.preview_provider === undefined ? {} : { provider: engines.preview_provider }),
@@ -5693,15 +5773,58 @@ export class MockBackend implements Backend {
         const phase = this.state.dictation.phase;
         if (script === undefined || !this.listeningIn(session) || phase.phase !== "listening")
           return;
-        // A degraded preview keeps what it showed and ignores later partials, like the core.
-        if (this.takeLive?.degraded !== undefined) return;
+        // A degraded preview keeps what it showed and ignores later partials, like the core; so
+        // does the pill once a streaming take's hidden text session failed (`simulateLiveDegraded`
+        // ends this loop then). Hidden text that failed in a take that no longer streams is not
+        // the pill's: the local model's words go on, while the take's text stays where it failed.
+        const failed = this.takeLive?.degraded !== undefined;
+        if (failed && !hidden) return;
         // `live_inject` pastes every committed sentence the moment it closes (§12): the mock's
-        // paste is instant, so `injected` follows `committed` and the cancel count follows both.
-        const injected = injecting ? script.committed.length : 0;
-        if (injecting) this.injectedChars = injectedChars(script.committed, injected);
-        const live: LiveText = { ...structuredClone(script), injected, ...tag };
-        this.takeLive = live;
-        if (shown !== undefined) this.emitPhase({ ...phase, live });
+        // paste is instant, so `injected` follows `committed` and the cancel count follows both —
+        // until a sentence finds another window in front (§14.3): nothing more is typed, the pill
+        // says so, and the rest is copied at the end (the core's `on_live_injected`); or until a
+        // paste is refused (§14.9) and falls back to the clipboard: nothing more is typed either,
+        // and the rest is written once at the end.
+        if (
+          injecting &&
+          !failed &&
+          !this.takeFellBack &&
+          script.committed.length > this.takeTyped
+        ) {
+          if (this.takeSwitched || this.pastesElsewhere()) this.takeSwitched = true;
+          else if (this.pasteFallsBack()) this.takeFellBack = true;
+          else this.takeTyped = script.committed.length;
+        }
+        const injected = injecting ? this.takeTyped : 0;
+        const live: LiveText = {
+          ...structuredClone(script),
+          injected,
+          // The pill's words are the take's text: a streaming take whose words show. Next to a
+          // hidden text session they are the local model's preview (the core's `on_live`).
+          streaming: this.takeStreams && !hidden,
+          switched: this.takeSwitched,
+          ...tag,
+        };
+        if (!failed) {
+          if (injecting) this.injectedChars = injectedChars(script.committed, injected);
+          this.takeLive = live;
+        }
+        // The local model's words next to hidden text carry no pasted marks (the core's
+        // `on_live_injected`); a window switch shows either way, also with no words on the pill,
+        // where a plain paste shows nothing.
+        if (shown !== undefined)
+          this.emitPhase({ ...phase, live: hidden ? { ...live, injected: 0 } : live });
+        else if (this.takeSwitched && phase.live?.switched !== true)
+          this.emitPhase({
+            ...phase,
+            live: {
+              committed: [],
+              current: "",
+              injected: 0,
+              streaming: this.takeStreams && !hidden,
+              switched: true,
+            },
+          });
         this.laterLive(MOCK_LIVE_STEP_MS, () => {
           step(n + 1);
         });
@@ -5740,6 +5863,36 @@ export class MockBackend implements Backend {
     });
   }
 
+  /** Whether the take's text comes from a session whose words the pill does not show
+   *  (docs/dictation.md §11.10): a realtime model's stream, or the built-in service in a streaming
+   *  mode, with 服务商的实时文字 off. The pill then shows the local model's words, or none. */
+  private takeTextHidden(): boolean {
+    return (
+      this.takeTextSource !== undefined && this.state.engines.preview_source !== this.takeTextSource
+    );
+  }
+
+  /** Whether a paste now would find another window in front and copy instead (docs/dictation.md
+   *  §14.3): `simulateWindowSwitch` on a desktop that pastes, with 只复制 for a switched window. */
+  private pastesElsewhere(): boolean {
+    return (
+      this.role !== "phone" &&
+      this.state.engines.inject === "paste" &&
+      this.windowSwitched &&
+      this.state.settings.engines.switched_window === "copy_only"
+    );
+  }
+
+  /** Whether a paste now would be refused and fall back to the clipboard (docs/dictation.md
+   *  §14.9): `simulatePasteRefused` or `simulatePortalUnavailable` on a desktop that pastes. */
+  private pasteFallsBack(): boolean {
+    return (
+      this.role !== "phone" &&
+      this.state.engines.inject === "paste" &&
+      (this.pasteRefused || this.portalUnavailable)
+    );
+  }
+
   /** Whether `session` is still the one listening (a stale timer must not touch a later take). */
   private listeningIn(session: number): boolean {
     return (
@@ -5747,23 +5900,48 @@ export class MockBackend implements Backend {
     );
   }
 
-  /** The core's test hook (docs/dictation.md §11 `StreamDegraded`): the streaming path failed
-   *  (model load, tap overrun, decoder error). The text shown so far stays, later partials are
-   *  ignored, and the recording continues to the whole-take result untouched. */
+  /** The core's test hook (docs/dictation.md §11 `StreamDegraded`): the streaming path that makes
+   *  the take's text failed (model load, tap overrun, decoder error). The text shown so far stays,
+   *  later partials are ignored, and the recording continues to the whole-take result untouched.
+   *  When the pill shows the local model's words next to that text (§11.10), they stop there too,
+   *  and in a streaming take the pill says that the rest comes after the release. */
   simulateLiveDegraded(reason: string) {
     const phase = this.state.dictation.phase;
     if (phase.phase !== "listening") return;
-    this.clearLiveTimers();
+    const hidden = this.takeTextHidden();
     const live: LiveText = {
       committed: [],
       current: "",
       injected: 0,
+      streaming: this.takeStreams && !hidden,
+      switched: this.takeSwitched,
       ...this.takeLive,
       degraded: reason,
     };
     this.takeLive = live;
-    // §11.10: hidden words stop unseen; the take still falls back to the whole recording.
-    if (this.state.engines.preview_source !== undefined) this.emitPhase({ ...phase, live });
+    if (!hidden) {
+      this.clearLiveTimers();
+      if (this.state.engines.preview_source !== undefined) this.emitPhase({ ...phase, live });
+    } else if (this.takeStreams) {
+      // §11.10, §12: the hidden text session of a streaming take failed, so the rest of its text
+      // comes after the release. The pill says so in place of the local model's words, which no
+      // longer matter and stop, also when it had no words yet (the core's `on_hidden_degraded`).
+      this.clearLiveTimers();
+      this.emitPhase({
+        ...phase,
+        live: {
+          committed: [],
+          current: "",
+          injected: 0,
+          switched: false,
+          ...phase.live,
+          degraded: reason,
+          streaming: true,
+        },
+      });
+    }
+    // The core's `degrade`: 边说边识别, and 边说边输入 before its first sentence, go whole from here.
+    if (this.takeMode === "streaming_final" || this.takeTyped === 0) this.takeStreams = false;
   }
 
   /** One hotkey edge into the activation machine (docs/dictation.md §13), simplified to what the
@@ -5883,6 +6061,15 @@ export class MockBackend implements Backend {
     const polished = refine && refineFailure === undefined;
     const asrMs = streaming ? MOCK_FINALIZE_MS : MOCK_ASR_MS;
     const raw = streaming ? preview : MOCK_DICTATION_RAW;
+    // §3.14: a streaming take the library's streaming model wrote names it and this computer, not
+    // the model the settings chose.
+    const byStreamingModel = streaming && this.takeTextSource === "local";
+    const recognisedBy = byStreamingModel
+      ? {
+          asr_model: this.catalogueRow(MOCK_STREAMING_MODEL_ID)?.name ?? MOCK_STREAMING_MODEL_ID,
+          asr_provider: "local" as const,
+        }
+      : { asr_model: engines.asr_model };
     const durationMs = Math.max(0, stoppedAt - startedAt);
     const segments = streaming && live !== undefined ? streamSegments(live, durationMs) : undefined;
     // The status names the clean-up's preset from the start of processing (§21).
@@ -5900,12 +6087,9 @@ export class MockBackend implements Backend {
     const finish = () => {
       if (this.state.dictation.session !== session) return;
       // The phone's result goes to its clipboard (docs/dictation.md §20.7), whatever the setting;
-      // another window in front copies instead of pasting (§14.3).
-      const switched =
-        this.role !== "phone" &&
-        engines.inject === "paste" &&
-        this.windowSwitched &&
-        this.state.settings.engines.switched_window === "copy_only";
+      // another window in front copies instead of pasting (§14.3), and once a sentence of
+      // 边说边输入 found one, the rest of that take is copied too.
+      const switched = this.pastesElsewhere() || (mode === "live_inject" && this.takeSwitched);
       // §14.9: the system did not allow the paste, or its portal could not be used for it; the text
       // waits on the clipboard.
       const asked = this.role !== "phone" && engines.inject === "paste" && !switched;
@@ -5926,6 +6110,24 @@ export class MockBackend implements Backend {
       const refined = polished ? vocabulary.correct(MOCK_DICTATION_TEXT).text : corrected.text;
       const ruled = vocabulary.applyRules(refined);
       const text = ruled.text;
+      // `live_inject` (§12, §14.3): what was not typed goes to the clipboard on its own when
+      // sentences were, and the result card offers only that (`done.rest`): copied for another
+      // window without the separator in front; after a refused paste, in the same window, with
+      // it, so that the card's 粘贴 continues the typed text (the core's `finish_live_inject`).
+      const typed =
+        mode === "live_inject" && (switched || refused || unavailable) ? this.takeTyped : 0;
+      const vocabularyOf = (pieces: readonly string[]) =>
+        vocabulary.applyRules(vocabulary.correct(joinLiveText(pieces)).text).text.trim();
+      const rest = (() => {
+        if (typed === 0 || live === undefined) return "";
+        const after = vocabularyOf([
+          ...live.committed.slice(typed).map((s) => s.text),
+          live.current,
+        ]);
+        if (switched || after.length === 0) return after;
+        const before = vocabularyOf(live.committed.slice(0, typed).map((s) => s.text));
+        return liveTextGap(before, after) + after;
+      })();
       if (text.trim().length === 0) {
         this.emitPhase({
           phase: "failed",
@@ -5982,6 +6184,7 @@ export class MockBackend implements Backend {
         ...(refused ? { clipboard_code: "remote_denied" as const } : {}),
         ...(unavailable ? { clipboard_code: "remote_unavailable" as const } : {}),
         ...checked,
+        ...(rest.trim().length === 0 ? {} : { rest }),
       };
       const entry: HistoryEntry = {
         id: this.uuid(),
@@ -5989,7 +6192,7 @@ export class MockBackend implements Backend {
         raw_text: raw,
         text,
         refined: polished,
-        asr_model: engines.asr_model,
+        ...recognisedBy,
         ...(polished ? { refine_model: engines.refine_model } : {}),
         ...(refineFailure === undefined ? {} : { refine_failure: refineFailure }),
         // As the core: a failed request keeps the service's words (§3.6).

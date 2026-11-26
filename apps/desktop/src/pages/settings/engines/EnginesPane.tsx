@@ -100,12 +100,16 @@ function ProviderList({ kind, initialOpen }: { kind: ServiceKind; initialOpen?: 
           </StatusRow>
         </SettingsRows>
       )}
-      {kind === "llm" && settings.refine_enabled && settings.output_mode === "live_inject" && (
-        // docs/dictation.md §12: live_inject pastes each sentence as it closes; nothing is refined.
-        <p className="text-[12px] leading-4 text-warning" data-testid="refine-live-inject">
-          {t("engines.refineLiveInject")}
-        </p>
-      )}
+      {kind === "llm" &&
+        settings.refine_enabled &&
+        engines.effective_output_mode === "live_inject" && (
+          // docs/dictation.md §12: live_inject pastes each sentence as it closes; nothing is refined.
+          // The mode in effect: a 边说边输入 that runs as a whole take (nothing recognises the take as
+          // it is spoken, a fallback model taking whole recordings stands in) is polished.
+          <p className="text-[12px] leading-4 text-warning" data-testid="refine-live-inject">
+            {t("engines.refineLiveInject")}
+          </p>
+        )}
       {kind === "llm" && <PresetsSection />}
       <SettingsSection
         title={title}

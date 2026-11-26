@@ -13,6 +13,7 @@ import type {
   GlossaryRoute,
   KeyPolicy,
   ModelState,
+  OutputMode,
   ProviderId,
   ProviderStatus,
   SecretState,
@@ -21,7 +22,7 @@ import type {
   SiteId,
   LiveSource,
 } from "./schema";
-import { PROVIDER_IDS } from "./schema";
+import { PROVIDER_IDS, isStreamingOutputMode } from "./schema";
 
 /** A service a vendor offers: its public base URL, the models suggested first and, for a vendor
  *  with a Chinese and an international site, both sites (the default first, docs/dictation.md
@@ -692,7 +693,9 @@ function fallbackStatus(
 /** `voltip_core::engines::LiveSources` (docs/dictation.md §11.10): what can give words while a
  *  take is spoken. */
 export interface LiveSources {
-  /** The built-in service previews and 服务商的实时文字 is on. */
+  /** The built-in service recognises and previews (`ResolvedEngines.cloud_preview`): it decodes
+   *  each sentence of a streaming take again whatever 服务商的实时文字 says, the growing sentence
+   *  only with it on. */
   cloud: boolean;
   /** The selected model is a realtime model: it recognises the take as it is spoken, whatever
    *  the switches say. */
@@ -710,20 +713,40 @@ export interface LivePlan {
   shown?: LiveSource;
 }
 
-/** `LiveSources::plan` (docs/dictation.md §11.10): the built-in service's preview first, then the
- *  realtime model's stream while it streams now (no model taking whole recordings stands in for
- *  it, §3.5), then the local model. The stream's words are shown only with 服务商的实时文字 on;
- *  off, the local model shows its own while the stream still recognises the take. */
-export function livePlan(sources: LiveSources, streamNow: boolean): LivePlan {
-  const text: LiveSource | undefined = sources.cloud
-    ? "cloud"
-    : sources.stream && streamNow
-      ? "stream"
-      : sources.local
-        ? "local"
-        : undefined;
+/** `LiveSources::plan` (docs/dictation.md §11.10) of a take in a streaming output mode
+ *  (`streaming`) or in 整段输出: the built-in service first (in the streaming modes whatever
+ *  服务商的实时文字 says, in 整段输出 only with it on), then the realtime model's stream while it
+ *  streams now (no model taking whole recordings stands in for it, §3.5), then the local model.
+ *  While such a model stands in, a streaming take has no source at all: it runs whole through
+ *  the fallback chain, not on the local model's words (2026-11-23, the user's decision). The
+ *  service's words are shown only with 服务商的实时文字 on; off, the local model shows its own
+ *  while the service still recognises the take. */
+export function livePlan(
+  sources: LiveSources,
+  streamNow: boolean,
+  selectedNow: boolean,
+  streaming: boolean,
+): LivePlan {
+  const text: LiveSource | undefined =
+    sources.cloud && selectedNow && (streaming || sources.providerShown)
+      ? "cloud"
+      : sources.cloud && streaming
+        ? // A fallback model stands in for the built-in service (its day used up): a streaming
+          // take runs whole through the chain (2026-11-24, the user's decision).
+          undefined
+        : sources.stream && streamNow
+          ? "stream"
+          : sources.stream && streaming
+            ? undefined
+            : sources.local
+              ? "local"
+              : undefined;
   const shown: LiveSource | undefined =
-    text === "stream" && !sources.providerShown ? (sources.local ? "local" : undefined) : text;
+    (text === "stream" || text === "cloud") && !sources.providerShown
+      ? sources.local
+        ? "local"
+        : undefined
+      : text;
   return { ...(text === undefined ? {} : { text }), ...(shown === undefined ? {} : { shown }) };
 }
 
@@ -799,10 +822,7 @@ export function resolveEngineStatus(input: EngineResolveInput): EngineStatus {
   // model streams itself, the local model previews with its own switch.
   const sources: LiveSources = {
     cloud:
-      settings.provider_preview &&
-      asrProvider === "builtin" &&
-      asrTarget !== undefined &&
-      input.builtIn.asr?.preview === true,
+      asrProvider === "builtin" && asrTarget !== undefined && input.builtIn.asr?.preview === true,
     stream: asrTarget !== undefined && asrStreams(asrProvider, asrTarget.url, asrTarget.model),
     providerShown: settings.provider_preview,
     local: input.localPreviewReady,
@@ -818,25 +838,37 @@ export function resolveEngineStatus(input: EngineResolveInput): EngineStatus {
   // A phone has no library: its rows read as before (nothing of the device recognises there).
   const onDevice = asrProvider === "local" && (input.library?.length ?? 0) > 0;
   const asrFallback = fallbackStatus("asr", input, asrPrimary, onDevice);
-  // §3.5: while a model taking whole recordings only stands in for the realtime one, the take does
-  // not stream: the local model takes over when it can, otherwise nothing recognises while the
-  // take is spoken, and the live source stays the realtime model.
+  // §3.5: while a model taking whole recordings only stands in for the realtime one, or any
+  // fallback model for the built-in service, the take does not stream: a streaming mode runs as a
+  // whole take through the chain, the local model previews when it can, otherwise nothing
+  // recognises while the take is spoken, and the live source stays the selected service.
   const standIn = asrFallback.standIn;
-  const plan = livePlan(sources, standIn === undefined || standIn.streams);
-  const liveSource = plan.text ?? (sources.stream ? "stream" : undefined);
+  const streamNow = standIn === undefined || standIn.streams;
+  const selectedNow = standIn === undefined;
+  // `output_mode_with`: a realtime model's stream is the take's text (§11.9), also while its words
+  // are hidden (§11.10); a streaming mode without a source runs as a whole take (§12).
+  const modeWith = (text: LiveSource | undefined): OutputMode =>
+    settings.output_mode === "whole_take" && text === "stream"
+      ? "streaming_final"
+      : settings.output_mode !== "whole_take" && text === undefined
+        ? "whole_take"
+        : settings.output_mode;
+  // `status_with`: the mode the configured one runs as, and that mode's sources; `live_ready` says
+  // whether the streaming modes would take effect, so it reads the plan of a streaming take.
+  const effective = modeWith(
+    livePlan(sources, streamNow, selectedNow, isStreamingOutputMode(settings.output_mode)).text,
+  );
+  const plan = livePlan(sources, streamNow, selectedNow, isStreamingOutputMode(effective));
+  const liveReady = livePlan(sources, streamNow, selectedNow, true).text !== undefined;
+  // With nothing previewing while a fallback model stands in, the live source stays the selected
+  // service: the realtime model, or the built-in service (2026-11-24).
+  const liveSource =
+    plan.text ?? (sources.stream ? "stream" : sources.cloud && !selectedNow ? "cloud" : undefined);
   // §11.10: the service whose words the pill shows — the one standing in, if one does.
   const previewProvider =
     plan.shown === "cloud" || plan.shown === "stream"
       ? (standIn?.provider ?? asrProvider)
       : undefined;
-  // `effective_output_mode`: a realtime model's stream is the take's text (§11.9), also while its
-  // words are hidden (§11.10).
-  const effective =
-    settings.output_mode === "whole_take" && plan.text === "stream"
-      ? "streaming_final"
-      : settings.output_mode !== "whole_take" && plan.text === undefined
-        ? "whole_take"
-        : settings.output_mode;
   const language = trimmed(settings.language);
   return {
     asr_provider: asrProvider,
@@ -846,7 +878,7 @@ export function resolveEngineStatus(input: EngineResolveInput): EngineStatus {
     asr_host: userHost(asrProvider, asrTarget),
     ...(asrProvider === "local" ? { local_model: input.local.id } : {}),
     local_ready: asrProvider === "local" && input.local.installed,
-    live_ready: plan.text !== undefined,
+    live_ready: liveReady,
     ...(liveSource === undefined ? {} : { live_source: liveSource }),
     ...(plan.shown === undefined ? {} : { preview_source: plan.shown }),
     ...(previewProvider === undefined ? {} : { preview_provider: previewProvider }),

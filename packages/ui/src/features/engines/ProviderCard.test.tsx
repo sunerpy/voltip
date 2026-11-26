@@ -8,7 +8,13 @@ import {
   zhCN,
   zhT,
 } from "@voltip/shared";
-import { MOCK_PROBE_MS, MockBackend } from "@voltip/shared/mock";
+import {
+  MOCK_ENGINE_BUILTIN,
+  MOCK_MODELS_ROOT,
+  MOCK_PROBE_MS,
+  MOCK_STREAMING_MODEL_ID,
+  MockBackend,
+} from "@voltip/shared/mock";
 import { act, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
@@ -19,6 +25,19 @@ import { ProviderCards, ProviderDetail } from "./ProviderCard";
 import { PROBE_WAIT_MS, useProviderProbe } from "./useProviderProbe";
 
 const t = zhT.t;
+
+/** A release build's built-in service, which previews itself (docs/dictation.md §11.8). */
+const PREVIEWING = {
+  asr: { model: MOCK_ENGINE_BUILTIN.asr_model, key: true, preview: true },
+  llm: { model: MOCK_ENGINE_BUILTIN.refine_model, key: true },
+};
+
+/** The Live preview model, downloaded (docs/dictation.md §11). */
+const STREAMING_INSTALLED = {
+  kind: "installed" as const,
+  path: `${MOCK_MODELS_ROOT}/${MOCK_STREAMING_MODEL_ID}`,
+  installed_at: 1_758_600_000,
+};
 
 /** The settings drawer of `id` once the backend's state has loaded, as a card opens it. */
 function Detail({
@@ -377,6 +396,95 @@ describe("ProviderCards (desktop model pages and phone settings)", () => {
     const stepfun = await screen.findByTestId("provider-asr-stepfun-detail");
     expect(within(stepfun).getByTestId("provider-abilities-help")).toHaveTextContent(
       t("engines.ability.realtimeHiddenHelp"),
+    );
+    backend.destroy();
+  });
+
+  it("regression: says in 边说边识别 and 边说边输入 that the built-in service recognises each sentence, and what shows while you speak as the switches change (docs/dictation.md §3.15, §11.10)", async () => {
+    // Review of the 2026-11-23 change (the built-in service writes the text of the streaming
+    // output modes whatever 服务商的实时文字 says): its drawer still said 「松开后识别整段录音」 there.
+    const backend = new MockBackend({
+      builtIn: PREVIEWING,
+      models: { [MOCK_STREAMING_MODEL_ID]: STREAMING_INSTALLED },
+      settings: { engines: { ...defaultEngineSettings(), output_mode: "live_inject" } },
+    });
+    shell(backend, <Detail id="builtin" kind="asr" previews onClose={() => undefined} />);
+    const builtin = await screen.findByTestId("provider-asr-builtin-detail");
+    const help = within(builtin).getByTestId("provider-abilities-help");
+    expect(help).not.toHaveTextContent("松开后识别整段录音");
+    expect(help).toHaveTextContent(t("engines.ability.streamingPreviewHelp"));
+    const set = async (engines: Partial<ReturnType<typeof defaultEngineSettings>>) => {
+      await act(async () => {
+        await backend.invoke("settings_set_engines", {
+          engines: { ...backend.peek().settings.engines, ...engines },
+        });
+      });
+    };
+    // 服务商的实时文字 off: the Live preview model shows the words, then nothing once it is off.
+    await set({ provider_preview: false });
+    expect(help).toHaveTextContent(t("engines.ability.streamingLocalHelp"));
+    await set({ local_preview: false });
+    expect(help).toHaveTextContent(t("engines.ability.streamingHiddenHelp"));
+    // 整段输出: the whole recording after release, as before.
+    await set({ output_mode: "whole_take" });
+    expect(help).toHaveTextContent(t("engines.ability.wholePreviewHelp"));
+    backend.destroy();
+  });
+
+  it("regression: while a fallback model stands in for the built-in service, its drawer still says what it does in the streaming mode the settings choose (docs/dictation.md §3.5, §3.15)", async () => {
+    // The review of 2026-11-24: the line followed the mode in effect, 整段输出 while the fallback
+    // model stands in, and promised the built-in service's preview, which no take gets then.
+    const backend = new MockBackend({
+      builtIn: PREVIEWING,
+      providerKeys: [{ provider: "groq", kind: "asr" }],
+      models: { [MOCK_STREAMING_MODEL_ID]: STREAMING_INSTALLED },
+      settings: {
+        engines: {
+          ...defaultEngineSettings(),
+          output_mode: "streaming_final",
+          asr_fallback: {
+            enabled: true,
+            models: [{ provider: "groq", model: "whisper-large-v3" }],
+          },
+        },
+      },
+    });
+    shell(backend, <Detail id="builtin" kind="asr" previews onClose={() => undefined} />);
+    const builtin = await screen.findByTestId("provider-asr-builtin-detail");
+    const help = within(builtin).getByTestId("provider-abilities-help");
+    expect(help).toHaveTextContent(t("engines.ability.streamingPreviewHelp"));
+    act(() => {
+      backend.simulateQuotaExhausted("asr", Date.now() + 86_400_000);
+    });
+    await waitFor(() => {
+      expect(backend.peek().engines.effective_output_mode).toBe("whole_take");
+    });
+    expect(help).toHaveTextContent(t("engines.ability.streamingPreviewHelp"));
+    expect(help).not.toHaveTextContent("松开后识别整段录音");
+    backend.destroy();
+  });
+
+  it("says what the built-in service would do in the output mode the settings choose while another provider is in use (docs/dictation.md §3.15)", async () => {
+    // A realtime model runs 整段输出 as 边说边识别 (§11.9), which the built-in service would not.
+    const backend = new MockBackend({
+      builtIn: PREVIEWING,
+      providerKeys: [{ provider: "stepfun", kind: "asr" }],
+      settings: {
+        engines: {
+          ...defaultEngineSettings(),
+          asr_provider: "stepfun",
+          providers: { stepfun: { asr_model: "stepaudio-2.5-asr-stream" } },
+        },
+      },
+    });
+    shell(backend, <Detail id="builtin" kind="asr" previews onClose={() => undefined} />);
+    const builtin = await screen.findByTestId("provider-asr-builtin-detail");
+    expect(backend.peek().engines).toMatchObject({
+      asr_provider: "stepfun",
+      effective_output_mode: "streaming_final",
+    });
+    expect(within(builtin).getByTestId("provider-abilities-help")).toHaveTextContent(
+      t("engines.ability.previewHelp"),
     );
     backend.destroy();
   });

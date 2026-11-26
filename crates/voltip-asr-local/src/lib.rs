@@ -52,6 +52,7 @@ pub use pool::{GPU_STRIKE_WINDOW, LOCK_WAIT};
 pub use relocate::STAGING_SUFFIX;
 pub use root::ModelsRoot;
 pub use segmenter::{VadSegmenter, VadSegmenterFactory};
+pub use sherpa::TAIL_PADDING_SAMPLES;
 pub use store::{
     CATALOGUE_VERSION, DISK_HEADROOM, FreeSpace, ImportError, MANIFEST_FILE, Manifest, ModelStore, RELEASE_BASE_URL, SlowSourcePolicy, Source, StoreError,
     bytes_to_fetch, release_base,

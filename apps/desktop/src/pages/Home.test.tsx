@@ -771,6 +771,41 @@ describe("Home page", () => {
     }
   });
 
+  it("regression: in 边说边识别 and 边说边输入 the engine card's note says the rest is recognised whole after the release, not that the text is unaffected (docs/dictation.md §12)", async () => {
+    // The review of 边说边输入 on realtime models, 2026-11-23: a streaming take's live session
+    // writes its text, so when it stops the text is not unaffected: the rest is recognised whole
+    // once the key is released (`LiveText.streaming`).
+    for (const output_mode of ["streaming_final", "live_inject"] as const) {
+      const backend = new MockBackend({
+        now: () => Date.now(),
+        settings: { engines: { ...defaultEngineSettings(), output_mode } },
+        models: {
+          [MOCK_STREAMING_MODEL_ID]: {
+            kind: "installed",
+            path: `~/.local/share/voltip/models/${MOCK_STREAMING_MODEL_ID}`,
+            installed_at: 1_758_600_000,
+          },
+        },
+      });
+      const { unmount } = renderApp({ backend });
+      const engine = await screen.findByTestId("home-engine");
+      await act(async () => {
+        await backend.invoke("dictation_start");
+      });
+      act(() => {
+        backend.simulateLiveDegraded("live tap overrun");
+      });
+      expect(await within(engine).findByTestId("home-live-degraded")).toHaveTextContent(
+        "实时识别已中断 · 松开后改用整段识别补齐",
+      );
+      await act(async () => {
+        await backend.invoke("dictation_cancel");
+      });
+      unmount();
+      backend.destroy();
+    }
+  });
+
   it("regression: the engine card shows the 实时预览 chip while the pill would show live words (preview_source) and a one-line note when the live preview degraded; the local model name follows the core", async () => {
     const backend = new MockBackend({
       now: () => Date.now(),
@@ -790,7 +825,9 @@ describe("Home page", () => {
     renderApp({ backend });
     const engine = await screen.findByTestId("home-engine");
     expect(backend.peek().engines.preview_source).toBe("local");
-    expect(within(engine).getByTestId("home-live-preview")).toHaveTextContent("实时预览");
+    // The card paints with the empty state until `core_state` answers: wait for the chip that
+    // state brings (a full parallel run on 2026-11-24 read the card before it had arrived).
+    expect(await within(engine).findByTestId("home-live-preview")).toHaveTextContent("实时预览");
     expect(screen.queryByTestId("home-live-degraded")).toBeNull();
     // The note appears only while the take is listening with a degraded preview, and names no
     // error: the final text is unaffected.

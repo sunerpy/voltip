@@ -392,11 +392,13 @@ describe("dictation contract (docs/dictation.md)", () => {
       ready: true,
       live,
     });
+    // Since 2026-11-23 a LiveText also says whether the take streams and whether the window
+    // changed (`streaming`, `switched`, §12, §14.3): `#[serde(default)]` too, false when absent.
     expect(listening).toEqual({
       phase: "listening",
       started_at: 1_758_700_600_180,
       ready: true,
-      live: { ...live, injected: 0 },
+      live: { ...live, injected: 0, streaming: false, switched: false },
       locked: false,
     });
     // `degraded` rides along; `live` without it has no key (skip-if-none), never `null`.
@@ -409,7 +411,13 @@ describe("dictation contract (docs/dictation.md)", () => {
     expect(degraded.phase === "listening" && degraded.live?.degraded).toBe("live tap overrun");
     expect(listening.phase === "listening" && "degraded" in (listening.live ?? {})).toBe(false);
     // Every LiveText field is `#[serde(default)]`.
-    expect(liveTextSchema.parse({})).toEqual({ committed: [], current: "", injected: 0 });
+    expect(liveTextSchema.parse({})).toEqual({
+      committed: [],
+      current: "",
+      injected: 0,
+      streaming: false,
+      switched: false,
+    });
     expect(liveTextSchema.safeParse({ committed: [{ text: "x" }] }).success).toBe(false);
     expect(
       dictationPhaseSchema.safeParse({ phase: "listening", started_at: 1, live: null }).success,
@@ -551,6 +559,8 @@ describe("dictation contract (docs/dictation.md)", () => {
       injected: 0,
       source: "stream",
       provider: "volcengine_speech",
+      streaming: false,
+      switched: false,
     });
     expect(liveTextSchema.safeParse({ source: "radio" }).success).toBe(false);
     expect(

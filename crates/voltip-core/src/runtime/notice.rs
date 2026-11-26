@@ -93,6 +93,7 @@ mod tests {
             clipboard_code: None,
             check: None,
             timing: None,
+            rest: None,
         }
     }
 

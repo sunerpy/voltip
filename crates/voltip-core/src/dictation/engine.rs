@@ -8,11 +8,12 @@
 //! needs.
 //!
 //! The live preview (§11) is a second, optional path next to the recording: when something
-//! recognises the take while it is spoken (`live_ready`: the built-in service's preview, a realtime
-//! model, the library's streaming model), the capture's 16 kHz tap is decoded on a blocking thread
-//! ([`run_live`]) and its partials land in `Listening.live`; on stop the text moves to
-//! `Processing.preview`. A realtime model whose words are not shown (§11.10) still recognises the
-//! take, and the local model may show its own words from a second copy of the tap ([`tee`]).
+//! recognises the take while it is spoken (the built-in service, a realtime model, the library's
+//! streaming model), the capture's 16 kHz tap is decoded on a blocking thread ([`run_live`]) and
+//! its partials land in `Listening.live`; on stop the text moves to `Processing.preview`. A
+//! realtime model, or the built-in service in a streaming mode, whose words are not shown (§11.10)
+//! still recognises the take, and the local model may show its own words from a second copy of the
+//! tap ([`tee`]).
 //!
 //! Every recogniser's text is first brought to the configured Chinese script (§17): whole takes,
 //! the live worker's partials / sentences / flush, and the `live_inject` remainder.
@@ -67,8 +68,8 @@ use super::ports::{
 use super::redecode::RedecodeStreaming;
 use super::tee;
 use super::{
-    DictationPhase, DictationStatus, FailureCode, LiveText, OutputMode, ProcessingStage, RefineFailure, SegmentProgress, TakeKind, TakeTiming,
-    inject_separator, join_text,
+    DictationPhase, DictationStatus, FailureCode, LiveText, OutputMode, ProcessingStage, RefineFailure, SegmentProgress, TakeKind, TakeTiming, inject_prefix,
+    join_text,
 };
 use super::{steps, wav};
 use crate::audio_cache::{KeptAudio, KeptStatus, NewRecording};
@@ -142,7 +143,7 @@ impl LivePiece {
     }
 }
 
-/// What the local model's session next to a hidden realtime stream reports
+/// What the local model's session next to a hidden realtime stream or built-in service reports
 /// (docs/dictation.md §11.10): only the pill uses it.
 pub enum ShownEvent {
     /// The current sentence changed.
@@ -234,7 +235,8 @@ pub enum Internal {
         /// The provider.
         provider: ProviderId,
     },
-    /// The local model's session next to a realtime model whose words are not shown
+    /// The local model's session next to a realtime model or built-in service whose words are not
+    /// shown
     /// (docs/dictation.md §11.10): what the pill shows, and nothing else.
     Shown {
         /// Session.
@@ -690,6 +692,8 @@ struct LiveInject {
     pasted: usize,
     /// Characters pasted so far (`Cancelled.injected_chars`).
     pasted_chars: usize,
+    /// The text copied at the end after sentences were typed ([`DictationPhase::Done`]'s `rest`).
+    copied: Option<String>,
     /// Once a paste fell back to the clipboard (or failed): the text not pasted yet, written in
     /// one go at the end; `Some` from the fallback on.
     rest: Option<String>,
@@ -975,6 +979,9 @@ pub struct DictationEngine {
     transcriber: Arc<dyn Transcriber>,
     refiner: Option<Arc<dyn Refiner>>,
     injector: Arc<dyn Injector>,
+    /// The dictation hotkey is down, as the runtime says at its edges ([`DictationEngine::set_key_held`]):
+    /// on X11 its grab takes every key event, so 边说边输入 holds its sentences until it is up.
+    key_held: bool,
     factory: EngineFactory,
     streaming: Option<Arc<dyn StreamingTranscriber>>,
     /// `ResolvedEngines::live_sources()` of the last configuration (docs/dictation.md §11.10): what
@@ -1069,9 +1076,31 @@ struct OrphanKeep {
 
 /// Why a scene's streaming output mode could not be honoured (docs/dictation.md §18.4); the take
 /// runs as a whole take and `Done.live_error` says so.
-const SCENE_MODE_NOT_READY: &str = "场景要求边说边识别，但实时预览未就绪（已关闭或实时识别模型未下载），本次按整段输出处理";
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SceneFallback {
+    /// Nothing recognises the take while it is spoken: the live switches are off or the local model
+    /// is not downloaded.
+    NotReady,
+    /// A fallback model taking whole recordings stands in for the realtime model (§3.5).
+    StandIn,
+    /// A fallback model, of any kind, stands in for the built-in service (§3.5, 2026-11-24).
+    BuiltInStandIn,
+    /// This shell has no streaming recogniser.
+    NoStreaming,
+}
+
+/// The history's note for [`SceneFallback`], naming the mode the scene asks for.
+fn scene_mode_fallback(requested: OutputMode, why: SceneFallback) -> String {
+    let mode = if requested == OutputMode::LiveInject { "「边说边输入」" } else { "「边说边识别」" };
+    let reason = match why {
+        SceneFallback::NotReady => "说话时没有识别结果（实时预览已关闭或「实时预览」模型未下载）",
+        SceneFallback::StandIn => "当前使用的候补模型只能整段识别",
+        SceneFallback::BuiltInStandIn => "当前由候补模型代替内置服务",
+        SceneFallback::NoStreaming => "此设备不支持实时识别",
+    };
+    format!("场景要求{mode}，但{reason}，本次按整段输出处理")
+}
 /// The same, on a shell without a streaming recogniser.
-const SCENE_MODE_NO_STREAMING: &str = "场景要求边说边识别，但此设备不支持实时识别，本次按整段输出处理";
 /// `Done.live_error` of a stream that ended without any text (docs/dictation.md §12).
 const EMPTY_STREAM: &str = "实时识别未得到文本";
 
@@ -1258,8 +1287,9 @@ impl DictationEngine {
             metering,
             keep_audio: false,
             orphans: Vec::new(),
+            key_held: false,
         };
-        engine.warm_streaming();
+        engine.warm_streaming(engine.output_mode);
         engine.warm_transcriber();
         (engine, rx)
     }
@@ -1426,23 +1456,26 @@ impl DictationEngine {
         {
             self.arm(dwell, |session| Internal::DwellOver { session });
         }
-        self.warm_streaming();
+        self.warm_streaming(self.output_mode);
         self.warm_transcriber();
     }
 
-    /// The next start's live sources (docs/dictation.md §11.10): the configuration's, as the ports
-    /// here allow — a realtime model streams when its client streams now (a fallback model taking
-    /// whole recordings may stand in for it, §3.5), the library's model needs a streaming port.
-    fn live_plan(&self) -> LivePlan {
+    /// The live sources of a take in `mode` (docs/dictation.md §11.10): the configuration's, as the
+    /// ports here allow — a realtime model streams when its client streams now (a fallback model
+    /// taking whole recordings may stand in for it, §3.5), the library's model needs a streaming
+    /// port, and the built-in service writes a streaming take's text whatever its words switch says.
+    fn live_plan(&self, mode: OutputMode) -> LivePlan {
         let stream_now = self.live.stream && self.transcriber.streaming(&[]).is_some();
-        LiveSources { local: self.live.local && self.streaming.is_some(), ..self.live }.plan(stream_now)
+        let selected_now = !self.transcriber.stands_in();
+        LiveSources { local: self.live.local && self.streaming.is_some(), ..self.live }.plan(stream_now, selected_now, mode.is_streaming())
     }
 
-    /// Whether the next start recognises the take while it is spoken: the built-in service's
-    /// preview, a realtime model whose client streams, or the library's model with a streaming port
-    /// plugged in (docs/dictation.md §11.10) — shown on the pill or not.
+    /// Whether a streaming take would be recognised while it is spoken — the streaming output
+    /// modes take effect (`EngineStatus.live_ready`): the built-in service, a realtime model whose
+    /// client streams, or the library's model with a streaming port plugged in (docs/dictation.md
+    /// §11.10) — shown on the pill or not.
     pub fn live_enabled(&self) -> bool {
-        self.live_plan().text.is_some()
+        self.live_plan(OutputMode::StreamingFinal).text.is_some()
     }
 
     /// The streaming port `source` runs on in this take (docs/dictation.md §11.8, §11.9): the
@@ -1451,9 +1484,11 @@ impl DictationEngine {
     fn live_port(&self, source: LiveSource) -> Option<Arc<dyn StreamingTranscriber>> {
         match source {
             // The streaming modes take their text from the flush; a whole take decodes it itself.
+            // §11.10: the growing sentence goes out again only for a pill that shows its words.
             LiveSource::Cloud => Some(Arc::new(
                 RedecodeStreaming::new(self.transcriber.clone(), self.take.vocabulary.glossary().to_vec())
                     .flushing(self.take.mode.is_streaming())
+                    .previewing(self.take.live_plan.shown == Some(LiveSource::Cloud))
                     .with_origin(self.take.origin.clone()),
             )),
             LiveSource::Stream => self.transcriber.streaming(self.take.vocabulary.glossary()),
@@ -1480,12 +1515,13 @@ impl DictationEngine {
     /// sentences are the take's text, and sending the whole take once more would recognise (and
     /// bill) it twice, and may take as long as the take played.
     fn resolve_output_mode(&self, mode: OutputMode) -> (OutputMode, Option<&'static str>) {
-        let text = self.live_plan().text;
+        let text = self.live_plan(mode).text;
         match mode {
             OutputMode::WholeTake if text == Some(LiveSource::Stream) => (OutputMode::StreamingFinal, None),
             OutputMode::WholeTake => (OutputMode::WholeTake, None),
             mode if text.is_some() => (mode, None),
             _ if !self.live.any() => (OutputMode::WholeTake, Some("live preview is not ready (switched off or streaming model not installed)")),
+            _ if self.live.stream || self.live.cloud => (OutputMode::WholeTake, Some("the fallback model standing in takes whole recordings only")),
             _ => (OutputMode::WholeTake, Some("this shell has no streaming recogniser")),
         }
     }
@@ -1496,10 +1532,10 @@ impl DictationEngine {
     }
 
     /// Preload the streaming model (2.6 s measured) so the first partial is not late. No-op when
-    /// the next take does not use it; the port itself makes it idempotent.
-    fn warm_streaming(&self) {
+    /// a take in `mode` does not use it; the port itself makes it idempotent.
+    fn warm_streaming(&self, mode: OutputMode) {
         // The built-in service and a realtime model have nothing to load.
-        let plan = self.live_plan();
+        let plan = self.live_plan(mode);
         if (plan.text == Some(LiveSource::Local) || plan.shown == Some(LiveSource::Local))
             && let Some(streaming) = &self.streaming
         {
@@ -1683,6 +1719,34 @@ impl DictationEngine {
         self.injector.selection_timing()
     }
 
+    /// The dictation hotkey went down or up (docs/dictation.md §12): where its grab takes every key
+    /// event while it is down (X11, [`SelectionTiming::AfterKeyUp`]), 边说边输入 types nothing then,
+    /// and the sentences that waited go out in order once it is up. A take's stop counts as up.
+    pub fn set_key_held(&mut self, held: bool) {
+        self.key_held = held;
+        if !held {
+            self.resume_live_inject();
+        }
+    }
+
+    /// 边说边输入 must not paste now: the hotkey is down and grabs the keyboard.
+    fn paste_waits_for_key(&self) -> bool {
+        self.key_held && self.injector.selection_timing() == SelectionTiming::AfterKeyUp
+    }
+
+    /// The hotkey is up: the first sentence that waited goes out (the rest follow it in turn).
+    fn resume_live_inject(&mut self) {
+        let li = &mut self.take.inject;
+        let next = if self.take.mode == OutputMode::LiveInject && li.in_flight.is_none() && li.rest.is_none() && !li.writing_rest {
+            li.queue.pop_front()
+        } else {
+            None
+        };
+        if let Some(piece) = next {
+            self.dispatch(piece);
+        }
+    }
+
     /// Copy the selection of the current edit take now (docs/dictation.md §19); the result arrives
     /// as [`Internal::SelectionCopied`]. A no-op unless the take is an edit take that is still
     /// listening or processing and has not copied yet — the runtime may call it at the press,
@@ -1770,7 +1834,7 @@ impl DictationEngine {
         if let Mic::Open(capture) = std::mem::replace(&mut *self.mic.lock(), Mic::Opening { then: None }) {
             release(capture);
         }
-        self.warm_streaming();
+        self.warm_streaming(self.take.mode);
         let listening = self.set_phase(DictationPhase::Listening { started_at: now_ms(), ready: false, live: None, locked: false });
         // With a probe the scene is known once it answered (`Internal::Context`, docs/dictation.md
         // §18.4). The device opens at once when no scene can change what the take records, and
@@ -1829,7 +1893,9 @@ impl DictationEngine {
     /// `Settings.recording` (docs/dictation.md §22); a voice edit's instruction is spoken into the
     /// microphone and short; a phone's take keeps the cap of its output mode (§20).
     fn capture_options(&self) -> CaptureOptions {
-        let live = self.live_enabled();
+        // The take's own mode: a whole take with the built-in service's words off has no built-in
+        // session (the local model may still be its source).
+        let live = self.live_plan(self.take.mode).text.is_some();
         match (self.status.kind, self.take.source.is_some()) {
             (_, true) => CaptureOptions { live, max_duration: max_recording(self.take.mode), ..CaptureOptions::default() },
             // §30.3: a voice edit's instruction is spoken into the microphone too.
@@ -1957,7 +2023,8 @@ impl DictationEngine {
     }
 
     /// Start the take's live sessions on `pcm` (docs/dictation.md §11, §11.10): the one that
-    /// recognises the take and, next to a realtime model whose words are not shown, the local
+    /// recognises the take and, next to a realtime model or built-in service whose words are not
+    /// shown, the local
     /// model's, which only shows its own — each reading its own copy of the tap.
     fn start_live(&mut self, session: u64, pcm: Box<dyn LivePcm>) {
         let plan = self.take.live_plan;
@@ -2013,7 +2080,16 @@ impl DictationEngine {
             self.take.requested = requested;
             self.take.mode = mode;
             // The globals' fallback is visible on the settings page; a scene's is not: say it in `live_error`.
-            self.take.live_error = reason.map(|_| if self.live.any() { SCENE_MODE_NO_STREAMING } else { SCENE_MODE_NOT_READY }.to_owned());
+            let why = if !self.live.any() {
+                SceneFallback::NotReady
+            } else if self.live.stream {
+                SceneFallback::StandIn
+            } else if self.live.cloud {
+                SceneFallback::BuiltInStandIn
+            } else {
+                SceneFallback::NoStreaming
+            };
+            self.take.live_error = reason.map(|_| scene_mode_fallback(requested, why));
             tracing::info!(session, requested = requested.as_str(), mode = mode.as_str(), "scene output mode");
         }
         // §18.10: a built-in scene's term pack joins this take's glossary after the dictionary's.
@@ -2150,6 +2226,8 @@ impl DictationEngine {
         // closes (docs/dictation.md §19).
         self.capture_selection();
         self.disarm();
+        // §12: the key is up by now too; 边说边输入's waiting sentences go out.
+        self.set_key_held(false);
         // docs/dictation.md §30.1: the release, when the runtime did not say first; the recording
         // ends now.
         TimingMarks::mark(&mut self.take.timing.released);
@@ -2308,13 +2386,15 @@ impl DictationEngine {
                 }
                 _ => Vec::new(),
             },
-            Internal::Partial { session, current } if session == self.status.session && !current.trim().is_empty() => {
+            // `first_text_ms` is the pill's first word (docs/dictation.md §30.1): the text session's
+            // while its words show, else the local model's next to it (`Internal::Shown`).
+            Internal::Partial { session, current } if session == self.status.session && !current.trim().is_empty() && !self.text_hidden() => {
                 TimingMarks::mark(&mut self.take.timing.first_text);
                 self.on_partial(session, current)
             }
             Internal::Partial { session, current } => self.on_partial(session, current),
             Internal::Segment { session, segment } => {
-                if session == self.status.session && !segment.text.trim().is_empty() {
+                if session == self.status.session && !segment.text.trim().is_empty() && !self.text_hidden() {
                     TimingMarks::mark(&mut self.take.timing.first_text);
                 }
                 self.on_segment(session, segment)
@@ -2393,6 +2473,10 @@ impl DictationEngine {
                 }
                 // docs/dictation.md §11.10: the pill's 预览 tag names whose words these are.
                 (live.source, live.provider) = (source, provider);
+                // The pill's words are the take's text: a streaming take whose words show. Next to
+                // a hidden text session they are the local model's preview, whose failure changes
+                // nothing about the text (2026-11-24).
+                live.streaming = self.take.mode.is_streaming() && !self.text_hidden();
                 vec![self.set_phase(DictationPhase::Listening { started_at, ready, live: Some(live), locked })]
             }
             _ => Vec::new(),
@@ -2400,8 +2484,9 @@ impl DictationEngine {
     }
 
     /// The take's text session runs while its words are not shown (docs/dictation.md §11.10): a
-    /// realtime model with 服务商的实时文字 off. Its words then reach neither `Listening.live` nor
-    /// `Processing.preview`; the pill shows the local model's, or none.
+    /// realtime model, or the built-in service in a streaming mode, with 服务商的实时文字 off. Its
+    /// words then reach neither `Listening.live` nor `Processing.preview`; the pill shows the local
+    /// model's, or none.
     fn text_hidden(&self) -> bool {
         matches!(self.take.live_plan, LivePlan { text: Some(text), shown } if shown != Some(text))
     }
@@ -2430,12 +2515,18 @@ impl DictationEngine {
         Vec::new()
     }
 
-    /// The local model's session next to a hidden realtime stream (docs/dictation.md §11.10): its
+    /// The local model's session next to a hidden realtime stream or built-in service
+    /// (docs/dictation.md §11.10): its
     /// words are what the pill shows while listening and, after the flush, while processing. The
     /// take's text and output mode never depend on them.
     fn on_shown(&mut self, session: u64, event: ShownEvent) -> Vec<Effect> {
         if session != self.status.session {
             return Vec::new();
+        }
+        if let ShownEvent::Partial(text) | ShownEvent::Segment(Segment { text, .. }) = &event
+            && !text.trim().is_empty()
+        {
+            TimingMarks::mark(&mut self.take.timing.first_text);
         }
         match event {
             ShownEvent::Partial(current) => self.on_live(session, |live| {
@@ -2523,17 +2614,35 @@ impl DictationEngine {
             // Sentences of the stream were taken: they came from its model.
             self.served_by(served);
         }
-        // A hidden stream's failure is not the pill's: it shows the local model's words, or none.
-        let mut effects = if self.text_hidden() {
-            Vec::new()
-        } else {
+        // A hidden stream's failure is not the pill's words', but in a streaming mode it is the
+        // take's text: the rest is recognised whole after the release, and the pill says so.
+        let mut effects = if !self.text_hidden() {
             self.on_live(session, |live| {
                 live.degraded = Some(reason.clone());
                 true
             })
+        } else if self.take.mode.is_streaming() {
+            self.on_hidden_degraded(session, &reason)
+        } else {
+            Vec::new()
         };
         effects.extend(self.degrade(reason));
         effects
+    }
+
+    /// The hidden text session of a streaming take failed (docs/dictation.md §11.10, §12): the pill
+    /// shows its notice in place of the local model's words, which no longer matter.
+    fn on_hidden_degraded(&mut self, session: u64, reason: &str) -> Vec<Effect> {
+        match &self.status.phase {
+            DictationPhase::Listening { started_at, ready, live, locked } if session == self.status.session => {
+                let (started_at, ready, locked) = (*started_at, *ready, *locked);
+                let mut live = live.clone().unwrap_or_default();
+                live.degraded = Some(reason.to_owned());
+                live.streaming = true;
+                vec![self.set_phase(DictationPhase::Listening { started_at, ready, live: Some(live), locked })]
+            }
+            _ => Vec::new(),
+        }
     }
 
     /// Apply the §12 fallback for the current mode after the stream failed (`reason`).
@@ -2773,6 +2882,7 @@ impl DictationEngine {
         }
         let vocabulary = self.take.vocabulary.clone();
         let (processed, hits) = process_final_text(&vocabulary, &raw);
+        let waits = self.paste_waits_for_key();
         let li = &mut self.take.inject;
         li.hits.merge(hits);
         join_text(&mut li.raw_text, &raw);
@@ -2783,13 +2893,13 @@ impl DictationEngine {
             tracing::info!(session = self.status.session, "the vocabulary emptied a sentence; nothing to paste");
             return;
         }
-        let piece =
-            Piece { idx: li.next_idx, text: format!("{sentence}{}", inject_separator(sentence)), chars: sentence.chars().count(), gate: InsertGate::new() };
+        let prefix = inject_prefix(&li.text, sentence);
+        let piece = Piece { idx: li.next_idx, text: format!("{prefix}{sentence}"), chars: sentence.chars().count(), gate: InsertGate::new() };
         li.next_idx += 1;
         join_text(&mut li.text, sentence);
         match &mut li.rest {
             Some(rest) => rest.push_str(&piece.text),
-            None if li.in_flight.is_none() => self.dispatch(piece),
+            None if li.in_flight.is_none() && !waits => self.dispatch(piece),
             None => li.queue.push_back(piece),
         }
     }
@@ -2813,7 +2923,8 @@ impl DictationEngine {
                         return Ok(LivePiece::CalledOff);
                     }
                     let note = Some(InjectNote::new(ClipboardCode::TargetChanged, WINDOW_CHANGED));
-                    let out = injector.copy(&text).map(|()| LivePiece::Delivered(Injection { via: Via::Clipboard, note }));
+                    // Copied for another place: without the separator in front of it.
+                    let out = injector.copy(text.trim_start()).map(|()| LivePiece::Delivered(Injection { via: Via::Clipboard, note }));
                     gate.delivered();
                     return out;
                 }
@@ -2905,19 +3016,29 @@ impl DictationEngine {
                 li.rest = Some(rest);
             }
         }
-        let pasted = li.pasted;
+        let (pasted, switched) = (li.pasted, li.switched);
         let hidden = self.text_hidden();
         let mut effects = match &self.status.phase {
             // The pill shows the local model's words next to a hidden stream: no pasted marks there.
-            DictationPhase::Listening { started_at, ready, live: Some(live), locked } if live.injected != pasted && !hidden => {
-                let (started_at, ready, locked, mut live) = (*started_at, *ready, *locked, live.clone());
-                live.injected = pasted;
+            // A window switch shows either way (§14.3, 2026-11-23): the text stops arriving.
+            DictationPhase::Listening { started_at, ready, live, locked }
+                if (!hidden && live.as_ref().is_some_and(|l| l.injected != pasted)) || live.as_ref().is_some_and(|l| l.switched) != switched =>
+            {
+                let (started_at, ready, locked) = (*started_at, *ready, *locked);
+                let mut live = live.clone().unwrap_or_default();
+                if !hidden {
+                    live.injected = pasted;
+                }
+                live.switched = switched;
+                live.streaming = !hidden;
                 vec![self.set_phase(DictationPhase::Listening { started_at, ready, live: Some(live), locked })]
             }
             _ => Vec::new(),
         };
+        let waits = self.paste_waits_for_key();
         let li = &mut self.take.inject;
         if li.rest.is_none()
+            && !waits
             && let Some(next) = li.queue.pop_front()
         {
             self.dispatch(next);
@@ -2954,7 +3075,13 @@ impl DictationEngine {
         let fallback_note = self.take.inject.note.take();
         let (injection, undelivered) = match last {
             Ok((Injection { via: Via::Paste, note }, _)) => (Ok(Injection { via: Via::Paste, note }), None),
-            Ok((Injection { via: Via::Clipboard, note }, _)) => (Ok(Injection { via: Via::Clipboard, note: note.or(fallback_note) }), None),
+            Ok((Injection { via: Via::Clipboard, note }, copied)) => {
+                // What the result card offers: only the copied part when sentences were typed —
+                // without the separator in front only when it goes to another window.
+                let copied = if self.take.inject.switched { copied.trim() } else { copied.trim_end() };
+                self.take.inject.copied = (self.take.inject.pasted > 0 && !copied.is_empty()).then(|| copied.to_owned());
+                (Ok(Injection { via: Via::Clipboard, note: note.or(fallback_note) }), None)
+            }
             Err((e, rest)) => (Err(e), Some(rest)),
         };
         let outcome = PipelineOutcome {
@@ -3097,7 +3224,16 @@ impl DictationEngine {
                 None => {
                     self.take.timing.device_open.get_or_insert(at);
                     let (mut tap, mut no_tap) = (None, false);
-                    let plan = self.live_plan();
+                    let mut plan = self.live_plan(self.take.mode);
+                    // docs/dictation.md §3.5, §12: a fallback model began to stand in after the take
+                    // started (the ledger changed while the device opened), so nothing recognises a
+                    // streaming take any more: it runs whole, as the next start would. Otherwise it
+                    // waited for a flush that never came (the review of 2026-11-24).
+                    if plan.text.is_none() && self.take.mode.is_streaming() {
+                        tracing::info!(session, mode = self.take.mode.as_str(), "no live source when the device opened: a whole take");
+                        self.take.mode = OutputMode::WholeTake;
+                        plan = self.live_plan(OutputMode::WholeTake);
+                    }
                     if plan.text.is_some() {
                         // docs/dictation.md §11.10: decided once, for both of the take's sessions.
                         self.take.live_plan = plan;
@@ -3785,7 +3921,8 @@ impl DictationEngine {
                     live_error,
                     clipboard_code,
                     check,
-                    timing: Some(timing),
+                    timing: Some(Box::new(timing)),
+                    rest: self.take.inject.copied.take(),
                 };
                 let mut effects = self.terminal(phase, dwell);
                 effects.push(Effect::Record(Box::new(entry)));
@@ -3972,7 +4109,8 @@ enum LiveRole {
     /// The session that recognises the take: its sentences are the streaming modes' text, and
     /// the pill shows them unless they are hidden.
     Text,
-    /// The local model's next to a hidden realtime stream: only the pill uses its words.
+    /// The local model's next to a hidden realtime stream or built-in service: only the pill uses
+    /// its words.
     Shown,
 }
 
@@ -4032,12 +4170,16 @@ fn run_live(job: LiveJob) {
             if cancelled.load(Ordering::SeqCst) {
                 return Ok(());
             }
+            // Closed before the read: the samples pushed until it closed are all in the ring then,
+            // so an empty read after it is the end. Asked after the read, a chunk pushed in between
+            // (the recorder's last callback, then its stop) was left unread (2026-11-23).
+            let was_closed = pcm.is_closed();
             let n = pcm.read(&mut buf);
             pending.extend_from_slice(&buf[..n]);
             if pcm.overrun() {
                 return Err("live tap overrun: the decoder fell behind the microphone".to_owned());
             }
-            let closed = pcm.is_closed() && n == 0;
+            let closed = was_closed && n == 0;
             // Everything the session has to say, sent on: after a feed, and while no audio comes,
             // since a remote recogniser's answer arrives whenever it does (docs/dictation.md §11.8).
             let mut drain = |stream: &mut Box<dyn StreamingSession>| -> Result<(), String> {
@@ -4805,6 +4947,7 @@ mod tests {
                 clipboard_code,
                 check: None,
                 timing: Some(_),
+                rest: None,
             } => {
                 assert_eq!(text, "你好，世界。");
                 assert_eq!(*clipboard_code, None, "a paste names no clipboard reason");
@@ -5592,7 +5735,7 @@ mod tests {
         r.engine.stop().unwrap();
         let fx = r.run_to_terminal().await;
         let DictationPhase::Done { timing: Some(t), .. } = phase(&fx).clone() else { panic!("{fx:?}") };
-        assert_eq!(record(&fx).expect("history").timing, Some(t), "the history keeps the same timeline");
+        assert_eq!(record(&fx).expect("history").timing, Some(*t), "the history keeps the same timeline");
         let released = t.released_ms.expect("released");
         assert!(t.device_open_ms.is_some_and(|ms| ms <= released) && t.first_audio_ms.is_some_and(|ms| ms <= released), "{t:?}");
         assert!((1_000..1_050).contains(&released), "{t:?}");
@@ -5696,6 +5839,7 @@ mod tests {
         // built-in service's (docs/dictation.md §11.10).
         let phases = r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if l.current == FAKE_TRANSCRIPT)).await;
         assert!(captions(&phases).iter().all(|l| (l.source, l.provider) == (Some(LiveSource::Cloud), Some(ProviderId::Builtin))), "{phases:?}");
+        assert!(captions(&phases).iter().all(|l| !l.streaming), "a whole take's preview: {phases:?}");
         let fx = r.engine.stop().unwrap();
         assert!(matches!(phase(&fx), DictationPhase::Processing { stage: ProcessingStage::Transcribing, .. }), "{fx:?}");
         let fx = r.run_to_terminal().await;
@@ -5998,6 +6142,249 @@ mod tests {
         }
     }
 
+    /// docs/dictation.md §18.4: why a scene's streaming mode ran as a whole take names the mode the
+    /// scene asks for, and the fallback model that can only take whole recordings. Regression,
+    /// 2026-11-23 (the review of 边说边输入): every case said 「场景要求边说边识别」, also for 边说边输入,
+    /// and a fallback model standing in read 「此设备不支持实时识别」.
+    #[test]
+    fn regression_a_scenes_fallback_names_its_mode_and_the_stand_in() {
+        assert_eq!(
+            scene_mode_fallback(OutputMode::LiveInject, SceneFallback::StandIn),
+            "场景要求「边说边输入」，但当前使用的候补模型只能整段识别，本次按整段输出处理"
+        );
+        assert_eq!(
+            scene_mode_fallback(OutputMode::StreamingFinal, SceneFallback::NotReady),
+            "场景要求「边说边识别」，但说话时没有识别结果（实时预览已关闭或「实时预览」模型未下载），本次按整段输出处理"
+        );
+        assert_eq!(
+            scene_mode_fallback(OutputMode::LiveInject, SceneFallback::NoStreaming),
+            "场景要求「边说边输入」，但此设备不支持实时识别，本次按整段输出处理"
+        );
+        assert_eq!(
+            scene_mode_fallback(OutputMode::StreamingFinal, SceneFallback::BuiltInStandIn),
+            "场景要求「边说边识别」，但当前由候补模型代替内置服务，本次按整段输出处理"
+        );
+    }
+
+    /// docs/dictation.md §11.10 (2026-11-23, the user's request 「请优化这个边说边识别，能否也使用内置服务
+    /// 来实现？」): with 服务商的实时文字 off the built-in service still writes the text of a 边说边识别
+    /// or 边说边输入 take, sentence by sentence and without a preview request; the pill shows the
+    /// local model's words when its switch is on, none otherwise, and the local model writes
+    /// nothing. Regression: the take's text came from the local streaming model then (2026-11-23 on
+    /// windows-local: `asr_ms=36` after the release, poor accuracy, the last words lost).
+    #[tokio::test(start_paused = true)]
+    async fn regression_with_its_words_off_the_built_in_service_still_writes_the_streaming_text() {
+        const PREVIEWING: BuiltIn = BuiltIn { asr_live_preview: true, ..TEST_BUILT_IN };
+        for mode in [OutputMode::StreamingFinal, OutputMode::LiveInject] {
+            for local_preview in [true, false] {
+                let at = format!("{mode:?} local {local_preview}");
+                let settings = EngineSettings { refine_enabled: false, provider_preview: false, local_preview, output_mode: mode, ..EngineSettings::default() };
+                let library = FakeModels::new(1).with_installed(FAKE_STREAMING_MODEL_ID).scan();
+                let engines = ResolvedEngines::resolve_with_models(&settings, &UserSecrets::default(), &PREVIEWING, &library);
+                let local = local_words();
+                let (audio, transcriber, injector) =
+                    (Arc::new(FakeAudio::speech()), Arc::new(FakeTranscriber::ok(FAKE_TRANSCRIPT)), Arc::new(FakeInjector::paste()));
+                let (levels_tx, levels) = broadcast::channel(64);
+                let ports = DictationPorts { streaming: Some(local.clone()), ..ports_with(audio.clone(), transcriber.clone(), None, injector.clone()) };
+                let (engine, rx) = DictationEngine::new(ports, &engines, levels_tx);
+                assert_eq!(engine.effective_output_mode(), (mode, None), "{at}");
+                let mut r = Rig { engine, rx, audio, transcriber, refiner: None, injector, levels };
+                r.start_open().await;
+                if local_preview {
+                    let phases = r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if !l.committed.is_empty())).await;
+                    assert!(captions(&phases).iter().all(|l| l.source == Some(LiveSource::Local)), "{at}: {phases:?}");
+                    // The local model's words are a preview next to the hidden text session: not
+                    // the take's text, so a failure of theirs is no 「实时识别中断」 (2026-11-24).
+                    assert!(captions(&phases).iter().all(|l| !l.streaming), "{at}: {phases:?}");
+                }
+                r.engine.stop().unwrap();
+                let fx = r.run_to_terminal().await;
+                assert!(
+                    matches!(phase(&fx), DictationPhase::Done { text, mode: done, .. } if text == FAKE_TRANSCRIPT && *done == mode),
+                    "{at}: the built-in service's sentence is the text: {fx:?}"
+                );
+                // The pill never shows the built-in service's words, not even its last sentence
+                // while the take is finished: the local model's, or none.
+                let previews: Vec<&str> = fx
+                    .iter()
+                    .filter_map(|e| {
+                        if let Effect::Status(s) = e {
+                            if let DictationPhase::Processing { preview: Some(p), .. } = &s.phase { Some(p.as_str()) } else { None }
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                assert!(previews.iter().all(|p| *p != FAKE_TRANSCRIPT), "{at}: {previews:?}");
+                if !local_preview {
+                    assert!(previews.is_empty(), "{at}: {previews:?}");
+                }
+                // The first word on the pill is the local model's; with nothing shown there is none.
+                let DictationPhase::Done { timing: Some(t), .. } = phase(&fx).clone() else { panic!("{at}: {fx:?}") };
+                assert_eq!(t.first_text_ms.is_some(), local_preview, "{at}: {t:?}");
+                // The take once, whole, as its text: no preview of the first second.
+                assert_eq!(r.transcriber.durations_ms(), [1500], "{at}");
+                assert!(r.transcriber.usage_calls().iter().all(|c| c.purpose == crate::usage::UsagePurpose::Take), "{at}: {:?}", r.transcriber.usage_calls());
+                assert_eq!((r.audio.live_requests(), local.opens()), (1, usize::from(local_preview)), "{at}");
+            }
+        }
+        // A sentence the built-in service closes while the take is still spoken (a pause of 1.5 s,
+        // past its 1.2 s) is pasted in 边说边输入 and never shown: with both switches off the pill
+        // has no words.
+        let pcm: Vec<i16> = (0..56_000)
+            .map(|i| if (16_000..40_000).contains(&i) { 0 } else { ((i as f32 / 16_000.0 * 440.0 * std::f32::consts::TAU).sin() * 16_000.0) as i16 })
+            .collect();
+        let recording =
+            crate::dictation::ports::Recording { wav: crate::dictation::wav::encode_pcm16(&pcm, 16_000), duration_ms: 3500, sample_rate_hz: 16_000 };
+        let settings = EngineSettings {
+            refine_enabled: false,
+            provider_preview: false,
+            local_preview: false,
+            output_mode: OutputMode::LiveInject,
+            ..EngineSettings::default()
+        };
+        let engines = ResolvedEngines::resolve_with_models(&settings, &UserSecrets::default(), &PREVIEWING, &FakeModels::new(1).scan());
+        let (audio, transcriber, injector) =
+            (Arc::new(FakeAudio::recording(recording)), Arc::new(FakeTranscriber::ok(FAKE_TRANSCRIPT)), Arc::new(FakeInjector::paste()));
+        let (levels_tx, levels) = broadcast::channel(64);
+        let (engine, rx) = DictationEngine::new(ports_with(audio.clone(), transcriber.clone(), None, injector.clone()), &engines, levels_tx);
+        let mut r = Rig { engine, rx, audio, transcriber, refiner: None, injector, levels };
+        r.start_open().await;
+        let mut fx = Vec::new();
+        // Fold what the live thread sends without waiting on it: the virtual clock stands still
+        // while it runs, so only a real deadline ends a wait for a sentence that never closes.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while r.engine.take.inject.seen == 0 {
+            assert!(std::time::Instant::now() < deadline, "the first sentence never closed: {fx:?}");
+            while let Ok(ev) = r.rx.try_recv() {
+                fx.extend(r.engine.on_internal(ev));
+            }
+            tokio::task::yield_now().await;
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        // The first sentence's paste comes back while the take is still spoken: nothing on the pill.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while r.engine.take.inject.pasted == 0 {
+            assert!(std::time::Instant::now() < deadline, "the first paste never came back: {fx:?}");
+            while let Ok(ev) = r.rx.try_recv() {
+                fx.extend(r.engine.on_internal(ev));
+            }
+            tokio::task::yield_now().await;
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(matches!(r.engine.status.phase, DictationPhase::Listening { live: None, .. }), "still spoken, nothing shown: {:?}", r.engine.status.phase);
+        r.engine.stop().unwrap();
+        fx.extend(r.run_to_terminal().await);
+        assert!(
+            fx.iter().all(|e| !matches!(e, Effect::Status(s) if matches!(&s.phase, DictationPhase::Listening { live: Some(_), .. } | DictationPhase::Processing { preview: Some(_), .. }))),
+            "no words on the pill: {fx:?}"
+        );
+        assert_eq!(r.injector.injected(), vec![FAKE_TRANSCRIPT.to_owned(), FAKE_TRANSCRIPT.to_owned()], "both sentences pasted");
+        // Regression, 2026-11-24 (the review of the round): a plain paste with nothing on the pill
+        // made an empty live text (`is_none_or` read no live text as a window switch).
+        assert!(r.engine.take.inject.pasted == 2 && !r.engine.take.inject.switched);
+        let DictationPhase::Done { timing: Some(t), .. } = phase(&fx).clone() else { panic!("{fx:?}") };
+        assert_eq!(t.first_text_ms, None, "nothing was shown: {t:?}");
+    }
+
+    /// The hidden text session of a 边说边识别 take failing is the take's: the pill says the rest is
+    /// recognised whole after the release, also with no words on it before. Regression, 2026-11-24
+    /// (the review of the round): a hidden session's failure reached nothing on the pill.
+    #[tokio::test(start_paused = true)]
+    async fn regression_a_hidden_text_sessions_failure_shows_the_streaming_notice() {
+        const PREVIEWING: BuiltIn = BuiltIn { asr_live_preview: true, ..TEST_BUILT_IN };
+        // 1 s of a tone, a 1.5 s pause (the sentence closes, its decode fails), 1 s more.
+        let pcm: Vec<i16> = (0..56_000)
+            .map(|i| if (16_000..40_000).contains(&i) { 0 } else { ((i as f32 / 16_000.0 * 440.0 * std::f32::consts::TAU).sin() * 16_000.0) as i16 })
+            .collect();
+        let recording =
+            crate::dictation::ports::Recording { wav: crate::dictation::wav::encode_pcm16(&pcm, 16_000), duration_ms: 3500, sample_rate_hz: 16_000 };
+        let settings = EngineSettings {
+            refine_enabled: false,
+            provider_preview: false,
+            local_preview: false,
+            output_mode: OutputMode::StreamingFinal,
+            ..EngineSettings::default()
+        };
+        let engines = ResolvedEngines::resolve_with_models(&settings, &UserSecrets::default(), &PREVIEWING, &FakeModels::new(1).scan());
+        let transcriber = Arc::new(FakeTranscriber::numbered_failing(0, &[1], DictationError::Asr("busy".into())));
+        let (audio, injector) = (Arc::new(FakeAudio::recording(recording)), Arc::new(FakeInjector::paste()));
+        let (levels_tx, levels) = broadcast::channel(64);
+        let (engine, rx) = DictationEngine::new(ports_with(audio.clone(), transcriber.clone(), None, injector.clone()), &engines, levels_tx);
+        let mut r = Rig { engine, rx, audio, transcriber, refiner: None, injector, levels };
+        r.start_open().await;
+        let phases = r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if l.degraded.is_some())).await;
+        let Some(DictationPhase::Listening { live: Some(live), .. }) = phases.last() else { panic!("{phases:?}") };
+        assert!(live.streaming && live.committed.is_empty() && live.current.is_empty(), "the notice alone: {live:?}");
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { mode: OutputMode::WholeTake, live_error: Some(_), .. }), "recognised whole: {fx:?}");
+    }
+
+    /// 边说边输入 in one window whose paste fell back to the clipboard after a typed sentence: the
+    /// card offers the rest with the separator in front, so its Paste continues the typed text;
+    /// only a copy for another window (a switch) goes without it. Regression, 2026-11-24 (the review
+    /// of the round): the rest lost its separator either way, and the card's Paste ran the next
+    /// sentence into the typed one.
+    #[tokio::test(start_paused = true)]
+    async fn regression_a_rest_copied_in_the_same_window_keeps_its_separator() {
+        let mut r = rig_mode(
+            FakeAudio::speech(),
+            FakeTranscriber::ok("never"),
+            None,
+            FakeInjector::clipboard(Some("no focused window")).paste_once(),
+            english_script(),
+            OutputMode::LiveInject,
+        );
+        r.start_open().await;
+        r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if l.committed.len() == 2)).await;
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        match phase(&fx) {
+            DictationPhase::Done { text, via, rest, .. } => {
+                assert_eq!((text.as_str(), *via), ("Hello world. How are you. Fine", Via::Clipboard));
+                assert_eq!(rest.as_deref(), Some(" How are you. Fine"), "the separator stays in front");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(r.injector.injected()[0], "Hello world.", "the first sentence was typed");
+    }
+
+    /// Two sessions (the built-in service writes a 边说边识别 take unseen, the local model shows its
+    /// words): the local model failing says nothing about the take's text, so the pill gives no
+    /// 「实时识别中断」 notice — only the preview stopped. Regression, 2026-11-24 (the review of the
+    /// round): the shown session's failure set `streaming` and the notice, while the text session
+    /// went on.
+    #[tokio::test(start_paused = true)]
+    async fn regression_the_local_previews_failure_next_to_a_hidden_text_session_is_no_streaming_notice() {
+        const PREVIEWING: BuiltIn = BuiltIn { asr_live_preview: true, ..TEST_BUILT_IN };
+        let settings = EngineSettings {
+            refine_enabled: false,
+            provider_preview: false,
+            local_preview: true,
+            output_mode: OutputMode::StreamingFinal,
+            ..EngineSettings::default()
+        };
+        let library = FakeModels::new(1).with_installed(FAKE_STREAMING_MODEL_ID).scan();
+        let engines = ResolvedEngines::resolve_with_models(&settings, &UserSecrets::default(), &PREVIEWING, &library);
+        let local = Arc::new(FakeStreaming::erroring_after(1));
+        let (audio, transcriber, injector) = (Arc::new(FakeAudio::speech()), Arc::new(FakeTranscriber::ok(FAKE_TRANSCRIPT)), Arc::new(FakeInjector::paste()));
+        let (levels_tx, levels) = broadcast::channel(64);
+        let ports = DictationPorts { streaming: Some(local.clone()), ..ports_with(audio.clone(), transcriber.clone(), None, injector.clone()) };
+        let (engine, rx) = DictationEngine::new(ports, &engines, levels_tx);
+        let mut r = Rig { engine, rx, audio, transcriber, refiner: None, injector, levels };
+        r.start_open().await;
+        let phases = r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if l.degraded.is_some())).await;
+        let Some(DictationPhase::Listening { live: Some(live), .. }) = phases.last() else { panic!("{phases:?}") };
+        assert!(!live.streaming, "the shown session's failure is a preview's: {live:?}");
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(
+            matches!(phase(&fx), DictationPhase::Done { text, mode: OutputMode::StreamingFinal, .. } if text == FAKE_TRANSCRIPT),
+            "the text session went on: {fx:?}"
+        );
+    }
+
     /// docs/dictation.md §3.5, §11.10: the 预览 tag names the provider whose model gives the words —
     /// a realtime fallback model of another vendor standing in for the selected one names that
     /// vendor, as its stream says; a fallback model taking whole recordings has no words, and the
@@ -6296,6 +6683,76 @@ mod tests {
         }
     }
 
+    /// The last chunk the audio thread pushes while the tap closes still reaches the session.
+    /// Regression, 2026-11-23 (the 边说边识别 takes on windows-local lost their last words; the
+    /// investigation of the tail found this besides the streaming model's own padding): the loop
+    /// read the tap and asked whether it was closed afterwards, so a chunk pushed in between — the
+    /// recorder's last callback, then its stop — was never fed when nothing else was pending.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn regression_the_last_chunk_that_lands_while_the_tap_closes_is_fed() {
+        /// Two chunks waiting; the first `is_closed` after an empty read pushes 800 samples more and
+        /// closes, as the audio thread's last callback and the recorder's stop would in between.
+        struct ClosingTap {
+            queue: std::collections::VecDeque<f32>,
+            emptied: std::sync::atomic::AtomicBool,
+            closed: AtomicBool,
+            last: Mutex<Option<Vec<f32>>>,
+        }
+        impl crate::dictation::LivePcm for ClosingTap {
+            fn read(&mut self, out: &mut [f32]) -> usize {
+                if let Some(last) = self.last.lock().take() {
+                    self.queue.extend(last);
+                }
+                let n = out.len().min(self.queue.len());
+                for (slot, sample) in out.iter_mut().zip(self.queue.drain(..n)) {
+                    *slot = sample;
+                }
+                self.emptied.store(n == 0, Ordering::SeqCst);
+                n
+            }
+            fn overrun(&self) -> bool {
+                false
+            }
+            fn is_closed(&self) -> bool {
+                if self.emptied.load(Ordering::SeqCst) && !self.closed.swap(true, Ordering::SeqCst) {
+                    *self.last.lock() = Some(vec![0.1; 800]);
+                }
+                self.closed.load(Ordering::SeqCst)
+            }
+        }
+        let tap = ClosingTap {
+            queue: vec![0.1; 2 * LIVE_CHUNK_SAMPLES].into(),
+            emptied: std::sync::atomic::AtomicBool::new(false),
+            closed: AtomicBool::new(false),
+            last: Mutex::new(None),
+        };
+        let streaming = Arc::new(FakeStreaming::script());
+        let (tx, mut rx) = mpsc::channel(64);
+        // Kept to stop the worker: a loop that never ends would otherwise hold the runtime's drop.
+        let stop = Arc::new(AtomicBool::new(false));
+        let job = LiveJob {
+            session: 1,
+            pcm: Box::new(tap),
+            streaming: streaming.clone(),
+            role: LiveRole::Text,
+            language: None,
+            script: ChineseScript::AsIs,
+            cancelled: stop.clone(),
+            tx,
+        };
+        let ended = tokio::time::timeout(Duration::from_secs(30), tokio::task::spawn_blocking(move || run_live(job))).await;
+        stop.store(true, Ordering::SeqCst);
+        ended.expect("the worker ends").unwrap();
+        let mut tail = None;
+        while let Ok(event) = rx.try_recv() {
+            if let Internal::StreamFinished { result: Ok(fin), .. } = event {
+                tail = Some(fin.tail);
+            }
+        }
+        assert_eq!(streaming.feeds(), 3, "the chunk pushed while the tap closed was fed");
+        assert_eq!(tail.as_deref(), Some("你好，世界"));
+    }
+
     // ---------------- output modes (docs/dictation.md §12) ----------------
 
     /// A configuration with the streaming model installed and `output_mode` set.
@@ -6451,7 +6908,7 @@ mod tests {
         r.injector.release(1);
         let phases = r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if l.injected == 1 && l.current == "Fine")).await;
         assert!(matches!(phases.last().unwrap(), DictationPhase::Listening { live: Some(l), .. } if l.injected == 1 && l.committed.len() == 2), "{phases:?}");
-        assert_eq!(r.injector.injected(), vec!["Hello world. ".to_owned()], "Latin sentence + one space");
+        assert_eq!(r.injector.injected(), vec!["Hello world.".to_owned()], "the first sentence, nothing in front of it");
         wait_until(|| r.injector.waiting() == 1).await;
         assert_eq!(r.injector.waiting(), 1, "the queued sentence follows at once");
         let fx = r.engine.stop().unwrap();
@@ -6488,7 +6945,11 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
-        assert_eq!(r.injector.injected(), ["Hello world. ", "How are you. ", "Fine "].map(String::from), "in order, each with its separator");
+        // Regression, 2026-11-23 (the review of 边说边输入): each sentence carried its separator
+        // after it, so English text ended in a space and the typed text was not the history's.
+        // The separator goes in front of the next sentence now (rule changed on purpose).
+        assert_eq!(r.injector.injected(), ["Hello world.", " How are you.", " Fine"].map(String::from), "in order, each after its separator");
+        assert_eq!(r.injector.injected().concat(), "Hello world. How are you. Fine", "what was typed is the take's text");
         assert_eq!(r.transcriber.calls(), 0);
         assert_eq!(r.refiner.as_ref().unwrap().calls(), 0);
         assert_eq!(streaming.finishes(), 1);
@@ -6530,7 +6991,7 @@ mod tests {
         r.injector.release(2);
         let fx = r.run_to_terminal().await;
         assert!(matches!(phase(&fx), DictationPhase::Done { text, .. } if text == "Hello world. How are you. Fine"), "{fx:?}");
-        assert_eq!(r.injector.injected(), ["Hello world. ", "How are you. ", "Fine "].map(String::from));
+        assert_eq!(r.injector.injected(), ["Hello world.", " How are you.", " Fine"].map(String::from));
     }
 
     /// `live_inject` when a paste falls back to the clipboard (docs/dictation.md §12): the pasting
@@ -6562,7 +7023,7 @@ mod tests {
         }
         assert_eq!(
             r.injector.injected(),
-            ["Hello world. ", "Hello world. How are you. Fine "].map(String::from),
+            ["Hello world.", "Hello world. How are you. Fine"].map(String::from),
             "the first attempt, then everything not pasted in one clipboard write"
         );
         assert_eq!(record(&fx).unwrap().outcome, Outcome::Clipboard { reason: "no focused window".into(), code: Some(ClipboardCode::Other) });
@@ -6581,7 +7042,7 @@ mod tests {
         r.engine.stop().unwrap();
         let fx = r.run_to_terminal().await;
         assert!(matches!(phase(&fx), DictationPhase::Done { via: Via::Paste, text, .. } if text == "Hello world. How are you. Fine"), "{fx:?}");
-        assert_eq!(r.injector.injected(), ["Hello world. ", "Hello world. How are you. Fine "].map(String::from));
+        assert_eq!(r.injector.injected(), ["Hello world.", "Hello world. How are you. Fine"].map(String::from));
         assert_eq!(record(&fx).unwrap().outcome, Outcome::Inserted { via: Via::Paste, check: None });
         // An injection error works the same way; when the final write fails too the run is `Failed`
         // with the undelivered text, and what was pasted before stays pasted.
@@ -6594,9 +7055,9 @@ mod tests {
         let fx = r.run_to_terminal().await;
         assert_eq!(
             phase(&fx),
-            &DictationPhase::Failed { code: FailureCode::Inject, message: "inject: denied".into(), text: Some("Hello world. How are you. Fine ".into()) }
+            &DictationPhase::Failed { code: FailureCode::Inject, message: "inject: denied".into(), text: Some("Hello world. How are you. Fine".into()) }
         );
-        assert_eq!(r.injector.injected(), ["Hello world. ", "Hello world. How are you. Fine "].map(String::from));
+        assert_eq!(r.injector.injected(), ["Hello world.", "Hello world. How are you. Fine"].map(String::from));
         assert_eq!(record(&fx).unwrap().outcome, Outcome::Failed { reason: "inject: denied".into() });
         assert_eq!(record(&fx).unwrap().mode, OutputMode::LiveInject);
     }
@@ -6626,10 +7087,10 @@ mod tests {
         wait_until(|| r.injector.events().contains(&InsertEvent::Abort)).await;
         r.drain().await;
         assert_eq!(r.engine.status().phase, DictationPhase::Cancelled { injected_chars: 12 }, "the late result changes nothing");
-        assert_eq!(r.injector.injected(), ["Hello world. "].map(String::from), "the held sentence never reached the application");
+        assert_eq!(r.injector.injected(), ["Hello world."].map(String::from), "the held sentence never reached the application");
         assert_eq!(
             r.injector.events(),
-            [InsertEvent::Begin, InsertEvent::Piece("Hello world. ".into()), InsertEvent::CalledOff("How are you. ".into()), InsertEvent::Abort]
+            [InsertEvent::Begin, InsertEvent::Piece("Hello world.".into()), InsertEvent::CalledOff(" How are you.".into()), InsertEvent::Abort]
         );
         assert_eq!(r.transcriber.calls(), 0);
         tokio::time::advance(DWELL).await;
@@ -7112,7 +7573,7 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
-        assert_eq!(r.injector.injected(), ["Hello World. ", "How are you. ", "Fine! "].map(String::from), "each sentence pasted already corrected");
+        assert_eq!(r.injector.injected(), ["Hello World.", " How are you.", " Fine!"].map(String::from), "each sentence pasted already corrected");
         let entry = record(&fx).unwrap();
         assert_eq!(
             entry.vocabulary,
@@ -7130,7 +7591,7 @@ mod tests {
         r.engine.stop().unwrap();
         let fx = r.run_to_terminal().await;
         assert!(matches!(phase(&fx), DictationPhase::Done { text, segments: Some(s), .. } if text == "Hello world. Fine" && s.len() == 3), "{fx:?}");
-        assert_eq!(r.injector.injected(), ["Hello world. ", "Fine "].map(String::from));
+        assert_eq!(r.injector.injected(), ["Hello world.", " Fine"].map(String::from));
     }
 
     /// `streaming_final` (docs/dictation.md §16.3): the joined stream text is corrected before the
@@ -8336,10 +8797,14 @@ mod tests {
         r.engine.stop().unwrap();
         let fx = r.run_to_terminal().await;
         assert!(
-            matches!(phase(&fx), DictationPhase::Done { mode: OutputMode::WholeTake, live_error: Some(e), text, .. } if e == SCENE_MODE_NOT_READY && text == FAKE_TRANSCRIPT),
+            matches!(phase(&fx), DictationPhase::Done { mode: OutputMode::WholeTake, live_error: Some(e), text, .. } if e == &scene_mode_fallback(OutputMode::LiveInject, SceneFallback::NotReady) && text == FAKE_TRANSCRIPT),
             "{fx:?}"
         );
-        assert_eq!(record(&fx).unwrap().live_error.as_deref(), Some(SCENE_MODE_NOT_READY));
+        assert_eq!(
+            record(&fx).unwrap().live_error,
+            Some(scene_mode_fallback(OutputMode::LiveInject, SceneFallback::NotReady)),
+            "the history names the mode the scene asks for"
+        );
         assert_eq!(streaming.opens(), 0);
         assert_eq!(r.transcriber.calls(), 1);
         // Ready by configuration but no streaming port: the other reason.
@@ -8354,7 +8819,10 @@ mod tests {
         r.start_probed().await;
         r.engine.stop().unwrap();
         let fx = r.run_to_terminal().await;
-        assert!(matches!(phase(&fx), DictationPhase::Done { live_error: Some(e), .. } if e == SCENE_MODE_NO_STREAMING), "{fx:?}");
+        assert!(
+            matches!(phase(&fx), DictationPhase::Done { live_error: Some(e), .. } if e == &scene_mode_fallback(OutputMode::StreamingFinal, SceneFallback::NoStreaming)),
+            "{fx:?}"
+        );
     }
 
     /// §18.5: the switches decide what of the context reaches the refiner (the title only when
@@ -8660,6 +9128,65 @@ mod tests {
         assert_eq!(r.injector.injected(), vec![REWRITE.to_owned()]);
     }
 
+    /// 边说边输入 on a realtime model whose day is used up, the local streaming model installed and
+    /// shown: once a model taking whole recordings stands in, the take runs whole through the chain
+    /// and the stand-in writes its text; the local model only shows its words. Regression,
+    /// 2026-11-23 (the user's decision after the review of 边说边输入 on realtime models): the local
+    /// model's sentences were the take's text then, and were typed sentence by sentence.
+    #[tokio::test(start_paused = true)]
+    async fn regression_a_whole_take_stand_in_runs_a_streaming_take_whole_not_on_the_local_model() {
+        use crate::engines::{FallbackModel, FallbackSettings};
+        let mut secrets = UserSecrets::default();
+        secrets.set(ProviderId::Aliyun, ServiceKind::Asr, Some("sk-test".into()));
+        let settings = EngineSettings {
+            asr_provider: ProviderId::Aliyun,
+            providers: [(ProviderId::Aliyun, ProviderSettings { asr_model: Some("qwen-audio-3.1-asr-flash-streaming".into()), ..Default::default() })].into(),
+            refine_enabled: false,
+            output_mode: OutputMode::LiveInject,
+            asr_fallback: FallbackSettings {
+                enabled: true,
+                on_outage: false,
+                models: vec![FallbackModel { provider: ProviderId::Aliyun, model: "qwen-audio-3.1-asr-flash".into() }],
+            },
+            ..EngineSettings::default()
+        };
+        let library = FakeModels::new(1).with_installed(FAKE_STREAMING_MODEL_ID).scan();
+        let engines = ResolvedEngines::resolve_with_models(&settings, &secrets, &TEST_BUILT_IN, &library);
+        let refused_stream = Arc::new(FakeStreaming::failing_open("task-failed: AllocationQuota.FreeTierOnly"));
+        let realtime = Arc::new(FakeTranscriber::quota().with_stream(refused_stream.clone()));
+        let whole = Arc::new(FakeTranscriber::ok("整段识别的文字"));
+        let local = local_words();
+        let (audio, injector) = (Arc::new(FakeAudio::speech()), Arc::new(FakeInjector::paste()));
+        let (levels_tx, levels) = broadcast::channel(64);
+        let unused = Arc::new(FakeTranscriber::ok("unused"));
+        let factory = crate::dictation::fakes::factory_by_model(
+            &[("qwen-audio-3.1-asr-flash-streaming", realtime.clone()), ("qwen-audio-3.1-asr-flash", whole.clone())],
+            &[],
+        );
+        let ports = DictationPorts { factory, streaming: Some(local.clone()), ..ports_with(audio.clone(), unused.clone(), None, injector.clone()) };
+        let (engine, rx) = DictationEngine::new(ports, &engines, levels_tx);
+        let mut r = Rig { engine, rx, audio, transcriber: unused, refiner: None, injector, levels };
+        assert_eq!(r.engine.effective_output_mode(), (OutputMode::LiveInject, None), "the realtime model streams");
+        // The first take finds the realtime model out of quota: recognised whole by the next model.
+        r.start_open().await;
+        r.engine.stop().unwrap();
+        r.run_to_terminal().await;
+        tokio::time::advance(DWELL).await;
+        assert_eq!(phase(&r.next().await), &DictationPhase::Idle);
+        // From now on the model taking whole recordings stands in: the streaming mode runs whole.
+        assert!(!r.engine.live_enabled(), "no source writes a streaming take now");
+        assert_eq!(r.engine.effective_output_mode(), (OutputMode::WholeTake, Some("the fallback model standing in takes whole recordings only")));
+        let pasted_before = r.injector.injected().len();
+        r.start_open().await;
+        let phases = r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if !l.committed.is_empty())).await;
+        assert!(captions(&phases).iter().all(|l| l.source == Some(LiveSource::Local)), "the local model still shows its words: {phases:?}");
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { text, mode: OutputMode::WholeTake, .. } if text == "整段识别的文字"), "{fx:?}");
+        assert_eq!(r.injector.injected()[pasted_before..].to_vec(), vec!["整段识别的文字".to_owned()], "typed once, the stand-in's text");
+        assert_eq!(record(&fx).unwrap().asr_model, "qwen-audio-3.1-asr-flash");
+    }
+
     /// A realtime selected model that ran out: its stream fails, the take is recognised whole by the
     /// next model (one more refusal, which marks it), and the next take does not stream at all —
     /// the next model takes whole recordings. With quota, the stream's model is the receipt.
@@ -8820,6 +9347,111 @@ mod tests {
             (entry.asr_model.as_str(), entry.asr_provider, entry.asr_fallback),
             ("qwen-audio-3.1-asr-flash-message", Some(ProviderId::Aliyun), Some(SwitchReason::Outage))
         );
+    }
+
+    /// The built-in service's day used up and a fallback model standing in for it: 边说边输入 and
+    /// 边说边识别 run as a whole take through the chain — one request for the take, not one a
+    /// sentence. Regression, 2026-11-24 (the user's decision 「候补模型顶替时可以修改为整段识别」): the
+    /// built-in service's sentence-by-sentence recognition went on through the chain, each sentence
+    /// a request to the user's own fallback service.
+    #[tokio::test(start_paused = true)]
+    async fn regression_a_fallback_standing_in_for_the_built_in_service_runs_a_streaming_take_whole() {
+        const PREVIEWING: BuiltIn = BuiltIn { asr_live_preview: true, ..TEST_BUILT_IN };
+        let engines = resolved_fallback_with(&PREVIEWING, ProviderId::Builtin, &["qwen-audio-3.1-asr-flash"], &[], true, OutputMode::LiveInject);
+        let builtin = Arc::new(FakeTranscriber::quota());
+        let fallback = Arc::new(FakeTranscriber::ok("候补模型识别的整段。"));
+        let mut r = rig_fallback(
+            &engines,
+            &[(crate::engines::DEFAULT_ASR_MODEL, builtin.clone()), ("qwen-audio-3.1-asr-flash", fallback.clone())],
+            &[],
+            FakeInjector::paste(),
+        );
+        assert_eq!(r.engine.effective_output_mode(), (OutputMode::LiveInject, None), "the built-in service has its day");
+        // The first take finds the built-in service's day used up: the fallback model answers.
+        r.start_open().await;
+        r.engine.stop().unwrap();
+        r.run_to_terminal().await;
+        tokio::time::advance(DWELL).await;
+        assert_eq!(phase(&r.next().await), &DictationPhase::Idle);
+        // From now on the fallback model stands in: the streaming mode runs whole.
+        assert!(!r.engine.live_enabled(), "no source writes a streaming take now");
+        assert_eq!(r.engine.effective_output_mode(), (OutputMode::WholeTake, Some("the fallback model standing in takes whole recordings only")));
+        let (asked_before, pasted_before) = (fallback.calls(), r.injector.injected().len());
+        r.start_open().await;
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { text, mode: OutputMode::WholeTake, .. } if text == "候补模型识别的整段。"), "{fx:?}");
+        assert_eq!(fallback.calls() - asked_before, 1, "one request for the take");
+        assert_eq!(r.injector.injected()[pasted_before..].to_vec(), vec!["候补模型识别的整段。".to_owned()]);
+    }
+
+    /// docs/dictation.md §3.5, §18.4: a scene asking for 边说边输入 while a fallback model stands in
+    /// for the built-in service runs whole, and its note says that a fallback model stands in for
+    /// the built-in service. Regression, the review of 2026-11-24: the note said
+    /// 「当前使用的候补模型只能整段识别」, untrue when the fallback model is a realtime one.
+    #[tokio::test(start_paused = true)]
+    async fn regression_a_streaming_scene_while_a_fallback_stands_in_for_the_built_in_service_says_so() {
+        const PREVIEWING: BuiltIn = BuiltIn { asr_live_preview: true, ..TEST_BUILT_IN };
+        let engines = resolved_fallback_with(&PREVIEWING, ProviderId::Builtin, &["qwen-audio-3.1-asr-flash"], &[], true, OutputMode::WholeTake);
+        let builtin = Arc::new(FakeTranscriber::ok(FAKE_TRANSCRIPT));
+        let fallback = Arc::new(FakeTranscriber::ok("候补模型识别的整段。"));
+        let (audio, injector, unused) = (Arc::new(FakeAudio::speech()), Arc::new(FakeInjector::paste()), Arc::new(FakeTranscriber::ok("unused")));
+        let (levels_tx, levels) = broadcast::channel(64);
+        let factory = crate::dictation::fakes::factory_by_model(
+            &[(crate::engines::DEFAULT_ASR_MODEL, builtin.clone()), ("qwen-audio-3.1-asr-flash", fallback.clone())],
+            &[],
+        );
+        let probe = Arc::new(FakeProbe::app("slack", "Slack", None));
+        let ports = DictationPorts { factory, probe: Some(probe), ..ports_with(audio.clone(), unused.clone(), None, injector.clone()) };
+        let (engine, rx) = DictationEngine::new(ports, &engines, levels_tx);
+        let mut r = Rig { engine, rx, audio, transcriber: unused, refiner: None, injector, levels };
+        r.engine.set_scenes(Arc::new(vec![scene_with(
+            "实时",
+            &["slack"],
+            &[],
+            crate::scenes::SceneOverrides { output_mode: Some(OutputMode::LiveInject), ..Default::default() },
+        )]));
+        r.engine.quota().mark(&asr_key(&engines, crate::engines::DEFAULT_ASR_MODEL), SwitchReason::Quota);
+        r.start_probed().await;
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        let note = "场景要求「边说边输入」，但当前由候补模型代替内置服务，本次按整段输出处理";
+        assert!(
+            matches!(phase(&fx), DictationPhase::Done { mode: OutputMode::WholeTake, live_error: Some(e), text, .. } if e == note && text == "候补模型识别的整段。"),
+            "{fx:?}"
+        );
+        assert_eq!((builtin.calls(), fallback.calls()), (0, 1));
+    }
+
+    /// docs/dictation.md §3.5, §12: whether a fallback model stands in is read when the take starts
+    /// (its output mode) and again when the device opens (its live plan). Regression, the review of
+    /// 2026-11-24: when the built-in service ran out in between (another request on the same chain,
+    /// such as 试识别 or the hosted speech service), a 边说边识别 take kept its streaming mode with
+    /// nothing recognising it: no worker, nothing flushed, and after the release it waited in
+    /// Processing until cancelled. Now it runs as a whole take through the chain.
+    #[tokio::test(start_paused = true)]
+    async fn regression_a_stand_in_that_begins_while_the_device_opens_runs_the_streaming_take_whole() {
+        const PREVIEWING: BuiltIn = BuiltIn { asr_live_preview: true, ..TEST_BUILT_IN };
+        let engines = resolved_fallback_with(&PREVIEWING, ProviderId::Builtin, &["qwen-audio-3.1-asr-flash"], &[], true, OutputMode::StreamingFinal);
+        let builtin = Arc::new(FakeTranscriber::ok(FAKE_TRANSCRIPT));
+        let fallback = Arc::new(FakeTranscriber::ok("候补模型识别的整段。"));
+        let mut r = rig_fallback(
+            &engines,
+            &[(crate::engines::DEFAULT_ASR_MODEL, builtin.clone()), ("qwen-audio-3.1-asr-flash", fallback.clone())],
+            &[],
+            FakeInjector::paste(),
+        );
+        let fx = r.engine.start().unwrap();
+        assert!(matches!(phase(&fx), DictationPhase::Listening { ready: false, .. }), "{fx:?}");
+        assert_eq!(r.engine.take.mode, OutputMode::StreamingFinal, "the built-in service had its day when the key went down");
+        // The built-in service runs out before the device has opened.
+        r.engine.quota().mark(&asr_key(&engines, crate::engines::DEFAULT_ASR_MODEL), SwitchReason::Quota);
+        r.next().await;
+        r.next().await;
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { text, mode: OutputMode::WholeTake, .. } if text == "候补模型识别的整段。"), "{fx:?}");
+        assert_eq!((builtin.calls(), fallback.calls()), (0, 1), "one whole-take request, to the fallback model");
     }
 
     /// The built-in preview decodes the sentence again through the take's chain (docs/dictation.md
@@ -9483,6 +10115,43 @@ mod tests {
         }
     }
 
+    /// 边说边输入 on X11 (`SelectionTiming::AfterKeyUp`): while the hotkey is held its grab takes
+    /// every key event, the paste's Ctrl+V included, so the sentences wait and go out in order once
+    /// the key is up. Regression, 2026-11-23: they were pasted while the key was held and never
+    /// reached the field, though the take said 已输入 (voltip-inject's real_display
+    /// regression_x11_hotkey_grab_swallows_a_paste_until_the_key_is_up shows the server side).
+    #[tokio::test(start_paused = true)]
+    async fn regression_on_x11_live_inject_waits_for_the_hotkey_to_be_up_before_pasting() {
+        let mut r = rig_mode(
+            FakeAudio::speech(),
+            FakeTranscriber::ok("never"),
+            None,
+            FakeInjector::paste().with_selection("").after_key_up(),
+            english_script(),
+            OutputMode::LiveInject,
+        );
+        assert_eq!(r.engine.selection_timing(), SelectionTiming::AfterKeyUp);
+        r.start_open().await;
+        r.engine.set_key_held(true);
+        r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if l.committed.len() == 2)).await;
+        r.drain().await;
+        assert!(r.injector.injected().is_empty(), "nothing goes out while the key is held: {:?}", r.injector.injected());
+        // The key comes up: the waiting sentences go out, in order.
+        r.engine.set_key_held(false);
+        r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if l.injected == 2)).await;
+        assert_eq!(r.injector.injected(), ["Hello world.", " How are you."].map(String::from));
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { text, via: Via::Paste, .. } if text == "Hello world. How are you. Fine"), "{fx:?}");
+        assert_eq!(r.injector.injected(), ["Hello world.", " How are you.", " Fine"].map(String::from));
+        // Where the hotkey grabs nothing (Windows, macOS) the key does not hold the sentences back.
+        let mut r = rig_mode(FakeAudio::speech(), FakeTranscriber::ok("never"), None, FakeInjector::paste(), english_script(), OutputMode::LiveInject);
+        r.start_open().await;
+        r.engine.set_key_held(true);
+        r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if l.injected == 1)).await;
+        assert_eq!(r.injector.injected(), ["Hello world."].map(String::from));
+    }
+
     /// Regression (R02, §12): `live_inject` went on pasting sentence after sentence into whatever
     /// window was in front. At the first sentence whose window changed it stops pasting; that
     /// sentence, the rest and the tail are copied in one go at the end.
@@ -9503,24 +10172,34 @@ mod tests {
         r.injector.release(1);
         r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if l.injected == 1)).await;
         probe.set_window(Some(8));
-        // The second sentence, then the final copy.
-        r.injector.release(2);
+        // The second sentence finds another window in front: the pill says so while the take goes on
+        // (regression, 2026-11-23, the review of 边说边输入: it said nothing, and the text stopped
+        // arriving without a word).
+        r.injector.release(1);
+        let phases = r.phases_until(|p| matches!(p, DictationPhase::Listening { live: Some(l), .. } if l.switched)).await;
+        assert!(matches!(phases.last(), Some(DictationPhase::Listening { live: Some(l), .. }) if l.switched && l.streaming && l.injected == 1), "{phases:?}");
+        // The final copy.
+        r.injector.release(1);
         r.engine.stop().unwrap();
         let fx = r.run_to_terminal().await;
         match phase(&fx) {
-            DictationPhase::Done { text, via, clipboard_code, mode, .. } => {
+            DictationPhase::Done { text, via, clipboard_code, mode, rest, .. } => {
                 assert_eq!(text, "Hello world. How are you. Fine");
                 assert_eq!((*via, *clipboard_code, *mode), (Via::Clipboard, Some(ClipboardCode::TargetChanged), OutputMode::LiveInject));
+                // Regression, 2026-11-23 (the review of 边说边输入): the result card pasted and
+                // copied `text`, typing the sentence before the switch a second time. It offers
+                // what went to the clipboard.
+                assert_eq!(rest.as_deref(), Some("How are you. Fine"), "the card offers the copied rest");
             }
             other => panic!("{other:?}"),
         }
-        assert_eq!(r.injector.injected(), vec!["Hello world. ".to_owned()], "only the sentence before the switch was pasted");
-        assert_eq!(r.injector.clipboard_copies(), vec!["How are you. Fine ".to_owned()]);
+        assert_eq!(r.injector.injected(), vec!["Hello world.".to_owned()], "only the sentence before the switch was pasted");
+        assert_eq!(r.injector.clipboard_copies(), vec!["How are you. Fine".to_owned()], "without the separator in front, nor a space after");
         // The session ends on a blocking thread of its own once the take is over.
         wait_until(|| r.injector.events().contains(&InsertEvent::Finish)).await;
         assert_eq!(
             r.injector.events(),
-            [InsertEvent::Begin, InsertEvent::Piece("Hello world. ".into()), InsertEvent::CalledOff("How are you. ".into()), InsertEvent::Finish]
+            [InsertEvent::Begin, InsertEvent::Piece("Hello world.".into()), InsertEvent::CalledOff(" How are you.".into()), InsertEvent::Finish]
         );
         assert!(matches!(&record(&fx).unwrap().outcome, Outcome::Clipboard { code: Some(ClipboardCode::TargetChanged), .. }));
     }
@@ -9539,7 +10218,7 @@ mod tests {
         assert_eq!(phase(&fx), &DictationPhase::Cancelled { injected_chars: "Hello world.".chars().count() }, "the sentence being pasted counts");
         r.injector.release_deliveries(1);
         wait_until(|| r.injector.events().contains(&InsertEvent::Abort)).await;
-        assert_eq!(r.injector.events(), [InsertEvent::Begin, InsertEvent::Piece("Hello world. ".into()), InsertEvent::Abort]);
+        assert_eq!(r.injector.events(), [InsertEvent::Begin, InsertEvent::Piece("Hello world.".into()), InsertEvent::Abort]);
         r.wait_stops(1).await;
     }
 

@@ -249,6 +249,26 @@ impl LiveProducer {
     }
 }
 
+/// The recorder stopped (the producer goes with the stream's callback): the resampler's tail —
+/// input short of a step and the filter's look-ahead, up to 8 ms from a 48 kHz device — goes into
+/// the ring before it reads as closed, so the tap ends where the take ends (docs/dictation.md §11).
+/// Runs once, at the end of the take, where the flush may allocate.
+impl Drop for LiveProducer {
+    fn drop(&mut self) {
+        let producer = &mut self.producer;
+        let overrun = &self.overrun;
+        let result = self.resampler.flush(&mut |frames: &[f32]| {
+            let (_, rest) = producer.push_partial_slice(frames);
+            if !rest.is_empty() {
+                overrun.store(true, Ordering::Relaxed);
+            }
+        });
+        if let Err(e) = result {
+            tracing::warn!(error = %e, "live tap: the resampler's tail could not be flushed");
+        }
+    }
+}
+
 /// Build the two ends of a tap for a device running at `device_rate_hz`.
 pub fn live_tap(config: &LiveTapConfig, device_rate_hz: u32) -> Result<(LiveProducer, LiveConsumer), AudioError> {
     let resampler = StreamResampler::new(device_rate_hz, config.target_rate_hz)?;

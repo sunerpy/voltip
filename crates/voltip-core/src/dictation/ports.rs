@@ -577,6 +577,12 @@ pub trait Transcriber: Send + Sync {
     fn streaming(&self, _glossary: &[String]) -> Option<Arc<dyn StreamingTranscriber>> {
         None
     }
+
+    /// A fallback model answers now instead of the selected one (docs/dictation.md §3.5): the
+    /// selected model's day is used up. `false` (the default) for a client of its own.
+    fn stands_in(&self) -> bool {
+        false
+    }
 }
 
 /// One sentence the streaming recogniser committed at an endpoint (docs/dictation.md §11). Times

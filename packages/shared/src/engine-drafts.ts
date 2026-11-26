@@ -5,10 +5,12 @@
 // `apps/desktop/src/pages/settings/engines/helpers.ts`, which re-exports it.
 import { zhT, type Messages, type TFunction } from "./i18n";
 import { asrStreams, glossaryRoute } from "./providers";
+import { isStreamingOutputMode } from "./schema";
 import type {
   EngineSettings,
   EngineStatus,
   LlmApi,
+  OutputMode,
   ProbeReport,
   ProviderId,
   ProviderSettings,
@@ -344,37 +346,57 @@ export type LocalPreview = "none" | "off" | "missing" | "installed";
 
 /** The lines under a recognition drawer's model (docs/dictation.md §3.15): how `model` hears a
  *  take — a realtime model recognises it as it is spoken whatever the switches say, and the pill
- *  shows its words while 服务商的实时文字 (`providerPreview`) is on (§11.10) — and where the
- *  dictionary's terms go. */
+ *  shows its words while 服务商的实时文字 (`providerPreview`) is on (§11.10); the built-in service
+ *  recognises each sentence of a take in a streaming output mode (`outputMode`) whatever that
+ *  switch says — and where the dictionary's terms go; for iFlytek dictation on a computer, that it
+ *  settles one sentence per session, so 边说边输入 types at the release. */
 export function asrAbilityHelp(
   provider: ProviderId,
   url: string,
   model: string,
-  shell: { previews: boolean; providerPreview: boolean; localPreview: LocalPreview },
+  shell: {
+    previews: boolean;
+    providerPreview: boolean;
+    localPreview: LocalPreview;
+    /** The output mode a take with `provider` runs in (§12); a whole take when absent. */
+    outputMode?: OutputMode;
+  },
   t: TFunction = zhT.t,
 ): string[] {
   const { live, glossary } = asrAbilities(provider, url, model, shell.previews);
   // A shell without a live preview (the phone) shows no words, so the switch says nothing there.
   const shown = !shell.previews || shell.providerPreview;
+  // §11.10: in the streaming output modes the built-in service writes the text sentence by
+  // sentence; 服务商的实时文字 decides only whose words the pill shows.
+  const sentences = live === "preview" && isStreamingOutputMode(shell.outputMode ?? "whole_take");
   const hears =
     live === "realtime"
       ? shown
         ? t("engines.ability.realtimeHelp")
         : t("engines.ability.realtimeHiddenHelp")
-      : live === "preview" && shown
-        ? t("engines.ability.previewHelp")
-        : shell.localPreview === "installed"
-          ? t("engines.ability.wholeLocalHelp")
-          : shell.localPreview !== "none"
-            ? t("engines.ability.wholePreviewHelp")
-            : t("engines.ability.wholeHelp");
+      : sentences
+        ? shown
+          ? t("engines.ability.streamingPreviewHelp")
+          : shell.localPreview === "installed"
+            ? t("engines.ability.streamingLocalHelp")
+            : t("engines.ability.streamingHiddenHelp")
+        : live === "preview" && shown
+          ? t("engines.ability.previewHelp")
+          : shell.localPreview === "installed"
+            ? t("engines.ability.wholeLocalHelp")
+            : shell.localPreview !== "none"
+              ? t("engines.ability.wholePreviewHelp")
+              : t("engines.ability.wholeHelp");
   const terms =
     glossary === "hotwords"
       ? t("engines.ability.hotwordsHelp")
       : glossary === "prompt"
         ? t("engines.ability.promptHelp")
         : t("engines.ability.noGlossaryHelp");
-  return [hears, terms];
+  // §12: iFlytek dictation settles a sentence only when its session ends (a 10 s pause or 55 s of
+  // speech), so 边说边输入 types at the release; the phone types nothing.
+  const sessions = provider === "iflytek" && shell.previews;
+  return sessions ? [hears, terms, t("engines.ability.iflytekSentenceHelp")] : [hears, terms];
 }
 
 /** The line under a card's model select (docs/dictation.md §3.3): how many models the provider

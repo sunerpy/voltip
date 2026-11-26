@@ -4,6 +4,8 @@ import {
   isStreamingOutputMode,
   outputModeDescription,
   outputModeLabel,
+  standInTakesWhole,
+  standsInForBuiltIn,
 } from "@voltip/shared";
 import {
   Badge,
@@ -30,9 +32,11 @@ const MODE_ICONS: Readonly<Record<OutputModeId, IconName>> = {
  *  engine setting). The status line and the 当前生效 badge read `state.engines.effective_output_mode`:
  *  a streaming mode picked while nothing recognises the take as it is spoken (`live_ready`) stays
  *  selected but runs as a whole take, and the card says why — the streaming model is missing, the
- *  live preview switches are off (§11.10) or a fallback model stands in (§3.5); 整段输出 on a
- *  realtime model runs as 边说边识别 (§11.9), also while its words are hidden, and its card says
- *  that. */
+ *  live preview switches are off (§11.10) or a fallback model taking whole recordings stands in
+ *  (§3.5; the Live preview model then only previews the whole take, 2026-11-23); the built-in
+ *  service always recognises a streaming take, whatever its words switch says (§11.10,
+ *  2026-11-23); 整段输出 on a realtime model runs as 边说边识别 (§11.9), also while its words are
+ *  hidden, and its card says that. */
 export function OutputMode() {
   const { backend } = useBackend();
   const { t, locale } = useI18n();
@@ -43,15 +47,15 @@ export function OutputMode() {
   const fallback = isStreamingOutputMode(settings.output_mode) && effective === "whole_take";
   const streamed = settings.output_mode === "whole_take" && effective === "streaming_final";
   // docs/dictation.md §3.5: a fallback model taking whole recordings only stands in for the
-  // realtime model: no model to download. §11.10: with 本地模型预览 on, only its model is missing;
-  // otherwise the switches are off.
+  // realtime model: no model to download, whatever the 实时预览 block shows. §11.10: with
+  // 本地模型预览 on, only its model is missing; otherwise the switches are off.
   const live = livePreviewState(settings, engines);
-  const fallbackText =
-    live.kind === "paused"
-      ? t("outputMode.fallbackPaused")
-      : live.kind === "missing"
-        ? t("outputMode.fallback")
-        : t("outputMode.fallbackOff");
+  const standIn = standInTakesWhole(engines);
+  const fallbackText = standIn
+    ? t(standsInForBuiltIn(engines) ? "outputMode.fallbackBuiltIn" : "outputMode.fallbackPaused")
+    : live.kind === "missing"
+      ? t("outputMode.fallback")
+      : t("outputMode.fallbackOff");
   const setMode = (output_mode: OutputModeId) => {
     if (output_mode === settings.output_mode) return;
     void backend.invoke("settings_set_engines", { engines: { ...settings, output_mode } });
@@ -72,8 +76,7 @@ export function OutputMode() {
       <CardGrid min={220} role="listbox" aria-label={t("engines.outputMode.label")}>
         {OUTPUT_MODES.map((mode) => {
           const selected = settings.output_mode === mode;
-          const unavailable =
-            isStreamingOutputMode(mode) && !engines.live_ready && live.kind !== "paused";
+          const unavailable = isStreamingOutputMode(mode) && !engines.live_ready && !standIn;
           return (
             <OptionCard
               key={mode}

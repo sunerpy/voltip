@@ -1210,6 +1210,12 @@ impl FakeInjector {
         self
     }
 
+    /// The next call is pasted, later ones are answered as configured.
+    pub fn paste_once(self) -> Self {
+        self.first.lock().push_back(InjectReply::Paste);
+        self
+    }
+
     /// The first call fails with `Inject(message)`, later ones are answered as configured.
     pub fn err_once(self, message: &str) -> Self {
         self.first.lock().push_back(InjectReply::Err(message.to_owned()));

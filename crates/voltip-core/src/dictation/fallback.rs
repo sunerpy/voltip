@@ -413,6 +413,10 @@ impl Transcriber for FallbackTranscriber {
         }
     }
 
+    fn stands_in(&self) -> bool {
+        self.first().is_some_and(|(_, reason)| reason.is_some())
+    }
+
     fn streaming(&self, glossary: &[String]) -> Option<Arc<dyn StreamingTranscriber>> {
         let (link, reason) = self.first()?;
         let inner = link.port.streaming(glossary)?;

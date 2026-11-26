@@ -292,6 +292,10 @@ impl Transcriber for MeteredTranscriber {
         self.inner.warm(language);
     }
 
+    fn stands_in(&self) -> bool {
+        self.inner.stands_in()
+    }
+
     /// A realtime model's stream: the streaming modes take its text and send no whole take, so its
     /// sessions are told as takes when their flush is answered.
     fn streaming(&self, glossary: &[String]) -> Option<Arc<dyn StreamingTranscriber>> {

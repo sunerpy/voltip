@@ -71,7 +71,8 @@ pub struct LiveText {
     #[serde(default)]
     pub current: String,
     /// Why the preview stopped (model failed to load, tap overrun, decoder error); `None` while it
-    /// is following the audio. The final text is unaffected either way.
+    /// is following the audio. A whole take's text is unaffected; with `streaming`, the rest of a
+    /// streaming take is recognised whole after the release.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub degraded: Option<String>,
     /// `live_inject` (docs/dictation.md §12): how many committed sentences have been pasted so
@@ -85,6 +86,16 @@ pub struct LiveText {
     /// fallback model's that stands in for it (§3.5). `None` for the local model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<crate::providers::ProviderId>,
+    /// These are the take's text (docs/dictation.md §12, §11.10): a streaming take whose text
+    /// session's words show — or whose hidden text session failed — so `degraded` means the rest
+    /// is recognised whole after the release. `false` for a whole take and for the local model's
+    /// preview next to a hidden text session, whose failure only stops the preview.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub streaming: bool,
+    /// `live_inject`: another window came to the front (§14.3); the sentences from then on are
+    /// copied when the take ends instead of typed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub switched: bool,
 }
 
 impl LiveText {
@@ -105,14 +116,22 @@ fn join_text(out: &mut String, piece: &str) {
     if piece.is_empty() {
         return;
     }
-    if let (Some(last), Some(first)) = (out.chars().next_back(), piece.chars().next())
-        && !last.is_whitespace()
-        && !is_cjk(last)
-        && !is_cjk(first)
-    {
+    if needs_space(out, piece) {
         out.push(' ');
     }
     out.push_str(piece);
+}
+
+/// A space goes between `before` and `after`: both boundary characters are non-CJK, and `before`
+/// does not end in whitespace already. A closing quote, an ellipsis or a dash at the end of
+/// `before` takes the script of the character in front of it (`他说“你好”` ends in CJK).
+fn needs_space(before: &str, after: &str) -> bool {
+    if before.chars().next_back().is_none_or(char::is_whitespace) {
+        return false;
+    }
+    let mut end = before.chars().rev().skip_while(|c| matches!(*c as u32, 0x2014 | 0x2018..=0x201F | 0x2026));
+    let last = end.next().or_else(|| before.chars().next_back());
+    matches!((last, after.chars().next()), (Some(last), Some(first)) if !is_cjk(last) && !is_cjk(first))
 }
 
 /// CJK scripts and their punctuation (U+2E80 and up, excluding the Latin ranges), which join
@@ -121,16 +140,24 @@ fn is_cjk(c: char) -> bool {
     matches!(c as u32, 0x2E80..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF | 0xFE30..=0xFE4F | 0xFF00..=0xFFEF | 0x20000..=0x3134F)
 }
 
-/// The separator `live_inject` appends after one sentence so the next one does not run into it
-/// (docs/dictation.md §12): nothing after a CJK character or CJK punctuation (`你好。`), one space
-/// otherwise (`Hello world.`). The next sentence's first character is not known at inject time,
-/// hence a rule on the end of this one only.
+/// The separator that joins one whole sentence to the text before it in a long take and in a
+/// history entry's processed parts (docs/dictation.md §22.3, §22.4): nothing after a CJK character or
+/// CJK punctuation (`你好。`), one space otherwise (`Hello world.`).
 pub fn inject_separator(text: &str) -> &'static str {
     match text.trim_end().chars().next_back() {
         None => "",
         Some(last) if is_cjk(last) => "",
         Some(_) => " ",
     }
+}
+
+/// The separator `live_inject` types in front of `next`, after the take's text so far `typed`
+/// (docs/dictation.md §12): the take's join rule ([`join_text`]), so what is typed is the take's
+/// text — nothing before the first sentence or next to CJK (`你好。今天`), one space between Latin
+/// sentences (`Hello world. How are you.`), and no space left at the end. It went after each
+/// sentence until 2026-11-23, deciding on that sentence's end alone.
+pub fn inject_prefix(typed: &str, next: &str) -> &'static str {
+    if needs_space(typed.trim_end(), next.trim_start()) { " " } else { "" }
 }
 
 /// Which step of the pipeline is running.
@@ -343,9 +370,15 @@ pub enum DictationPhase {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         check: Option<InsertCheck>,
         /// When each step of the take happened (docs/dictation.md §30.1); absent from a core that
-        /// did not send it.
+        /// did not send it. Boxed: the variant stays small next to the others.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        timing: Option<TakeTiming>,
+        timing: Option<Box<TakeTiming>>,
+        /// `live_inject` (docs/dictation.md §12, §14.3): what went to the clipboard after a window
+        /// switch or a failed paste, when sentences before it were already typed. The result card
+        /// pastes and copies this, not `text`, whose start is in the application already. Absent
+        /// otherwise, and from a core that did not send it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rest: Option<String>,
     },
     /// The pipeline stopped short.
     Failed {
@@ -519,6 +552,8 @@ mod tests {
             injected: 0,
             source: None,
             provider: None,
+            streaming: false,
+            switched: false,
         };
         assert_eq!(live.preview(), "你好。hello world.今天");
         let listening = DictationPhase::Listening { started_at: 5, ready: true, live: Some(live.clone()), locked: false };
@@ -547,6 +582,12 @@ mod tests {
         assert_eq!(serde_json::from_str::<LiveText>(&json).unwrap(), labelled);
         let degraded = LiveText { degraded: Some("tap overrun".into()), ..live };
         assert!(serde_json::to_string(&degraded).unwrap().contains(r#""degraded":"tap overrun""#));
+        // §12, §14.3 (2026-11-23): a streaming take's flags go on the wire only when set.
+        assert!(!serde_json::to_string(&degraded).unwrap().contains("streaming"), "false is omitted");
+        let flagged = LiveText { streaming: true, switched: true, ..LiveText::default() };
+        let json = serde_json::to_string(&flagged).unwrap();
+        assert!(json.ends_with(r#""injected":0,"streaming":true,"switched":true}"#), "{json}");
+        assert_eq!(serde_json::from_str::<LiveText>(&json).unwrap(), flagged);
         assert_eq!(LiveText::default().preview(), "");
         assert_eq!(LiveText { current: "  a ".into(), ..LiveText::default() }.preview(), "a");
         let latin = LiveText {
@@ -581,6 +622,7 @@ mod tests {
             clipboard_code: None,
             check: None,
             timing: None,
+            rest: None,
         };
         assert!(done.is_terminal());
         let json = serde_json::to_string(&done).unwrap();
@@ -611,6 +653,7 @@ mod tests {
             clipboard_code: None,
             check: None,
             timing: None,
+            rest: None,
         };
         let json = serde_json::to_string(&streamed).unwrap();
         assert!(json.contains(r#""mode":"streaming_final","segments":[{"text":"你好。","start_ms":0,"end_ms":900}],"live_error":"flush: asr: x""#), "{json}");
@@ -680,17 +723,30 @@ mod tests {
     /// `live_inject` puts a separator after each sentence so the next one does not run into it:
     /// nothing after CJK text or punctuation, one space after Latin text (docs/dictation.md §12).
     #[test]
-    fn inject_separator_follows_the_last_character() {
-        assert_eq!(inject_separator("你好，世界。"), "");
-        assert_eq!(inject_separator("今天天气"), "", "unpunctuated CJK joins without a space");
-        assert_eq!(inject_separator("Hello world."), " ");
-        assert_eq!(inject_separator("fetchUser"), " ");
-        assert_eq!(inject_separator("Rust 很好"), "");
-        assert_eq!(inject_separator("你好 Rust"), " ");
-        assert_eq!(inject_separator("123"), " ");
-        assert_eq!(inject_separator("  "), "");
-        assert_eq!(inject_separator(""), "");
-        assert_eq!(inject_separator("Hello. "), " ", "trailing whitespace is ignored when deciding");
+    /// The separator `live_inject` types in front of a sentence follows the take's join rule (a
+    /// space only between two non-CJK characters), so what is typed is the take's text. Regression,
+    /// 2026-11-23 (the review of 边说边输入): it went after each sentence, deciding on the end of
+    /// that sentence alone — English text ended in a space, and a sentence closing on ” or …… got a
+    /// space after it, before Chinese too (they are not CJK code points); the rule changed on purpose.
+    fn inject_prefix_follows_the_join_rule() {
+        assert_eq!(inject_prefix("", "Hello world."), "", "the first sentence has none");
+        assert_eq!(inject_prefix("你好，世界。", "今天"), "");
+        assert_eq!(inject_prefix("今天天气", "很好"), "", "unpunctuated CJK joins without a space");
+        assert_eq!(inject_prefix("Hello world.", "How are you."), " ");
+        assert_eq!(inject_prefix("fetchUser", "then"), " ");
+        assert_eq!(inject_prefix("Rust 很好", "Next"), "");
+        assert_eq!(inject_prefix("你好 Rust", "很好"), "", "a CJK sentence after Latin: no space");
+        assert_eq!(inject_prefix("你好 Rust", "and Go"), " ");
+        assert_eq!(inject_prefix("123", "456"), " ");
+        assert_eq!(inject_prefix("Hello. ", "Next"), " ", "trailing whitespace is ignored when deciding");
+        assert_eq!(inject_prefix("他说“你好”", "Hello"), "", "a closing quote takes the script before it");
+        assert_eq!(inject_prefix("等一下……", "OK"), "", "so does an ellipsis");
+        assert_eq!(inject_prefix("He said “hi”", "Then"), " ");
+        let mut joined = String::new();
+        for piece in ["他说“你好”", "Hello", "world."] {
+            join_text(&mut joined, piece);
+        }
+        assert_eq!(joined, "他说“你好”Hello world.", "the take's text joins the same way");
     }
 
     /// docs/dictation.md §3.6: a clean-up that failed says why by kind, on the wire in snake_case;
