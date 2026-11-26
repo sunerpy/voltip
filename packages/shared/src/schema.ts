@@ -1893,7 +1893,9 @@ export const learnOutcomeSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("learned"), pairs: z.array(suggestionPickSchema), safe: z.boolean() }),
   z.object({ kind: z.literal("no_pairs") }),
   z.object({ kind: z.literal("unchanged") }),
-  z.object({ kind: z.literal("no_match") }),
+  /** `context`: the paragraph around the selection was read from the focused control
+   *  (docs/dictation.md §35, 2026-11-25); without it, only the selection was compared. */
+  z.object({ kind: z.literal("no_match"), context: z.boolean().default(false) }),
   z.object({ kind: z.literal("no_selection") }),
   z.object({ kind: z.literal("too_long"), max: z.number().int().positive() }),
   z.object({ kind: z.literal("terminal") }),

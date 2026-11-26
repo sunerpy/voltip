@@ -465,7 +465,8 @@ mod tests {
     /// over a take or its result) and with the pill on.
     #[test]
     fn the_learn_notice_shows_only_when_the_core_shows_it_between_takes() {
-        let notice = |shown| voltip_core::LearnNotice { id: 1, outcome: voltip_core::LearnOutcome::NoMatch, shown, accepted: None, undone: None };
+        let notice =
+            |shown| voltip_core::LearnNotice { id: 1, outcome: voltip_core::LearnOutcome::NoMatch { context: true }, shown, accepted: None, undone: None };
         let shown = notice(true);
         assert!(learned_wanted(&DictationPhase::Idle, Some(&shown), OverlayPlacement::Bottom));
         assert!(!learned_wanted(&DictationPhase::Idle, Some(&notice(false)), OverlayPlacement::Bottom), "waiting behind a result");

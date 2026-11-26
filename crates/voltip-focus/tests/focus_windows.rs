@@ -2,7 +2,8 @@
 //! a paste into Notepad is `written`; the same paste into a read-only EDIT of this test's own
 //! window leaves it `not_written`; the focus moving to the window's other EDIT is `unconfirmed`.
 //! And the copy that reads the selection (§19, 从选中文字学习 §35): Notepad's selection comes
-//! back while the shortcut's modifiers are still held, and the clipboard holds what it held.
+//! back while the shortcut's modifiers are still held, and the clipboard holds what it held; the
+//! learning read gives Notepad's text around its selection and around its caret.
 //! It pastes and copies the way Voltip does (the clipboard, Ctrl+V and Ctrl+Insert) in windows it
 //! brings to the front, so it is ignored: CI runs it on the windows-2025 desktop (`hooks-windows`),
 //! never on a computer someone is using:
@@ -17,7 +18,7 @@ use std::sync::mpsc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use voltip_focus::{Expected, Reader, Settled, UnconfirmedWhy, Watch, windows as uia};
+use voltip_focus::{Expected, FocusContext, Reader, Settled, UnconfirmedWhy, Watch, windows as uia};
 use voltip_inject::{ClipboardPort as _, CopyOptions, Injector as _, Modifier, PasteOptions, SelectionSource as _, SystemClipboard, system_selection};
 use voltip_platform::HostOs;
 use voltip_platform::insert_check::rules::InsertCheck;
@@ -29,7 +30,7 @@ use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Threading::GetCurrentThreadId;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_KEYUP, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEINPUT, SendInput, VIRTUAL_KEY,
-    VK_A, VK_CONTROL, VK_MENU,
+    VK_A, VK_CONTROL, VK_HOME, VK_LEFT, VK_MENU, VK_SHIFT,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, ES_AUTOHSCROLL, ES_READONLY, FindWindowW, GetForegroundWindow, GetMessageW,
@@ -305,6 +306,42 @@ fn a_paste_lands_in_notepad_a_read_only_edit_stays_and_another_edit_takes_the_fo
     let watch = wait_watch(&reader, OWN);
     click(own.other, own.top, "the other EDIT");
     assert_eq!(watch.settle(WATCH), Settled::unconfirmed(UnconfirmedWhy::ControlChanged), "the focus moved");
+}
+
+/// Read Notepad for 从选中文字学习 until `wanted` holds (the keys reach Notepad a little later).
+fn wait_context(reader: &Reader, what: &str, wanted: impl Fn(&FocusContext) -> bool) -> FocusContext {
+    let until = Instant::now() + WAIT;
+    loop {
+        let read = reader.context("notepad", None);
+        if let Ok(context) = &read
+            && wanted(context)
+        {
+            return context.clone();
+        }
+        assert!(Instant::now() < until, "{what}: last read {read:?}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// docs/dictation.md §35: the learning read gives Notepad's text around its selection
+/// (Ctrl+Shift+Left selects the last word), then around its caret (Home); a terminal is never read.
+#[test]
+#[ignore = "reads windows it brings to the front: CI's windows-2025 desktop only"]
+fn a_learning_read_gives_notepads_text_around_the_selection_and_the_caret() {
+    let focuser = Focuser::new();
+    let reader = Reader::new(HostOs::Windows, uia::open);
+    let notepad = Notepad::open();
+    focuser.focus(notepad.window, notepad.window, "Notepad");
+    let watch = wait_watch(&reader, "notepad");
+    paste_into(notepad.window);
+    assert_eq!(watch.settle(WATCH), Settled::sure(InsertCheck::Written), "the text is in Notepad");
+    drop(Held::down(&[VK_SHIFT, VK_CONTROL, VK_LEFT]));
+    let around = wait_context(&reader, "the last word selected", |c| c.selected == "check");
+    assert_eq!((around.before.as_str(), around.after.as_str()), ("voltip ", ""));
+    drop(Held::down(&[VK_HOME]));
+    let at_start = wait_context(&reader, "the caret at the start", |c| c.selected.is_empty() && c.before.is_empty());
+    assert_eq!(at_start.after, TYPED);
+    assert_eq!(reader.context("windowsterminal", None).err(), Some(UnconfirmedWhy::Skipped), "a terminal is never read");
 }
 
 /// docs/dictation.md §35 (the copy of §19): 从选中文字学习 reads Notepad's selection the way Voltip

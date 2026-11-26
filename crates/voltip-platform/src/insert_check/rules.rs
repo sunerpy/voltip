@@ -222,6 +222,108 @@ impl std::fmt::Debug for FocusText {
     }
 }
 
+/// How many characters of its paragraph a reading for 从选中文字学习 keeps on each side of the
+/// selection, or of the caret when nothing is selected (docs/dictation.md §35; the user's choice of
+/// 2026-11-25).
+pub const CONTEXT_CHARS: usize = 200;
+
+/// What a reading for 从选中文字学习 keeps of the focused control (docs/dictation.md §35): the
+/// selected text whole, and the selection's paragraph on each side of it, at most
+/// [`CONTEXT_CHARS`] characters each, all [`normalize`]d. It stays in memory for one comparison
+/// with the history: never stored, sent or logged, and `Debug` prints only the lengths.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct FocusContext {
+    /// The paragraph's text before the selection (or the caret).
+    pub before: String,
+    /// The selected text; empty at a caret.
+    pub selected: String,
+    /// The paragraph's text after the selection (or the caret).
+    pub after: String,
+}
+
+impl FocusContext {
+    /// The context from what a reader read before the selection, of it, and after it: `before`
+    /// from its paragraph's start and at most its last [`CONTEXT_CHARS`] characters, `after` to its
+    /// paragraph's end and at most its first ones. `None` for a selection longer than
+    /// [`MAX_SELECTED_CHARS`].
+    pub fn from_parts(before: &str, selected: &str, after: &str) -> Option<Self> {
+        let selected = normalize(selected);
+        if selected.chars().count() > MAX_SELECTED_CHARS {
+            return None;
+        }
+        let before = normalize(before);
+        let before = before.rsplit('\n').next().unwrap_or_default();
+        let after = normalize(after);
+        let after = after.split('\n').next().unwrap_or_default();
+        Some(Self { before: last_chars(before, CONTEXT_CHARS).to_owned(), selected, after: first_chars(after, CONTEXT_CHARS).to_owned() })
+    }
+
+    /// The context of `text` around `[start, end)`, in characters (as AT-SPI counts); the offsets
+    /// are put in order and held to the text.
+    pub fn around(text: &str, start: usize, end: usize) -> Option<Self> {
+        let byte = |n: usize| text.char_indices().nth(n).map_or(text.len(), |(at, _)| at);
+        let (start, end) = (byte(start.min(end)), byte(start.max(end)));
+        Self::from_parts(&text[..start], &text[start..end], &text[end..])
+    }
+
+    /// The context of `units` (UTF-16, as UI Automation and the Accessibility API count) around
+    /// `[start, end)`. An offset inside a surrogate pair keeps the pair on the selection's side;
+    /// only the units near the selection are decoded on each side, enough for [`CONTEXT_CHARS`].
+    pub fn around_utf16(units: &[u16], start: usize, end: usize) -> Option<Self> {
+        let low = |at: usize| units.get(at).is_some_and(|u| (0xDC00..0xE000).contains(u));
+        let (mut start, mut end) = (start.min(end).min(units.len()), start.max(end).min(units.len()));
+        if start > 0 && low(start) {
+            start -= 1;
+        }
+        if end < units.len() && low(end) {
+            end += 1;
+        }
+        // Two units a character at most, and a few more so that a pair cut at the far end of the
+        // window falls outside the characters kept.
+        let window = 2 * CONTEXT_CHARS + 4;
+        let before = String::from_utf16_lossy(&units[start.saturating_sub(window)..start]);
+        let selected = String::from_utf16(&units[start..end]).ok()?;
+        let after = String::from_utf16_lossy(&units[end..(end + window).min(units.len())]);
+        Self::from_parts(&before, &selected, &after)
+    }
+
+    /// The context of the one place where `hint` (the copied selection) is in `value`, for a
+    /// control that tells its whole value but no caret: `None` when it is not there, there more
+    /// than once, or empty.
+    pub fn find(value: &str, hint: &str) -> Option<Self> {
+        let (value, hint) = (normalize(value), normalize(hint));
+        if hint.trim().is_empty() {
+            return None;
+        }
+        let mut places = value.match_indices(hint.as_str());
+        let (at, _) = places.next()?;
+        if places.next().is_some() {
+            return None;
+        }
+        Self::from_parts(&value[..at], &hint, &value[at + hint.len()..])
+    }
+
+    /// Nothing selected, and nothing read on either side.
+    pub fn is_empty(&self) -> bool {
+        self.before.is_empty() && self.selected.is_empty() && self.after.is_empty()
+    }
+}
+
+impl std::fmt::Debug for FocusContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FocusContext")
+            .field("before", &self.before.chars().count())
+            .field("selected", &self.selected.chars().count())
+            .field("after", &self.after.chars().count())
+            .finish()
+    }
+}
+
+/// The first `n` characters of `text`.
+fn first_chars(text: &str, n: usize) -> &str {
+    text.char_indices().nth(n).map_or(text, |(at, _)| &text[..at])
+}
+
 /// One reading after the paste.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Sample {
@@ -465,5 +567,76 @@ mod tests {
             Sample::OtherControl
         });
         assert_eq!((verdict, reads), (Settled::unconfirmed(UnconfirmedWhy::ControlChanged), 1));
+    }
+
+    /// docs/dictation.md §35: 从选中文字学习 keeps the selection's paragraph on each side of it, at
+    /// most `CONTEXT_CHARS` characters each, the selection whole, all normalised.
+    #[test]
+    fn a_learning_context_keeps_the_selections_paragraph_up_to_200_characters_a_side() {
+        let ctx = |before: &str, selected: &str, after: &str| FocusContext::from_parts(before, selected, after).unwrap();
+        let parts = |c: &FocusContext| (c.before.clone(), c.selected.clone(), c.after.clone());
+        // The paragraph ends at any line break: \n, \r\n, \r, U+2028, U+2029.
+        for (before, after) in [
+            ("上一段\n今天测试一下", "Max的推理能力。\n下一段"),
+            ("上一段\r\n今天测试一下", "Max的推理能力。\r\n下一段"),
+            ("上一段\u{2029}今天测试一下", "Max的推理能力。\u{2028}下一段"),
+        ] {
+            assert_eq!(parts(&ctx(before, "Qwen 4 ", after)), ("今天测试一下".into(), "Qwen 4 ".into(), "Max的推理能力。".into()), "{before:?}");
+        }
+        // At most 200 characters a side: the nearest ones.
+        let long = "字".repeat(250);
+        let c = ctx(&format!("{long}前"), "选", &format!("后{long}"));
+        assert_eq!((c.before.chars().count(), c.after.chars().count()), (CONTEXT_CHARS, CONTEXT_CHARS));
+        assert!(c.before.ends_with('前') && c.after.starts_with('后'));
+        // A selection over a line break stays whole; the caret at a paragraph's edge reads nothing there.
+        assert_eq!(parts(&ctx("开头", "第一行\r\n第二行", "")), ("开头".into(), "第一行\n第二行".into(), String::new()));
+        assert_eq!(parts(&ctx("前一段\n", "", "这一段")), (String::new(), String::new(), "这一段".into()));
+        // No-break spaces read as spaces, as the comparison sees them.
+        assert_eq!(ctx("Qwen\u{a0}4", "", "").before, "Qwen 4");
+        // A selection longer than a reader reads is not a context.
+        assert_eq!(FocusContext::from_parts("", &"字".repeat(MAX_SELECTED_CHARS + 1), ""), None);
+        assert!(ctx("", "", "").is_empty() && !ctx("前", "", "").is_empty());
+    }
+
+    #[test]
+    fn a_learning_context_cuts_the_text_at_character_or_utf16_offsets_without_splitting_a_pair() {
+        let text = "今天测试一下Qwen 4 Max的推理能力。";
+        let c = FocusContext::around(text, 6, 12).unwrap();
+        assert_eq!((c.before.as_str(), c.selected.as_str(), c.after.as_str()), ("今天测试一下", "Qwen 4", " Max的推理能力。"));
+        // Offsets out of order or past the end are put in order and held to the text.
+        assert_eq!(FocusContext::around(text, 12, 6), FocusContext::around(text, 6, 12));
+        assert_eq!(FocusContext::around(text, 6, 999).unwrap().after, "");
+        // UTF-16: an emoji is two units; an offset inside it keeps it whole on the selection's side.
+        let units: Vec<u16> = "前😀中😀后".encode_utf16().collect();
+        let c = FocusContext::around_utf16(&units, 1, 4).unwrap();
+        assert_eq!((c.before.as_str(), c.selected.as_str(), c.after.as_str()), ("前", "😀中", "😀后"));
+        let c = FocusContext::around_utf16(&units, 2, 5).unwrap();
+        assert_eq!((c.before.as_str(), c.selected.as_str(), c.after.as_str()), ("前", "😀中😀", "后"), "both ends inside a pair");
+        // A long text: only the window near the selection is decoded, and no broken pair shows.
+        let long: String = "😀".repeat(300);
+        let units: Vec<u16> = format!("{long}选{long}").encode_utf16().collect();
+        let c = FocusContext::around_utf16(&units, 600, 601).unwrap();
+        assert_eq!((c.before.chars().count(), c.selected.as_str(), c.after.chars().count()), (CONTEXT_CHARS, "选", CONTEXT_CHARS));
+        assert!(!c.before.contains('\u{fffd}') && !c.after.contains('\u{fffd}'));
+    }
+
+    /// A control that tells its whole value but no caret: the copied selection places the context
+    /// when it is there exactly once.
+    #[test]
+    fn a_learning_context_is_found_by_the_copied_selection_when_it_is_there_once() {
+        let value = "第一句。\r\n今天测试一下Qwen 4 Max的推理能力。";
+        let c = FocusContext::find(value, "Qwen 4").unwrap();
+        assert_eq!((c.before.as_str(), c.selected.as_str(), c.after.as_str()), ("今天测试一下", "Qwen 4", " Max的推理能力。"));
+        assert_eq!(FocusContext::find("Qwen 4 和 Qwen 4", "Qwen 4"), None, "twice: which one is not known");
+        assert_eq!(FocusContext::find(value, "GPT"), None);
+        assert_eq!(FocusContext::find(value, "  "), None);
+    }
+
+    #[test]
+    fn a_learning_context_never_prints_its_text() {
+        let c = FocusContext::from_parts("秘密前文", "选中", "秘密后文").unwrap();
+        let shown = format!("{c:?}");
+        assert!(!shown.contains("秘密") && !shown.contains("选中"), "{shown}");
+        assert!(shown.contains('4') && shown.contains('2'), "{shown}");
     }
 }

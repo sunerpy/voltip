@@ -13,7 +13,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
-use voltip_platform::insert_check::rules::{FocusText, MAX_SELECTED_CHARS, READ_BEFORE_CARET, UnconfirmedWhy};
+use voltip_platform::insert_check::rules::{CONTEXT_CHARS, FocusContext, FocusText, MAX_SELECTED_CHARS, READ_BEFORE_CARET, UnconfirmedWhy};
 use zbus::{Connection, OwnedObjectPath, OwnedVariant};
 
 use crate::FocusPlatform;
@@ -194,6 +194,38 @@ impl AtSpi {
         Ok(found.node)
     }
 
+    /// [`FocusPlatform::context`]: AT-SPI counts characters, and every text control tells its
+    /// caret, so no hint is needed.
+    async fn read_context(&self, node: &Node) -> Option<FocusContext> {
+        let chars: i32 = self.property(node, TEXT, "CharacterCount").await.ok()?;
+        let chars = usize::try_from(chars).ok()?;
+        let caret: i32 = self.property(node, TEXT, "CaretOffset").await.ok()?;
+        let caret = usize::try_from(caret).ok()?.min(chars);
+        let selections: i32 = self.call(node, TEXT, "GetNSelections", &()).await.ok()?;
+        let (start, end) = if selections > 0 {
+            let (a, b): (i32, i32) = self.call(node, TEXT, "GetSelection", &(0i32,)).await.ok()?;
+            let (a, b) = (usize::try_from(a).ok()?.min(chars), usize::try_from(b).ok()?.min(chars));
+            (a.min(b), a.max(b))
+        } else {
+            (caret, caret)
+        };
+        if end - start > MAX_SELECTED_CHARS {
+            return None;
+        }
+        // A few characters more than kept: a line break written as two still leaves enough.
+        let window = 2 * CONTEXT_CHARS;
+        let text = |from: usize, to: usize| async move {
+            if to <= from {
+                return Some(String::new());
+            }
+            self.call::<_, String>(node, TEXT, "GetText", &(i32::try_from(from).ok()?, i32::try_from(to).ok()?)).await.ok()
+        };
+        let before = text(start.saturating_sub(window), start).await?;
+        let selected = text(start, end).await?;
+        let after = text(end, (end + window).min(chars)).await?;
+        FocusContext::from_parts(&before, &selected, &after)
+    }
+
     /// [`FocusPlatform::text`].
     async fn read_text(&self, node: &Node) -> Option<FocusText> {
         let chars: i32 = self.property(node, TEXT, "CharacterCount").await.ok()?;
@@ -231,6 +263,10 @@ impl FocusPlatform for AtSpi {
 
     fn text(&mut self, node: &Node) -> Option<FocusText> {
         zbus::block_on(self.read_text(node))
+    }
+
+    fn context(&mut self, node: &Node, _hint: Option<&str>) -> Option<FocusContext> {
+        zbus::block_on(self.read_context(node))
     }
 }
 

@@ -1601,11 +1601,18 @@ describe("Overlay learn notice (docs/dictation.md §35)", () => {
       });
       return screen.getByTestId("overlay-window").textContent;
     };
-    backend.showLearnNotice({ id: 4, outcome: { kind: "no_match" }, shown: true });
+    backend.showLearnNotice({ id: 4, outcome: { kind: "no_match", context: false }, shown: true });
     renderApp({ path: "/overlay?state=learned", backend });
-    expect(await notice()).toHaveTextContent("最近 50 次听写里没有找到这段文字");
+    // docs/dictation.md §35 (2026-11-25): with only the selection compared, the notice asks for
+    // the unchanged words around the change; with the paragraph read, it says so. Both fit the
+    // pill's one line (the review of 2026-11-25: the first text was cut off), and 没有改动 no
+    // longer speaks of a selection the user may not have made.
+    expect(await notice()).toHaveTextContent("没找到这段文字，请连同前后没改的字一起选中");
+    expect(say({ kind: "no_match", context: true })).toContain(
+      "最近 50 次听写里没有找到光标附近的文字",
+    );
     expect(say({ kind: "no_selection" })).toContain("没有选中文字");
-    expect(say({ kind: "unchanged" })).toContain("选中的文字和听写结果相同");
+    expect(say({ kind: "unchanged" })).toContain("这段文字和听写结果相同");
     expect(say({ kind: "no_pairs" })).toContain("没有可以加入词典的改动");
     expect(say({ kind: "too_long", max: 8000 })).toContain("最多 8000 字");
     expect(say({ kind: "terminal" })).toContain("终端里的文字不能用来学习");

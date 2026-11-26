@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use voltip_core::ForegroundApp;
 use voltip_core::dictation::insert_check::Expected;
-use voltip_core::dictation::{FocusReader, FocusWatch, Settled, UnconfirmedWhy};
+use voltip_core::dictation::{FocusContext, FocusReader, FocusWatch, Settled, UnconfirmedWhy};
 
 /// The core's [`FocusReader`] over a [`voltip_focus::Reader`].
 pub struct SystemFocusReader(pub voltip_focus::Reader);
@@ -17,6 +17,10 @@ impl FocusReader for SystemFocusReader {
     fn watch(&self, app: &ForegroundApp, expected: &Expected) -> Result<Box<dyn FocusWatch>, UnconfirmedWhy> {
         let watch = self.0.watch(&app.app_id, expected)?;
         Ok(Box::new(Watch(watch)))
+    }
+
+    fn context(&self, app: &ForegroundApp, hint: Option<&str>) -> Result<FocusContext, UnconfirmedWhy> {
+        self.0.context(&app.app_id, hint)
     }
 }
 

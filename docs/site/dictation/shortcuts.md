@@ -86,7 +86,7 @@ Under **Settings → Shortcuts**, **Copy last result** takes a shortcut of its o
 
 ## Learn from selection
 
-Under **Settings → Shortcuts**, **Learn from selection** takes a shortcut of its own, none by default. After you correct a dictation in another app, select the corrected text and press it: Voltip notes the change for the dictionary's suggestions, and the overlay shows the change it noted. It must differ from the dictation, voice edit and Copy last result shortcuts. See [Learn from selection](/recognition/dictionary#learn-from-selection) for how to use it.
+Under **Settings → Shortcuts**, **Learn from selection** takes a shortcut of its own, none by default. After you correct a dictation in another app, leave the cursor in the change or select the corrected text, and press it: Voltip finds the dictation and notes the change for the dictionary's suggestions, and the overlay shows the change it noted. It must differ from the dictation, voice edit and Copy last result shortcuts. See [Learn from selection](/recognition/dictionary#learn-from-selection) for how to use it.
 
 ## Recording source
 

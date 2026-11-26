@@ -933,7 +933,7 @@ pub struct Injection {
     pub note: Option<InjectNote>,
 }
 
-pub use voltip_platform::insert_check::rules::{CONFIRM_WITHIN, FOCUS_READ_DEADLINE, InsertCheck, Settled, UnconfirmedWhy};
+pub use voltip_platform::insert_check::rules::{CONFIRM_WITHIN, CONTEXT_CHARS, FOCUS_READ_DEADLINE, FocusContext, InsertCheck, Settled, UnconfirmedWhy};
 
 /// Reads the focused control of the application in front, once before a paste and again after it
 /// (docs/dictation.md §28): the desktop shell's UI Automation / Accessibility / AT-SPI reader. What
@@ -944,6 +944,17 @@ pub trait FocusReader: Send + Sync {
     /// says why there is nothing to compare with afterwards. Blocking, bounded by
     /// [`FOCUS_READ_DEADLINE`].
     fn watch(&self, app: &ForegroundApp, expected: &super::insert_check::Expected) -> Result<Box<dyn FocusWatch>, UnconfirmedWhy>;
+
+    /// Read the focused control of `app` for 从选中文字学习 (docs/dictation.md §35): its paragraph
+    /// around the selection or the caret, at most [`CONTEXT_CHARS`] characters on each side, with
+    /// `hint` (the copied selection) placing it in a control that tells no caret. The insert
+    /// check's rules hold (no terminal, remote desktop, virtual machine or password field). A
+    /// reader that cannot read the context says `Unreadable`. Blocking, bounded by
+    /// [`FOCUS_READ_DEADLINE`].
+    fn context(&self, app: &ForegroundApp, hint: Option<&str>) -> Result<FocusContext, UnconfirmedWhy> {
+        let _ = (app, hint);
+        Err(UnconfirmedWhy::Unreadable)
+    }
 }
 
 /// One paste's reading of the focused control, settled once the paste went out.

@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use parking_lot::Mutex;
 
 use super::engine::DictationPorts;
-use super::insert_check::{Expected, FocusText, Sample, decide};
+use super::insert_check::{Expected, FocusContext, FocusText, Sample, decide};
 use super::ports::{
     AsrNote, AudioSource, Capture, CaptureOptions, DictationError, FocusReader, FocusWatch, ForegroundApp, ForegroundProbe, InjectNote, Injection, Injector,
     InsertSession, Inserted, LIVE_CHUNK_SAMPLES, LevelFrame, LivePcm, PCM_SAMPLE_RATE_HZ, PROBE_DEADLINE, PcmStream, Recording, RefineHints, Refined, Refiner,
@@ -1399,6 +1399,8 @@ pub struct FocusCalls {
     pub watched: Vec<(String, String)>,
     /// `settle` calls: the window.
     pub settled: Vec<Duration>,
+    /// `context` calls (从选中文字学习, §35): the application id and the hint.
+    pub contexts: Vec<(String, Option<String>)>,
 }
 
 /// What a [`FakeFocusReader`] reads.
@@ -1416,12 +1418,14 @@ enum FocusScript {
 pub struct FakeFocusReader {
     script: FocusScript,
     calls: Arc<Mutex<FocusCalls>>,
+    /// What `context` answers; `Unreadable` unless a test sets it ([`FakeFocusReader::with_context`]).
+    context: Result<FocusContext, UnconfirmedWhy>,
 }
 
 impl FakeFocusReader {
     /// The control reads `before`, then `after` once the paste went out.
     pub fn reading(before: FocusText, after: Vec<Sample>) -> Self {
-        Self { script: FocusScript::Reads { before, after }, calls: Arc::default() }
+        Self { script: FocusScript::Reads { before, after }, calls: Arc::default(), context: Err(UnconfirmedWhy::Unreadable) }
     }
 
     /// A field with `text` before its caret that stays exactly so: the paste never arrived.
@@ -1437,7 +1441,20 @@ impl FakeFocusReader {
 
     /// A reader that cannot read the focused control: every `watch` fails with `why`.
     pub fn refusing(why: UnconfirmedWhy) -> Self {
-        Self { script: FocusScript::Refuses(why), calls: Arc::default() }
+        Self { script: FocusScript::Refuses(why), calls: Arc::default(), context: Err(UnconfirmedWhy::Unreadable) }
+    }
+
+    /// A field whose paragraph reads `before`, `selected` and `after` around its selection, for
+    /// 从选中文字学习 (§35); nothing to paste into.
+    pub fn around(before: &str, selected: &str, after: &str) -> Self {
+        let context = FocusContext::from_parts(before, selected, after).ok_or(UnconfirmedWhy::Unreadable);
+        Self { context, ..Self::refusing(UnconfirmedWhy::Unreadable) }
+    }
+
+    /// The same reader, answering `context` with `answer`.
+    #[must_use]
+    pub fn with_context(self, answer: Result<FocusContext, UnconfirmedWhy>) -> Self {
+        Self { context: answer, ..self }
     }
 
     /// Every call so far.
@@ -1447,6 +1464,11 @@ impl FakeFocusReader {
 }
 
 impl FocusReader for FakeFocusReader {
+    fn context(&self, app: &ForegroundApp, hint: Option<&str>) -> Result<FocusContext, UnconfirmedWhy> {
+        self.calls.lock().contexts.push((app.app_id.clone(), hint.map(str::to_owned)));
+        self.context.clone()
+    }
+
     fn watch(&self, app: &ForegroundApp, expected: &Expected) -> Result<Box<dyn FocusWatch>, UnconfirmedWhy> {
         self.calls.lock().watched.push((app.app_id.clone(), expected.tail().to_owned()));
         match &self.script {

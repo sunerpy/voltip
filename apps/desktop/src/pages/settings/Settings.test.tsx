@@ -1048,7 +1048,8 @@ describe("Settings · 热键", () => {
     const learn = await screen.findByTestId("learn-hotkey-recorder");
     const copyLast = screen.getByTestId("copy-last-hotkey-recorder");
     expect(screen.getByText("从选中文字学习")).toBeInTheDocument();
-    expect(screen.getByText(/选中改好的文字按这个快捷键/)).toBeInTheDocument();
+    // docs/dictation.md §35 (2026-11-25): the caret left in the change is enough.
+    expect(screen.getByText(/把光标留在改过的地方，或选中改好的文字/)).toBeInTheDocument();
     expect(screen.getByTestId("learn-hotkey-status")).toHaveTextContent("未设置");
     expect(screen.queryByRole("button", { name: "清除 · 从选中文字学习" })).toBeNull();
     // One recorder at a time.

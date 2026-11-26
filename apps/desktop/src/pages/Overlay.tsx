@@ -274,7 +274,13 @@ export function learnCard(
     case "unchanged":
       return { state: "error", label: t("learn.notice.unchanged"), buttons: [] };
     case "no_match":
-      return { state: "error", label: t("learn.notice.noMatch", { n: LEARN_TAKES }), buttons: [] };
+      return {
+        state: "error",
+        label: t(o.context ? "learn.notice.noMatch" : "learn.notice.noMatchSelection", {
+          n: LEARN_TAKES,
+        }),
+        buttons: [],
+      };
     case "no_selection":
       return { state: "error", label: t("learn.notice.noSelection"), buttons: [] };
     case "too_long":

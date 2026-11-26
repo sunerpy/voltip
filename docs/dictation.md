@@ -2862,6 +2862,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 与 `voltip-hooks` 一样单独成 crate：只依赖 `voltip-platform` 和各平台的绑定，CI 不构建整个应用也能在真实桌面上跑它的测试（§28.9），本机也能为 macOS、Windows 做交叉检查。桌面壳的 `platform/focus.rs` 把它包成核心的 `FocusReader`。
 
 - **共同**：`Reader` 在自己的工作线程上打开平台接口（COM、辅助功能总线），请求经通道，每次回答至多等 `FOCUS_READ_DEADLINE`；连续 `REPLACE_AFTER` = 3 次超时就丢下这条线程另起一条（卡住的系统调用留在旧线程上结束）。打不开平台接口时这次读不到，下一次粘贴再试。粘贴前读到的控件留在工作线程上，粘贴结束即丢弃。跳过表（`voltip_platform::insert_check`）里的应用直接 `Skipped`：三个平台的终端（语音编辑的终端表，§19.2，加上 macOS 的 Terminal、iTerm2、Warp、kitty、Alacritty、WezTerm、Ghostty、Hyper、Tabby），以及远程桌面与虚拟机客户端（Windows 的 mstsc、msrdc、AnyDesk、TeamViewer、Parsec、RustDesk、VNC、VMware、VirtualBox、Hyper-V 控制台、Citrix；macOS 的 Windows App、屏幕共享、AnyDesk、TeamViewer、Parsec、RustDesk、VNC Viewer、VMware Fusion、VirtualBox、Parallels、UTM、Citrix Viewer；Linux 的 Remmina、FreeRDP、GNOME 连接、AnyDesk、TeamViewer、Parsec、RustDesk、VNC、virt-viewer、virt-manager、GNOME Boxes、VMware、VirtualBox、Citrix）。这些窗口里的「输入框」是另一台电脑或程序输出，本机读不到粘贴的结果。
+- **从选中文字学习的读取**（§35，2026-11-25）：`Reader::context(app_id, hint)` 走同一条工作线程、同样的截止时间和跳过规则，读焦点控件里选区（没有选区时为光标）所在段落的前后各至多 `CONTEXT_CHARS` = 200 个字符，截取由 `voltip_platform::insert_check::rules::FocusContext` 完成（`from_parts` 在换行处截断段落；`around_utf16` 不切开代理对，只解码选区附近的单位；`find` 用复制到的文字在只有整段值的控件里定位，正好出现一次才算）。只有截取后的三段离开工作线程。Windows：复用插入确认的 `DocumentRange` 全文与 `offset_of`，没有光标和选区时用 `hint` 在全文里定位，只有 `ValuePattern` 时在整段值里定位；macOS：`AXSelectedTextRange` 加三次 `AXStringForRange`（前文、选区、后文），只有 `AXValue` 时用 `hint`；Linux：`Text` 接口三次 `GetText`。
 - **Windows**（`windows.rs`，`windows =0.61.3`，tao 已经编译的版本与特性）：工作线程上 `CoInitializeEx(MTA)`、`CUIAutomation8`，`IUIAutomation2::SetConnectionTimeout(200)`、`SetTransactionTimeout(300)`；`GetFocusedElement` 取控件，`CompareElements` 判断是否同一个，`CurrentIsPassword` 为真时 `Skipped`；文字：有 `TextPattern2` 时 `GetCaretRange` 取光标，否则 `TextPattern` 的第一个选区的末端代表光标，`DocumentRange` 取全文（超过 1 Mi 个 UTF-16 单位不读），`GetSelection` 取选区与选中的文字；两者都没有时用 `ValuePattern.CurrentValue` 的整段值（没有光标：只能证明写入，不能证明没写进去）。第一次查询会让基于 Chromium 的应用一直开着原生辅助功能树，内容很多的页面可能变慢；「检查文字是否写入」可以关。
 - **macOS**（`macos.rs`，手写 `ApplicationServices` 声明，CF 类型用 `core-foundation =0.10.1`）：系统级元素的 `AXFocusedUIElement`，`CFEqual` 判断是否同一个，子角色 `AXSecureTextField` 时 `Skipped`；`AXNumberOfCharacters`、`AXSelectedTextRange`（选区，末端代表光标）、`AXSelectedText`、`AXStringForRange`（光标前的文字）；读不到时用 `AXValue` 的整段值；`AXUIElementSetMessagingTimeout(0.3)`。用的是粘贴本来就需要的辅助功能权限，不新增权限。进程要连上窗口服务器（应用都是），辅助功能接口才回答：没有 `NSApplication` 的命令行测量工具在第一次粘贴之前什么都读不到。
 - **Linux**（`linux.rs`，`zbus =6.2.1` 的异步接口，在读取线程上用 `zbus::block_on` 驱动，每次调用 300 ms）：会话总线的 `org.a11y.Bus.GetAddress` 连 AT-SPI 总线；`org.a11y.Status.IsEnabled` 为假时读不到——Voltip 不去打开它，打开会让所有应用开启辅助功能。注册表根下各应用里 `STATE_ACTIVE` 的顶层窗口，在它下面用 `Collection.GetMatches(STATE_FOCUSED)` 找焦点，没有 Collection 接口（GTK 4）时限深遍历（≤ 3000 个节点、≤ 150 ms）；上次找到的控件仍在焦点上时先用它。身份是（总线名，对象路径）；`ROLE_PASSWORD_TEXT` 与 `ROLE_TERMINAL` 时 `Skipped`（终端控件嵌在 IDE 等应用里、应用名不在跳过表中时也认得出）；文字来自 `Text` 接口的 `CharacterCount`、`CaretOffset`、`GetNSelections` / `GetSelection(0)`、`GetText`。X11 与 Wayland 同一套。Chromium 与 Electron 默认不开 AT-SPI，多半读不到，按无法确认处理。
@@ -2922,12 +2923,12 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 
 ### 28.8 隐私
 
-读数只在一次粘贴的几百毫秒里留在内存中比较，比较完即丢弃：不保存、不发送、不写日志。比较用的只有焦点控件的长度、光标、选区、选中的文字（≤ 8192 个单位）和光标前 64 个字符，但读进内存的可能更多：Windows 的 UI Automation 没有按位置取光标前文字的办法，读取器取整个控件的文字（`DocumentRange`，不超过 `MAX_DOCUMENT` = 1 Mi 个 UTF-16 单位，更长的不读）再从中算出这几项；只有整段值的控件（Windows 的 `ValuePattern`、macOS 的 `AXValue`）也读整段值。这些文字同样只在内存里、只用于这次比较。密码框、终端和远程桌面不读，说不出粘贴去往哪个应用时也不读。站点的隐私页写明。
+读数只在一次粘贴的几百毫秒里留在内存中比较，比较完即丢弃：不保存、不发送、不写日志。比较用的只有焦点控件的长度、光标、选区、选中的文字（≤ 8192 个单位）和光标前 64 个字符，但读进内存的可能更多：Windows 的 UI Automation 没有按位置取光标前文字的办法，读取器取整个控件的文字（`DocumentRange`，不超过 `MAX_DOCUMENT` = 1 Mi 个 UTF-16 单位，更长的不读）再从中算出这几项；只有整段值的控件（Windows 的 `ValuePattern`、macOS 的 `AXValue`）也读整段值。这些文字同样只在内存里、只用于这次比较。密码框、终端和远程桌面不读，说不出粘贴去往哪个应用时也不读。从选中文字学习（§35）按快捷键时读一次，留下的是选区与它所在段落的前后各至多 200 个字符，同样只在内存里、只用于与最近的听写比较；只有匹配到的那条听写改后的文字会保存（§35.5）。站点的隐私页写明。
 
 ### 28.9 门禁
 
 - Rust：`voltip-platform` 的 `insert_check::rules`（规则表 `the_verdicts_follow_the_rules_of_the_insert_check`、`regression_the_same_text_over_the_same_selection_is_unconfirmed`、`unchanged_text_that_already_ended_with_the_take_is_not_written`、`a_value_without_a_caret_can_be_written_but_never_not_written`、`line_endings_and_no_break_spaces_still_match`、`polling_stops_at_the_text_or_another_control_and_otherwise_at_the_window`）与跳过表；`voltip-focus` 的工作线程（`a_paste_is_written_not_written_or_unconfirmed_from_the_platform_readings`、`terminals_remote_screens_and_password_fields_are_never_read`、`a_reader_that_stops_answering_times_out_and_its_thread_is_replaced_after_three_deadlines`、`a_reading_that_misses_its_deadline_after_the_paste_is_a_timeout_and_never_not_written`）；核心 `dictation::engine`（`regression_a_paste_the_field_never_received_reports_not_written`、`a_paste_whose_text_shows_at_the_caret_is_written`、`regression_same_text_over_the_same_selection_is_unconfirmed`、`a_change_that_is_not_the_text_another_control_or_no_reading_is_unconfirmed`、`the_check_switched_off_never_asks_the_reader`、`live_inject_is_never_checked`、`a_retake_is_never_checked`、`a_clipboard_fallback_or_a_clipboard_only_take_is_never_checked`、`a_voice_edit_is_checked_unless_the_rewrite_equals_the_selection`、`the_reader_is_told_the_takes_application`，卡片 `result_cards_stay_until_dismissed_or_the_next_take`、`regression_result_cards_follow_the_stay_setting`、`without_result_cards_every_card_keeps_its_dwell`、`the_other_terminal_states_keep_their_dwell`）；历史 `regression_a_paste_that_was_not_written_is_found_by_the_not_inserted_filter`；runtime 的复制上一条结果与快捷键三方互斥；桌面 `tests/ipc.rs`（`the_result_card_copies_pastes_into_the_window_in_front_and_opens_the_history`、`a_result_card_stays_until_it_is_dismissed_and_the_last_result_is_copied`、`the_copy_last_chord_is_saved_through_its_own_command`）、`paste.rs`、`overlay.rs`、托盘与 `tests/cli.rs`；IPC 契约夹具；两个手机壳把五条新命令列为仅电脑。
-- 平台真测试（`#[ignore]`，文件头写运行方法）：`crates/voltip-focus/tests/focus_linux.rs`（`smoke-desktop`：`scripts/focus-check-linux.sh` 在 Xvfb 与私有 D-Bus 会话里起辅助功能总线，GTK 3 窗口：可编辑输入框 `written`、只读输入框 `not_written`、焦点换到另一个输入框 `unconfirmed`、辅助功能关闭时读不到）；`focus_windows.rs`（`hooks-windows`：记事本 `written`，测试自己的 `ES_READONLY` EDIT `not_written`，点到另一个 EDIT `unconfirmed`）；`focus_macos.rs`（`harness = false`，主线程跑 AppKit；`macos` 的 Apple 芯片腿，像 event tap 一样给测试二进制授辅助功能与发送事件权限：自建的不可编辑 `NSTextView` `not_written`，TextEdit `written`）。
+- 平台真测试（`#[ignore]`，文件头写运行方法）：`crates/voltip-focus/tests/focus_linux.rs`（`smoke-desktop`：`scripts/focus-check-linux.sh` 在 Xvfb 与私有 D-Bus 会话里起辅助功能总线，GTK 3 窗口：可编辑输入框 `written`、只读输入框 `not_written`、焦点换到另一个输入框 `unconfirmed`、辅助功能关闭时读不到）；`focus_windows.rs`（`hooks-windows`：记事本 `written`，测试自己的 `ES_READONLY` EDIT `not_written`，点到另一个 EDIT `unconfirmed`）；`focus_macos.rs`（`harness = false`，主线程跑 AppKit；`macos` 的 Apple 芯片腿，像 event tap 一样给测试二进制授辅助功能与发送事件权限：自建的不可编辑 `NSTextView` `not_written`，TextEdit `written`）。从选中文字学习的读取（§35，2026-11-25）：`focus_linux.rs@a_learning_read_gives_the_entrys_text_around_the_selection_and_the_caret`（Ctrl+Shift+Left 选中最后一个词，Home 之后读光标前后；本机在 Xvfb 下跑过）、`focus_windows.rs@a_learning_read_gives_notepads_text_around_the_selection_and_the_caret`、`focus_macos.rs` 里 TextEdit 的选区前后（Shift+Option+Left）；三处都确认终端不读（macOS 用 `com.apple.terminal`）。另外 `macos.rs` 的 `regression_a_range_cut_inside_a_pair_reads_with_a_replacement_character`：在代理对中间切开的范围读成 U+FFFD，不再让 core-foundation 的转换断言结束读取线程。
 - TS：`Overlay.test.tsx` 的卡片情形与按钮、`Pill.test.tsx` 的卡片布局、`Settings.test.tsx` 的两个开关与录制器、`history-queries.test.ts` 的「未插入」筛选、mock 后端与 schema。
 
 ### 28.10 未做与偏离
@@ -3477,12 +3478,13 @@ AppImage 目录在 C locale 下运行应用，并对截图做 OCR（`code/check-
 
 ## 35. 从修改中学习（2026-11-18）
 
-**起因**（测试用户的反馈，2026-11-18）：学习建议（§16.10）只比较识别原文和 AI 润色结果，识别和润色都没改对的错误学不到。说「Qwen 4 max」，识别和润色都写成「Quinn for max」，用户在应用里改正了，Voltip 却不知道。现在用户可以选中改好的文字，按「从选中文字学习」的快捷键，Voltip 找到对应的听写，记下改动，放进学习建议。全程只做逐字比较，不调用 AI。
+**起因**（测试用户的反馈，2026-11-18）：学习建议（§16.10）只比较识别原文和 AI 润色结果，识别和润色都没改对的错误学不到。说「Qwen 4 max」，识别和润色都写成「Quinn for max」，用户在应用里改正了，Voltip 却不知道。现在用户可以选中改好的文字，或把光标留在改过的地方，按「从选中文字学习」的快捷键，Voltip 找到对应的听写，记下改动，放进学习建议。全程只做逐字比较，不调用 AI。
 
 ### 35.1 决定
 
 - 用户决定（2026-11-18）：「选中改好的文字，按快捷键学习」是主要方式（本节）。「自动跟踪输入框里的修改」做成要手动开启的实验功能，先在用户自己的电脑上实测各应用的输入框能不能读到，再单独设计。不做手机端。改动只进学习建议，不自动写进词典。中文单字的改动带上相邻的字（§16.10）。
 - 逐项回答：快捷键默认不分配，由用户自己设，与「复制上一条结果」相同。悬浮窗的通知能一键「加入词典」，改动里有 1 个字或 1–2 个字母的写法时只给「查看」。通知停 8 秒，点按钮后重新计时，下一次听写开始时消失。学习建议默认显示「推荐」：出现 2 次及以上的，加上来自你的修改的。历史详情显示保存下来的修改，并且可以移除。
+- 用户决定（2026-11-25，在 windows-local 上验证时）：只选中改好的词（「千问四Max」改成「Qwen 4 Max」后只选「Qwen 4」）时提示「最近50次听写里没有找到这段文字」——选区与听写没有相同的词；选「Qwen 4 Max」能找到却学不到改动（改动在选区最前面，判断不出它替换了原文哪一段）。用户要求「上下文感知」：按快捷键时读取光标或选区所在段落里前后各最多 200 字（`CONTEXT_CHARS`，AskUserQuestion 的回答），按这段上下文找听写；先做快捷键，之后再做「自动跟踪输入框里的修改」的实验开关（另出计划）。计划 `voltip-learn-context-2026-11-25.md` 经 Codex 方案评审第 4 轮 `PASS`。
 - 不做：托盘入口（Windows 上点托盘菜单时 Voltip 自己成为前台，复制键到不了原来的应用）；MCP 的 `history_get` / `history_search` 输出改后的文字（`vocabulary_candidates` 只受单字扩展影响，§25.4）；语音编辑的结果、手机发来的文字和导入的文件参与学习（与学习建议的范围相同）；历史记录的复制、粘贴和导出改用改后的文字（仍用当时插入的文字）。
 
 ### 35.2 触发
@@ -3498,17 +3500,19 @@ AppImage 目录在 C locale 下运行应用，并对截图做 OCR（`code/check-
 1. 有听写还没到终态（录音、识别、润色中）：忽略，只写日志。空闲和终态（完成、失败、取消）时照常进行。
 2. 历史记录关闭：结果 `history_off`，不按任何键。
 3. 在后台任务里先问前台探针，最多等它的期限。前台是终端（`injector.holds_program_output`）时结果 `terminal`，不按任何键：终端里选中的是程序输出。这张表包括 macOS 的终端（`voltip_platform::insert_check::holds_program_output`，与插入确认跳过的终端相同）；语音编辑的表（`is_terminal_app`）在 macOS 上是空的，因为 Cmd+C 在那里不会打断程序（2026-11-18 目标评审发现学习沿用了它）。探针没有回答时（纯 Wayland、超时）照常复制，与语音编辑相同。
-4. 在阻塞线程里调用 `injector.copy_selection(&held)`（§19.2：保存剪贴板，按复制键，读出选区，放回剪贴板）。同一进程里一次只做一次复制（`voltip_inject::selection` 的进程锁，从保存到放回）：连按两次快捷键、或学习和语音编辑同时复制时，后一次等前一次放回剪贴板再开始，不会把前一次清空的剪贴板当成用户的内容保存，也不会把前一次放回的内容当成选区。没有选中是 `no_selection`，出错是 `failed { message }`，超过 `MAX_LEARN_SELECTION_CHARS` = 8000 个字符是 `too_long { max }`。
-5. 在阻塞线程里读最新 `LEARN_TAKES` = 50 条识别记录：运行时自己的只读 `HistoryReader` 调用 `recent_texts`，只有听写，与学习建议相同。按 35.4 匹配：一条也没匹配到是 `no_match`，匹配到的都与插入的文字相同是 `unchanged`。
-6. 对匹配到的每条记录：改后的整段有可学的改动时（35.4 的 `storable`）保存，`HistoryStore::set_corrected(id, Some(CorrectedText { text, at_ms, via: selection }))`；没有可学的改动、而这条记录原来有 `corrected` 时清除它（用户把修改又改回了原文）。有写入时发 `history` 事件，学习建议的缓存随之失效。
-7. 算出这几条记录给学习建议的组合（`suggest::edit_picks`：与 §16.10 的「你的修改」来源算法相同，去掉忽略的和词典已知的）。有组合时结果是 `learned { pairs, safe }`，`pairs` 是 `SuggestionPick` 列表，`safe` 为假表示其中有 1 个字或 1–2 个字母的写法；没有组合时是 `no_pairs`。然后设置通知（35.6）。
+4. 在阻塞线程里调用 `injector.copy_selection(&held)`（§19.2：保存剪贴板，按复制键，读出选区，放回剪贴板）。同一进程里一次只做一次复制（`voltip_inject::selection` 的进程锁，从保存到放回）：连按两次快捷键、或学习和语音编辑同时复制时，后一次等前一次放回剪贴板再开始，不会把前一次清空的剪贴板当成用户的内容保存，也不会把前一次放回的内容当成选区。复制为空时继续第 5 步，上下文也没读到才是 `no_selection`；出错是 `failed { message }`，超过 `MAX_LEARN_SELECTION_CHARS` = 8000 个字符是 `too_long { max }`。
+5. **读上下文**（2026-11-25）：探针说出了前台应用、而注入器有焦点控件的读取器（`Injector::focus_reader`，与插入确认相同，不受「检查文字是否写入」开关影响）时，在阻塞线程里调用 `FocusReader::context(app, hint)`，`hint` 是复制到的文字：读出焦点控件里选区（没有选区时为光标）所在段落的前后各至多 `CONTEXT_CHARS` = 200 个字符，选区本身完整保留（`FocusContext`，§28.3）。跳过规则、截止时间与插入确认相同；读不到时（不支持的控件、超时、纯 Wayland 说不出应用、密码框、远程桌面）只用复制到的文字。复制到的文字为空、上下文也没读到时才是 `no_selection`。读到的文字只在内存里，日志只写字数。
+6. 在阻塞线程里读最新 `LEARN_TAKES` = 50 条识别记录：运行时自己的只读 `HistoryReader` 调用 `recent_texts`，只有听写，与学习建议相同。读到上下文时按 35.4 的 `match_around` 匹配，只留光标处的听写；在光标处一条也没找到、复制到的文字又不为空时，退回只用复制到的文字匹配（`match_selection`，读到的上下文可能不是最新的）。一条也没匹配到是 `no_match { context }`，`context` 表示读到了上下文（通知的文案据此不同）；匹配到的都与插入的文字相同是 `unchanged`。任务把结果连同 `context` 交回（`Compared { corrections, context }`）。
+7. 对匹配到的每条记录：改后的整段有可学的改动时（35.4 的 `storable`）保存，`HistoryStore::set_corrected(id, Some(CorrectedText { text, at_ms, via: selection }))`；没有可学的改动、而这条记录原来有 `corrected` 时清除它（用户把修改又改回了原文）。有写入时发 `history` 事件，学习建议的缓存随之失效。
+8. 算出这几条记录给学习建议的组合（`suggest::edit_picks`：与 §16.10 的「你的修改」来源算法相同，去掉忽略的和词典已知的）。有组合时结果是 `learned { pairs, safe }`，`pairs` 是 `SuggestionPick` 列表，`safe` 为假表示其中有 1 个字或 1–2 个字母的写法；没有组合时是 `no_pairs`。然后设置通知（35.6）。
 
 只有最新一次请求的回答算数：再按一次快捷键后，前一次的回答到了也丢掉。日志只写结果种类、条数和字数，不写文字。
 
 ### 35.4 匹配与可学的改动（`crates/voltip-core/src/vocabulary/learn.rs`）
 
+- **上下文**（`match_around`，2026-11-25）：把读到的前文、选区、后文连起来按下面的规则匹配，每个匹配带上它在这段文字里覆盖的字符范围（`Matched.span`）；有选区时只有覆盖范围与选区重叠的听写参加挑选，没有选区时只有包含光标或紧挨光标的听写参加，同一段里的其他听写不学，也占不了「一次最多 5 条」的名额（评审 2026-11-25：先在整段里挑满 5 条再筛，同一段里没改过的听写会把光标处那条挤掉）。有选区时，听写开头或结尾那处改动只从选区里取，不把紧挨着的前后文字算进去（评审 2026-11-25：「我们讨论一下千问四Max…」曾学成「千问四 → 下Qwen 4」）。只选改好的词、改动在选区最前面、只放光标三种情况都因此能学到（`vocabulary::learn::tests::regression_a_corrected_word_selected_alone_is_learned_from_its_paragraph`，用户的原例「今天测试一下千问四Max的推理能力。」）。
 - 比较沿用 `mcp::candidates` 的分词与 LCS（§25.4）。选区先按插入确认的规则规范化（`insert_check::normalize`）；两个词按去掉末尾空白后的样子比较（应用可能换了行尾），区分大小写，所以只改大小写的修正（「github → GitHub」）也能看到。
-- **对齐**：取两边词级 LCS 中匹配字符最多的一段；相邻两个匹配词之间，一侧比另一侧多出 `GAP_BREAK` = 3 个以上的词时从那里断开（那是多选进来的别的听写，或者少选的部分）。选区两端只属于选区的部分算多选，听写两端只属于听写的部分算少选，都不算改动。某一端两侧都有对不上的文字时（错词在听写的开头或结尾），从选区那段里紧挨匹配部分取几个整词，作为这一端的改动：词数与听写一侧相差不超过 1，字符数是它的一半到两倍，取与它逐字 LCS 最长的，一样长时取词数与它最接近的，再一样时取最短的；没有合适的就不学这一端。（最初一样长时直接取最短的：冒烟测试里「Voltip 冒烟注入」改成「Voltip 冒烟测试」，「测」与「测试」和「注入」都没有相同的字，存下的是「Voltip 冒烟测」。）汉字、假名、谚文按字算一个词。
+- **对齐**：取两边词级 LCS 中匹配字符最多的一段；相邻两个匹配词之间，一侧比另一侧多出 `GAP_BREAK` = 3 个以上的词时从那里断开（那是多选进来的别的听写，或者少选的部分）。选区两端只属于选区的部分算多选，听写两端只属于听写的部分算少选，都不算改动。某一端两侧都有对不上的文字时（错词在听写的开头或结尾），从选区那段里紧挨匹配部分取几个整词，作为这一端的改动：词数与听写一侧相差不超过 1，字符数是它的一半到两倍，取与它逐字 LCS 最长的；一样长时先取在词的边界上起止的（文本边缘、空白或标点、汉字与其他文字交界的地方），再取词数与它最接近的，再一样时取最短的；没有合适的就不学这一端。（最初一样长时直接取最短的：冒烟测试里「Voltip 冒烟注入」改成「Voltip 冒烟测试」，「测」与「测试」和「注入」都没有相同的字，存下的是「Voltip 冒烟测」。只放光标时，段落「我们讨论一下Qwen 4 Max的推理能力」里「下Qwen 4」和「千问四」词数相同，曾学成「千问四 → 下Qwen 4」；2026-11-26 改为先看词的边界。）汉字、假名、谚文按字算一个词。
 - **相似度** =（相同词的字符数 + 每组替换内部逐字 LCS 的字符数）÷ 两侧对齐范围字符数的较大者，不计空白；某一侧超过 64 个字符的替换不做内部比较。
 - **选记录**：相似度至少 `MATCH_MIN` = 0.4，并且至少有一个相同的词；取最高的，与次高的相差 `MATCH_TIE` = 0.05 以内时取较新的。然后在选区剩下、不重叠的部分里继续找，一次最多 `MAX_TAKES_PER_SELECTION` = 5 条（选中了连续几次听写的情况）。比较格受 `MAX_DIFF_CELLS` / `MAX_SCAN_CELLS` 限制，从新到旧比较。
 - **存什么**：这条记录已有 `corrected.text` 时，与 `text`、与 `corrected.text` 都对齐，用胜出的那个：相似度较高的，一样高时覆盖选区较多的，再一样时用 `corrected.text`。胜出的是 `corrected.text`（或者没有 `corrected`）时，改后的整段是它（或 `text`）中对齐的范围换成选区里对应的文字。胜出的是 `text` 时（用户选中了原来的写法，例如撤回上次的修改），先把 `text` 中对齐的范围按两者的词级 LCS 对到 `corrected.text` 里：从范围第一个词变成的词（或它之前最后一个没改的词之后）到最后一个词变成的词（或它之后第一个没改的词之前），跨在范围两端的旧修改算在范围内；再在 `corrected.text` 里换成选区的文字，所以范围以外的旧修改照样保留（2026-11-18 目标评审第 2 轮：之前总按 `corrected.text` 的对齐重建，「red apple」只对上了第一个「red」，旧的「grape」留了下来）。选区在下一个词之前结束、没有带上那里的空格时，被换掉的范围末尾的空白保留（以前会拼成「Qwen 4 maxis great」）。改后的整段是基准中对齐的范围换成选区里对应的文字，所以没被这次选区覆盖的部分保留上次的修改，重叠的部分以这次为准。改后的整段至少有一处改动满足下面第 1、3 条时保存，替换旧值；否则清除已有的 `corrected`。改后的整段与 `text` 完全相同时结果是 `unchanged`。
@@ -3528,7 +3532,7 @@ AppImage 目录在 C locale 下运行应用，并对截图做 OCR（`code/check-
 
 ### 35.6 悬浮窗通知
 
-- `UiState.learn_notice: Option<LearnNotice>`，事件 `learn_notice { notice }`。`LearnNotice { id, outcome, shown, accepted?, undone? }`：`outcome` 是 `LearnOutcome`（按 `kind` 区分：`learned { pairs, safe }`、`no_pairs`、`unchanged`、`no_match`、`no_selection`、`too_long { max }`、`terminal`、`history_off`、`failed { message }`）；`accepted` 是加入词典的结果 `{ added, refused, undo? }`；`undone` 是撤销的结果（`BatchUndoOutcome`）。
+- `UiState.learn_notice: Option<LearnNotice>`，事件 `learn_notice { notice }`。`LearnNotice { id, outcome, shown, accepted?, undone? }`：`outcome` 是 `LearnOutcome`（按 `kind` 区分：`learned { pairs, safe }`、`no_pairs`、`unchanged`、`no_match { context }`（`context` 默认 `false`，旧格式照样能读）、`no_selection`、`too_long { max }`、`terminal`、`history_off`、`failed { message }`）；`accepted` 是加入词典的结果 `{ added, refused, undo? }`；`undone` 是撤销的结果（`BatchUndoOutcome`）。
 - 悬浮窗关闭（`Settings.overlay = off`）时不创建通知：结果只写日志，改动照样保存，照样进学习建议。
 - 排队与计时由核心负责：
   - 学习完成时听写空闲：通知立即显示（`shown`），开始计时 `LEARN_NOTICE_DWELL` = 8 秒（`CoreConfig.learn_notice_dwell`，测试里改短）。
@@ -3551,8 +3555,9 @@ AppImage 目录在 C locale 下运行应用，并对截图做 OCR（`code/check-
 | 都没加入 | 无法加入词典，原因见词典页 · 查看 | Couldn't add to the dictionary; the dictionary page says why · View |
 | 撤销后 | 已撤销 / 无法撤销 · 查看 | Undone / Couldn't undo · View |
 | `no_pairs` | 没有可以加入词典的改动 | No change to add to the dictionary |
-| `unchanged` | 选中的文字和听写结果相同 | The selection matches what was dictated |
-| `no_match` | 最近 50 次听写里没有找到这段文字 | Not found in the last 50 dictations |
+| `unchanged` | 这段文字和听写结果相同（2026-11-25 起，只放光标时也会出现） | This text matches what was dictated |
+| `no_match`，读到上下文 | 最近 50 次听写里没有找到光标附近的文字 | Nothing near the cursor matches the last 50 dictations |
+| `no_match`，只比较了选区 | 没找到这段文字，请连同前后没改的字一起选中（一行放得下，评审 2026-11-25） | Not found; select the words around your change too |
 | `no_selection` | 没有选中文字 | Nothing is selected |
 | `too_long` | 选中的文字太长，最多 8000 字 | The selection is too long (8000 characters at most) |
 | `terminal` | 终端里的文字不能用来学习 | Text in a terminal can't be learned from |
@@ -3572,10 +3577,21 @@ AppImage 目录在 C locale 下运行应用，并对截图做 OCR（`code/check-
   - Windows（CI `hooks-windows`）：`crates/voltip-focus/tests/focus_windows.rs@the_copy_reads_notepads_selection_with_the_shortcut_held_and_puts_the_clipboard_back`：记事本里粘贴文字、全选，按住 Ctrl+Alt 时复制，读到这段文字，剪贴板放回原样。
   - macOS（CI `macos` 的 Apple 芯片一路，合并前手动触发）：`crates/voltip-focus/tests/focus_macos.rs` 在 TextEdit 里粘贴后全选，用 Cmd+C 读到这段文字，剪贴板放回原样。
   - 计划里这两个测试是 voltip-inject 下新建的测试文件；实际放进了 voltip-focus 已有的测试，那里已经会打开记事本和 TextEdit，CI 也已经给它的测试二进制授予了辅助功能权限。
+- 上下文（2026-11-25，先看到失败再改）：
+  - `crates/voltip-core/tests/learn.rs@regression_only_the_corrected_words_selected_are_learned_from_their_paragraph`（原来是 `no_match`）；
+  - `regression_with_nothing_selected_the_paragraph_at_the_caret_is_learned`（原来是 `no_selection`）；
+  - `the_notice_says_whether_the_text_around_the_cursor_was_read`（两种 `no_match` 与退回选区）；
+  - 终端里既不按键也不读取（`regression_a_terminal_the_voice_edit_allows_is_still_not_learned_from` 加了读取器）；
+  - `vocabulary::learn::tests` 的 `regression_a_corrected_word_selected_alone_is_learned_from_its_paragraph`、`only_the_take_at_the_selection_or_the_caret_is_learned_from_a_paragraph`、`a_match_names_the_characters_of_the_selection_its_take_covers`，以及评审后补的 `regression_unchanged_takes_around_do_not_crowd_out_the_one_at_the_cursor`（同一段六条听写、连选三条改两条）与 `regression_text_glued_before_the_take_is_not_taken_into_the_change`；
+  - `voltip-platform` 的 `a_learning_context_*`（段落、200 字、代理对、`find`、`Debug` 不打印文字）；
+  - `voltip-focus` 的 `a_learning_read_*` 与 `a_value_only_control_is_placed_by_the_copied_selection`；
+  - 真机读取测试写在 §28.9 的三个 `focus_*` 文件里。
 
 ### 35.9 限制
 
-- 复制靠应用响应复制键（Windows / Linux 是 Ctrl+Insert，macOS 是 Cmd+C，§19.2）；不响应的应用里结果是 `no_selection`。
+- 复制靠应用响应复制键（Windows / Linux 是 Ctrl+Insert，macOS 是 Cmd+C，§19.2）；不响应的应用里复制为空，读得到上下文时照样按光标处的段落学习，读不到时结果是 `no_selection`。
 - 只比较最新 50 条听写；更早的听写改正后选中也学不到（`no_match`）。
 - 触发过的词条或规则在这条记录之后改过时，这条记录不产生「你的修改」（与润色来源相同的局限，§16.9）。
 - 手机没有这个功能；手机的历史副本带着修改，但不显示。
+- 上下文靠焦点控件的辅助功能接口（§28.3）：Linux 上的 Chromium / Electron 应用、macOS 上没有开辅助功能树的 Electron 应用、纯 Wayland（说不出应用）都读不到，只按选中的文字比较，通知请用户连同前后没改的字一起选中。Windows 读取器先读整个控件的文字（不超过 1 Mi 个 UTF-16 单位），很长的文档可能超过 300 ms 截止时间，同样退回选中的文字。
+- 段落按换行截断：一次听写里有换行、光标在另一行时，只有光标所在的那一行参与比较，仍能匹配到这次听写的那一部分。
