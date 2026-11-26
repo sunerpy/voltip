@@ -1613,10 +1613,14 @@ Rust：`vocabulary` 单测（上限、校验、字面 vs 正则、大小写、�
 
 ### 16.10 词典学习建议（2026-10-30）
 
-**目标**：从历史记录里找出「识别成 A、被润色改成 B」的写法，按次数排好，用户一键加入词典或忽略，可以撤销；加入之前能看到对过去记录的影响。全程只做逐字比较，不调用 AI（0.3.0 计划 R08 阶段一，只做电脑端）。跨应用学习（阶段二）不在这里。
+**目标**：从历史记录里找出「识别成 A、被润色改成 B」的写法，以及「识别成 A、用户在应用里改成 B」的写法（§35），按次数排好，用户一键加入词典或忽略，可以撤销；加入之前能看到对过去记录的影响。全程只做逐字比较，不调用 AI（0.3.0 计划 R08 阶段一，只做电脑端；用户修改的来源 2026-11-18 加入）。
 
-- **来源**（`voltip_core::vocabulary::suggest::suggestions`）：`suggestions(dictionary, rules, history, ignored, limit) -> Suggestions { scanned, refined, skipped, total, repeated, pairs }`。`history` 是 `HistoryReader::recent_texts(MAX_RECENT_TEXTS)` 读到的最新 2000 条识别记录（§16.9），只有听写：语音编辑、手机发来的文字和导入的文件（§31，里面可能是别人说的话）都不算，回测也一样。比较与 MCP 的 `vocabulary_candidates` 是同一个函数（`mcp::candidates::candidates`，§25.4）：只汇总 AI 润色做的替换（与 `takePolishPairs` 相同，没有润色的记录只计入 `scanned`，`refined` 是其中润色过的条数），中文按字成对（「非书 → 飞书」汇总为「非 → 飞」），比较格超过 `MAX_DIFF_CELLS` = 100 万（TS 里是 `MAX_PAIR_DIFF_CELLS`）的记录计入 `skipped`；一次累计最多 `MAX_SCAN_CELLS` = 5000 万个比较格，到了就不再读更早的记录，`scanned` 只算读到的条数。
-- **过滤与排序**：去掉启用词条已有的曾听成写法（ASCII 大小写不敏感）和忽略列表里的组合（`heard` 与 `polished` 逐字相同）；按次数从多到少，次数相同时最近一次在前。`total` 是过滤后的组数，`repeated` 是其中出现 `REPEATED_MIN` = 2 次及以上的组数（两者都在截到 `limit` 之前统计），`pairs` 最多 `limit` 组（1–`MAX_SUGGESTIONS` = 200）；每组带 `count`、`last_at_ms` 和最多 3 个示例（`history_id`，识别原文中前后各 12 个字符的片段）。
+- **来源**（`voltip_core::vocabulary::suggest::suggestions`）：`suggestions(dictionary, rules, history, ignored, limit) -> Suggestions { scanned, refined, edited, skipped, total, repeated, pairs }`。`history` 是 `HistoryReader::recent_texts(MAX_RECENT_TEXTS)` 读到的最新 2000 条识别记录（§16.9），只有听写：语音编辑、手机发来的文字和导入的文件（§31，里面可能是别人说的话）都不算，回测也一样。两个来源，按 `heard` 与 `polished` 合并计数：
+  - 润色：AI 润色做的替换，比较与 MCP 的 `vocabulary_candidates` 相同（`mcp::candidates::scan`，§25.4）：与 `takePolishPairs` 相同，没有润色的记录只计入 `scanned`，`refined` 是其中润色过的条数。
+  - 你的修改（§35）：有 `corrected` 的记录里用户改正、而识别原文就是这个写法、词典和规则没碰过的替换（`vocabulary::learn::edit_changes`），每条记录每组算 1 次（同一条记录里改了两处相同的写法也是 1 次）；`edited` 是读到的记录里有修改的条数（比较格超出上限、被跳过的也算，与 `refined` 相同），`Suggestion.from_edits` 是一组里来自修改的次数（为 0 时不写出）。
+  - 两个来源都按 `diffSegments` 的切分成对，再做单字扩展（`mcp::candidates::widen`）：`heard` 或 `polished` 只有 1 个汉字、假名或谚文时，两侧都加上同一个相邻的、没有改动的字；左右都能加时，选扩展后的 `polished` 在读到的最终文字（各记录的 `text` 和 `corrected`）里出现次数更多的一边，一样多时取右边；两边都没有可加的字时保持 1 个字。所以「非书 → 飞书」就是「非书 → 飞书」（2026-11-18 之前汇总为「非 → 飞」），「钉丁 → 钉钉」取左边，因为「钉钉」在最终文字里更常见。
+  - 比较格超过 `MAX_DIFF_CELLS` = 100 万（TS 里是 `MAX_PAIR_DIFF_CELLS`）的记录计入 `skipped`；一次累计最多 `MAX_SCAN_CELLS` = 5000 万个比较格（两个来源合计），到了就不再读更早的记录，`scanned` 只算读到的条数。
+- **过滤与排序**：去掉启用词条已有的曾听成写法（ASCII 大小写不敏感）和忽略列表里的组合（`heard` 与 `polished` 逐字相同）；扩展过的组合，扩展前的单字写法是已有的曾听成写法、或扩展前的单字组合在忽略列表里时也去掉（2026-11-18 之前忽略的单字组合继续有效）。按次数从多到少，次数相同时最近一次在前。`total` 是过滤后的组数，`repeated` 是其中「推荐」的组数：出现 `REPEATED_MIN` = 2 次及以上，或者 `from_edits` 至少 1（用户决定 2026-11-18，只出现 1 次的修改也推荐；两者都在截到 `limit` 之前统计）。`pairs` 最多 `limit` 组（1–`MAX_SUGGESTIONS` = 200）；每组带 `count`、`from_edits`、`last_at_ms` 和最多 3 个示例（`history_id`，识别原文中前后各 12 个字符的片段，两个来源合并后按新到旧取）。
 - **忽略列表**（`vocabulary::IgnoreStore`）：`<数据目录>/vocabulary-ignored.json`（`schema` 1，`IgnoredPair { heard, polished, at_ms }`），原子写入；最多 `MAX_IGNORED` = 2000 组，超出时去掉最早的，再次忽略同一组时移到末尾；文件无法使用时改名移开并在启动时提示（与 §16.1 的列表文件相同）。由运行时持有，`UiState.vocabulary_ignored` 与事件 `vocabulary_ignored { pairs }`（最早忽略的在前）把它送给界面，桌面的「已忽略」列表就是它。不进备份。
 - **加入词典**（`suggest::accept`，`vocabulary_suggestion_accept { heard, polished, historyId }`）：先看替换规则，正在执行的规则（启用且不在待确认中）会把 `polished` 改掉时拒绝（`Refusal::Rule { rule_id, name, becomes }`，加入后也不会生效）；再看词典：`heard` 是其他词条的正确写法（`heard_is_term`）或曾听成写法（`heard_taken`），或 `polished` 是其他词条的曾听成写法（`term_taken`）时拒绝。有正确写法相同（ASCII 大小写不敏感）的词条时，把 `heard` 加到它的曾听成写法，保留它的写法（它已停用时拒绝 `disabled`，已有 `MAX_HEARD_AS` = 10 个时拒绝 `too_many`）；否则新建启用的词条，来源 `EntrySource::History { history_id }`（第一个示例所在的记录），词典已满时拒绝（`Full { max }`）。拒绝是一种结果（`AcceptOutcome::Refused`），不是错误，界面按类型写出原因。
 - **撤销**：运行时在内存里记下每次加入前后的词条（`UndoLog`，最多 `MAX_UNDOS` = 100 条），返回 `SuggestionUndo { id, entry_id, term, created, previous_heard_as }`。`vocabulary_suggestion_undo { id }` 在词条仍是加入后的样子时还原（新建的删除，合并的恢复原来的曾听成写法），词条已删除时是 `gone`，之后改过时是 `changed`，没有这条记录时是 `expired`（每条只能撤销一次，重启后的旧记录也是 `expired`）。忽略的撤销是 `vocabulary_suggestion_unignore`。「加入词典」的撤销只在词典页打开期间提供；忽略的组合随时可以在「已忽略」里取消忽略（同一个命令，2026-10-31 用户决定加这个列表）。页面上写明这两点。
@@ -1626,7 +1630,7 @@ Rust：`vocabulary` 单测（上限、校验、字面 vs 正则、大小写、�
   - 整批撤销（查询 `vocabulary_suggestions_undo { id }` → `BatchUndoOutcome`）：批量加入的撤销在这一批新建或加入过的每个词条都还是这一批留下的样子时进行，新建的删除，加入的恢复原来的曾听成写法，一次写入，词典回到加入前的样子（之后改过的其他词条保持不变）；其中有词条之后被删除或修改时一个也不撤销，回答 `gone { term }` / `changed { term }`，点名第一个这样的词条；批量忽略的撤销（`IgnoreStore::remove_batch(&IgnoredBatch)`，一次写入）把日志里这一批标为已撤销，从稳定点起依次重放其余改动，列表就是这一批从没发生过时的样子：这一批加入的组合拿掉，它挤掉的组合按原来的时间回到原来的位置；之后单独取消忽略或又单独忽略的组合保持现在的样子，其余改动挤掉的仍是最早的组合。几批按任意顺序撤销都是如此，撤销过的一批不会因为撤销另一批而回到列表里（例如 11 批各 200 组、第 11 批挤掉第 1 批，按 1、11、10…2 的顺序撤销后列表与批量前相同）。稳定点之前的改动不再需要时并入稳定点：最早一个还能撤销的批次之前的改动，以及超过 `MAX_UNDOS` 批或 1 万次改动时最早的那一批（它从此不能撤销，回答 `expired`）。运行时在内存里记下每一批（`BatchLog`，最多 `MAX_UNDOS` = 100 批），每批只能撤销一次，未知或重启前的是 `expired`。一批 1–`MAX_BATCH` = 200 组；超出范围或其中有一组不是有效写法（与单组相同的校验）时，桥接层整批拒绝（`BadArgument`「vocabulary_suggestions_accept: pairs 1–200」），什么也不发给核心。
 - **规则提示**（`vocabulary::rule_warnings(rules, dictionary)`，查询 `rules_warnings`）：只看正在执行的规则和启用的词条。`Duplicate`：另一条规则的类型、匹配内容与大小写设置都相同，只有排在前面的那条会命中；`Inverse`：另一条同类型的规则正好把替换内容改回匹配内容（匹配与替换相同的规则不算）；`UndoesEntry`：这条规则单独作用于某个词条的正确写法时得到它的一个曾听成写法（ASCII 大小写不敏感），抵消词典的纠正。规则页在每条规则下面一行写出。
 - **IPC**：查询（`QUERY_COMMANDS`，只有桌面注册）`vocabulary_suggestions { limit? }` → `SuggestionsAnswer`：历史记录关闭时是 `{ status: "history_off" }`（不是空列表），否则 `{ status: "ready", scanned, refined, skipped, total, repeated, pairs }`，`limit` 越界是 `BadArgument`「vocabulary_suggestions: limit 1–200」；`vocabulary_suggestion_accept`、`vocabulary_suggestion_undo`、批量的 `vocabulary_suggestions_accept`、`vocabulary_suggestions_ignore`、`vocabulary_suggestions_undo`、`rules_warnings`。命令 `vocabulary_suggestion_ignore` / `vocabulary_suggestion_unignore { heard, polished }`。两个写法在两边都先校验（去掉首尾空白，不能为空，最多 64 个字符，不能有换行或控制字符，两者不能相同）。`Bridge::vocabulary_suggestions` 在后台线程计算并缓存结果，词典、规则、历史记录或忽略列表的事件让缓存失效（代次号在事件更新状态之后递增），同一时刻只算一次。zod：`suggestionsAnswerSchema`、`acceptOutcomeSchema`、`undoOutcomeSchema`、`batchAcceptOutcomeSchema`、`batchIgnoreOutcomeSchema`、`batchUndoOutcomeSchema`、`ruleWarningSchema`、`ignoredPairSchema`；夹具 `fixtures/ipc/vocabulary-suggestions.json`。`MockBackend` 用 `packages/shared/src/suggestions.ts` 的 `suggestVocabulary`、`acceptSuggestion`、`acceptSuggestions`、`undoSuggestions`、`ruleWarnings` 按同样语义回答。两个手机壳都不注册这些命令（`DESKTOP_ONLY`）；`UiState.vocabulary_ignored` 为空时不写出，缺省为空列表。
-- **桌面**（`apps/desktop/src/pages/Dictionary.tsx`、`pages/dictionary/`）：页头「个人词典」旁有两个视图「词条」「学习建议（n）」（`packages/ui` `Tabs`：`Segmented` 的外观加上 tab 的语义，左右方向键与 Home / End 切换），n 是当前显示范围内还没处理的组数（默认是 `repeated`，选「全部」时是 `total`），为 0 或历史记录关闭时不写；「新建词条」与 `Ctrl N` 回到词条视图。右侧的「试一试」只在词条视图里，学习建议视图占满整页宽度（2026-10-30 在 1152 × 720 的默认窗口里实测：放在「试一试」旁边时，听错的写法被截成「维… → Vol…」，表头也挤在一起），切回词条视图时「试一试」里的文字还在。学习建议视图有说明卡（只逐字比较、不调用 AI；离开词典页后「加入词典」不能再撤销，忽略的写法可以在「已忽略」中取消忽略）和一张表「识别结果 → 润色结果 · 次数 · 最近一次」，每行有「加入词典」「忽略」和展开按钮。展开后：识别原文里的示例（听错的写法高亮）；会新建哪个词条，或会加到哪个词条；`vocabulary_backtest`（§16.9，不排除任何记录，读最近 500 条）给出的「加入后，最近 N 条记录中有 x 条会被改动」，以及最终文本仍是原写法的条数；写法只有 1 个字或 1–2 个字母时提示容易误改其他词语。加入或忽略后该行留在原处，显示「已加入词典 · 撤销」或「已忽略 · 撤销」；被拒绝时原因写在这一行下面，与词条冲突时带「查看词条」（回到词条视图并选中那个词条），与规则冲突时带「打开替换规则」。表头右侧是显示范围「出现 2 次及以上」（默认）/「全部」（`Segmented`）和「全部忽略（n）」，n 是当前显示、还没处理的行数，「全部忽略」只忽略这些行；切换显示范围时，隐藏的行取消勾选。表的第一列是勾选框（`packages/ui` `Checkbox`，原生复选框，Tab 到达、空格切换，名称「选择：A → B」），表头的「全选」勾选当前显示、还没处理的全部行，只选了一部分时显示为部分选中；已处理的行没有勾选框。有勾选的行时表上方出现「已选 n 组」与「加入词典」「忽略」（名称「将所选的 n 组加入词典」「忽略所选的 n 组」）和「取消选择」。一批处理完后，这些行显示「已加入词典」或「已忽略」，没有各自的撤销；表上方按时间倒序列出每一批的结果：「已将 n 组加入词典。」「已将 n 组加入词典，m 组无法加入，原因见对应的行。」「所选的 n 组都无法加入词典，原因见对应的行。」「已忽略 n 组。」，有内容加入或忽略时带「撤销」（页面打开期间有效），撤销后这些行回到「加入词典」「忽略」；撤销不成时写明原因（「无法撤销：词条「X」已被修改。」等）；整批失败时写「操作失败：…」，这些行恢复原样可以再试。在「已忽略」里取消忽略某一组后，学习建议里那一行回到「加入词典」「忽略」，一批的行都这样取回后，这一批的结果不再显示。列表下方的统计在「最近 N 条记录 · x 条经过 AI 润色」之后写「显示 n 组」（只显示前 200 组时是「显示前 n 组 · 共 m 组」），默认范围下还有「隐藏 k 组只出现 1 次的建议」。空状态：历史记录关闭（「需要开启历史记录」，按钮打开 设置 › 隐私）、最近的记录都没有经过 AI 润色、没有新的写法可以加入；默认范围下只有出现 1 次的建议时写「没有出现 2 次及以上的建议」「另有 n 组只出现 1 次。」并带「显示全部」。表下面是「已忽略（n）」（`pages/dictionary/IgnoredList.tsx`）：忽略过的组合，最近忽略的在前，每行是「识别结果 → 润色结果 · 忽略时间」和「取消忽略」；超过 `IGNORED_SHOWN` = 5 组时先列最近 5 组，「显示全部（n）」列出全部，「收起」收回。列表就是 `UiState.vocabulary_ignored`，离开页面或重启后还在，与历史记录开关无关；没有忽略过的组合时不显示。在这里取消忽略后，学习建议里还显示「已忽略 · 撤销」的那一行回到「加入词典」「忽略」；取消忽略失败时原因写在那一组下面，组合留在列表里。词典、规则、历史记录、忽略列表或历史记录开关变化时重新查询；这些状态（连同显示范围、勾选和每一批的结果）由页面持有，切换视图不会丢掉撤销。侧栏不显示数量。手机没有这个视图。
+- **桌面**（`apps/desktop/src/pages/Dictionary.tsx`、`pages/dictionary/`）：页头「个人词典」旁有两个视图「词条」「学习建议（n）」（`packages/ui` `Tabs`：`Segmented` 的外观加上 tab 的语义，左右方向键与 Home / End 切换），n 是当前显示范围内还没处理的组数（默认是 `repeated`，选「全部」时是 `total`），为 0 或历史记录关闭时不写；「新建词条」与 `Ctrl N` 回到词条视图。右侧的「试一试」只在词条视图里，学习建议视图占满整页宽度（2026-10-30 在 1152 × 720 的默认窗口里实测：放在「试一试」旁边时，听错的写法被截成「维… → Vol…」，表头也挤在一起），切回词条视图时「试一试」里的文字还在。学习建议视图有说明卡（来自 AI 润色的改动和你在其他应用里的修改（§35）；只逐字比较、不调用 AI；离开词典页后「加入词典」不能再撤销，忽略的写法可以在「已忽略」中取消忽略；「从选中文字学习」的快捷键还没设置时带「设置快捷键」，打开 设置 › 快捷键）和一张表「识别结果 → 正确写法 · 次数 · 最近一次」，每行有「加入词典」「忽略」和展开按钮；写法后面标出来源「润色」「你的修改」，两种都有时都标。展开后：识别原文里的示例（听错的写法高亮）；会新建哪个词条，或会加到哪个词条；`vocabulary_backtest`（§16.9，不排除任何记录，读最近 500 条）给出的「加入后，最近 N 条记录中有 x 条会被改动」，以及最终文本仍是原写法的条数；写法只有 1 个字或 1–2 个字母时提示容易误改其他词语。加入或忽略后该行留在原处，显示「已加入词典 · 撤销」或「已忽略 · 撤销」；被拒绝时原因写在这一行下面，与词条冲突时带「查看词条」（回到词条视图并选中那个词条），与规则冲突时带「打开替换规则」。表头右侧是显示范围「推荐」（默认：出现 2 次及以上的，以及你改正过的）/「全部」（`Segmented`）和「全部忽略（n）」，n 是当前显示、还没处理的行数，「全部忽略」只忽略这些行；切换显示范围时，隐藏的行取消勾选。表的第一列是勾选框（`packages/ui` `Checkbox`，原生复选框，Tab 到达、空格切换，名称「选择：A → B」），表头的「全选」勾选当前显示、还没处理的全部行，只选了一部分时显示为部分选中；已处理的行没有勾选框。有勾选的行时表上方出现「已选 n 组」与「加入词典」「忽略」（名称「将所选的 n 组加入词典」「忽略所选的 n 组」）和「取消选择」。一批处理完后，这些行显示「已加入词典」或「已忽略」，没有各自的撤销；表上方按时间倒序列出每一批的结果：「已将 n 组加入词典。」「已将 n 组加入词典，m 组无法加入，原因见对应的行。」「所选的 n 组都无法加入词典，原因见对应的行。」「已忽略 n 组。」，有内容加入或忽略时带「撤销」（页面打开期间有效），撤销后这些行回到「加入词典」「忽略」；撤销不成时写明原因（「无法撤销：词条「X」已被修改。」等）；整批失败时写「操作失败：…」，这些行恢复原样可以再试。在「已忽略」里取消忽略某一组后，学习建议里那一行回到「加入词典」「忽略」，一批的行都这样取回后，这一批的结果不再显示。列表下方的统计在「最近 N 条记录 · x 条经过 AI 润色」之后写「y 条有你的修改」（有时）和「显示 n 组」（只显示前 200 组时是「显示前 n 组 · 共 m 组」），默认范围下还有「隐藏 k 组只出现 1 次的建议」。空状态：历史记录关闭（「需要开启历史记录」，按钮打开 设置 › 隐私）、最近的记录既没有经过 AI 润色也没有你的修改、没有新的写法可以加入（按比较过的记录写「最近 n 条经过 AI 润色的记录里」「最近 n 条有你修改的记录里」，两种都有时两者都写）；默认范围下只有不推荐的建议时写「没有推荐的建议」「另有 n 组只出现 1 次。」并带「显示全部」。表下面是「已忽略（n）」（`pages/dictionary/IgnoredList.tsx`）：忽略过的组合，最近忽略的在前，每行是「识别结果 → 正确写法 · 忽略时间」和「取消忽略」；超过 `IGNORED_SHOWN` = 5 组时先列最近 5 组，「显示全部（n）」列出全部，「收起」收回。列表就是 `UiState.vocabulary_ignored`，离开页面或重启后还在，与历史记录开关无关；没有忽略过的组合时不显示。在这里取消忽略后，学习建议里还显示「已忽略 · 撤销」的那一行回到「加入词典」「忽略」；取消忽略失败时原因写在那一组下面，组合留在列表里。词典、规则、历史记录、忽略列表或历史记录开关变化时重新查询；这些状态（连同显示范围、勾选和每一批的结果）由页面持有，切换视图不会丢掉撤销。侧栏不显示数量。手机没有这个视图。
 - **耗时**（2026-10-30，本机 32 核 CPU，`--release`，`voltip-tauri-bridge` 的 `timing_learning_suggestions_over_2000_takes`，运行方法见它的注释；测量时机器上还有其他进程，负载约 10）：测了两遍。2000 条约 100 字的润色记录：第一次 99 ms 与 66 ms（读出并比较全部 2000 条），之后命中缓存 9 µs；2000 条约 900 字的润色记录：比较格累计到 `MAX_SCAN_CELLS` = 5000 万时停止读更早的记录，只比较了最新的 73 条，第一次两遍都是 145 ms，`scanned` 如实写 73。计算在后台线程里进行，不占界面线程。
 - **门禁**：Rust `vocabulary::suggest` 14 条（含 `regression_a_pair_the_dictionary_already_explains_is_not_suggested`，批量 6 条：`the_repeated_suggestions_are_counted_before_the_cut`、`a_batch_goes_in_in_order_with_one_write_and_one_entry_per_spelling`、`a_batch_refuses_each_pick_in_the_way_and_takes_the_rest`、`a_batch_that_cannot_be_written_changes_nothing`、`undo_of_a_batch_puts_the_dictionary_back_while_its_entries_are_unchanged`、`the_batch_log_gives_each_batch_once_and_keeps_the_newest`；「只写一次」用单元测试里按线程计数的列表文件写入次数核对）、`vocabulary::ignored` 9 条（批量 6 条，含满额时撤销放回挤掉的组合、几批不按先后撤销、11 批各 200 组按 1、11、10…2 撤销、超过撤销上限的批次过期）、`vocabulary::tests::rule_warnings_*` 2 条、`crates/voltip-core/tests/vocabulary.rs@learning_suggestions_through_the_core`、`@the_ignored_list_holds_each_pair_with_when_it_was_ignored`、`@batches_of_suggestions_through_the_core`（一批只发一次 `Dictionary` 事件）、`@regression_undo_of_a_batch_ignore_on_a_full_list_puts_back_the_pairs_it_pushed_out`、`@regression_batches_ignored_on_a_full_list_and_taken_back_out_of_order_keep_the_oldest_first` 与 `@regression_eleven_full_batches_taken_back_out_of_order_leave_the_list_as_before`、bridge `learning_suggestions_follow_the_lists_and_the_history`、`the_ignored_list_is_in_the_state_with_its_times` 与 `batches_of_suggestions_follow_the_lists`、契约 `vocabulary_suggestions_fixture_matches_serde_output`、桌面命令层 `apps/desktop/src-tauri/tests/ipc.rs@learning_suggestions_run_through_the_command_layer` 与 `@batches_of_suggestions_run_through_the_command_layer`；TS `suggestions.test.ts` 15 条、`mock-backend.test.ts`「MockBackend learning suggestions」9 条、`ipc-contract.test.ts` 与 `tauri-backend.test.ts` 的对应用例、`packages/ui` `Tabs.test.tsx` 3 条与 `Checkbox.test.tsx` 3 条、`apps/desktop` `Dictionary.test.tsx`「learning suggestions」24 条（含 `regression: 学习建议 takes the page's whole width, and the test panel comes back with the entries`，「已忽略」3 条，批量与显示范围 9 条）与 `Rules.test.tsx`「hints」2 条。
 
@@ -2609,7 +2613,7 @@ Rust：`presets` 单测（wire 名与旧值、校验、存储往返与隔离、�
 - 只读（`readOnlyHint: true`、`idempotentHint: true`）：`dictionary_list`、`rules_list`（每页 100，带 cursor）、`vocabulary_preview`（文本最多 64 KiB，可带一条规则草稿）、`vocabulary_backtest`（§16.9 的 `backtest`，默认扫 500 条、最多 2000）、`vocabulary_candidates`（润色前后的替换对与次数，默认 50、最多 200，每对最多 3 个示例，片段前后各 12 字）、`history_search`（`query`、`since` / `until`（毫秒数或 RFC 3339，只写日期时按 UTC 零点）、`app`、`cursor`；每页默认 20、最多 50）、`history_get`。
 - 写入（`destructiveHint: false`）：`dictionary_add`（按正确写法 ASCII 大小写不敏感合并曾听成写法，重复调用不产生变化，`idempotentHint: true`）、`dictionary_update`（`idempotentHint: true`）、`rules_add`、`rules_update`（`idempotentHint: true`）。所有工具 `openWorldHint: false`；参数 schema 在 `crates/voltip-core/src/mcp/tools.rs`。结果里带 `activity_id`。
 - prompt `review_misrecognitions { days }`（1–3650，缺省 30）：先 `vocabulary_candidates`，再对每个草稿 `vocabulary_backtest`，把建议列给用户确认后再写入。工具与 prompt 的描述用英文（读者是模型）。
-- 替换汇总的切分与历史页的 `diffSegments` 相同（Rust 实现 `voltip_core::mcp::candidates`，夹具 `fixtures/ipc/diff.json` 让两边逐例对照），所以中文按字成对：「非书 → 飞书」汇总为「非 → 飞」。只汇总 AI 润色做的替换，与历史页的 `takePolishPairs` 相同（§16.9，含同样的局限）：没有润色的记录只计入 `scanned`，这条记录自己触发过的词条和规则能解释的替换不计入，触发过的定义已删除或在记录之后改过的记录整条不计入（`recent_texts` 为此读出 `refined` 与 `vocabulary`）。桌面词典页的「学习建议」（§16.10）调用同一个函数，再去掉忽略列表里的组合。
+- 替换汇总的切分与历史页的 `diffSegments` 相同（Rust 实现 `voltip_core::mcp::candidates`，夹具 `fixtures/ipc/diff.json` 让两边逐例对照），中文按字成对后做单字扩展（§16.10，2026-11-18）：「非书 → 飞书」汇总为「非书 → 飞书」，不再是「非 → 飞」。只汇总 AI 润色做的替换（用户在应用里的修改（§35）不进这个工具），与历史页的 `takePolishPairs` 相同（§16.9，含同样的局限）：没有润色的记录只计入 `scanned`，这条记录自己触发过的词条和规则能解释的替换不计入，触发过的定义已删除或在记录之后改过的记录整条不计入（`recent_texts` 为此读出 `refined` 与 `vocabulary`）。桌面词典页的「学习建议」（§16.10）用同样的比较，再加上用户修改的来源，去掉忽略列表里的组合。
 - `history_search` / `history_get` 的每条记录：id、时间、kind、原文、最终文本、处理后文本、是否润色、应用、场景名、预设名、识别与润色模型、时长、`outcome` 的类别、来源、`truncated`；不包含语音编辑的指令与选区、失败原因，搜索也不匹配选区。
 
 ### 25.5 写入、活动记录与撤销
@@ -3445,3 +3449,108 @@ AppImage 目录在 C locale 下运行应用，并对截图做 OCR（`code/check-
 - 对话框没有父窗口（主窗口隐藏），位置由窗口管理器决定；没有窗口管理器时在屏幕左上角。macOS 菜单栏启动（`--start-hidden`，没有 Dock 图标）时它是否在其他窗口前面没有验证。
 - Secret Service 的解锁提示由 gnome-keyring 或 KWallet 自己显示，Voltip 等它结束才继续启动（与之前相同）；提示一直不关时 Voltip 一直等。
 - 截图在根窗口为黑色的环境里大部分是暗色，目录脚本的「默认深色主题」检查只给警告。
+
+## 35. 从修改中学习（2026-11-18）
+
+**起因**（测试用户的反馈，2026-11-18）：学习建议（§16.10）只比较识别原文和 AI 润色结果，识别和润色都没改对的错误学不到。说「Qwen 4 max」，识别和润色都写成「Quinn for max」，用户在应用里改正了，Voltip 却不知道。现在用户可以选中改好的文字，按「从选中文字学习」的快捷键，Voltip 找到对应的听写，记下改动，放进学习建议。全程只做逐字比较，不调用 AI。
+
+### 35.1 决定
+
+- 用户决定（2026-11-18）：「选中改好的文字，按快捷键学习」是主要方式（本节）。「自动跟踪输入框里的修改」做成要手动开启的实验功能，先在用户自己的电脑上实测各应用的输入框能不能读到，再单独设计。不做手机端。改动只进学习建议，不自动写进词典。中文单字的改动带上相邻的字（§16.10）。
+- 逐项回答：快捷键默认不分配，由用户自己设，与「复制上一条结果」相同。悬浮窗的通知能一键「加入词典」，改动里有 1 个字或 1–2 个字母的写法时只给「查看」。通知停 8 秒，点按钮后重新计时，下一次听写开始时消失。学习建议默认显示「推荐」：出现 2 次及以上的，加上来自你的修改的。历史详情显示保存下来的修改，并且可以移除。
+- 不做：托盘入口（Windows 上点托盘菜单时 Voltip 自己成为前台，复制键到不了原来的应用）；MCP 的 `history_get` / `history_search` 输出改后的文字（`vocabulary_candidates` 只受单字扩展影响，§25.4）；语音编辑的结果、手机发来的文字和导入的文件参与学习（与学习建议的范围相同）；历史记录的复制、粘贴和导出改用改后的文字（仍用当时插入的文字）。
+
+### 35.2 触发
+
+- 设置：`Settings.learn_hotkey: Option<String>`，默认没有；命令 `settings_set_learn_hotkey { hotkey }`，`null` 清除。设置 › 快捷键 有一行「从选中文字学习」，录制器的做法与「复制上一条结果」相同，四个录制器同一时间只开一个。
+- 四个组合键互不相同：听写、语音编辑、复制上一条结果、从选中文字学习。核心的四个 setter 都用 `Hotkey::same_chord` 检查其余三个，冲突时报错（如「已用作「从选中文字学习」的快捷键」），设置不变。桌面的 `hotkey::apply` 遇到手改设置文件造成的重复组合同样不注册，原因写进 `HotkeyStatus.learn_error`（另有 `learn_registered`）。
+- 触发时机：`selection_timing_for(session)` 为 `AtPress` 时按下即触发；为 `AfterKeyUp` 时（X11 / XWayland：键盘抓取期间复制键到不了焦点窗口，§19）松开时触发（`hotkey::learn_fires_on`）。纯 Wayland 没有全局快捷键，设置页显示要在系统快捷键里绑定的命令 `voltip-desktop --learn-selection`。
+- 命令行 `--learn-selection`（`cli.rs`）经单实例插件交给正在运行的 Voltip，做法与 `--copy-last` 相同。
+- 核心命令 `CoreCommand::LearnSelection { source }`。复制前要松开的修饰键（`held`，§19.2）在快捷键触发时是 `learn_hotkey` 的修饰键，命令行触发时为空。
+
+### 35.3 核心流程（`crates/voltip-core/src/runtime/learn.rs`）
+
+1. 有听写还没到终态（录音、识别、润色中）：忽略，只写日志。空闲和终态（完成、失败、取消）时照常进行。
+2. 历史记录关闭：结果 `history_off`，不按任何键。
+3. 在后台任务里先问前台探针，最多等它的期限。前台是终端（`injector.holds_program_output`）时结果 `terminal`，不按任何键：终端里选中的是程序输出。这张表包括 macOS 的终端（`voltip_platform::insert_check::holds_program_output`，与插入确认跳过的终端相同）；语音编辑的表（`is_terminal_app`）在 macOS 上是空的，因为 Cmd+C 在那里不会打断程序（2026-11-18 目标评审发现学习沿用了它）。探针没有回答时（纯 Wayland、超时）照常复制，与语音编辑相同。
+4. 在阻塞线程里调用 `injector.copy_selection(&held)`（§19.2：保存剪贴板，按复制键，读出选区，放回剪贴板）。同一进程里一次只做一次复制（`voltip_inject::selection` 的进程锁，从保存到放回）：连按两次快捷键、或学习和语音编辑同时复制时，后一次等前一次放回剪贴板再开始，不会把前一次清空的剪贴板当成用户的内容保存，也不会把前一次放回的内容当成选区。没有选中是 `no_selection`，出错是 `failed { message }`，超过 `MAX_LEARN_SELECTION_CHARS` = 8000 个字符是 `too_long { max }`。
+5. 在阻塞线程里读最新 `LEARN_TAKES` = 50 条识别记录：运行时自己的只读 `HistoryReader` 调用 `recent_texts`，只有听写，与学习建议相同。按 35.4 匹配：一条也没匹配到是 `no_match`，匹配到的都与插入的文字相同是 `unchanged`。
+6. 对匹配到的每条记录：改后的整段有可学的改动时（35.4 的 `storable`）保存，`HistoryStore::set_corrected(id, Some(CorrectedText { text, at_ms, via: selection }))`；没有可学的改动、而这条记录原来有 `corrected` 时清除它（用户把修改又改回了原文）。有写入时发 `history` 事件，学习建议的缓存随之失效。
+7. 算出这几条记录给学习建议的组合（`suggest::edit_picks`：与 §16.10 的「你的修改」来源算法相同，去掉忽略的和词典已知的）。有组合时结果是 `learned { pairs, safe }`，`pairs` 是 `SuggestionPick` 列表，`safe` 为假表示其中有 1 个字或 1–2 个字母的写法；没有组合时是 `no_pairs`。然后设置通知（35.6）。
+
+只有最新一次请求的回答算数：再按一次快捷键后，前一次的回答到了也丢掉。日志只写结果种类、条数和字数，不写文字。
+
+### 35.4 匹配与可学的改动（`crates/voltip-core/src/vocabulary/learn.rs`）
+
+- 比较沿用 `mcp::candidates` 的分词与 LCS（§25.4）。选区先按插入确认的规则规范化（`insert_check::normalize`）；两个词按去掉末尾空白后的样子比较（应用可能换了行尾），区分大小写，所以只改大小写的修正（「github → GitHub」）也能看到。
+- **对齐**：取两边词级 LCS 中匹配字符最多的一段；相邻两个匹配词之间，一侧比另一侧多出 `GAP_BREAK` = 3 个以上的词时从那里断开（那是多选进来的别的听写，或者少选的部分）。选区两端只属于选区的部分算多选，听写两端只属于听写的部分算少选，都不算改动。某一端两侧都有对不上的文字时（错词在听写的开头或结尾），从选区那段里紧挨匹配部分取几个整词，作为这一端的改动：词数与听写一侧相差不超过 1，字符数是它的一半到两倍，取与它逐字 LCS 最长的，一样长时取词数与它最接近的，再一样时取最短的；没有合适的就不学这一端。（最初一样长时直接取最短的：冒烟测试里「Voltip 冒烟注入」改成「Voltip 冒烟测试」，「测」与「测试」和「注入」都没有相同的字，存下的是「Voltip 冒烟测」。）汉字、假名、谚文按字算一个词。
+- **相似度** =（相同词的字符数 + 每组替换内部逐字 LCS 的字符数）÷ 两侧对齐范围字符数的较大者，不计空白；某一侧超过 64 个字符的替换不做内部比较。
+- **选记录**：相似度至少 `MATCH_MIN` = 0.4，并且至少有一个相同的词；取最高的，与次高的相差 `MATCH_TIE` = 0.05 以内时取较新的。然后在选区剩下、不重叠的部分里继续找，一次最多 `MAX_TAKES_PER_SELECTION` = 5 条（选中了连续几次听写的情况）。比较格受 `MAX_DIFF_CELLS` / `MAX_SCAN_CELLS` 限制，从新到旧比较。
+- **存什么**：这条记录已有 `corrected.text` 时，与 `text`、与 `corrected.text` 都对齐，用胜出的那个：相似度较高的，一样高时覆盖选区较多的，再一样时用 `corrected.text`。胜出的是 `corrected.text`（或者没有 `corrected`）时，改后的整段是它（或 `text`）中对齐的范围换成选区里对应的文字。胜出的是 `text` 时（用户选中了原来的写法，例如撤回上次的修改），先把 `text` 中对齐的范围按两者的词级 LCS 对到 `corrected.text` 里：从范围第一个词变成的词（或它之前最后一个没改的词之后）到最后一个词变成的词（或它之后第一个没改的词之前），跨在范围两端的旧修改算在范围内；再在 `corrected.text` 里换成选区的文字，所以范围以外的旧修改照样保留（2026-11-18 目标评审第 2 轮：之前总按 `corrected.text` 的对齐重建，「red apple」只对上了第一个「red」，旧的「grape」留了下来）。选区在下一个词之前结束、没有带上那里的空格时，被换掉的范围末尾的空白保留（以前会拼成「Qwen 4 maxis great」）。改后的整段是基准中对齐的范围换成选区里对应的文字，所以没被这次选区覆盖的部分保留上次的修改，重叠的部分以这次为准。改后的整段至少有一处改动满足下面第 1、3 条时保存，替换旧值；否则清除已有的 `corrected`。改后的整段与 `text` 完全相同时结果是 `unchanged`。
+- **可学的改动**（`edit_changes`）：`text` → `corrected` 的替换里同时满足三条的。
+  1. 插入的写法是识别原文的写法：它在 `raw_text → text` 的比较里落在相同的部分。这一步不分 ASCII 大小写，润色只改了大小写的地方仍然可学。`heard` 取识别原文里的写法。
+  2. 词典和规则没碰过：重放这条记录当时触发过的词条和规则（`mcp::candidates::Replay`，与润色来源相同，§16.9）。改动与它们改过的位置重叠，或者重放直接把 `heard` 变成用户的写法，都不学；触发过的词条或规则已删除、或在这条记录之后改过时，这条记录不产生组合，改后的文字照样保存。词典或规则改错的地方，应该去改词条或规则。
+  3. 长度和内容与润色来源相同（`replacements`）：去掉首尾空白和标点后 1–64 个字符，两侧不同；只有新增、或只有删除的改动不学。
+
+  润色改过的地方已经由润色来源覆盖，这里不再算。
+- 例子都是单元测试（`vocabulary::learn::tests`）：整句「我在用 Quinn for max 做测试」改成「我在用 Qwen 4 max 做测试」，学到 Quinn for → Qwen 4；整次听写「Quinn for max」改成「Qwen 4 max」（相似度 5/11）；开头多选了「Hi, 」；末尾的「注入」改成没有相同字的「测试」，两个字都算改动；连续两次听写一起改，两条记录各存自己的整段；没有相同的词是 `no_match`；改回原文时清除修改；词典改过的「github → GitHub」又改成 GitLab，不学。
+
+### 35.5 存储与历史详情
+
+- `HistoryEntry.corrected: Option<Box<CorrectedText>>`，`CorrectedText { text, at_ms, via }`。`via` 是 `selection`（从选中文字学习）或 `follow`（以后的实验功能在输入框里读到的修改）；这个版本只写 `selection`，两种都能读，所以以后的版本写的记录（经手机的历史副本同步回来，或者降级之后）照样能加载，历史详情把 `follow` 写成「在输入框中修改」。没有时不写出，旧版本读新记录不受影响，做法与 `processed` 相同。
+- `HistoryStore::set_corrected(id, Option<CorrectedText>)`：改 JSON，搜索文本加上改后的文字（`derived::search_text`），记 `revs`，所以会同步到配对手机的历史副本（手机不显示它）。`recent_texts` 读出 `HistoryText.corrected`（`json_extract(json, '$.corrected.text')`）。备份随历史记录一起导出；删除记录、清空历史时一起删除。
+- 历史详情（`apps/desktop/src/pages/history/DetailParts.tsx` 的 `CorrectedDetail`）：有修改时多一行「之后改成」、改后的文字、「从选中文字学习 · 时间」和「移除」。「移除」调用 `history_clear_corrected { id }`（`set_corrected(id, None)`），这条记录给学习建议的「你的修改」随之消失。
+
+### 35.6 悬浮窗通知
+
+- `UiState.learn_notice: Option<LearnNotice>`，事件 `learn_notice { notice }`。`LearnNotice { id, outcome, shown, accepted?, undone? }`：`outcome` 是 `LearnOutcome`（按 `kind` 区分：`learned { pairs, safe }`、`no_pairs`、`unchanged`、`no_match`、`no_selection`、`too_long { max }`、`terminal`、`history_off`、`failed { message }`）；`accepted` 是加入词典的结果 `{ added, refused, undo? }`；`undone` 是撤销的结果（`BatchUndoOutcome`）。
+- 悬浮窗关闭（`Settings.overlay = off`）时不创建通知：结果只写日志，改动照样保存，照样进学习建议。
+- 排队与计时由核心负责：
+  - 学习完成时听写空闲：通知立即显示（`shown`），开始计时 `LEARN_NOTICE_DWELL` = 8 秒（`CoreConfig.learn_notice_dwell`，测试里改短）。
+  - 上一次听写的终态还在悬浮窗上（常驻的结果卡片 §28，或还在停留时间内的完成提示）：通知排队，不计时；听写回到空闲时才显示，从那时开始计时。
+  - 按钮操作后重新计时；时间到了由核心清掉；新的一次听写开始时，清掉排队中和显示中的通知；再学一次时，新通知替换旧的；× 立即清掉。
+- 桌面壳（`apps/desktop/src-tauri/src/overlay.rs`）：听写空闲、通知已显示时，悬浮窗切到固定状态 `learned`（与 `copied` 共用 `show_fixed`），通知清掉后隐藏。结果卡片在屏幕上时通知不会处于已显示状态，所以不会盖住卡片。
+- 卡片（`apps/desktop/src/pages/Overlay.tsx` 的 `learnCard`）：学到、加入、撤销成功时用结果卡片「已插入」的样子，其余用「失败」的样子。
+  - 「加入词典」→ `learn_notice_accept { id }`：核心对 `pairs` 运行 `suggest::accept_batch`，检查与词典页的批量加入相同，批次记进同一个 `BatchLog`。`safe` 为假时没有这个按钮。
+  - 「撤销」→ `learn_notice_undo { id }`，即整批撤销（§16.10）。
+  - 「查看」→ 壳命令 `open_suggestions`：主窗口收到 `voltip://tray` 的 `{ action: "suggestions" }`，打开词典页的学习建议（路由 `/dictionary/suggestions`）。同时调用 `learn_notice_keep { id }`，通知重新停留 8 秒，与其他按钮相同（D3）。
+  - 「打开设置」（只在 `history_off` 时）→ 壳命令 `open_privacy`（`{ action: "privacy" }`），打开 设置 › 隐私与历史，同样调用 `learn_notice_keep { id }`。计划里写的是沿用学习建议页的按钮，但悬浮窗不能让主窗口换页，所以与「查看」一样新增了一个壳命令。
+  - × → `learn_notice_dismiss { id }`。
+- 文案（`learn.notice`）：
+
+| 情形 | 中文 | English |
+|---|---|---|
+| `learned`，1 处 / 多处 | 已记下 1 处改动：A → B / 已记下 n 处改动：A → B 等 | Noted 1 change: A → B / Noted n changes: A → B and more |
+| 加入后 | 已加入词典：A → B / 已将 n 处改动加入词典 · 撤销 | Added to the dictionary: A → B / Added n changes to the dictionary · Undo |
+| 部分加入 | a 处已加入，r 处无法加入 · 查看 · 撤销 | a added, r couldn't be added · View · Undo |
+| 都没加入 | 无法加入词典，原因见词典页 · 查看 | Couldn't add to the dictionary; the dictionary page says why · View |
+| 撤销后 | 已撤销 / 无法撤销 · 查看 | Undone / Couldn't undo · View |
+| `no_pairs` | 没有可以加入词典的改动 | No change to add to the dictionary |
+| `unchanged` | 选中的文字和听写结果相同 | The selection matches what was dictated |
+| `no_match` | 最近 50 次听写里没有找到这段文字 | Not found in the last 50 dictations |
+| `no_selection` | 没有选中文字 | Nothing is selected |
+| `too_long` | 选中的文字太长，最多 8000 字 | The selection is too long (8000 characters at most) |
+| `terminal` | 终端里的文字不能用来学习 | Text in a terminal can't be learned from |
+| `history_off` | 需要先开启历史记录 · 打开设置 | Turn on the history first · Open settings |
+| `failed` | 无法读取选中的文字：原因 | Couldn't read the selection: reason |
+
+### 35.7 学习建议
+
+用户修改是学习建议的第二个来源，与单字扩展、「推荐」的显示范围一起写在 §16.10。快捷键还没设置时，学习建议的说明卡里有「设置快捷键」，打开 设置 › 快捷键。
+
+### 35.8 门禁
+
+- Rust：`vocabulary::learn::tests` 12 条（上面的例子，以及 CRLF、末尾空白、`storable`）；`vocabulary::suggest` 的新用例（两个来源合并与 `from_edits`、单字扩展选边「钉丁 → 钉钉」、通知的组合 `edit_picks`）；`history::tests` 的修改读写与搜索；`crates/voltip-core/tests/learn.rs` 4 条（四个组合键互斥；选区改正听写：保存修改、通知排队后显示、加入词典与撤销、到时清掉、复制时松开快捷键的修饰键；常驻的结果卡片关闭后才显示、新的听写清掉通知、悬浮窗关闭时没有通知；各种拒绝）；bridge 契约夹具（`commands.json`、`events.json`、`state.json`、`vocabulary-suggestions.json`）；`hotkey.rs` 的 `learn_fires_on`、`overlay.rs` 的 `learned_wanted`；桌面命令层 `apps/desktop/src-tauri/tests/ipc.rs@learning_from_the_selection_runs_through_the_command_layer`。2026-11-18 目标评审之后补的回归测试，都先在原代码上看到失败：`crates/voltip-core/tests/learn.rs@regression_a_terminal_the_voice_edit_allows_is_still_not_learned_from` 与 `crates/voltip-platform/src/insert_check.rs@regression_every_hosts_terminals_hold_program_output`（macOS 的终端）、`crates/voltip-inject/src/selection.rs@regression_two_copies_at_once_neither_read_nor_lose_the_users_clipboard`（两次复制同时进行）、`vocabulary::learn::tests::regression_the_original_wording_takes_back_a_correction_that_shares_no_word_with_it`、`history::tests::regression_a_correction_read_in_the_field_loads`（`follow`）、`vocabulary::learn::tests::regression_the_alignment_that_wins_rebuilds_the_take` 与 `regression_a_selection_that_stops_before_the_next_word_keeps_the_space`（第 2 轮）、`vocabulary::suggest::tests::regression_a_correction_counts_once_per_take_and_a_skipped_one_is_still_edited` 与 TS 的同名用例、`crates/voltip-core/tests/learn.rs@regression_view_and_open_settings_start_the_notices_stay_again`、词典页 `regression: with only corrected takes and nothing new, …`（空状态按比较过的记录写）。
+- TS：`suggestions.test.ts`、`mock-backend.test.ts` 的 §35 用例、`ipc-contract.test.ts`、`tauri-backend.test.ts`；`apps/desktop` 的 `Overlay.test.tsx`（卡片的按钮与状态）、`Settings.test.tsx`（快捷键行）、`HistoryDetail.test.tsx`（修改的一行与移除）、`Dictionary.test.tsx`（来源标记、「推荐」、设置快捷键的提示）、`tray-requests.test.tsx` 与 `router.test.tsx`（「查看」「打开设置」）。
+- 真机：
+  - Linux（CI `smoke-desktop`）：`crates/voltip-inject/tests/real_display.rs` 的 `real_copy_chord_reads_the_selection_of_an_x11_text_widget` 与 `regression_x11_hotkey_grab_swallows_the_copy_until_the_key_is_up` 现在每次都跑（需要 `python3-tk`）；`scripts/smoke-desktop-linux.sh` 在真实应用上走一遍：预先设好学习快捷键，冒烟听写之后，Tk 输入框里放改正后的文字并全选，xdotool 按下真实的组合键，检查日志的 `learn selection outcome="learned"`、`history.sqlite3` 里那条记录的 `corrected`、剪贴板放回哨兵内容、悬浮窗显示通知（截图 `*-learn-notice.png`）。
+  - Windows（CI `hooks-windows`）：`crates/voltip-focus/tests/focus_windows.rs@the_copy_reads_notepads_selection_with_the_shortcut_held_and_puts_the_clipboard_back`：记事本里粘贴文字、全选，按住 Ctrl+Alt 时复制，读到这段文字，剪贴板放回原样。
+  - macOS（CI `macos` 的 Apple 芯片一路，合并前手动触发）：`crates/voltip-focus/tests/focus_macos.rs` 在 TextEdit 里粘贴后全选，用 Cmd+C 读到这段文字，剪贴板放回原样。
+  - 计划里这两个测试是 voltip-inject 下新建的测试文件；实际放进了 voltip-focus 已有的测试，那里已经会打开记事本和 TextEdit，CI 也已经给它的测试二进制授予了辅助功能权限。
+
+### 35.9 限制
+
+- 复制靠应用响应复制键（Windows / Linux 是 Ctrl+Insert，macOS 是 Cmd+C，§19.2）；不响应的应用里结果是 `no_selection`。
+- 只比较最新 50 条听写；更早的听写改正后选中也学不到（`no_match`）。
+- 触发过的词条或规则在这条记录之后改过时，这条记录不产生「你的修改」（与润色来源相同的局限，§16.9）。
+- 手机没有这个功能；手机的历史副本带着修改，但不显示。

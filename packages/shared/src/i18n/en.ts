@@ -1281,14 +1281,21 @@ export const en: Messages = {
       suggestionsCount: "Suggestions ({n})",
     },
     suggestions: {
-      explainTitle: "Learn from what AI polish changed",
+      explainTitle: "Learn from AI polish and your corrections",
       explain:
-        "Compares the recognised text of recent history entries with the polished text and lists the words recognised as A and polished to B, most frequent first. Once a pair is in the dictionary, it is corrected right after recognition. The comparison is character by character; no AI is used.",
+        "Compares the recognised text of recent history entries with the polished text, and with the text you corrected in another app and noted with Learn from selection, and lists the words recognised as A and changed to B, most frequent first. Once a pair is in the dictionary, it is corrected right after recognition. The comparison is character by character; no AI is used.",
+      /** The explanation card's hint while 从选中文字学习 has no shortcut (§35). */
+      hint: "After you correct a dictation in another app, select the corrected text and press the Learn from selection shortcut; your corrections show here too.",
+      hintSet: "Set the shortcut",
+      /** Where a pair came from (§35). */
+      source: { polish: "Polish", edit: "Your correction" },
       undoNote:
         "Adding or ignoring can be undone right away. Once you leave the dictionary page, adding can no longer be undone; ignored pairs can be brought back from Ignored.",
+      /** What the default 显示范围 shows (§35). */
+      filterNote: "Suggested lists the pairs seen twice or more, and the ones you corrected.",
       list: "Suggestions",
       table: "Suggestions",
-      column: { pair: "Recognised → polished", count: "Count", last: "Last seen" },
+      column: { pair: "Recognised → right spelling", count: "Count", last: "Last seen" },
       accept: "Add to dictionary",
       ignore: "Ignore",
       accepted: "Added to the dictionary",
@@ -1300,7 +1307,11 @@ export const en: Messages = {
         undo: "Undo: {heard} → {polished}",
         details: "Details: {heard} → {polished}",
       },
-      filter: { label: "Show", repeated: "Seen twice or more", all: "All" },
+      filter: {
+        label: "Show",
+        repeated: "Suggested",
+        all: "All",
+      },
       select: { all: "Select all", row: "Select: {heard} → {polished}" },
       selection: {
         count: "{n} selected",
@@ -1376,15 +1387,21 @@ export const en: Messages = {
         historyOff:
           "Suggestions come from the history. Once history is on, new dictations are compared.",
         openPrivacy: "Open privacy settings",
-        noPolishedTitle: "No dictation in recent history was polished",
+        noPolishedTitle: "No dictation in recent history was polished or corrected",
         noPolished:
-          "Suggestions compare the recognised text with the polished text. Turn on AI polish and dictate a few times, and the words it changed appear here.",
+          "Suggestions compare the recognised text with the polished text, and take in the corrections you note with Learn from selection. Turn on AI polish and dictate a few times, or press that shortcut after correcting a dictation in another app, and the words appear here.",
         noneTitle: "No suggestions",
         none: {
           one: "The last polished entry has nothing new for the dictionary.",
           other: "The last {n} polished entries have nothing new for the dictionary.",
         },
-        noneRepeatedTitle: "No pair was seen twice or more",
+        noneEdited: {
+          one: "The last entry with your corrections has nothing new for the dictionary.",
+          other: "The last {n} entries with your corrections have nothing new for the dictionary.",
+        },
+        noneBoth:
+          "The last {refined} polished entries and {edited} entries with your corrections have nothing new for the dictionary.",
+        noneRepeatedTitle: "Nothing suggested",
         noneRepeated: {
           one: "1 more pair was seen once.",
           other: "{n} more pairs were seen once.",
@@ -1396,6 +1413,7 @@ export const en: Messages = {
         other: "Last {n} entries · {refined} polished",
       },
       skipped: "{n} too long to compare",
+      edited: "{n} with your corrections",
       more: "Showing the first {shown} of {total}",
       shown: { one: "Showing 1 pair", other: "Showing {n} pairs" },
       hiddenOnce: {
@@ -1405,7 +1423,7 @@ export const en: Messages = {
       ignoredList: {
         title: "Ignored ({n})",
         table: "Ignored",
-        column: { pair: "Recognised → polished", at: "Ignored" },
+        column: { pair: "Recognised → right spelling", at: "Ignored" },
         unignore: "Stop ignoring",
         row: "Stop ignoring: {heard} → {polished}",
         showAll: "Show all ({n})",
@@ -2672,6 +2690,55 @@ export const en: Messages = {
       copyLastCancelLabel: "Cancel recording · Copy last result",
       copyLastClear: "Clear",
       copyLastClearLabel: "Clear · Copy last result",
+    },
+  },
+  /** 从选中文字学习 (docs/dictation.md §35): the shortcut, the pill's notice after it, and the
+   *  correction kept with a history entry. */
+  learn: {
+    settings: {
+      label: "Learn from selection",
+      help: "After you correct a dictation in another app, select the corrected text and press this shortcut. Voltip notes the change for you to confirm in the dictionary's suggestions.",
+      none: "Not set",
+      record: "Record",
+      recordLabel: "Record · Learn from selection",
+      rerecordLabel: "Record again · Learn from selection",
+      cancelLabel: "Cancel recording · Learn from selection",
+      clear: "Clear",
+      clearLabel: "Clear · Learn from selection",
+    },
+    notice: {
+      pair: "{heard} → {polished}",
+      learned: "Noted 1 change: {pair}",
+      learnedMany: "Noted {n} changes: {pair} and more",
+      added: "Added to the dictionary: {pair}",
+      addedMany: "Added {n} changes to the dictionary",
+      addedSome: {
+        one: "{added} added, {refused} couldn't be added",
+        other: "{added} added, {refused} couldn't be added",
+      },
+      refusedAll: "Couldn't add to the dictionary; the dictionary page says why",
+      undone: "Undone",
+      undoFailed: "Couldn't undo",
+      noPairs: "No change to add to the dictionary",
+      unchanged: "The selection matches what was dictated",
+      noMatch: "Not found in the last {n} dictations",
+      noSelection: "Nothing is selected",
+      tooLong: "The selection is too long ({max} characters at most)",
+      terminal: "Text in a terminal can't be learned from",
+      historyOff: "Turn on the history first",
+      failed: "Couldn't read the selection: {message}",
+      add: "Add to dictionary",
+      view: "View",
+      undo: "Undo",
+      openSettings: "Open settings",
+    },
+    /** The history detail's line about the user's correction. */
+    history: {
+      corrected: "Later corrected to",
+      via: "Learn from selection · {time}",
+      viaFollow: "Edited in the text field · {time}",
+      remove: "Remove",
+      removeLabel: "Remove the later correction",
     },
   },
   /** docs/dictation.md §3.14: 服务出错时也改用候补, the models of this computer in a recognition

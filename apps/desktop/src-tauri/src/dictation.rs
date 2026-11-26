@@ -552,6 +552,12 @@ impl Injector for NativeInjector {
         voltip_platform::foreground::is_terminal(voltip_platform::HostOs::current(), app_id)
     }
 
+    /// docs/dictation.md §35: every terminal of this host, macOS's included
+    /// (`voltip_platform::insert_check::holds_program_output`).
+    fn holds_program_output(&self, app_id: &str) -> bool {
+        voltip_platform::insert_check::holds_program_output(voltip_platform::HostOs::current(), app_id)
+    }
+
     /// docs/dictation.md §28: the platform's reader of the focused control.
     fn focus_reader(&self) -> Option<Arc<dyn FocusReader>> {
         self.focus.clone()

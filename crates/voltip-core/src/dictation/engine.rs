@@ -3748,6 +3748,7 @@ impl DictationEngine {
             preset: (refined && self.status.kind == TakeKind::Dictation).then(|| self.take_preset().to_ref()),
             origin: None,
             processed: None,
+            corrected: None,
             file: None,
             timing: Some(timing),
             glossary_sent,

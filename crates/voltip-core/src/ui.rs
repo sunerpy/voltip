@@ -97,6 +97,12 @@ pub enum UiEvent {
         /// The ignored pairs.
         pairs: Vec<crate::vocabulary::IgnoredPair>,
     },
+    /// The pill's notice after a 从选中文字学习 (docs/dictation.md §35), full replacement; `None`
+    /// when it went.
+    LearnNotice {
+        /// The notice.
+        notice: Option<crate::LearnNotice>,
+    },
     /// Scenes, full replacement, in matching order (docs/dictation.md §18).
     Scenes {
         /// Scenes in order.
@@ -451,6 +457,12 @@ pub struct HotkeyStatus {
     /// Why the 复制上一条结果 chord is not registered (conflict, pure Wayland, another chord's).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub copy_last_error: Option<String>,
+    /// The 从选中文字学习 chord actually registered (docs/dictation.md §35), if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub learn_registered: Option<String>,
+    /// Why the 从选中文字学习 chord is not registered (conflict, pure Wayland, another chord's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub learn_error: Option<String>,
     /// What the hotkey can do in the session the shell runs in (all `false` until it reports).
     #[serde(default)]
     pub capabilities: HotkeyCapabilities,
@@ -565,6 +577,10 @@ pub struct UiState {
     /// (and left off the wire) until the user ignores one.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub vocabulary_ignored: Vec<crate::vocabulary::IgnoredPair>,
+    /// The pill's notice after a 从选中文字学习 (docs/dictation.md §35); left off the wire while
+    /// there is none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub learn_notice: Option<crate::LearnNotice>,
     /// Scenes in matching order (docs/dictation.md §18).
     #[serde(default)]
     pub scenes: Vec<Scene>,
@@ -654,6 +670,7 @@ impl Default for UiState {
             dictionary: Vec::new(),
             rules: Vec::new(),
             vocabulary_ignored: Vec::new(),
+            learn_notice: None,
             scenes: Vec::new(),
             presets: Vec::new(),
             phone_take: None,
@@ -762,6 +779,10 @@ impl UiState {
             CoreEvent::VocabularyIgnored(pairs) => {
                 self.vocabulary_ignored = pairs.clone();
                 UiEvent::VocabularyIgnored { pairs }
+            }
+            CoreEvent::LearnNotice(notice) => {
+                self.learn_notice = notice.clone();
+                UiEvent::LearnNotice { notice }
             }
             CoreEvent::Scenes(scenes) => {
                 self.scenes = scenes.clone();
@@ -984,6 +1005,7 @@ mod tests {
             preset: None,
             origin: None,
             processed: None,
+            corrected: None,
             file: None,
             timing: None,
             glossary_sent: None,

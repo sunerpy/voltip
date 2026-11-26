@@ -24,8 +24,9 @@ import {
   useI18n,
   useUiState,
 } from "@voltip/ui";
-import { type KeyboardEvent, useCallback, useMemo, useState } from "react";
+import { type KeyboardEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { usePageShortcuts, withCommand } from "../app/page-shortcuts";
+import { useRouter } from "../app/router";
 import { copyWithToast, useShell } from "../app/shell-context";
 import { GlossaryNote } from "../features/vocabulary/GlossaryNote";
 import { useHitTotals } from "../features/vocabulary/useHitTotals";
@@ -69,8 +70,14 @@ const ASCII_ONLY = /^[\x20-\x7e]+$/;
  *  counts come from the history rows (`HistoryEntry.vocabulary`); the test panel asks the core
  *  (`vocabulary_preview`), so it corrects exactly as a take would. 学习建议 (§16.10) is the second
  *  view: what AI polish changed in the history, for the dictionary. */
-export function Dictionary() {
+export interface DictionaryProps {
+  /** Open on 学习建议 once (`/dictionary/suggestions`, the learn notice's 查看, §35). */
+  openSuggestions?: boolean;
+}
+
+export function Dictionary({ openSuggestions = false }: DictionaryProps) {
   const shell = useShell();
+  const { navigate } = useRouter();
   const { backend } = useBackend();
   const { t } = useI18n();
   const state = useUiState();
@@ -83,7 +90,18 @@ export function Dictionary() {
   const [deleting, setDeleting] = useState<string | undefined>(undefined);
   const [sample, setSample] = useState("");
   const preview = useVocabularyPreview(sample);
-  const [view, setView] = useState<View>("entries");
+  const [view, setView] = useState<View>(openSuggestions ? "suggestions" : "entries");
+  // `/dictionary/suggestions` shows the suggestions: adjusted during render when the flag appears
+  // (React's pattern for state that follows a prop), then the effect drops the flag from the URL so
+  // the next 查看 can ask again.
+  const [opening, setOpening] = useState(openSuggestions);
+  if (opening !== openSuggestions) {
+    setOpening(openSuggestions);
+    if (openSuggestions) setView("suggestions");
+  }
+  useEffect(() => {
+    if (openSuggestions) navigate({ name: "dictionary" }, { replace: true });
+  }, [openSuggestions, navigate]);
   // Held by the page, so switching views keeps the rows acted on and their 撤销.
   const suggestions = useSuggestions();
 

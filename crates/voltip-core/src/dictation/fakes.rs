@@ -1074,6 +1074,9 @@ pub enum InsertEvent {
     Dropped,
 }
 
+/// A yes / no about an application id (a host's table of terminals).
+type AppIdTest = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+
 /// Injector stand-in: records every text it was given. Optionally gated ([`FakeInjector::gated`]):
 /// every call then blocks until a permit is [`FakeInjector::release`]d, so a test can observe what
 /// the core does while an injection is in flight. In an insert session the gate holds a piece
@@ -1095,7 +1098,9 @@ pub struct FakeInjector {
     /// Texts put on the clipboard alone (`Injector::copy`).
     clipboard: Mutex<Vec<String>>,
     /// Which application ids are terminals (docs/dictation.md §19.2).
-    terminals: Arc<dyn Fn(&str) -> bool + Send + Sync>,
+    terminals: AppIdTest,
+    /// Which are terminals for 从选中文字学习 (§35), when it differs from `terminals` (macOS).
+    program_output: Option<AppIdTest>,
     /// Holds a session's piece once `may_deliver` agreed.
     delivery_gate: Option<Arc<Gate>>,
     /// Every insert session step.
@@ -1138,6 +1143,7 @@ impl FakeInjector {
             copy_gate: None,
             clipboard: Mutex::new(Vec::new()),
             terminals: Arc::new(|_: &str| false),
+            program_output: None,
             delivery_gate: None,
             events: Mutex::new(Vec::new()),
             focus: None,
@@ -1163,6 +1169,12 @@ impl FakeInjector {
     /// §19.2); by default nothing is.
     pub fn with_terminals(self, terminals: impl Fn(&str) -> bool + Send + Sync + 'static) -> Self {
         Self { terminals: Arc::new(terminals), ..self }
+    }
+
+    /// The applications `terminals` says yes to hold program output for 从选中文字学习
+    /// (docs/dictation.md §35) although the voice edit's table has none of them (macOS's).
+    pub fn with_program_output(self, terminals: impl Fn(&str) -> bool + Send + Sync + 'static) -> Self {
+        Self { program_output: Some(Arc::new(terminals)), ..self }
     }
 
     /// Report [`SelectionTiming::AfterKeyUp`] (an X11 session).
@@ -1350,6 +1362,10 @@ impl Injector for FakeInjector {
 
     fn is_terminal_app(&self, app_id: &str) -> bool {
         (self.terminals)(app_id)
+    }
+
+    fn holds_program_output(&self, app_id: &str) -> bool {
+        self.program_output.as_ref().map_or_else(|| (self.terminals)(app_id), |f| f(app_id))
     }
 
     fn focus_reader(&self) -> Option<Arc<dyn FocusReader>> {
@@ -1763,6 +1779,7 @@ pub fn history_entry(text: &str) -> crate::HistoryEntry {
         preset: None,
         origin: None,
         processed: None,
+        corrected: None,
         file: None,
         timing: None,
         glossary_sent: None,

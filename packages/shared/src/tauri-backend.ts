@@ -425,6 +425,14 @@ export class TauriBackend implements Backend {
     await this.transport.invoke("open_history");
   }
 
+  async openSuggestions() {
+    await this.transport.invoke("open_suggestions");
+  }
+
+  async openPrivacy() {
+    await this.transport.invoke("open_privacy");
+  }
+
   async meter(deviceId: string | undefined, onFrame: FrameListener): Promise<Unsubscribe> {
     const warn = this.warn();
     const channel = (this.transport.channel ?? newChannel)();

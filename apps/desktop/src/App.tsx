@@ -27,6 +27,7 @@ import {
   COPIED_STATE,
   Overlay,
   isOverlayWindowState,
+  LEARNED_STATE,
 } from "./pages/Overlay";
 import { Rules } from "./pages/Rules";
 import { SettingsDialog } from "./pages/settings/SettingsDialog";
@@ -85,7 +86,7 @@ function Page({ route }: { route: Exclude<Route, { name: "settings" | "feedback"
     case "history":
       return <History initialFilter={route.filter} />;
     case "dictionary":
-      return <Dictionary />;
+      return <Dictionary openSuggestions={route.view === "suggestions"} />;
     case "rules":
       return <Rules compose={route.compose === true} />;
     case "devices":
@@ -246,7 +247,8 @@ function Frame({ traySource }: { traySource?: TrayRequestSource }) {
   if (overlayWindow) {
     return route.state === LIVE_STATE ||
       route.state === BLANK_STATE ||
-      route.state === COPIED_STATE ? (
+      route.state === COPIED_STATE ||
+      route.state === LEARNED_STATE ? (
       <Overlay state={route.state} />
     ) : (
       <OverlayPreview state={route.state} />

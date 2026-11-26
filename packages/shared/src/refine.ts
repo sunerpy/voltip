@@ -13,8 +13,12 @@ export function diffTokens(text: string): string[] {
   return text.match(/[A-Za-z0-9_<>@#$%&*+=/\\.:-]+\s*|\s+|[^\sA-Za-z0-9_<>@#$%&*+=/\\.:-]/g) ?? [];
 }
 
-/** Token-level LCS diff of `rawText` → `text`, merged into runs (identifiers stay whole). */
-export function diffSegments(entry: Pick<SampleHistoryRow, "rawText" | "text">): DiffSegment[] {
+/** Token-level LCS diff of `rawText` → `text`, merged into runs (identifiers stay whole). `same`
+ *  decides which tokens are equal (exact by default); a `same` run holds `rawText`'s tokens. */
+export function diffSegments(
+  entry: Pick<SampleHistoryRow, "rawText" | "text">,
+  same: (a: string, b: string) => boolean = (a, b) => a === b,
+): DiffSegment[] {
   const a = diffTokens(entry.rawText);
   const b = diffTokens(entry.text);
   const table: number[][] = Array.from({ length: a.length + 1 }, () =>
@@ -26,7 +30,7 @@ export function diffSegments(entry: Pick<SampleHistoryRow, "rawText" | "text">):
       const down = table[i + 1]?.[j] ?? 0;
       const right = table[i]?.[j + 1] ?? 0;
       const row = table[i];
-      if (row) row[j] = a[i] === b[j] ? diag + 1 : Math.max(down, right);
+      if (row) row[j] = same(a[i] ?? "", b[j] ?? "") ? diag + 1 : Math.max(down, right);
     }
   }
   const out: DiffSegment[] = [];
@@ -40,7 +44,7 @@ export function diffSegments(entry: Pick<SampleHistoryRow, "rawText" | "text">):
   while (i < a.length && j < b.length) {
     const ta = a[i] ?? "";
     const tb = b[j] ?? "";
-    if (ta === tb) {
+    if (same(ta, tb)) {
       push("same", ta);
       i += 1;
       j += 1;

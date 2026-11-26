@@ -107,13 +107,18 @@ To let AI tools such as Claude Code or Codex analyse the history with your proje
 
 ## Suggestions
 
-**Suggestions**, at the top of the Dictionary page, lists the spellings AI polish corrected in your recent history: what was recognised, what it was polished to, how many times and when last, the most frequent first. Spellings the dictionary already corrects and pairs you ignored are left out. Voltip compares the recognised text with the polished text character by character; no AI is used and nothing is sent anywhere.
+**Suggestions**, at the top of the Dictionary page, lists the spellings that were corrected in your recent history: what was recognised, the right spelling, how many times and when last, the most frequent first. The corrections come from two sources, and each row names its source:
+
+- **Polish**: spellings AI polish corrected.
+- **Your correction**: spellings you corrected in another app and gave to Voltip with [Learn from selection](#learn-from-selection). Errors that neither recognition nor polish got right can be learned this way.
+
+Spellings the dictionary already corrects and pairs you ignored are left out. Voltip compares the recognised text, the polished text and your corrected text character by character; no AI is used and nothing is sent anywhere.
 
 <ScreenFigure src="/screens/dictionary-suggestions-en-light.webp" width="1440" height="900"
-  alt="Suggestions on the Dictionary page, showing the four pairs seen twice or more. The first two were added to the dictionary together: the line above the list says “Added 2 pairs to the dictionary.” and has Undo. The other two are checked, the bar above the list adds or ignores them at once, and Ignore all (2) is next to the view switch. The line under the list says 4 pairs are shown and 4 pairs seen once are hidden."
-  caption="Check several rows to add them to the dictionary or ignore them at once; Undo takes back the whole batch." />
+  alt="Suggestions on the Dictionary page, showing the five Suggested pairs, each marked with its source, Polish or Your correction: 维他命 → Voltip has both, and Quinn for → Qwen 4 was seen once, from your correction. The first two were added to the dictionary together: the line above the list says “Added 2 pairs to the dictionary.” and has Undo. The pairs for 瑞迪斯 and 泰普斯克瑞普特 are checked, and the bar above the list adds or ignores them at once. Under the explanation, a line offers to set the Learn from selection shortcut. The line under the list says 2 entries have your corrections, 5 pairs are shown and 4 pairs seen once are hidden."
+  caption="Each pair names its source; check several rows to add them to the dictionary or ignore them at once, and Undo takes back the whole batch." />
 
-- By default the list shows the pairs seen twice or more; choose **All** above the list to include the ones seen once. The number after **Suggestions** counts the pairs left to decide in the current view, and the line under the list says how many pairs are shown and how many seen once are hidden.
+- By default the list shows the **Suggested** pairs: those seen twice or more, and those you corrected (even once). Choose **All** above the list to include the other pairs seen once. The number after **Suggestions** counts the pairs left to decide in the current view, and the line under the list says how many pairs are shown, how many entries carry your corrections, and how many pairs seen once are hidden.
 - **Add to dictionary** adds the recognised spelling as a heard-as form: to the entry that already has the right spelling, or to a new entry. When a replacement rule would change the right spelling, or the spelling belongs to another entry, Voltip says why and saves nothing.
 - **Ignore** keeps the pair off the list and moves it to **Ignored** below.
 - Check several rows, or **Select all** in the header, to add them all to the dictionary or ignore them at once. Pairs with the same right spelling go into one entry; when a pair cannot be added, the reason is under its row and the others are added.
@@ -122,7 +127,24 @@ To let AI tools such as Claude Code or Codex analyse the history with your proje
 - Expand a row to see the recognised text it appeared in, and how many of your recent entries adding it would change. Voltip warns when the spelling is a single character, which can change other words by mistake.
 - **Ignored (n)** lists the pairs you ignored, the most recent first, with when you ignored each. **Stop ignoring** puts a pair back among the suggestions. The list stays after you leave the page or restart Voltip.
 
-Suggestions come from the history: while history is off, the view only says that history needs to be on, and dictations without AI polish and imported audio or video files are not compared. Chinese is compared character by character: when 非书 was polished to 飞书, the pair listed is 非 → 飞. Suggestions are available on the computer only.
+Suggestions come from the history: while history is off, the view only says that history needs to be on; imported audio or video files are not compared, and a dictation with neither AI polish nor a correction of yours has nothing to compare. Chinese is compared character by character; when only one character changed, the pair listed takes the character next to it as well: when 非书 was corrected to 飞书, the pair listed is 非书 → 飞书. Suggestions are available on the computer only.
+
+## Learn from selection
+
+After you correct a dictation in another app, you can give Voltip the corrected text: it notes the change and adds it to the suggestions.
+
+1. Under **Settings → Shortcuts**, set a shortcut for **Learn from selection**. It is not set by default, and it must differ from the shortcuts for dictation, voice editing and copying the last result.
+2. When the inserted text has an error, correct it where it is, for example “I'm testing Quinn for max” to “I'm testing Qwen 4 max”.
+3. Select the corrected text and press the shortcut. Selecting a little more or less is fine, and so is a selection over several dictations in a row.
+4. The overlay shows “Noted 1 change: Quinn for → Qwen 4”. **Add to dictionary** adds it at once, and you can undo it; **View** opens the suggestions. You can also leave it: the change stays among the suggestions, marked **Your correction**.
+
+- Voltip reads the selection by copying it, and puts the clipboard back afterwards. In a terminal it reads nothing and presses no key.
+- Voltip looks for the dictation the selection corrects among your last 50 dictations. When none matches, the selection is the same as what was dictated, or nothing is selected, the overlay says so.
+- The corrected text is kept with that history entry: its details gain a **Later corrected to** line, and **Remove** deletes it. Learn from selection needs the history to be on.
+- When a change has a spelling of one character or one or two letters, the overlay offers **View** only: check what it would change on the dictionary page before adding it.
+- The overlay stays for 8 seconds, counted again after each button, and goes when the next dictation starts. While a dictation's result card is on screen, it appears after the card is closed.
+- In a pure Wayland session, bind a shortcut to the command `voltip-desktop --learn-selection` in the system settings.
+- Learn from selection is available on the computer only.
 
 ## Simplified and Traditional Chinese
 

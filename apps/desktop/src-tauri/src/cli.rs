@@ -50,6 +50,11 @@ pub struct Cli {
     /// happens when none runs.
     #[arg(long, conflicts_with_all = ["toggle", "edit_toggle", "cancel", "quit", "start_hidden", "list_devices", "list_compute", "list_models", "download_model", "transcribe_file"])]
     pub copy_last: bool,
+    /// Have the running instance learn from the selected text (从选中文字学习, docs/dictation.md
+    /// §35): the corrected text selected in another application; bind it to a compositor shortcut
+    /// where no global hotkey exists (Wayland). Nothing happens when none runs.
+    #[arg(long, conflicts_with_all = ["toggle", "edit_toggle", "cancel", "quit", "copy_last", "start_hidden", "list_devices", "list_compute", "list_models", "download_model", "transcribe_file"])]
+    pub learn_selection: bool,
     /// Print the input devices (`id<TAB>name`, default first) and exit.
     #[arg(long, conflicts_with_all = ["list_models", "transcribe_file"])]
     pub list_devices: bool,
@@ -145,6 +150,8 @@ pub enum Action {
     Quit,
     /// `--copy-last`: the same way, for 复制上一条结果 (a new instance has no result yet).
     CopyLast,
+    /// `--learn-selection`: the same way, for 从选中文字学习 (a new instance has no history open).
+    LearnSelection,
     /// `--list-devices`.
     ListDevices,
     /// `--list-compute`.
@@ -230,6 +237,9 @@ impl Cli {
         if self.copy_last {
             return Action::CopyLast;
         }
+        if self.learn_selection {
+            return Action::LearnSelection;
+        }
         Action::Gui { start_hidden: self.start_hidden, remote: self.remote() }
     }
 }
@@ -248,6 +258,11 @@ pub fn quit_from_args(args: &[String]) -> bool {
 /// Whether a second instance's arguments ask this one for 复制上一条结果 (`--copy-last`).
 pub fn copy_last_from_args(args: &[String]) -> bool {
     Cli::parse_args(args).is_ok_and(|cli| cli.copy_last)
+}
+
+/// Whether a second instance's arguments ask this one for 从选中文字学习 (`--learn-selection`).
+pub fn learn_selection_from_args(args: &[String]) -> bool {
+    Cli::parse_args(args).is_ok_and(|cli| cli.learn_selection)
 }
 
 /// What `--transcribe-file --json` prints.
@@ -525,6 +540,6 @@ pub fn run_headless(action: &Action, data_dir: &Path, out: &mut dyn Write, err: 
             };
             transcribe_file(&transcriber, &args, out, err)
         }
-        Action::Gui { .. } | Action::Quit | Action::CopyLast => ExitCode::Ok,
+        Action::Gui { .. } | Action::Quit | Action::CopyLast | Action::LearnSelection => ExitCode::Ok,
     }
 }

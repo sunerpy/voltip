@@ -5,13 +5,17 @@
 # Evidence that the shell builds, starts the core and renders — on a machine with no display and
 # no keychain (CI runner, container). The hotkey take runs to the injector (docs/dictation.md §14):
 # a private PulseAudio null sink is the microphone, a local mock stands in for the ASR, and the
-# X11 clipboard must hold a sentinel again after the paste. Usage: scripts/smoke-desktop-linux.sh [out.png]
+# X11 clipboard must hold a sentinel again after the paste. Then 从选中文字学习 (docs/dictation.md
+# §35): a Tk entry holds the take as the user corrected it, selected; the learn shortcut copies the
+# selection, the correction is kept with the take, the pill shows the notice and the clipboard holds
+# the sentinel again. Usage: scripts/smoke-desktop-linux.sh [out.png]
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . scripts/lib/build-env.sh && voltip_load_build_env
 . scripts/lib/smoke-dictation.sh
 out=${1:-docs/acceptance/screens/tauri/desktop-linux-xvfb.png}
-display=:99
+# Another display when :99 is taken on this machine (VOLTIP_SMOKE_DISPLAY=:197).
+display=${VOLTIP_SMOKE_DISPLAY:-:99}
 screen=1280x800x24
 window_timeout=90
 
@@ -25,6 +29,12 @@ for c in python3 /usr/bin/python3; do
   if command -v "$c" >/dev/null && "$c" -c "import PIL" >/dev/null 2>&1; then PY=$c; break; fi
 done
 [ -n "$PY" ] || { echo "smoke-desktop-linux: no python3 with Pillow (apt install python3-pil)"; exit 2; }
+# The corrected text sits in a Tk entry: an X11 text widget that takes Ctrl+Insert as copy.
+TK_PY=""
+for c in python3 /usr/bin/python3; do
+  if command -v "$c" >/dev/null && "$c" -c "import tkinter" >/dev/null 2>&1; then TK_PY=$c; break; fi
+done
+[ -n "$TK_PY" ] || { echo "smoke-desktop-linux: no python3 with tkinter (apt install python3-tk)"; exit 2; }
 # The debug binary embeds apps/desktop/dist (custom-protocol); rebuild it first or the window shows
 # whatever the last `vite build` produced.
 pnpm --filter @voltip/desktop run build >/dev/null
@@ -33,8 +43,9 @@ mkdir -p "$(dirname "$out")"
 data=$(mktemp -d)
 app_pid=""
 xvfb_pid=""
+tk_pid=""
 cleanup() {
-  voltip_smoke_stop "$app_pid" "$xvfb_pid" "${VOLTIP_SMOKE_ASR_PID:-}"
+  voltip_smoke_stop "$tk_pid" "$app_pid" "$xvfb_pid" "${VOLTIP_SMOKE_ASR_PID:-}"
   voltip_smoke_pulse_mic_stop
   # Keep the app log next to the screenshots (CI uploads it; git ignores it).
   [ -f "$data/app.log" ] && sed -E 's/\x1b\[[0-9;]*m//g' "$data/app.log" > "${out%.png}-app.log" 2>/dev/null || true
@@ -52,7 +63,8 @@ sentinel="voltip-smoke-sentinel-$$"
 voltip_smoke_tone_wav "$data/tone.wav" 8
 voltip_smoke_mock_asr_start "$data" "$spoken"
 voltip_smoke_pulse_mic_start "$data" "voltip_smoke_$$"
-voltip_smoke_settings "$data/data/voltip/settings.json" "$VOLTIP_SMOKE_ASR_URL" paste true
+learn_hotkey="Ctrl+Alt+L"
+voltip_smoke_settings "$data/data/voltip/settings.json" "$VOLTIP_SMOKE_ASR_URL" paste true "$learn_hotkey"
 
 # VOLTIP_DEV_OPAQUE_OVERLAY: Xvfb has no compositor, so an RGBA (transparent) window renders as a
 # black rectangle; the debug-only knob draws the pill window opaque so the capture shows the pill.
@@ -144,7 +156,7 @@ if ! timeout 5 sh -c 'until [ "$(DISPLAY=$2 xclip -o -selection clipboard 2>/dev
 fi
 echo "smoke-desktop-linux: pasted via $(voltip_smoke_plain "$data/app.log" | grep -oE 'pasted .*tool=[a-z0-9-]+' | grep -oE 'tool=[a-z0-9-]+' | head -1 || echo 'tool=?'), clipboard restored to the sentinel"
 # The outcome dwells 2.5 s (a failure that keeps its text 6 s), then the core goes idle and the pill hides.
-if ! timeout 15 sh -c 'until [ "$( (DISPLAY=:99 xdotool search --onlyvisible --name "^Voltip Overlay$" || true) | wc -l)" = "0" ]; do sleep 0.5; done'; then
+if ! timeout 15 sh -c 'until [ "$( (DISPLAY=$1 xdotool search --onlyvisible --name "^Voltip Overlay$" || true) | wc -l)" = "0" ]; do sleep 0.5; done' _ "$display"; then
   echo "smoke-desktop-linux: pill did not hide after the outcome dwell"; exit 1
 fi
 echo "smoke-desktop-linux: overlay visible while held=$overlay_visible, hidden after outcome=yes"
@@ -181,6 +193,62 @@ if [ "$asr_after" != "$asr_before" ]; then
   echo "smoke-desktop-linux: a cancelled take still reached the ASR ($asr_before → $asr_after requests)"; exit 1
 fi
 echo "smoke-desktop-linux: Escape cancelled the take, nothing sent, cancel key released"
+# 从选中文字学习 (docs/dictation.md §35): the user corrected the take in the application — a Tk
+# entry holds it corrected, selected and focused — and presses the learn shortcut. On X11 it fires
+# once the key is up (a grabbed key swallows the copy chord, §19); the copy chord reads the
+# selection, the take it corrects keeps the correction, the pill shows the notice, and the
+# clipboard holds the sentinel again.
+corrected="Voltip 冒烟测试"
+if ! voltip_smoke_plain "$data/app.log" | grep -q 'learn hotkey registered'; then
+  echo "smoke-desktop-linux: the learn shortcut was not registered"; voltip_smoke_plain "$data/app.log" | grep -iE "hotkey" | tail -6; exit 1
+fi
+if ! timeout 15 sh -c 'until [ "$( (DISPLAY=$1 xdotool search --onlyvisible --name "^Voltip Overlay$" || true) | wc -l)" = "0" ]; do sleep 0.5; done' _ "$display"; then
+  echo "smoke-desktop-linux: the pill did not hide after the cancelled take"; exit 1
+fi
+DISPLAY=$display "$TK_PY" - "$corrected" >"$data/tk.log" 2>&1 <<'PYTK' &
+import sys, tkinter as tk
+root = tk.Tk()
+root.title("voltip-learn-target")
+root.geometry("+640+160")
+entry = tk.Entry(root, width=40)
+entry.insert(0, sys.argv[1])
+entry.pack()
+def ready():
+    entry.focus_force()
+    entry.select_range(0, "end")
+    print("ready", flush=True)
+root.after(200, ready)
+root.mainloop()
+PYTK
+tk_pid=$!
+if ! timeout 15 sh -c 'until grep -q "^ready" "$1"; do sleep 0.2; done' _ "$data/tk.log"; then
+  echo "smoke-desktop-linux: the Tk entry did not come up"; cat "$data/tk.log"; exit 1
+fi
+learned_before=$(voltip_smoke_plain "$data/app.log" | grep -c 'learn selection outcome=' || true)
+DISPLAY=$display xdotool key ctrl+alt+l
+if ! timeout 15 sh -c 'until [ "$(sed -E "s/\x1b\[[0-9;]*m//g" "$1" | grep -c "learn selection outcome=")" -gt "$2" ]; do sleep 0.2; done' _ "$data/app.log" "$learned_before"; then
+  echo "smoke-desktop-linux: the learn shortcut had no outcome"; voltip_smoke_plain "$data/app.log" | grep -iE "learn|selection|copy" | tail -8; exit 1
+fi
+learned=$(voltip_smoke_plain "$data/app.log" | grep -oE 'learn selection outcome="[a-z_]+"' | tail -1)
+if [ "$learned" != 'learn selection outcome="learned"' ]; then
+  echo "smoke-desktop-linux: nothing learned from the selection ($learned)"; voltip_smoke_plain "$data/app.log" | grep -iE "learn|selection" | tail -8; exit 1
+fi
+fixed=$(voltip_smoke_last_corrected "$data/data/voltip/history.sqlite3")
+if [ "$fixed" != "$(printf '%s\t%s\tselection' "$spoken" "$corrected")" ]; then
+  echo "smoke-desktop-linux: the take does not keep the correction: ${fixed:-<none>}"; exit 1
+fi
+if ! timeout 5 sh -c 'until [ "$(DISPLAY=$2 xclip -o -selection clipboard 2>/dev/null)" = "$1" ]; do sleep 0.1; done' _ "$sentinel" "$display"; then
+  echo "smoke-desktop-linux: clipboard not restored after the selection copy: $(DISPLAY=$display xclip -o -selection clipboard 2>/dev/null | head -c 80)"; exit 1
+fi
+if ! timeout 10 sh -c 'until [ "$( (DISPLAY=$1 xdotool search --onlyvisible --name "^Voltip Overlay$" || true) | wc -l)" != "0" ]; do sleep 0.2; done' _ "$display"; then
+  echo "smoke-desktop-linux: the pill did not show the learn notice"; exit 1
+fi
+# The pill's first paint after it maps; the WebView gives no event we can wait on.
+sleep 1
+DISPLAY=$display scrot --overwrite "${out%.png}-learn-notice.png"
+echo "smoke-desktop-linux: learned from the selection, the take keeps \"$corrected\", clipboard restored to the sentinel, the pill shows the notice"
+voltip_smoke_stop "$tk_pid"
+tk_pid=""
 grep -iE "dictation" "$data/app.log" | sed -E 's/\x1b\[[0-9;]*m//g' | tail -4
 if ! kill -0 "$app_pid" 2>/dev/null; then
   echo "smoke-desktop-linux: app exited early"; cat "$data/app.log"; exit 1

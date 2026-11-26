@@ -9,6 +9,7 @@ import {
   suggestionTarget,
 } from "@voltip/shared";
 import {
+  Badge,
   Button,
   Card,
   Checkbox,
@@ -389,6 +390,7 @@ export interface SuggestionsPanelProps {
 export function SuggestionsPanel({ view, onShowEntry }: SuggestionsPanelProps) {
   const { t, locale } = useI18n();
   const { navigate } = useRouter();
+  const learnHotkey = useUiState().settings.learn_hotkey;
   const now = useNow();
   const { load, visible, actions, expanded, selectable, checked } = view;
   const answer = load.kind === "answered" ? load.answer : undefined;
@@ -446,7 +448,18 @@ export function SuggestionsPanel({ view, onShowEntry }: SuggestionsPanelProps) {
       mono: false,
       // The header and a short pair stay whole when the window is narrow.
       minWidth: 160,
-      cell: (s) => <Pair heard={s.heard} polished={s.polished} testId="suggestion-pair" />,
+      cell: (s) => (
+        <span className="flex min-w-0 items-center gap-2">
+          <Pair heard={s.heard} polished={s.polished} testId="suggestion-pair" />
+          {/* docs/dictation.md §35: where the pair came from, both when both did. */}
+          <span className="flex shrink-0 gap-1" data-testid="suggestion-sources">
+            {s.count > s.from_edits && <Badge>{t("dictionary.suggestions.source.polish")}</Badge>}
+            {s.from_edits > 0 && (
+              <Badge tone="info">{t("dictionary.suggestions.source.edit")}</Badge>
+            )}
+          </span>
+        </span>
+      ),
     },
     {
       id: "count",
@@ -560,7 +573,7 @@ export function SuggestionsPanel({ view, onShowEntry }: SuggestionsPanelProps) {
         }>
         {t("dictionary.suggestions.empty.historyOff")}
       </EmptyState>
-    ) : load.answer.refined === 0 ? (
+    ) : load.answer.refined === 0 && load.answer.edited === 0 ? (
       <EmptyState title={t("dictionary.suggestions.empty.noPolishedTitle")}>
         {t("dictionary.suggestions.empty.noPolished")}
       </EmptyState>
@@ -580,7 +593,14 @@ export function SuggestionsPanel({ view, onShowEntry }: SuggestionsPanelProps) {
       </EmptyState>
     ) : (
       <EmptyState title={t("dictionary.suggestions.empty.noneTitle")}>
-        {t("dictionary.suggestions.empty.none", { n: load.answer.refined })}
+        {load.answer.edited === 0
+          ? t("dictionary.suggestions.empty.none", { n: load.answer.refined })
+          : load.answer.refined === 0
+            ? t("dictionary.suggestions.empty.noneEdited", { n: load.answer.edited })
+            : t("dictionary.suggestions.empty.noneBoth", {
+                refined: load.answer.refined,
+                edited: load.answer.edited,
+              })}
       </EmptyState>
     );
 
@@ -593,6 +613,7 @@ export function SuggestionsPanel({ view, onShowEntry }: SuggestionsPanelProps) {
     const hiddenOnce = view.filter === "repeated" ? answer.total - answer.repeated : 0;
     return [
       t("dictionary.suggestions.footer", { n: answer.scanned, refined: answer.refined }),
+      ...(answer.edited > 0 ? [t("dictionary.suggestions.edited", { n: answer.edited })] : []),
       ...(answer.skipped > 0 ? [t("dictionary.suggestions.skipped", { n: answer.skipped })] : []),
       inView > listed
         ? t("dictionary.suggestions.more", { shown: listed, total: inView })
@@ -634,8 +655,25 @@ export function SuggestionsPanel({ view, onShowEntry }: SuggestionsPanelProps) {
           {t("dictionary.suggestions.explain")}
         </div>
         <div className="mt-1 text-[11px] text-fg-subtle">
-          {t("dictionary.suggestions.undoNote")}
+          {t("dictionary.suggestions.filterNote")} {t("dictionary.suggestions.undoNote")}
         </div>
+        {/* docs/dictation.md §35: how the user's corrections get here, while no shortcut is set. */}
+        {learnHotkey == null && (
+          <div
+            className="mt-2 flex flex-wrap items-center gap-2"
+            data-testid="suggestions-learn-hint">
+            <span className="text-[12px] leading-5 text-fg-muted">
+              {t("dictionary.suggestions.hint")}
+            </span>
+            <Button
+              size="sm"
+              onClick={() => {
+                navigate({ name: "settings", section: "hotkey" });
+              }}>
+              {t("dictionary.suggestions.hintSet")}
+            </Button>
+          </div>
+        )}
       </Card>
       <Panel eyebrow={t("dictionary.suggestions.list")} padding="sm" right={tools}>
         <SelectionBar view={view} />
