@@ -3,10 +3,12 @@
 # On 2026-10-01 azure.archive.ubuntu.com served the desktop smoke's packages at a few kB/s, twice
 # in one day: the step ran for 48 and 35 minutes, the job never reached its tests, and each time
 # the release candidate waiting for CI Success stalled until the run was cancelled and rerun.
+# On 2026-11-18 a runner fetched from us-east-2.ec2.archive.ubuntu.com, which a rewrite of the
+# Azure mirror alone left in place: all three attempts used the same slow mirror (PR #260).
 #
 # The downloads (`apt-get update`, then `install --download-only`) get a deadline per attempt;
-# after a failed or late attempt the next one fetches from archive.ubuntu.com instead of the Azure
-# mirror. The install itself, from the downloaded files, has no deadline: a dpkg run stopped
+# after a failed or late attempt the next one fetches from archive.ubuntu.com instead of the
+# runner's regional mirror. The install itself, from the downloaded files, has no deadline: a dpkg run stopped
 # halfway would leave the system broken.
 #
 # Usage: .github/scripts/apt-install.sh <package>...
@@ -17,12 +19,13 @@ set -euo pipefail
 deadline=${APT_ATTEMPT_SECONDS:-600}
 opts=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Dpkg::Use-Pty=0)
 
-# The runner images name the Azure mirror in a mirror list or in the sources themselves.
+# The runner images name a regional mirror (azure.archive.ubuntu.com, or one such as
+# us-east-2.ec2.archive.ubuntu.com) in a mirror list or in the sources themselves.
 use_main_archive() {
 	local file
 	for file in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
 		[ -f "$file" ] || continue
-		sudo sed -i 's#azure\.archive\.ubuntu\.com#archive.ubuntu.com#g' "$file"
+		sudo sed -E -i 's#//[a-z0-9.-]+\.archive\.ubuntu\.com#//archive.ubuntu.com#g' "$file"
 	done
 }
 

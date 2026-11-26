@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import tomllib
 import unittest
 from pathlib import Path
@@ -726,8 +727,41 @@ class AptInstalls(unittest.TestCase):
         # from the downloaded files is never cut short.
         self.assertIn('sudo timeout "$deadline" apt-get "${opts[@]}" update', body)
         self.assertIn("--download-only", body)
-        self.assertIn("s#azure\\.archive\\.ubuntu\\.com#archive.ubuntu.com#g", body)
         self.assertIn('sudo apt-get "${opts[@]}" install --yes --no-install-recommends "$@"', body)
+
+    def test_regression_a_later_attempt_leaves_any_regional_mirror(self) -> None:
+        # 2026-11-18: the desktop smoke of PR #260 fetched from us-east-2.ec2.archive.ubuntu.com,
+        # which the rewrite (Azure's mirror only) left in place. All three attempts used the same
+        # slow mirror and the job failed after 30 minutes: "apt-get could not download the
+        # packages in three attempts" (run 44296737949).
+        body = (ROOT / ".github/scripts/apt-install.sh").read_text(encoding="utf-8")
+        programs = re.findall(r"sudo sed (-E )?-i '([^']+)' \"\$file\"", body)
+        self.assertEqual(len(programs), 1, "one sed program rewrites the mirrors")
+        extended, program = programs[0]
+        sources = [
+            "http://azure.archive.ubuntu.com/ubuntu/\tpriority:1",
+            "URIs: http://us-east-2.ec2.archive.ubuntu.com/ubuntu/",
+            "deb http://eu-west-1.ec2.archive.ubuntu.com/ubuntu noble main",
+            "https://archive.ubuntu.com/ubuntu/\tpriority:2",
+            "URIs: http://security.ubuntu.com/ubuntu/",
+            "URIs: http://ports.ubuntu.com/ubuntu-ports/",
+        ]
+        flags = ["-E"] if extended else []
+        rewritten = subprocess.run(
+            ["sed", *flags, program], input="\n".join(sources) + "\n", capture_output=True, text=True, check=True
+        ).stdout.splitlines()
+        self.assertEqual(
+            rewritten,
+            [
+                "http://archive.ubuntu.com/ubuntu/\tpriority:1",
+                "URIs: http://archive.ubuntu.com/ubuntu/",
+                "deb http://archive.ubuntu.com/ubuntu noble main",
+                # The main archive and the security and ports archives stay as they are.
+                "https://archive.ubuntu.com/ubuntu/\tpriority:2",
+                "URIs: http://security.ubuntu.com/ubuntu/",
+                "URIs: http://ports.ubuntu.com/ubuntu-ports/",
+            ],
+        )
 
 
 if __name__ == "__main__":
