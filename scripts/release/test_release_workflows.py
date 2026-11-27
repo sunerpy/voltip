@@ -630,6 +630,9 @@ class ContinuousIntegration(unittest.TestCase):
         self.assertLess(before, upload)
         self.assertLess(upload, passive)
         self.assertLess(passive, silent)
+        # The silent run still gets its verdict after a failed passive one, as in one step before.
+        self.assertIn("id: update-passive", steps[passive])
+        self.assertIn("if: ${{ !cancelled() && steps.update-passive.outcome != 'skipped' }}", steps[silent])
         # A rerun's attempt uploads its own copy (artifact names are unique within a run).
         self.assertIn("name: windows-update-before-${{ github.run_attempt }}", steps[upload])
         for index in (before, passive, silent):

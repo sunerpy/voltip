@@ -539,9 +539,10 @@ jobs:
     name: windows-x64 · native run (Windows Server)
     needs: [windows-cross]
     runs-on: windows-2025
-    # A run takes 3.5 to 6.5 minutes (November 2026: median 205 s, longest 395 s of 154). The cap
-    # stays close to that because a runner the platform loses ends at the cap plus five minutes
+    # A run takes about three minutes (2026-10-01 to 11-27: median 169 s, longest 395 s of 428). The
+    # cap stays close to that because a runner the platform loses ends at the cap plus five minutes
     # (actions/runner-images#14938), not 45 minutes after it froze; see the in-app update steps.
+    # The price: a models cache miss on a slow huggingface.co can now run out of time.
     # The upgrade probe (on demand) adds its rounds and the relay's build.
     timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.upgrade_probe && 120 || 20 }}
     defaults:
@@ -740,12 +741,15 @@ jobs:
           retention-days: 7
 
       - name: NSIS installer — an in-app update shows no window and opens Voltip again (passive, as 0.1.6 and earlier run it)
+        id: update-passive
         timeout-minutes: 6
         run: |
           $setup = Get-ChildItem dist-windows -Filter '*-setup.exe' | Select-Object -First 1
           ./scripts/smoke-windows-update.ps1 -Setup $setup.FullName -OutDir smoke-windows-update -Run passive
 
+      # After a failed passive run too, as when both ran in one step: each run gets its verdict.
       - name: NSIS installer — an in-app update shows no window and opens Voltip again (silent, as later releases run it)
+        if: ${{ !cancelled() && steps.update-passive.outcome != 'skipped' }}
         timeout-minutes: 6
         run: |
           $setup = Get-ChildItem dist-windows -Filter '*-setup.exe' | Select-Object -First 1
