@@ -150,6 +150,8 @@ import {
   HISTORY_MIN_KEEP,
   MIN_SERVE_PORT,
   MAX_MINUTES_CHOICES,
+  MIN_DONE_DWELL_MS,
+  MAX_DONE_DWELL_MS,
   HISTORY_RECENT,
   type HistoryHits,
   type HistoryPage,
@@ -2685,6 +2687,13 @@ export class MockBackend implements Backend {
           this.emit({ type: "error", message: `${id}.llm_api: 只有自定义服务商可以选择接口类型` });
           return;
         }
+      }
+      if (engines.done_dwell_ms < MIN_DONE_DWELL_MS || engines.done_dwell_ms > MAX_DONE_DWELL_MS) {
+        this.emit({
+          type: "error",
+          message: `done_dwell_ms: ${MIN_DONE_DWELL_MS}–${MAX_DONE_DWELL_MS}`,
+        });
+        return;
       }
       const settings: Settings = {
         ...this.state.settings,
@@ -5891,11 +5900,7 @@ export class MockBackend implements Backend {
       if (this.role === "phone") this.phoneClipboard = text;
       this.emitPhase(done);
       const card = switched || refused || unavailable || check === "not_written";
-      this.dwellOrPin(
-        card ? MOCK_DICTATION_FAILED_DWELL_MS : MOCK_DICTATION_DWELL_MS,
-        session,
-        card,
-      );
+      this.dwellOrPin(card ? MOCK_DICTATION_FAILED_DWELL_MS : this.doneDwellMs(), session, card);
     };
     this.laterDictation(asrMs, () => {
       if (this.state.dictation.session !== session) return;
@@ -6019,7 +6024,7 @@ export class MockBackend implements Backend {
           });
           const card = check === "not_written";
           this.dwellOrPin(
-            card ? MOCK_DICTATION_FAILED_DWELL_MS : MOCK_DICTATION_DWELL_MS,
+            card ? MOCK_DICTATION_FAILED_DWELL_MS : this.doneDwellMs(),
             session,
             card,
           );
@@ -6085,6 +6090,13 @@ export class MockBackend implements Backend {
     }
     this.pinned = undefined;
     this.dwell(ms, session);
+  }
+
+  private doneDwellMs(): number {
+    return Math.min(
+      MAX_DONE_DWELL_MS,
+      Math.max(MIN_DONE_DWELL_MS, this.state.settings.engines.done_dwell_ms),
+    );
   }
 
   private dwell(ms: number, session: number) {

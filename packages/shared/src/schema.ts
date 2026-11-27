@@ -260,6 +260,15 @@ export const fallbackSettingsSchema = z.object({
 });
 export type FallbackSettings = z.infer<typeof fallbackSettingsSchema>;
 
+/** `voltip_core::DEFAULT_DONE_DWELL_MS`: default dwell of a successful insert without a card, ms. */
+export const DEFAULT_DONE_DWELL_MS = 2500;
+/** `voltip_core::MIN_DONE_DWELL_MS`: shortest configurable dwell of a successful insert, ms. */
+export const MIN_DONE_DWELL_MS = 200;
+/** `voltip_core::MAX_DONE_DWELL_MS`: longest configurable dwell of a successful insert, ms. */
+export const MAX_DONE_DWELL_MS = 10_000;
+/** `voltip_core::DONE_DWELL_MS_CHOICES`: preset choices offered in Settings → Dictation. */
+export const DONE_DWELL_MS_CHOICES = [300, 500, 800, 1000, 1500, 2500, 4000] as const;
+
 /** `Settings.engines` (`voltip_core::engines::EngineSettings`, `#[serde(default)]`): one provider
  *  per service, per-provider model / endpoint choices, the on-device runtime and the pipeline
  *  switches. Keys never live here: they go through `provider_key_set` into the system keychain. */
@@ -311,6 +320,13 @@ export const engineSettingsSchema = z.object({
   /** 识别结果卡片常驻 (§28, user decision D13): a card stays until it is closed or the next take;
    *  off, it leaves after its usual time. Rust omits the default. */
   result_cards_stay: z.boolean().default(true),
+  /** How long the overlay notice stays after a successful insert without a card, ms; Rust omits the default. */
+  done_dwell_ms: z
+    .number()
+    .int()
+    .min(MIN_DONE_DWELL_MS)
+    .max(MAX_DONE_DWELL_MS)
+    .default(DEFAULT_DONE_DWELL_MS),
   /** The recognition fallback models (docs/dictation.md §3.5); absent = off, none listed. */
   asr_fallback: fallbackSettingsSchema.optional(),
   /** The clean-up (and voice edit) fallback models; absent = off, none listed. */
@@ -338,6 +354,7 @@ export function defaultEngineSettings(): EngineSettings {
     switched_window: "copy_only",
     insert_check: true,
     result_cards_stay: true,
+    done_dwell_ms: DEFAULT_DONE_DWELL_MS,
   };
 }
 

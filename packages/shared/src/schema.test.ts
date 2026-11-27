@@ -517,7 +517,11 @@ describe("dictation contract (docs/dictation.md)", () => {
       // docs/dictation.md §28: both on by default (D13).
       insert_check: true,
       result_cards_stay: true,
+      done_dwell_ms: 2500,
     });
+    expect(engineSettingsSchema.safeParse({ done_dwell_ms: 199 }).success).toBe(false);
+    expect(engineSettingsSchema.safeParse({ done_dwell_ms: 10_001 }).success).toBe(false);
+    expect(engineSettingsSchema.parse({ done_dwell_ms: 500 }).done_dwell_ms).toBe(500);
     // `#[serde(default)]` everywhere: an empty block is the defaults, an empty status the empty one.
     expect(engineSettingsSchema.parse({})).toEqual(defaultEngineSettings());
     expect(engineStatusSchema.parse({})).toEqual(emptyEngineStatus());

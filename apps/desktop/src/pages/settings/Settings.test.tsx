@@ -473,6 +473,17 @@ describe("Settings · 听写 · 插入确认与结果卡片 (docs/dictation.md s
       "aria-checked",
       "false",
     );
+    const dwell = within(pane).getByTestId("dictation-done-dwell");
+    expect(dwell).toHaveValue("2500");
+    await user.selectOptions(dwell, "500");
+    await waitFor(() => {
+      expect(backend.peek().settings.engines).toEqual({
+        ...defaultEngineSettings(),
+        insert_check: false,
+        result_cards_stay: false,
+        done_dwell_ms: 500,
+      });
+    });
   });
 });
 

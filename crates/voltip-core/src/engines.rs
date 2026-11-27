@@ -370,6 +370,11 @@ pub struct EngineSettings {
     /// dwell. On by default and then not written; files written before it read as on.
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
     pub result_cards_stay: bool,
+    /// How long the overlay pill stays after a successful insert without a result card, in
+    /// milliseconds (`MIN_DONE_DWELL_MS..=MAX_DONE_DWELL_MS`; `DEFAULT_DONE_DWELL_MS` by default
+    /// and then not written).
+    #[serde(default = "default_done_dwell_ms", skip_serializing_if = "is_default_done_dwell_ms")]
+    pub done_dwell_ms: u32,
     /// The recognition models to try after the selected one runs out of quota (docs/dictation.md §3.5).
     #[serde(skip_serializing_if = "FallbackSettings::is_default")]
     pub asr_fallback: FallbackSettings,
@@ -427,6 +432,7 @@ impl Default for EngineSettings {
             switched_window: SwitchedWindow::CopyOnly,
             insert_check: true,
             result_cards_stay: true,
+            done_dwell_ms: default_done_dwell_ms(),
             asr_fallback: FallbackSettings::default(),
             llm_fallback: FallbackSettings::default(),
         }
@@ -441,6 +447,14 @@ fn default_true() -> bool {
 /// A switch at its default (on): not written to the settings file.
 fn is_true(on: &bool) -> bool {
     *on
+}
+
+fn default_done_dwell_ms() -> u32 {
+    crate::dictation::DEFAULT_DONE_DWELL_MS
+}
+
+fn is_default_done_dwell_ms(ms: &u32) -> bool {
+    *ms == crate::dictation::DEFAULT_DONE_DWELL_MS
 }
 
 impl EngineSettings {
@@ -784,6 +798,8 @@ pub struct ResolvedEngines {
     pub insert_check: bool,
     /// `EngineSettings.result_cards_stay` (docs/dictation.md §28).
     pub result_cards_stay: bool,
+    /// `EngineSettings.done_dwell_ms`.
+    pub done_dwell_ms: u32,
     /// The recognition fallback models (docs/dictation.md §3.5).
     pub asr_fallback: FallbackPlan,
     /// The clean-up fallback models.
@@ -1124,6 +1140,7 @@ impl ResolvedEngines {
             switched_window: settings.switched_window,
             insert_check: settings.insert_check,
             result_cards_stay: settings.result_cards_stay,
+            done_dwell_ms: settings.done_dwell_ms,
             asr_fallback,
             refine_fallback,
             metering: None,
@@ -2940,5 +2957,18 @@ mod tests {
         let saved = serde_json::to_value(&custom(Some(LlmApi::Responses), Some(ReasoningEffort::Medium)).providers[&ProviderId::Custom]).unwrap();
         assert_eq!((saved["llm_api"].as_str(), saved["llm_reasoning"].as_str()), (Some("responses"), Some("medium")));
         assert!(serde_json::to_value(ProviderSettings::default()).unwrap().as_object().unwrap().is_empty(), "unset choices are not written");
+    }
+
+    #[test]
+    fn done_dwell_ms_defaults_omits_default_and_round_trips_custom() {
+        let empty: EngineSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(empty.done_dwell_ms, crate::dictation::DEFAULT_DONE_DWELL_MS);
+        let default_written = serde_json::to_value(&empty).unwrap();
+        assert!(default_written.get("done_dwell_ms").is_none(), "the default dwell is omitted on disk");
+        let custom: EngineSettings = serde_json::from_str(r#"{"done_dwell_ms":500}"#).unwrap();
+        assert_eq!(custom.done_dwell_ms, 500);
+        assert_eq!(serde_json::to_value(&custom).unwrap()["done_dwell_ms"], serde_json::json!(500));
+        let resolved = ResolvedEngines::resolve(&custom, &UserSecrets::default(), &BuiltIn::EMPTY);
+        assert_eq!(resolved.done_dwell_ms, 500);
     }
 }

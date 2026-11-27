@@ -25,7 +25,10 @@ use voltip_transport::{ConnectionState, LinkConfig, LinkEvent, ReconnectPolicy, 
 
 use crate::dictation::activation::{Activation, ActivationConfig, ActivationMachine, Edge, EdgeSource, Intent, PhaseHint};
 use crate::dictation::engine::{Effect, Internal};
-use crate::dictation::{DictationEngine, DictationError, DictationPhase, DictationPorts, DictationStatus, LevelFrame, RefineHints, SelectionTiming, TakeKind};
+use crate::dictation::{
+    DictationEngine, DictationError, DictationPhase, DictationPorts, DictationStatus, LevelFrame, MAX_DONE_DWELL_MS, MIN_DONE_DWELL_MS, RefineHints,
+    SelectionTiming, TakeKind,
+};
 use crate::engines::{
     BuiltIn, EngineSettings, EngineStatus, FallbackSettings, GlossaryRoute, MAX_FALLBACK_MODELS, MAX_LOCAL_THREADS, ProviderId, ResolvedEngines, ServiceKind,
     UserSecrets,
@@ -2029,6 +2032,9 @@ impl Runtime {
             && !(1..=MAX_LOCAL_THREADS).contains(&threads)
         {
             return Err(CoreError::Invalid(format!("local_threads: 1–{MAX_LOCAL_THREADS}")));
+        }
+        if !(MIN_DONE_DWELL_MS..=MAX_DONE_DWELL_MS).contains(&engines.done_dwell_ms) {
+            return Err(CoreError::Invalid(format!("done_dwell_ms: {MIN_DONE_DWELL_MS}–{MAX_DONE_DWELL_MS}")));
         }
         for kind in [ServiceKind::Asr, ServiceKind::Llm] {
             check_fallback_models(kind, engines.fallback(kind), self.models.is_some().then_some(self.library.as_slice()))?;

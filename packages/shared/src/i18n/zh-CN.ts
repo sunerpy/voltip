@@ -2739,6 +2739,9 @@ export const zhCN = {
       switchedHelp:
         "识别或润色期间切换到了其他窗口时，默认只把文字复制到剪贴板，避免粘贴到错误的位置。语音编辑总是只复制。",
       switched: { copyOnly: "只复制", pasteHere: "粘贴到当前窗口" },
+      doneDwellLabel: "插入成功提示停留",
+      doneDwellHelp: "文字成功插入后，悬浮窗提示显示的时长；结果卡片、取消和报错不受影响。",
+      doneDwellSeconds: "{n} 秒",
     },
     microphone: {
       title: "录音来源",

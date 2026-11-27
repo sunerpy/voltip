@@ -755,6 +755,7 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     expect(typeof engines.vad_trim).toBe("boolean");
     // docs/dictation.md §28: both switches off in the fixture, so Rust sends them (it omits `true`).
     expect([engines.insert_check, engines.result_cards_stay]).toEqual([false, false]);
+    expect(engines.done_dwell_ms).toBe(500);
     expect(OUTPUT_MODES).toContain(parsed.engines.effective_output_mode);
     expect(ACTIVATIONS).toContain(parsed.settings.activation);
     const rawSettings = z

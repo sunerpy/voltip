@@ -1130,6 +1130,18 @@ pub const MIN_RECORDING: Duration = Duration::from_millis(300);
 pub const MAX_EDIT_SELECTION_CHARS: usize = 2000;
 /// How long a terminal state (`Done` / `Cancelled` / `Failed` without text) stays before `Idle`.
 pub const DWELL: Duration = Duration::from_millis(2500);
+/// Default dwell of a successful insert (`Done` without a result card), in ms (`DWELL`).
+pub const DEFAULT_DONE_DWELL_MS: u32 = 2500;
+/// Shortest configurable dwell for a successful insert, in ms.
+pub const MIN_DONE_DWELL_MS: u32 = 200;
+/// Longest configurable dwell for a successful insert, in ms.
+pub const MAX_DONE_DWELL_MS: u32 = 10_000;
+/// Preset choices offered in Settings → Dictation for `EngineSettings.done_dwell_ms`.
+pub const DONE_DWELL_MS_CHOICES: [u32; 7] = [300, 500, 800, 1000, 1500, 2500, 4000];
+/// Clamped dwell of a successful insert (`Done` without a result card).
+pub fn done_dwell(ms: u32) -> Duration {
+    Duration::from_millis(u64::from(ms.clamp(MIN_DONE_DWELL_MS, MAX_DONE_DWELL_MS)))
+}
 /// How long `Failed` with recoverable text stays before `Idle` (the pill offers "copy").
 pub const DWELL_WITH_TEXT: Duration = Duration::from_secs(6);
 /// Minimum interval between two `Listening.live` updates from partial results (12.5 Hz).
@@ -1163,6 +1175,10 @@ mod tests {
         assert_eq!(serde_json::to_string(&Via::Clipboard).unwrap(), r#""clipboard""#);
         assert_eq!(serde_json::from_str::<Via>(r#""paste""#).unwrap(), Via::Paste);
         assert!(MIN_RECORDING < DWELL && DWELL < DWELL_WITH_TEXT && DWELL_WITH_TEXT < MAX_RECORDING);
+        assert_eq!(done_dwell(DEFAULT_DONE_DWELL_MS), DWELL);
+        assert_eq!(done_dwell(50), Duration::from_millis(u64::from(MIN_DONE_DWELL_MS)));
+        assert_eq!(done_dwell(20_000), Duration::from_millis(u64::from(MAX_DONE_DWELL_MS)));
+        assert!(DONE_DWELL_MS_CHOICES.contains(&DEFAULT_DONE_DWELL_MS));
         let frame = LevelFrame { rms_dbfs: -20.0, peak_dbfs: -3.0, clipping: false, sample_rate_hz: 16_000, channels: 1, seq: 7 };
         let json = serde_json::to_string(&frame).unwrap();
         assert!(json.contains(r#""rms_dbfs":-20.0"#) && json.contains(r#""seq":7"#), "{json}");

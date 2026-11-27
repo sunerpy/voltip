@@ -88,7 +88,7 @@ Idle ──DictationStart──▶ Listening{started_at, ready, live} ──Dict
 - 空录音（< 300 ms 或 RMS 全静音）→ `Failed{ code: NoSpeech, message: "没有听到声音", text: None }`，不上传。
 - `Failed.code` 是机器可读的阶段码（`no_speech` / `audio` / `asr` / `refine` / `inject` / `unknown`），由 `DictationError` 的变体决定，前端据此本地化；`message` 保留中文原因给日志与兜底显示。
 - 润色失败**不**阻断：记录 `refine_error`，用 ASR 原文注入，`Done.refined = false`。
-- `Done` / `Failed` / `Cancelled` 停留 2.5 s 后核心自动回 `Idle`（`Failed` 带 `text` 时停留 6 s，因窗口切换只复制了文字的 `Done` 也是 6 s，§14.3）。再次 `DictationStart` 立即打断停留。桌面上的结果卡片（确定没写进去的 `Done`、窗口已切换的 `Done`、GNOME 未获准远程交互或远程交互这次不可用的 `Done`（§14.9）、有文字的 `Failed`、录音已保留的无文字 `Failed`）默认不计时，停到 `DictationDismiss` 或下一次听写；设置「识别结果卡片常驻」关闭时按上面的时长（§28.4）。
+- `Done` / `Failed` / `Cancelled` 默认停留 2.5 s 后核心自动回 `Idle`（非卡片 `Done` 的停留时长由 `EngineSettings.done_dwell_ms` 配置，默认 2500 ms，范围 200–10000 ms；`Failed` 带 `text` 时停留 6 s，因窗口切换只复制了文字的 `Done` 也是 6 s，§14.3）。再次 `DictationStart` 立即打断停留。桌面上的结果卡片（确定没写进去的 `Done`、窗口已切换的 `Done`、GNOME 未获准远程交互或远程交互这次不可用的 `Done`（§14.9）、有文字的 `Failed`、录音已保留的无文字 `Failed`）默认不计时，停到 `DictationDismiss` 或下一次听写；设置「识别结果卡片常驻」关闭时按上面的时长（§28.4）。
 - `Processing` 中的 `DictationCancel` 与送出文字由这次的 `InsertGate` 决定（§14.3）：取消先到，什么都不送出，`Cancelled`；送出已经开始，取消不起作用，这次照常以同样的 `Done` 和历史结束。
 - 每次到达 `Done` 或带文本的 `Failed` 都追加一条 `HistoryEntry`。
 - `Listening.ready` 在设备送来第一批样本时变真（`CaptureReady`）。标记从音频线程经一个 oneshot 送出（`DictationEngine::open_capture`）：发送从不阻塞，也不会遇到满的队列。打开设备的任务在上报 `CaptureStarted` 之前转交已经到达的标记，否则由一个等待的任务稍后转交，转交用 `send().await`，从不 `try_send`。此前音频线程直接对核心的有界内部队列 `try_send`，队列满时标记丢失：这一次一直不就绪，悬浮窗的计时把设备的启动也算了进去（`regression_capture_ready_survives_a_full_queue`，2026-11-01，§30）。

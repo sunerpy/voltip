@@ -41,8 +41,9 @@ pub mod vocabulary;
 pub use channel::{is_initiator, rendezvous_channel};
 pub use dictation::activation::{Activation, ActivationConfig, ActivationMachine, Edge, EdgeSource, Intent, PhaseHint};
 pub use dictation::{
-    AsrNote, DictationError, DictationPhase, DictationPorts, DictationStatus, FailureCode, ForegroundApp, ForegroundProbe, LiveText, LocalFailure,
-    MAX_EDIT_SELECTION_CHARS, ProcessingStage, RefineFailure, Segment, SelectionTiming, TakeKind,
+    AsrNote, DEFAULT_DONE_DWELL_MS, DONE_DWELL_MS_CHOICES, DictationError, DictationPhase, DictationPorts, DictationStatus, FailureCode, ForegroundApp,
+    ForegroundProbe, LiveText, LocalFailure, MAX_DONE_DWELL_MS, MAX_EDIT_SELECTION_CHARS, MIN_DONE_DWELL_MS, ProcessingStage, RefineFailure, Segment,
+    SelectionTiming, TakeKind,
 };
 pub use engines::{
     BuiltIn, ChineseScript, ClipboardAfter, CredentialFieldStatus, CredentialSetStatus, EngineIssue, EngineSettings, EngineStatus, FallbackModel,

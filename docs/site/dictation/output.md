@@ -96,7 +96,7 @@ When the text was not written, the window changed while it processed, remote int
 - **Recognise again** recognises the kept recording again with the current speech model, and copies the result. **Open history** opens the History page.
 - **×** closes the card. Starting a new dictation replaces it.
 
-A card stays until you close it or start the next dictation. To let cards disappear after their usual time instead (6 seconds, or 2.5 seconds for a failure without text), switch off **Keep result cards on screen** under **Settings → Dictation**; the buttons stay the same. Other results disappear as before: text pasted, text left on the clipboard because pasting was not possible for another reason, no speech, and a cancelled dictation.
+A card stays until you close it or start the next dictation. To let cards disappear after their usual time instead (6 seconds, or 2.5 seconds for a failure without text), switch off **Keep result cards on screen** under **Settings → Dictation**; the buttons stay the same. Other results disappear after their usual time: 2.5 seconds by default, and **Inserted notice duration** under **Settings → Dictation** adjusts how long the notice stays after text is inserted (from 0.3 to 4 seconds), while no speech and a cancelled dictation stay 2.5 seconds.
 
 ## Copy or paste a result again
 

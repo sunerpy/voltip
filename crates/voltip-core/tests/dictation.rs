@@ -180,6 +180,8 @@ async fn pipeline_history_secrets_and_engines_through_the_core() {
     wait(&mut node, |e| if let CoreEvent::Error(m) = e { m.contains("llm_provider").then_some(()) } else { None }).await;
     node.handle.send(CoreCommand::SetEngines(EngineSettings { local_threads: Some(0), ..remote_engines() })).await.unwrap();
     wait(&mut node, |e| if let CoreEvent::Error(m) = e { m.contains("local_threads").then_some(()) } else { None }).await;
+    node.handle.send(CoreCommand::SetEngines(EngineSettings { done_dwell_ms: 100, ..remote_engines() })).await.unwrap();
+    wait(&mut node, |e| if let CoreEvent::Error(m) = e { m.contains("done_dwell_ms").then_some(()) } else { None }).await;
     let good = EngineSettings {
         providers: [(
             ProviderId::Custom,

@@ -296,6 +296,7 @@
         "asr_provider": "local",
         "chinese_script": "traditional",
         "clipboard_after": "keep",
+        "done_dwell_ms": 500,
         "inject": "paste",
         "insert_check": false,
         "language": "zh",

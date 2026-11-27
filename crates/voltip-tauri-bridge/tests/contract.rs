@@ -332,6 +332,7 @@ fn engine_settings() -> EngineSettings {
         // docs/dictation.md §28: both switches off, away from their defaults, so the sample shows them.
         insert_check: false,
         result_cards_stay: false,
+        done_dwell_ms: 500,
         // docs/dictation.md §3.5: a ready fallback model for the recognition (and the selected one,
         // listed again: skipped), one without its key for the clean-up. §3.14: the recognition also
         // moves on for failures, to a model of this device too (one installed, one downloading).

@@ -1,4 +1,4 @@
-import { MAX_MINUTES_CHOICES, type TFunction } from "@voltip/shared";
+import { DONE_DWELL_MS_CHOICES, MAX_MINUTES_CHOICES, type TFunction } from "@voltip/shared";
 import {
   Segmented,
   Select,
@@ -109,6 +109,25 @@ export function Dictation() {
             onChange={(result_cards_stay) => {
               void backend.invoke("settings_set_engines", {
                 engines: { ...engines, result_cards_stay },
+              });
+            }}
+          />
+        </StatusRow>
+        <StatusRow
+          label={t("settings.dictation.doneDwellLabel")}
+          help={t("settings.dictation.doneDwellHelp")}>
+          <Select
+            aria-label={t("settings.dictation.doneDwellLabel")}
+            size="sm"
+            value={String(engines.done_dwell_ms)}
+            options={DONE_DWELL_MS_CHOICES.map((ms) => ({
+              value: String(ms),
+              label: t("settings.dictation.doneDwellSeconds", { n: ms / 1000 }),
+            }))}
+            data-testid="dictation-done-dwell"
+            onChange={(value) => {
+              void backend.invoke("settings_set_engines", {
+                engines: { ...engines, done_dwell_ms: Number(value) },
               });
             }}
           />

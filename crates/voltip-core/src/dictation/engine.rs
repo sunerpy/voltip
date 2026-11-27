@@ -62,7 +62,7 @@ use super::ports::{
     ForegroundApp, ForegroundProbe, GateCancel, InjectNote, Injection, Injector, InsertCheck, InsertGate, InsertSession, Inserted, LIVE_CHUNK_SAMPLES,
     LevelFrame, LivePcm, MAX_EDIT_SELECTION_CHARS, MAX_RECORDING, MIN_RECORDING, PARTIAL_THROTTLE, PCM_SAMPLE_RATE_HZ, PcmStream, Receipt, Recording,
     RefineContext, RefineHints, Refiner, Segment, Segmenter, SegmenterFactory, SelectionTiming, ServiceProbe, Settled, StreamEvent, StreamFinal,
-    StreamingSession, StreamingTranscriber, SwitchReason, Transcriber, Transcript, UnconfirmedWhy, Via, max_recording,
+    StreamingSession, StreamingTranscriber, SwitchReason, Transcriber, Transcript, UnconfirmedWhy, Via, done_dwell, max_recording,
 };
 use super::redecode::RedecodeStreaming;
 use super::tee;
@@ -992,6 +992,8 @@ pub struct DictationEngine {
     result_cards: bool,
     /// `EngineSettings.result_cards_stay` of the last configuration (§28).
     result_cards_stay: bool,
+    /// `EngineSettings.done_dwell_ms` of the last configuration.
+    done_dwell_ms: u32,
     /// The dwell of the result card on screen while it stays (§28): armed when the setting is
     /// switched off; `None` when no card stays.
     pinned: Option<Duration>,
@@ -1227,6 +1229,7 @@ impl DictationEngine {
             insert_check: engines.insert_check,
             result_cards: false,
             result_cards_stay: engines.result_cards_stay,
+            done_dwell_ms: engines.done_dwell_ms,
             pinned: None,
             levels,
             internal: tx,
@@ -1419,6 +1422,7 @@ impl DictationEngine {
         self.inject_mode = engines.inject;
         self.insert_check = engines.insert_check;
         self.result_cards_stay = engines.result_cards_stay;
+        self.done_dwell_ms = engines.done_dwell_ms;
         // docs/dictation.md §28: switched off while a card stays, it goes after its dwell from now.
         if !self.result_cards_stay
             && let Some(dwell) = self.pinned.take()
@@ -3767,7 +3771,7 @@ impl DictationEngine {
                 // when the system did not allow the paste; §28: the text did not reach the field.
                 // The pill says so a little longer, like a failure that kept its text (or until it
                 // is closed, `terminal`).
-                let dwell = if carded(clipboard_code) || check == Some(InsertCheck::NotWritten) { DWELL_WITH_TEXT } else { DWELL };
+                let dwell = if carded(clipboard_code) || check == Some(InsertCheck::NotWritten) { DWELL_WITH_TEXT } else { done_dwell(self.done_dwell_ms) };
                 let phase = DictationPhase::Done {
                     chars: text.chars().count(),
                     text,
@@ -4843,6 +4847,33 @@ mod tests {
         let fx = r.next().await;
         assert_eq!(phase(&fx), &DictationPhase::Idle);
         assert_eq!(r.engine.status().session, 1, "session is only bumped by start");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn done_dwell_ms_controls_successful_insert_dwell_and_leaves_cancel_alone() {
+        let mut r = happy();
+        let custom = EngineSettings { refine_enabled: true, done_dwell_ms: 500, ..EngineSettings::default() };
+        r.engine.configure(&ResolvedEngines::resolve(&custom, &UserSecrets::default(), &TEST_BUILT_IN));
+        r.start_open().await;
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert!(matches!(phase(&fx), DictationPhase::Done { check: None, clipboard_code: None, .. }));
+
+        tokio::time::advance(Duration::from_millis(499)).await;
+        r.settle().await;
+        assert!(r.nothing_pending(), "still dwelling at 499 ms");
+        tokio::time::advance(Duration::from_millis(1)).await;
+        assert_eq!(phase(&r.next().await), &DictationPhase::Idle);
+
+        // Cancelled takes keep the fixed 2.5 s DWELL regardless of `done_dwell_ms`.
+        r.start_open().await;
+        assert_eq!(phase(&r.engine.cancel().unwrap()), &DictationPhase::CANCELLED);
+        tokio::time::advance(DWELL - Duration::from_millis(1)).await;
+        r.settle().await;
+        assert!(r.nothing_pending(), "cancelled take still dwells at DWELL - 1 ms");
+        tokio::time::advance(Duration::from_millis(1)).await;
+        assert_eq!(phase(&r.next().await), &DictationPhase::Idle);
+        r.wait_stops(2).await;
     }
 
     #[tokio::test(start_paused = true)]

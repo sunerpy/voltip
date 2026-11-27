@@ -2747,6 +2747,10 @@ export const en: Messages = {
       switchedHelp:
         "If you switch to another window while the text is recognised or polished, it is only copied to the clipboard by default, so it does not land in the wrong place. Voice edits always only copy.",
       switched: { copyOnly: "Copy only", pasteHere: "Paste into current window" },
+      doneDwellLabel: "Inserted notice duration",
+      doneDwellHelp:
+        "How long the overlay notice stays after text is inserted; result cards, cancelled dictations and errors are unchanged.",
+      doneDwellSeconds: "{n} s",
     },
     microphone: {
       title: "Recording source",

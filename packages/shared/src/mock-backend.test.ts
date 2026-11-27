@@ -715,6 +715,20 @@ describe("MockBackend dictation pipeline (docs/dictation.md §2)", () => {
     await backend.invoke("settings_set_engines", { engines: defaultEngineSettings() });
     backend.simulateWindowSwitch(false);
     expect(await take()).toMatchObject({ phase: "done", via: "paste" });
+    tick(MOCK_DICTATION_DWELL_MS);
+    // Custom `done_dwell_ms` controls successful insert dwell; out-of-range values are refused.
+    await backend.invoke("settings_set_engines", {
+      engines: { ...defaultEngineSettings(), done_dwell_ms: 100 },
+    });
+    expect(backend.peek().settings.engines.done_dwell_ms).toBe(2500);
+    await backend.invoke("settings_set_engines", {
+      engines: { ...defaultEngineSettings(), done_dwell_ms: 500 },
+    });
+    expect(await take()).toMatchObject({ phase: "done", via: "paste" });
+    tick(499);
+    expect(backend.peek().dictation.phase.phase).toBe("done");
+    tick(1);
+    expect(backend.peek().dictation.phase.phase).toBe("idle");
   });
 
   it("regression: 开始听写 starts a real session and shows the phase; 停止 finishes with the inserted text", async () => {
