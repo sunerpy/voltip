@@ -646,6 +646,15 @@ class ContinuousIntegration(unittest.TestCase):
         # shuts anything down itself.
         self.assertIn("RmGetList(uint session", script)
         self.assertNotRegex(script, r"extern \w+ RmShutdown")
+        # PowerShell names are case-insensitive: a loop over `$run` assigned the -Run parameter,
+        # whose ValidateSet refused the hashtable, and the passive step failed at once (PR #274's
+        # first CI run, 46077300426). No variable the script assigns may be a validated parameter.
+        block = script[script.index("param(") : script.index("\n)\n")]
+        validated = {name.lower() for name in re.findall(r"\[Validate\w+\([^)]*\)\] \[\w+\] \$(\w+)", block)}
+        self.assertIn("run", validated)
+        assigned = re.findall(r"foreach \(\$(\w+) in|^\s*\$(\w+) = ", script, re.M)
+        clashes = sorted({(a or b) for a, b in assigned if (a or b).lower() in validated})
+        self.assertEqual(clashes, [], "variables the script assigns that are its validated parameters")
 
     def test_macos_exercises_the_preinstall_keychain_boundary(self) -> None:
         body = self.jobs["macos"]

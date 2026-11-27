@@ -293,42 +293,44 @@ try {
     @{ Key = 'passive'; Name = 'passive update run (0.1.6 and earlier)'; Arguments = '/P /UPDATE /R /ARGS'; Window = $true },
     @{ Key = 'silent'; Name = 'silent update run (after 0.1.6)'; Arguments = '/S /UPDATE /R /ARGS'; Window = $false }
   ) | Where-Object { $Run -eq 'both' -or $_.Key -eq $Run }
-  foreach ($run in $runs) {
+  # Not `$run`: names are case-insensitive, so that would be the -Run parameter, whose ValidateSet
+  # refuses a hashtable (PR #274's first CI run, 46077300426).
+  foreach ($update in $runs) {
     Stop-Installed $exe
     # The installer skips its own check when the Restart Manager does not answer, so a question
     # that fails here is noted, not judged.
     $holders = @()
-    try { $holders = @(Holders-After $exe 20) } catch { Note "$($run.Name): the Restart Manager could not be asked who holds the exe: $_" }
+    try { $holders = @(Holders-After $exe 20) } catch { Note "$($update.Name): the Restart Manager could not be asked who holds the exe: $_" }
     if ($holders.Count -gt 0) {
-      $failures.Add("$($run.Name): with Voltip stopped, these still held $exe, and the installer would have shut them down by force: $($holders -join '; ')")
+      $failures.Add("$($update.Name): with Voltip stopped, these still held $exe, and the installer would have shut them down by force: $($holders -join '; ')")
       continue
     }
-    $installer = Start-Process -FilePath $Setup -ArgumentList $run.Arguments -PassThru
+    $installer = Start-Process -FilePath $Setup -ArgumentList $update.Arguments -PassThru
     # Holding the handle keeps ExitCode readable after the process ends (a Start-Process quirk).
     $null = $installer.Handle
     $frames = [InstallerFrames]::new()
     $finished = [VoltipInstallerWindows]::Watch($installer, $SampleMs, $InstallTimeoutSec * 1000, $frames)
     if (-not $finished) {
       Stop-Process -Id $installer.Id -Force -ErrorAction SilentlyContinue
-      $failures.Add("$($run.Name): the installer did not finish within ${InstallTimeoutSec}s")
+      $failures.Add("$($update.Name): the installer did not finish within ${InstallTimeoutSec}s")
       continue
     }
     $installer.WaitForExit()
-    Note ("$($run.Name) [$($run.Arguments)]: exit $($installer.ExitCode); $($frames.Samples) samples, " +
+    Note ("$($update.Name) [$($update.Arguments)]: exit $($installer.ExitCode); $($frames.Samples) samples, " +
       "$($frames.SeenSamples) with a visible installer window; at most $($frames.MostWindows) window(s); " +
       "$($frames.HiddenByHook) transparent sightings")
-    if ($frames.SeenSamples -gt 0) { $failures.Add("$($run.Name): the installer window was on the screen ($($frames.FirstSeen))") }
-    if ($installer.ExitCode -ne 0) { $failures.Add("$($run.Name): the installer exited with $($installer.ExitCode)") }
-    if ($run.Window -and $frames.HiddenByHook -eq 0) { $failures.Add("$($run.Name): no hidden installer window was sampled; the check saw nothing to judge") }
+    if ($frames.SeenSamples -gt 0) { $failures.Add("$($update.Name): the installer window was on the screen ($($frames.FirstSeen))") }
+    if ($installer.ExitCode -ne 0) { $failures.Add("$($update.Name): the installer exited with $($installer.ExitCode)") }
+    if ($update.Window -and $frames.HiddenByHook -eq 0) { $failures.Add("$($update.Name): no hidden installer window was sampled; the check saw nothing to judge") }
 
     # `/R`: the installer opens Voltip again when it is done.
     $deadline = (Get-Date).AddSeconds($RelaunchTimeoutSec)
     while (@(Running $exe).Count -eq 0 -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 250 }
     $reopened = @(Running $exe)
     if ($reopened.Count -eq 0) {
-      $failures.Add("$($run.Name): Voltip was not opened again within ${RelaunchTimeoutSec}s")
+      $failures.Add("$($update.Name): Voltip was not opened again within ${RelaunchTimeoutSec}s")
     } else {
-      Note "$($run.Name): Voltip opened again (pid $($reopened[0].Id))"
+      Note "$($update.Name): Voltip opened again (pid $($reopened[0].Id))"
     }
     Stop-Installed $exe
   }
