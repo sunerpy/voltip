@@ -345,6 +345,12 @@ fn a_kept_edit_is_read_again_as_it_is_edited_and_not_once_another_has_the_focus(
     assert_eq!(follow.context(None).map(|c| c.before), Ok("前文voltip ".to_owned()));
     click(own.readonly, own.top, "the read-only EDIT");
     wait_follow(&follow, "the focus moved", |r| *r == Err(UnconfirmedWhy::ControlChanged));
+    // Released while the window's thread still runs: the release goes to the reader's thread
+    // without waiting, and a reading after it comes back once it is done. Released after the
+    // window was gone, UI Automation timed out for the next test's SetFocus on Notepad
+    // (0x80131505, CI run 45938002604).
+    drop(follow);
+    let _ = reader.context(OWN, None);
 }
 
 /// Read Notepad for 从选中文字学习 until `wanted` holds (the keys reach Notepad a little later).
