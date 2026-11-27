@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.2](https://github.com/sunerpy/voltip/compare/v0.3.1...v0.3.2) (2026-11-27)
+
+
+### Features
+
+* **desktop:** 从选中文字学习，在其他应用里改正的写法进入学习建议 ([#260](https://github.com/sunerpy/voltip/issues/260)) ([3421669](https://github.com/sunerpy/voltip/commit/34216697370b7564388e05a56d63f541248f185d))
+* **desktop:** 从选中文字学习读取光标附近的文字，只选改好的词也能学到 ([#270](https://github.com/sunerpy/voltip/issues/270)) ([00d438c](https://github.com/sunerpy/voltip/commit/00d438c1e9ed1cf12bc8dec4fe867c8b97984f77))
+
+
+### Bug Fixes
+
+* **desktop:** 界面检查的结果没送到程序时重新发送，悬浮窗的检查不再漏进日志 ([#250](https://github.com/sunerpy/voltip/issues/250)) ([23253e2](https://github.com/sunerpy/voltip/commit/23253e23b5dd9119e59149feaa5c857b0d4c184e))
+* **dictation:** 边说边识别由内置服务逐句识别，补齐句尾，候补顶替时整段识别 ([#269](https://github.com/sunerpy/voltip/issues/269)) ([cdc50be](https://github.com/sunerpy/voltip/commit/cdc50becfb3698e53e352d66b5a70fe52a8c904c))
+* **install:** 下载失败时报出地址和原始错误，慢速下载不再被中断 ([#259](https://github.com/sunerpy/voltip/issues/259)) ([970beb9](https://github.com/sunerpy/voltip/commit/970beb9c46a6b2cd09fd6d63d1d6f6ce56c68f5c))
+
 ## [0.3.1](https://github.com/sunerpy/voltip/compare/v0.3.0...v0.3.1) (2026-11-10)
 
 
