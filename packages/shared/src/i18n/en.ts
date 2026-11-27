@@ -2696,7 +2696,7 @@ export const en: Messages = {
       follow: "Track your edits in the input field",
       followBadge: "Experimental",
       followHelp:
-        "After each dictation is written to an input field, keeps reading the text near it in that field (up to 200 characters on each side). When you change a word of the dictation, the change goes to the dictionary's suggestions. Only the field the dictation went into is read, and reading stops when the focus leaves it or the next dictation starts.",
+        "After each dictation is written to an input field, keeps reading the text near it in that field (up to 200 characters on each side of the cursor, and the selected text when there is a selection). When you change a word of the dictation, the change goes to the dictionary's suggestions. Only the field the dictation went into is read, and reading stops when the focus leaves it or the next dictation starts.",
       /** Why the switch is greyed out. */
       followNeedsCheck: "Turn on Check that the text was written first.",
       followNeedsHistory: "Turn on the history first.",
