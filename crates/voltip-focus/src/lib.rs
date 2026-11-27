@@ -11,19 +11,22 @@
 //! A crate of its own, as `voltip-hooks` is, so CI runs the readers against real applications on
 //! Windows and macOS desktops (`tests/focus_*.rs`) without building the app.
 //!
-//! What is read stays in memory for the length of one paste: it is never logged, stored or sent.
+//! What is read stays in memory for the length of one paste, or, while 自动跟踪输入框里的修改
+//! follows the field a paste went to ([`Follow`], docs/dictation.md §35.10), until that ends: it
+//! is never logged, stored or sent.
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
 
 use parking_lot::Mutex;
 use voltip_platform::HostOs;
-use voltip_platform::insert_check::rules::READ_BEFORE_CARET;
 pub use voltip_platform::insert_check::rules::{
     CONTEXT_CHARS, Expected, FOCUS_READ_DEADLINE, FocusContext, FocusText, POLL_EVERY, Sample, Settled, UnconfirmedWhy, settle_by_polling,
 };
+use voltip_platform::insert_check::rules::{InsertCheck, READ_BEFORE_CARET};
 
 #[cfg(target_os = "linux")]
 pub mod linux;
@@ -62,8 +65,9 @@ pub trait FocusPlatform {
 
 /// What the worker thread is asked.
 enum Request {
-    /// Read the focused control and keep it under a new token: the paste's `before`.
-    Begin(mpsc::SyncSender<Result<(u64, FocusText), UnconfirmedWhy>>),
+    /// Read the focused control and keep it under the token: the paste's `before`. Tokens come
+    /// from the reader, unique across its worker threads ([`Inner::tokens`]).
+    Begin(u64, mpsc::SyncSender<Result<FocusText, UnconfirmedWhy>>),
     /// Read the focused control again and compare it with the one kept under the token.
     Sample(u64, mpsc::SyncSender<Sample>),
     /// Forget the control kept under the token.
@@ -71,6 +75,9 @@ enum Request {
     /// Read the focused control's paragraph around its selection, for 从选中文字学习, with the
     /// copied selection as the hint.
     Context(Option<String>, mpsc::SyncSender<Result<FocusContext, UnconfirmedWhy>>),
+    /// Read the paragraph of the control kept under the token, when it still has the focus
+    /// (自动跟踪输入框里的修改, docs/dictation.md §35.10).
+    ContextOf(u64, Option<String>, mpsc::SyncSender<Result<FocusContext, UnconfirmedWhy>>),
 }
 
 /// The worker thread's loop: open the platform on this thread (COM, the accessibility bus), then
@@ -86,15 +93,13 @@ fn serve<P: FocusPlatform>(open: fn() -> Result<P, String>, requests: &mpsc::Rec
         }
     };
     let mut kept: HashMap<u64, P::Control> = HashMap::new();
-    let mut next = 0u64;
     for request in requests {
         match request {
-            Request::Begin(reply) => {
+            Request::Begin(token, reply) => {
                 let answer = platform.focused().and_then(|control| {
                     let text = platform.text(&control).ok_or(UnconfirmedWhy::Unreadable)?;
-                    next += 1;
-                    kept.insert(next, control);
-                    Ok((next, text))
+                    kept.insert(token, control);
+                    Ok(text)
                 });
                 let _ = reply.send(answer);
             }
@@ -114,6 +119,19 @@ fn serve<P: FocusPlatform>(open: fn() -> Result<P, String>, requests: &mpsc::Rec
             }
             Request::Context(hint, reply) => {
                 let answer = platform.focused().and_then(|control| platform.context(&control, hint.as_deref()).ok_or(UnconfirmedWhy::Unreadable));
+                let _ = reply.send(answer);
+            }
+            Request::ContextOf(token, hint, reply) => {
+                // As `Sample`: a password field, nothing focused and an unknown token read as
+                // nothing; another control is `ControlChanged`.
+                let answer = match kept.get(&token) {
+                    None => Err(UnconfirmedWhy::Unreadable),
+                    Some(control) => match platform.focused() {
+                        Err(_) => Err(UnconfirmedWhy::Unreadable),
+                        Ok(now) if !platform.same(control, &now) => Err(UnconfirmedWhy::ControlChanged),
+                        Ok(_) => platform.context(control, hint.as_deref()).ok_or(UnconfirmedWhy::Unreadable),
+                    },
+                };
                 let _ = reply.send(answer);
             }
         }
@@ -141,6 +159,12 @@ struct Inner {
     deadline: Duration,
     spawn: Box<dyn Fn() -> Option<mpsc::Sender<Request>> + Send + Sync>,
     worker: Mutex<Option<Worker>>,
+    /// The current worker's channel, for [`Inner::end`]: a release must not wait behind the read
+    /// that holds `worker` until its answer comes (up to the deadline).
+    sender: Mutex<Option<mpsc::Sender<Request>>>,
+    /// The last token handed out. One counter for every worker thread, so a control kept before a
+    /// thread was replaced never shares its token with one kept on the new thread.
+    tokens: AtomicU64,
 }
 
 impl Inner {
@@ -150,6 +174,7 @@ impl Inner {
         let mut slot = self.worker.lock();
         if slot.is_none() {
             *slot = (self.spawn)().map(|requests| Worker { requests, late: 0 });
+            *self.sender.lock() = slot.as_ref().map(|worker| worker.requests.clone());
         }
         let Some(worker) = slot.as_mut() else { return Err(Unanswered::NoWorker) };
         let (reply, answer) = mpsc::sync_channel(1);
@@ -179,8 +204,9 @@ impl Inner {
     }
 
     fn begin(&self) -> Result<(u64, FocusText), UnconfirmedWhy> {
-        match self.ask(Request::Begin) {
-            Ok(answer) => answer,
+        let token = self.tokens.fetch_add(1, Ordering::Relaxed) + 1;
+        match self.ask(|reply| Request::Begin(token, reply)) {
+            Ok(answer) => answer.map(|text| (token, text)),
             Err(Unanswered::TimedOut) => Err(UnconfirmedWhy::Timeout),
             Err(Unanswered::NoWorker) => Err(UnconfirmedWhy::Unreadable),
         }
@@ -202,9 +228,20 @@ impl Inner {
         }
     }
 
+    fn context_of(&self, token: u64, hint: Option<String>) -> Result<FocusContext, UnconfirmedWhy> {
+        match self.ask(|reply| Request::ContextOf(token, hint, reply)) {
+            Ok(answer) => answer,
+            Err(Unanswered::TimedOut) => Err(UnconfirmedWhy::Timeout),
+            Err(Unanswered::NoWorker) => Err(UnconfirmedWhy::Unreadable),
+        }
+    }
+
+    /// Forget the control kept under `token`, without waiting: the channel is unbounded and the
+    /// worker ends it when it gets there. After a thread was replaced the token is unknown to the
+    /// new one, and the release does nothing.
     fn end(&self, token: u64) {
-        if let Some(worker) = self.worker.lock().as_ref() {
-            let _ = worker.requests.send(Request::End(token));
+        if let Some(requests) = self.sender.lock().as_ref() {
+            let _ = requests.send(Request::End(token));
         }
     }
 }
@@ -233,7 +270,7 @@ impl Reader {
                 }
             }
         });
-        Self(Arc::new(Inner { os, deadline, spawn, worker: Mutex::new(None) }))
+        Self(Arc::new(Inner { os, deadline, spawn, worker: Mutex::new(None), sender: Mutex::new(None), tokens: AtomicU64::new(0) }))
     }
 }
 
@@ -248,7 +285,7 @@ impl Reader {
             return Err(UnconfirmedWhy::Skipped);
         }
         let (token, before) = self.0.begin()?;
-        Ok(Watch { inner: self.0.clone(), token, before, expected: expected.clone() })
+        Ok(Watch { inner: self.0.clone(), token, before, expected: expected.clone(), kept: false })
     }
 
     /// Read the focused control of `app_id` for 从选中文字学习 (docs/dictation.md §35): its
@@ -271,12 +308,29 @@ pub struct Watch {
     token: u64,
     before: FocusText,
     expected: Expected,
+    /// The control passed to a [`Follow`]: dropping the watch keeps it.
+    kept: bool,
 }
 
 impl Watch {
     /// Read the control right away and then every [`POLL_EVERY`] for at most `within`, and decide
     /// with the check's rules. Blocking: every read is bounded by the reader's deadline.
     pub fn settle(self, within: Duration) -> Settled {
+        self.decide(within)
+    }
+
+    /// [`Watch::settle`], keeping the control for 自动跟踪输入框里的修改 (docs/dictation.md §35.10)
+    /// when the paste is written there; any other answer releases it as `settle` does.
+    pub fn settle_and_keep(mut self, within: Duration) -> (Settled, Option<Follow>) {
+        let settled = self.decide(within);
+        if settled.check != InsertCheck::Written {
+            return (settled, None);
+        }
+        self.kept = true;
+        (settled, Some(Follow { inner: self.inner.clone(), token: self.token }))
+    }
+
+    fn decide(&self, within: Duration) -> Settled {
         let (settled, _took) = settle_by_polling(&self.before, &self.expected, within, POLL_EVERY, || self.inner.sample(self.token));
         settled
     }
@@ -293,6 +347,31 @@ impl Watch {
 }
 
 impl Drop for Watch {
+    fn drop(&mut self) {
+        if !self.kept {
+            self.inner.end(self.token);
+        }
+    }
+}
+
+/// The control a paste was written to, kept while 自动跟踪输入框里的修改 follows it
+/// (docs/dictation.md §35.10); dropping it releases the control without waiting.
+pub struct Follow {
+    inner: Arc<Inner>,
+    token: u64,
+}
+
+impl Follow {
+    /// The kept control's paragraph around its selection or caret ([`FocusContext`]), when it still
+    /// has the keyboard focus: `Err(ControlChanged)` when another control has it, `Err(Unreadable)`
+    /// for nothing focused, a password field or a control that no longer answers, `Err(Timeout)`
+    /// past the deadline. Blocking, bounded by the reader's deadline.
+    pub fn context(&self, hint: Option<&str>) -> Result<FocusContext, UnconfirmedWhy> {
+        self.inner.context_of(self.token, hint.map(str::to_owned))
+    }
+}
+
+impl Drop for Follow {
     fn drop(&mut self) {
         self.inner.end(self.token);
     }
@@ -537,6 +616,105 @@ mod tests {
         };
         drop(watch);
         assert!(OPENED.load(Ordering::SeqCst) >= opened + 2, "a new thread after the deadlines");
+    }
+
+    /// docs/dictation.md §35.10: a written paste's control is kept and read again while it has the
+    /// focus; another control, a password field, nothing focused and a late answer end the reading.
+    #[test]
+    fn a_follow_reads_the_kept_control_while_it_has_the_focus() {
+        let _serial = SERIAL.lock();
+        let reader = reader(Duration::from_millis(300));
+        set(Field { control: 1, text: "我们讨论一下".into(), ..Field::default() });
+        let watch = reader.watch("notepad", &Expected::of("千问四Max")).expect("read");
+        set(Field { control: 1, text: "我们讨论一下千问四Max".into(), ..Field::default() });
+        let (settled, follow) = watch.settle_and_keep(Duration::from_millis(200));
+        assert_eq!(settled.check, InsertCheck::Written);
+        let follow = follow.expect("a written paste keeps its control");
+        assert_eq!(follow.context(None).expect("read").before, "我们讨论一下千问四Max");
+        // The user corrects the take in place: the next reading has it.
+        set(Field { control: 1, text: "我们讨论一下Qwen 4 Max".into(), ..Field::default() });
+        assert_eq!(follow.context(None).expect("read").before, "我们讨论一下Qwen 4 Max");
+        set(Field { control: 2, text: "别的输入框".into(), ..Field::default() });
+        assert_eq!(follow.context(None).err(), Some(UnconfirmedWhy::ControlChanged));
+        set(Field { control: 1, text: "x".into(), password: true, ..Field::default() });
+        assert_eq!(follow.context(None).err(), Some(UnconfirmedWhy::Unreadable));
+        set(Field { control: 1, text: "x".into(), none: true, ..Field::default() });
+        assert_eq!(follow.context(None).err(), Some(UnconfirmedWhy::Unreadable));
+        set(Field { control: 1, text: "x".into(), hang: Some(Duration::from_millis(900)), ..Field::default() });
+        assert_eq!(follow.context(None).err(), Some(UnconfirmedWhy::Timeout));
+        set(Field::default());
+    }
+
+    #[test]
+    fn only_a_written_paste_keeps_its_control_and_dropping_the_follow_releases_it() {
+        let _serial = SERIAL.lock();
+        let reader = reader(Duration::from_secs(2));
+        set(Field { control: 1, text: "前文".into(), ..Field::default() });
+        let unchanged = reader.watch("notepad", &Expected::of("你好")).expect("read");
+        let (settled, follow) = unchanged.settle_and_keep(Duration::from_millis(100));
+        assert_eq!((settled.check, follow.is_none()), (InsertCheck::NotWritten, true));
+        let moved = reader.watch("notepad", &Expected::of("你好")).expect("read");
+        set(Field { control: 2, text: "前文你好".into(), ..Field::default() });
+        let (settled, follow) = moved.settle_and_keep(Duration::from_millis(100));
+        assert_eq!((settled, follow.is_none()), (Settled::unconfirmed(UnconfirmedWhy::ControlChanged), true));
+        set(Field { control: 1, text: "前文".into(), ..Field::default() });
+        let written = reader.watch("notepad", &Expected::of("你好")).expect("read");
+        set(Field { control: 1, text: "前文你好".into(), ..Field::default() });
+        let follow = written.settle_and_keep(Duration::from_millis(200)).1.expect("kept");
+        let (inner, token) = (follow.inner.clone(), follow.token);
+        drop(follow);
+        // The release goes first on the worker's channel, so the next read finds nothing kept.
+        assert_eq!(inner.context_of(token, None).err(), Some(UnconfirmedWhy::Unreadable));
+    }
+
+    /// A control kept across a replaced worker thread: the old token names nothing on the new
+    /// thread. Regression, 2026-11-26 (the plan of 跟踪输入框里的修改): each thread counted its
+    /// tokens from 1, so the first paste on the new thread got the old paste's token, and dropping
+    /// the old paste's watch ended the new paste's control.
+    #[test]
+    fn regression_a_watch_from_before_a_replaced_thread_does_not_end_the_new_threads_control() {
+        let _serial = SERIAL.lock();
+        let reader = reader(Duration::from_millis(100));
+        set(Field { control: 1, text: "前文".into(), ..Field::default() });
+        let old = reader.watch("notepad", &Expected::of("你好")).expect("read");
+        set(Field { control: 1, text: "前文".into(), hang: Some(Duration::from_secs(2)), ..Field::default() });
+        for _ in 0..REPLACE_AFTER {
+            assert_eq!(reader.watch("notepad", &Expected::of("你好")).err(), Some(UnconfirmedWhy::Timeout));
+        }
+        set(Field { control: 1, text: "前文".into(), ..Field::default() });
+        let until = Instant::now() + Duration::from_secs(10);
+        let new = loop {
+            if let Ok(watch) = reader.watch("notepad", &Expected::of("你好")) {
+                break watch;
+            }
+            assert!(Instant::now() < until, "a new thread answers");
+        };
+        drop(old);
+        assert!(matches!(new.sample(), Sample::Text(_)), "the new paste's control is still kept");
+    }
+
+    /// Releasing a kept control does not wait for another read the worker thread is busy with.
+    /// Regression, 2026-11-26: `end` took the lock a read holds until its answer (up to the
+    /// deadline), so dropping a watch on the core's task could hold it that long.
+    #[test]
+    fn regression_releasing_a_control_does_not_wait_for_a_read_in_progress() {
+        let _serial = SERIAL.lock();
+        let reader = reader(Duration::from_secs(5));
+        set(Field { control: 1, text: "前文".into(), ..Field::default() });
+        let watch = reader.watch("notepad", &Expected::of("你好")).expect("read");
+        set(Field { control: 1, text: "前文".into(), hang: Some(Duration::from_millis(1500)), ..Field::default() });
+        let busy = {
+            let reader = reader.clone();
+            std::thread::spawn(move || reader.context("notepad", None))
+        };
+        // The read is under way once the worker is inside the slow platform call.
+        std::thread::sleep(Duration::from_millis(200));
+        let started = Instant::now();
+        drop(watch);
+        let took = started.elapsed();
+        assert!(took < Duration::from_millis(300), "the release returned at once, not after the read: {took:?}");
+        let _ = busy.join();
+        set(Field::default());
     }
 
     #[test]

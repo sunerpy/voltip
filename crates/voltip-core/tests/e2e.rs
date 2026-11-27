@@ -1187,6 +1187,111 @@ async fn a_phone_sends_text_the_desktop_inserts_now_or_after_its_take() {
     desk.handle.send(CoreCommand::Shutdown).await.unwrap();
 }
 
+/// A desktop on the relay whose takes are pasted into a field it follows (docs/dictation.md §35.10):
+/// the switch on, the field receiving [`FAKE_TRANSCRIPT`](voltip_core::dictation::fakes::FAKE_TRANSCRIPT),
+/// its reader and the reader's feed.
+fn following_desktop(name: &str, relay_url: &str) -> (Node, Arc<voltip_core::dictation::fakes::FakeFocusReader>, voltip_core::dictation::fakes::FollowFeed) {
+    use voltip_core::dictation::fakes::{FAKE_TRANSCRIPT, FakeAudio, FakeFocusReader, FakeInjector, FakeProbe, FakeTranscriber, fake_engines};
+    use voltip_core::dictation::{DictationPorts, ForegroundProbe, Transcriber};
+    trace_init();
+    let dir = tempfile::tempdir().unwrap();
+    let dir_path = dir.path().to_path_buf();
+    let mut settings = Settings { relay_url: Some(relay_url.to_owned()), relay_enabled: true, engines: fake_engines(), ..Settings::default() };
+    settings.engines.follow_edits = true;
+    SettingsStore::new(&dir_path).save(&settings).unwrap();
+    let (reader, feed) = FakeFocusReader::following("", FAKE_TRANSCRIPT);
+    let reader = Arc::new(reader);
+    let transcriber = Arc::new(FakeTranscriber::ok(FAKE_TRANSCRIPT));
+    let probe = Arc::new(FakeProbe::app("notepad", "Notepad", None));
+    probe.set_window(Some(7));
+    let ports = DictationPorts {
+        audio: Arc::new(FakeAudio::speech()),
+        injector: Arc::new(FakeInjector::paste().with_focus_reader(reader.clone())),
+        factory: Arc::new(move |_: &voltip_core::ResolvedEngines| (transcriber.clone() as Arc<dyn Transcriber>, None)),
+        models: None,
+        streaming: None,
+        probe: Some(probe as Arc<dyn ForegroundProbe>),
+        service_probe: None,
+        segmenter: None,
+    };
+    let mut cfg = CoreConfig::new(dir_path.clone());
+    cfg.default_device_name = name.into();
+    cfg.tick = Duration::from_millis(50);
+    cfg.peer_handshake_timeout = Duration::from_millis(600);
+    cfg.follow_times = voltip_core::vocabulary::follow::FollowTimes { every: Duration::from_millis(20), fast: Duration::from_millis(10), ..Default::default() };
+    let store = Arc::new(MemorySecretStore::new());
+    let (handle, events) = AppCore::start_with(cfg, store.clone(), ports).unwrap();
+    (Node { handle, events, _dir: dir, store, dir_path }, reader, feed)
+}
+
+/// Until the reader's calls meet `cond` (ten seconds at most), folding the node's events meanwhile.
+async fn calls_until(
+    node: &mut Node,
+    reader: &voltip_core::dictation::fakes::FakeFocusReader,
+    what: &str,
+    cond: impl Fn(&voltip_core::dictation::fakes::FocusCalls) -> bool,
+) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !cond(&reader.calls()) {
+        assert!(std::time::Instant::now() < deadline, "{what}: {:?}", reader.calls());
+        let _ = tokio::time::timeout(Duration::from_millis(5), node.events.recv()).await;
+    }
+}
+
+/// docs/dictation.md §35.10: a phone's text pasted while the desktop follows its last take's field
+/// ends the follow and releases the control first: the text is not the user's edit of the take.
+/// Regression (plan review 2026-11-26): a text that waited for a take goes in at the take's end,
+/// after its paste kept the field's control and before the runtime took it, so the follow would
+/// have started on the field the text was going into. That control is released before the text
+/// goes in, and the field is not followed.
+#[tokio::test]
+async fn a_phone_text_ends_the_follow_of_the_desktops_take() {
+    use voltip_core::dictation::DictationPhase;
+    use voltip_core::dictation::fakes::FAKE_TRANSCRIPT;
+    use voltip_core::phone::{PhoneTextSource, SentTextState};
+    let (url, _stop, _relay) = relay().await;
+    let (mut desk, reader, feed) = following_desktop("Studio", &url);
+    let mut phone = node_with(tempfile::tempdir().unwrap(), Arc::new(MemorySecretStore::new()), "Pixel 8", Some(&url));
+    wait(&mut desk, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+    wait(&mut phone, |e| matches!(e, CoreEvent::Relay(r) if r.state == ConnectionState::Connected).then_some(())).await;
+    let (_, desktop) = pair_by_code(&mut desk, &mut phone).await;
+    wait_online(&mut desk).await;
+    wait_online(&mut phone).await;
+    feed.field(FAKE_TRANSCRIPT, "", "");
+    let take = async |desk: &mut Node| {
+        desk.handle.send(CoreCommand::DictationStart).await.unwrap();
+        wait(desk, |e| matches!(e, CoreEvent::Dictation(s) if matches!(s.phase, DictationPhase::Listening { .. })).then_some(())).await;
+    };
+    let in_history = async |desk: &mut Node, body: &str| {
+        wait(desk, |e| matches!(e, CoreEvent::History { recent, .. } if recent.iter().any(|h| h.text == body)).then_some(())).await;
+    };
+
+    // A take, its field followed; the phone's text, sent while the desktop is idle, ends that.
+    take(&mut desk).await;
+    desk.handle.send(CoreCommand::DictationStop).await.unwrap();
+    calls_until(&mut desk, &reader, "the take's field is followed", |c| c.follow_reads >= 2).await;
+    phone.handle.send(CoreCommand::PhoneTextSend { to: desktop.public_key, body: "会议改到三点".into(), source: PhoneTextSource::Typed }).await.unwrap();
+    in_history(&mut desk, "会议改到三点").await;
+    calls_until(&mut desk, &reader, "the follow ended", |c| c.released == 1).await;
+    let reads = reader.calls().follow_reads;
+
+    // A take with a phone's text waiting for it: the control its paste kept is released before
+    // the text goes in, and its field is never read.
+    take(&mut desk).await;
+    phone.handle.send(CoreCommand::PhoneTextSend { to: desktop.public_key, body: "剪贴板里的地址".into(), source: PhoneTextSource::Clipboard }).await.unwrap();
+    wait(&mut phone, |e| sent_texts(e).filter(|t| t.first().is_some_and(|t| t.state == SentTextState::Queued))).await;
+    desk.handle.send(CoreCommand::DictationStop).await.unwrap();
+    in_history(&mut desk, "剪贴板里的地址").await;
+    let quiet = tokio::time::Instant::now() + Duration::from_millis(300);
+    while tokio::time::timeout_at(quiet, desk.events.recv()).await.is_ok() {}
+    let calls = reader.calls();
+    assert_eq!(calls.order, ["watch", "keep", "release", "watch", "keep", "release"], "{calls:?}");
+    assert_eq!(calls.follow_reads, reads, "the second take's field is not read");
+
+    phone.handle.send(CoreCommand::Shutdown).await.unwrap();
+    desk.handle.send(CoreCommand::Shutdown).await.unwrap();
+}
+
 /// Opt-in check against a **deployed** relay: `VOLTIP_LIVE_RELAY_URL=wss://host/ws cargo test -p
 /// voltip-core --test e2e live_relay`. Two cores pair by code through that relay (TLS handshake,
 /// WebSocket upgrade through the reverse proxy, rendezvous, E2EE message both ways). Skipped when

@@ -1315,12 +1315,12 @@ export const zhCN = {
     suggestions: {
       explainTitle: "从 AI 润色和你的修改中学习",
       explain:
-        "比较最近记录的识别原文和 AI 润色后的文字，以及你在其他应用里改正、用「从选中文字学习」记下的文字，列出「识别成 A、改成 B」的写法，按出现次数排列。加入词典后，识别完成时就会直接纠正。只逐字比较，不调用 AI。",
+        "比较最近记录的识别原文和 AI 润色后的文字，以及你在其他应用里改正、由「从选中文字学习」或「自动跟踪输入框里的修改」记下的文字，列出「识别成 A、改成 B」的写法，按出现次数排列。加入词典后，识别完成时就会直接纠正。只逐字比较，不调用 AI。",
       /** The explanation card's hint while 从选中文字学习 has no shortcut (§35). */
       hint: "在其他应用里改正听写结果后，把光标留在改过的地方或选中改好的文字，按「从选中文字学习」的快捷键，这里也会列出你的修改。",
       hintSet: "设置快捷键",
       /** Where a pair came from (§35). */
-      source: { polish: "润色", edit: "你的修改" },
+      source: { polish: "润色", edit: "你的修改", follow: "自动跟踪" },
       undoNote:
         "加入或忽略后可以立即撤销。离开词典页后，加入词典不能再撤销，忽略的写法可以在「已忽略」中取消忽略。",
       /** What the default 显示范围 shows (§35). */
@@ -2701,6 +2701,14 @@ export const zhCN = {
     settings: {
       check: "检查文字是否写入",
       checkHelp: "只在本机比较输入框前后的变化，不保存、不上传",
+      /** 自动跟踪输入框里的修改 (docs/dictation.md §35.10), an experiment: off by default. */
+      follow: "自动跟踪输入框里的修改",
+      followBadge: "实验",
+      followHelp:
+        "每次听写写入输入框后，继续读取这个输入框里听写附近的文字（前后各至多 200 字），发现你改了听写里的词，就把改动放进学习建议。只读写入的那个输入框，焦点离开或开始下一次听写就停止。",
+      /** Why the switch is greyed out. */
+      followNeedsCheck: "需要先打开「检查文字是否写入」。",
+      followNeedsHistory: "需要先打开历史记录。",
       stay: "识别结果卡片常驻",
       stayHelp:
         "没写进去、窗口已切换和识别失败时，结果卡片一直留到你关闭或下一次听写；关闭后按原来的时长自动消失",

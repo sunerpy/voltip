@@ -78,6 +78,8 @@ When Voltip cannot tell, it treats the text as inserted and shows nothing more. 
 
 To turn the check off, switch off **Check that the text was written** under **Settings → Dictation**. What Voltip reads stays in memory for the moment of the paste; it is not saved or uploaded.
 
+Below it, **Track your edits in the input field** is an experiment and off by default: with it on, Voltip keeps reading the field after the text arrived, and the spellings you correct there go to the dictionary's suggestions; see [Track your edits in the input field](/recognition/dictionary#track-your-edits-in-the-input-field). It needs both **Check that the text was written** and the history to be on.
+
 ## Result cards
 
 When the text was not written, the window changed while it processed, remote interaction was not allowed or not available on GNOME, or recognition failed, the overlay keeps the result as a card instead of letting it disappear:

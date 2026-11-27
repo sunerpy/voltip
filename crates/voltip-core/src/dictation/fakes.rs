@@ -12,9 +12,10 @@ use parking_lot::Mutex;
 use super::engine::DictationPorts;
 use super::insert_check::{Expected, FocusContext, FocusText, Sample, decide};
 use super::ports::{
-    AsrNote, AudioSource, Capture, CaptureOptions, DictationError, FocusReader, FocusWatch, ForegroundApp, ForegroundProbe, InjectNote, Injection, Injector,
-    InsertSession, Inserted, LIVE_CHUNK_SAMPLES, LevelFrame, LivePcm, PCM_SAMPLE_RATE_HZ, PROBE_DEADLINE, PcmStream, Recording, RefineHints, Refined, Refiner,
-    Segment, SelectionTiming, Settled, StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber, Transcriber, Transcript, UnconfirmedWhy, Via,
+    AsrNote, AudioSource, Capture, CaptureOptions, DictationError, FocusFollow, FocusReader, FocusWatch, ForegroundApp, ForegroundProbe, InjectNote, Injection,
+    Injector, InsertCheck, InsertSession, Inserted, LIVE_CHUNK_SAMPLES, LevelFrame, LivePcm, PCM_SAMPLE_RATE_HZ, PROBE_DEADLINE, PcmStream, Recording,
+    RefineHints, Refined, Refiner, Segment, SelectionTiming, Settled, StreamEvent, StreamFinal, StreamingSession, StreamingTranscriber, Transcriber,
+    Transcript, UnconfirmedWhy, Via,
 };
 use super::wav;
 use crate::hotkey::Modifier;
@@ -1401,6 +1402,50 @@ pub struct FocusCalls {
     pub settled: Vec<Duration>,
     /// `context` calls (从选中文字学习, §35): the application id and the hint.
     pub contexts: Vec<(String, Option<String>)>,
+    /// Controls kept for 自动跟踪输入框里的修改 (§35.10): `settle_and_keep` calls that kept one.
+    pub kept: usize,
+    /// Readings of a kept control.
+    pub follow_reads: usize,
+    /// Kept controls released (their [`FakeFocusFollow`] dropped).
+    pub released: usize,
+    /// `"watch"`, `"keep"` and `"release"` in the order they happened.
+    pub order: Vec<&'static str>,
+}
+
+/// The readings a kept control gives while its edits are followed (docs/dictation.md §35.10):
+/// each read takes the next one, and the last one repeats once they run out (a field left as it
+/// is). A test pushes more at any time; nothing blocks.
+#[derive(Clone, Default)]
+pub struct FollowFeed(Arc<Mutex<FeedState>>);
+
+#[derive(Default)]
+struct FeedState {
+    queue: std::collections::VecDeque<Result<FocusContext, UnconfirmedWhy>>,
+    last: Option<Result<FocusContext, UnconfirmedWhy>>,
+}
+
+impl FollowFeed {
+    /// The next reading is `answer`.
+    pub fn push(&self, answer: Result<FocusContext, UnconfirmedWhy>) {
+        self.0.lock().queue.push_back(answer);
+    }
+
+    /// The next reading is the paragraph `before` `selected` `after` (nothing selected: the caret
+    /// after `before`).
+    pub fn field(&self, before: &str, selected: &str, after: &str) {
+        self.push(FocusContext::from_parts(before, selected, after).ok_or(UnconfirmedWhy::Unreadable));
+    }
+
+    fn next(&self) -> Result<FocusContext, UnconfirmedWhy> {
+        let mut state = self.0.lock();
+        match state.queue.pop_front() {
+            Some(answer) => {
+                state.last = Some(answer.clone());
+                answer
+            }
+            None => state.last.clone().unwrap_or(Err(UnconfirmedWhy::Unreadable)),
+        }
+    }
 }
 
 /// What a [`FakeFocusReader`] reads.
@@ -1420,12 +1465,14 @@ pub struct FakeFocusReader {
     calls: Arc<Mutex<FocusCalls>>,
     /// What `context` answers; `Unreadable` unless a test sets it ([`FakeFocusReader::with_context`]).
     context: Result<FocusContext, UnconfirmedWhy>,
+    /// A written paste's control is kept and reads from this feed (§35.10); `None`: never kept.
+    follow: Option<FollowFeed>,
 }
 
 impl FakeFocusReader {
     /// The control reads `before`, then `after` once the paste went out.
     pub fn reading(before: FocusText, after: Vec<Sample>) -> Self {
-        Self { script: FocusScript::Reads { before, after }, calls: Arc::default(), context: Err(UnconfirmedWhy::Unreadable) }
+        Self { script: FocusScript::Reads { before, after }, calls: Arc::default(), context: Err(UnconfirmedWhy::Unreadable), follow: None }
     }
 
     /// A field with `text` before its caret that stays exactly so: the paste never arrived.
@@ -1441,7 +1488,14 @@ impl FakeFocusReader {
 
     /// A reader that cannot read the focused control: every `watch` fails with `why`.
     pub fn refusing(why: UnconfirmedWhy) -> Self {
-        Self { script: FocusScript::Refuses(why), calls: Arc::default(), context: Err(UnconfirmedWhy::Unreadable) }
+        Self { script: FocusScript::Refuses(why), calls: Arc::default(), context: Err(UnconfirmedWhy::Unreadable), follow: None }
+    }
+
+    /// A field with `before` before its caret that reads `after` once the paste went out, whose
+    /// control is kept when the engine asks (§35.10) and then reads from the returned feed.
+    pub fn following(before: &str, after: &str) -> (Self, FollowFeed) {
+        let feed = FollowFeed::default();
+        (Self { follow: Some(feed.clone()), ..Self::showing(before, after) }, feed)
     }
 
     /// A field whose paragraph reads `before`, `selected` and `after` around its selection, for
@@ -1470,12 +1524,20 @@ impl FocusReader for FakeFocusReader {
     }
 
     fn watch(&self, app: &ForegroundApp, expected: &Expected) -> Result<Box<dyn FocusWatch>, UnconfirmedWhy> {
-        self.calls.lock().watched.push((app.app_id.clone(), expected.tail().to_owned()));
+        {
+            let mut calls = self.calls.lock();
+            calls.watched.push((app.app_id.clone(), expected.tail().to_owned()));
+            calls.order.push("watch");
+        }
         match &self.script {
             FocusScript::Refuses(why) => Err(*why),
-            FocusScript::Reads { before, after } => {
-                Ok(Box::new(FakeFocusWatch { before: before.clone(), after: after.clone(), expected: expected.clone(), calls: self.calls.clone() }))
-            }
+            FocusScript::Reads { before, after } => Ok(Box::new(FakeFocusWatch {
+                before: before.clone(),
+                after: after.clone(),
+                expected: expected.clone(),
+                calls: self.calls.clone(),
+                follow: self.follow.clone(),
+            })),
         }
     }
 }
@@ -1486,12 +1548,47 @@ struct FakeFocusWatch {
     after: Vec<Sample>,
     expected: Expected,
     calls: Arc<Mutex<FocusCalls>>,
+    follow: Option<FollowFeed>,
 }
 
 impl FocusWatch for FakeFocusWatch {
     fn settle(self: Box<Self>, within: Duration) -> Settled {
         self.calls.lock().settled.push(within);
         decide(&self.before, &self.after, &self.expected)
+    }
+
+    fn settle_and_keep(self: Box<Self>, within: Duration) -> (Settled, Option<Box<dyn FocusFollow>>) {
+        let (calls, follow) = (self.calls.clone(), self.follow.clone());
+        let settled = self.settle(within);
+        let kept = follow.filter(|_| settled.check == InsertCheck::Written).map(|feed| {
+            let mut seen = calls.lock();
+            seen.kept += 1;
+            seen.order.push("keep");
+            drop(seen);
+            Box::new(FakeFocusFollow { feed, calls: calls.clone() }) as Box<dyn FocusFollow>
+        });
+        (settled, kept)
+    }
+}
+
+/// A kept control's scripted readings ([`FollowFeed`]); dropping it counts as a release.
+pub struct FakeFocusFollow {
+    feed: FollowFeed,
+    calls: Arc<Mutex<FocusCalls>>,
+}
+
+impl FocusFollow for FakeFocusFollow {
+    fn context(&self, _hint: Option<&str>) -> Result<FocusContext, UnconfirmedWhy> {
+        self.calls.lock().follow_reads += 1;
+        self.feed.next()
+    }
+}
+
+impl Drop for FakeFocusFollow {
+    fn drop(&mut self) {
+        let mut calls = self.calls.lock();
+        calls.released += 1;
+        calls.order.push("release");
     }
 }
 

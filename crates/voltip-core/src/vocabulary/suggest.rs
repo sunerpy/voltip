@@ -47,9 +47,13 @@ pub struct Suggestion {
     pub last_at_ms: u64,
     /// Up to three snippets of the recognised text around it, newest first.
     pub examples: Vec<PairExample>,
-    /// Of `count`, the times the user's own correction made it; the rest the AI clean-up did.
+    /// Of `count`, the times the user's own correction made it (从选中文字学习).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub from_edits: u32,
+    /// Of `count`, the times 自动跟踪输入框里的修改 read it in the field (docs/dictation.md §35.10);
+    /// the rest of `count` the AI clean-up did.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub from_follow: u32,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -67,8 +71,9 @@ pub struct Suggestions {
     pub skipped: u32,
     /// Suggestions in all, before `pairs` was cut to the limit.
     pub total: u32,
-    /// Of `total`, the suggestions counted [`REPEATED_MIN`] times or more, and those the user
-    /// corrected themselves (`from_edits`, even once): what the page shows by default (推荐).
+    /// Of `total`, the suggestions counted [`REPEATED_MIN`] times or more, and those from the
+    /// user's corrections (`from_edits` or `from_follow`, even once): what the page shows by
+    /// default (推荐).
     #[serde(default)]
     pub repeated: u32,
     /// Of the takes looked at, those the user corrected (docs/dictation.md §35).
@@ -107,10 +112,18 @@ pub fn suggestions(dictionary: &[DictionaryEntry], rules: &[ReplacementRule], hi
     let mut pairs: Vec<Suggestion> = tally(dictionary, history, widen(history, &read))
         .into_iter()
         .filter(|p| !p.known && !is_ignored(ignored, p))
-        .map(|p| Suggestion { heard: p.heard, polished: p.polished, count: p.count, last_at_ms: p.last_at_ms, examples: p.examples, from_edits: p.from_edits })
+        .map(|p| Suggestion {
+            heard: p.heard,
+            polished: p.polished,
+            count: p.count,
+            last_at_ms: p.last_at_ms,
+            examples: p.examples,
+            from_edits: p.from_edits,
+            from_follow: p.from_follow,
+        })
         .collect();
     let total = u32::try_from(pairs.len()).unwrap_or(u32::MAX);
-    let repeated = u32::try_from(pairs.iter().filter(|p| p.count >= REPEATED_MIN || p.from_edits > 0).count()).unwrap_or(u32::MAX);
+    let repeated = u32::try_from(pairs.iter().filter(|p| p.count >= REPEATED_MIN || p.from_edits > 0 || p.from_follow > 0).count()).unwrap_or(u32::MAX);
     pairs.truncate(limit);
     Suggestions {
         scanned: read.scanned,
@@ -151,6 +164,7 @@ pub fn edit_picks(
             known: false,
             examples: Vec::new(),
             from_edits: 1,
+            from_follow: 0,
             single: counted.single,
         };
         let known_single = pair.single.as_ref().is_some_and(|(h, _)| is_known(h));
@@ -694,6 +708,7 @@ impl<T> std::fmt::Debug for Reply<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::history::CorrectionVia;
     use crate::vocabulary::{RuleKind, VocabularyHits};
 
     fn take(raw: &str, text: &str, at_ms: u64) -> HistoryText {
@@ -705,6 +720,7 @@ mod tests {
             refined: true,
             vocabulary: VocabularyHits::default(),
             corrected: None,
+            corrected_via: None,
         }
     }
 
@@ -811,6 +827,28 @@ mod tests {
         let history = vec![corrected(&long, &format!("{long}改"), 50)];
         let out = suggestions(&[], &[], &history, &[], MAX_SUGGESTIONS);
         assert_eq!((out.scanned, out.skipped, out.edited), (1, 1, 1));
+    }
+
+    /// docs/dictation.md §35.10: a correction 自动跟踪输入框里的修改 read is a third source, counted
+    /// apart from the ones the user taught (`from_follow`); once is enough to be shown by default,
+    /// and a take still counts each pair once.
+    #[test]
+    fn a_correction_the_follow_read_is_counted_as_its_own_source() {
+        let followed = |text: &str, fixed: &str, at_ms: u64| HistoryText { corrected_via: Some(CorrectionVia::Follow), ..corrected(text, fixed, at_ms) };
+        let history = vec![
+            followed("我在用 Quinn for max 做测试", "我在用 Qwen 4 max 做测试", 50),
+            HistoryText { corrected_via: Some(CorrectionVia::Selection), ..corrected("发到非书群", "发到飞书群", 40) },
+            followed("又是非书和非书", "又是飞书和飞书", 30),
+            take("库伯内特斯部署", "Kubernetes 部署", 20),
+        ];
+        let out = suggestions(&[], &[], &history, &[], MAX_SUGGESTIONS);
+        let got: Vec<(&str, &str, u32, u32, u32)> =
+            out.pairs.iter().map(|p| (p.heard.as_str(), p.polished.as_str(), p.count, p.from_edits, p.from_follow)).collect();
+        assert_eq!(got, [("非书", "飞书", 2, 1, 1), ("Quinn for", "Qwen 4", 1, 0, 1), ("库伯内特斯", "Kubernetes", 1, 0, 0)]);
+        assert_eq!((out.edited, out.total, out.repeated), (3, 3, 2), "read once by the follow is shown by default");
+        let json = serde_json::to_value(&out.pairs[1]).unwrap();
+        assert_eq!((json.get("from_follow"), json.get("from_edits")), (Some(&serde_json::json!(1)), None), "{json}");
+        assert!(serde_json::to_value(&out.pairs[2]).unwrap().get("from_follow").is_none(), "left off the wire when none");
     }
 
     /// docs/dictation.md §16.10: a single character is widened by the neighbour that makes the

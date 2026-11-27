@@ -250,8 +250,8 @@ pub struct CorrectedText {
 pub enum CorrectionVia {
     /// The user selected the corrected text and asked Voltip to learn from it (从选中文字学习).
     Selection,
-    /// Read from the text field the take went to after the paste: the experimental field
-    /// tracking of a later version writes it. This version writes none, and loads it.
+    /// Read from the text field the take went to after the paste, by 自动跟踪输入框里的修改
+    /// (docs/dictation.md §35.10, experimental).
     Follow,
 }
 

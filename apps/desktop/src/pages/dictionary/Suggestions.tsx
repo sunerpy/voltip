@@ -451,11 +451,17 @@ export function SuggestionsPanel({ view, onShowEntry }: SuggestionsPanelProps) {
       cell: (s) => (
         <span className="flex min-w-0 items-center gap-2">
           <Pair heard={s.heard} polished={s.polished} testId="suggestion-pair" />
-          {/* docs/dictation.md §35: where the pair came from, both when both did. */}
+          {/* docs/dictation.md §35: where the pair came from, every source that gave it: the AI
+              polish, the user's own correction, the field 自动跟踪 read (§35.10). */}
           <span className="flex shrink-0 gap-1" data-testid="suggestion-sources">
-            {s.count > s.from_edits && <Badge>{t("dictionary.suggestions.source.polish")}</Badge>}
+            {s.count > s.from_edits + s.from_follow && (
+              <Badge>{t("dictionary.suggestions.source.polish")}</Badge>
+            )}
             {s.from_edits > 0 && (
               <Badge tone="info">{t("dictionary.suggestions.source.edit")}</Badge>
+            )}
+            {s.from_follow > 0 && (
+              <Badge tone="info">{t("dictionary.suggestions.source.follow")}</Badge>
             )}
           </span>
         </span>

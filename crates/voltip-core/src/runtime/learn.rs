@@ -143,6 +143,8 @@ pub(super) enum LearnInbound {
     Counted { request: u64, picks: Result<Vec<SuggestionPick>, String> },
     /// A notice's time is up.
     Expired { id: u64, generation: u64 },
+    /// A step of 自动跟踪输入框里的修改 (docs/dictation.md §35.10, `super::edit_follow`).
+    Followed { generation: u64, id: Uuid, step: crate::vocabulary::follow::FollowStep, reads: u32 },
 }
 
 /// The runtime's part of 从选中文字学习.
@@ -161,6 +163,11 @@ impl LearnRuntime {
     pub(super) fn new(data_dir: &std::path::Path) -> (Self, mpsc::Receiver<LearnInbound>) {
         let (tx, rx) = mpsc::channel(8);
         (Self { tx, reader: Arc::new(HistoryReader::new(data_dir)), request: 0, notice: None, next_id: 0, generation: 0 }, rx)
+    }
+
+    /// Where the tasks answer.
+    pub(super) fn tx(&self) -> mpsc::Sender<LearnInbound> {
+        self.tx.clone()
     }
 }
 
@@ -218,6 +225,7 @@ impl Runtime {
                     self.set_learn_notice(None);
                 }
             }
+            LearnInbound::Followed { generation, id, step, reads } => self.on_followed(generation, id, step, reads),
             LearnInbound::Compared { .. } | LearnInbound::Counted { .. } => tracing::debug!("an older learn selection answered; dropped"),
         }
     }
@@ -235,6 +243,8 @@ impl Runtime {
             let result = match &c.keep {
                 Some(text) => {
                     kept.push(c.id);
+                    // docs/dictation.md §35.10: the user's own correction; a follow of it stops.
+                    self.edit_follow_corrected_by_user(c.id, false);
                     self.history.set_corrected(c.id, Some(CorrectedText { text: text.clone(), at_ms: now_ms(), via: CorrectionVia::Selection }))
                 }
                 None if c.had => self.history.set_corrected(c.id, None),
@@ -351,6 +361,8 @@ impl Runtime {
 
     /// The history detail's 移除: forget the user's correction of entry `id`.
     pub(super) fn clear_correction(&mut self, id: Uuid) -> Result<(), crate::CoreError> {
+        // docs/dictation.md §35.10: a follow of it stops, and it is not followed again.
+        self.edit_follow_corrected_by_user(id, true);
         if self.history.set_corrected(id, None)? {
             self.emit_history();
         }

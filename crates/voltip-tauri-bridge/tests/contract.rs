@@ -333,6 +333,8 @@ fn engine_settings() -> EngineSettings {
         // docs/dictation.md §28: both switches off, away from their defaults, so the sample shows them.
         insert_check: false,
         result_cards_stay: false,
+        // docs/dictation.md §35.10: the experiment on, so the sample shows it (written only when on).
+        follow_edits: true,
         // docs/dictation.md §3.5: a ready fallback model for the recognition (and the selected one,
         // listed again: skipped), one without its key for the clean-up. §3.14: the recognition also
         // moves on for failures, to a model of this device too (one installed, one downloading).
@@ -3581,6 +3583,7 @@ fn vocabulary_suggestions_fixture_matches_serde_output() {
                     PairExample { history_id: uuid(HISTORY_ID_2), snippet: "…今天用维他命跑了一遍回归".into() },
                 ],
                 from_edits: 0,
+                from_follow: 0,
             },
             Suggestion {
                 heard: "提成".into(),
@@ -3589,6 +3592,7 @@ fn vocabulary_suggestions_fixture_matches_serde_output() {
                 last_at_ms: AT_MS - 86_400_000,
                 examples: vec![PairExample { history_id: uuid(HISTORY_ID_3), snippet: "提成在 Teams 里面".into() }],
                 from_edits: 0,
+                from_follow: 0,
             },
             // docs/dictation.md §35: a pair the user corrected in the application, once.
             Suggestion {
@@ -3598,6 +3602,17 @@ fn vocabulary_suggestions_fixture_matches_serde_output() {
                 last_at_ms: AT_MS - 3_600_000,
                 examples: vec![PairExample { history_id: uuid(HISTORY_ID_2), snippet: "我在用 Quinn for max 做测试".into() }],
                 from_edits: 1,
+                from_follow: 0,
+            },
+            // docs/dictation.md §35.10: a pair 自动跟踪输入框里的修改 read in the field, once.
+            Suggestion {
+                heard: "千问四".into(),
+                polished: "Qwen 4".into(),
+                count: 1,
+                last_at_ms: AT_MS - 7_200_000,
+                examples: vec![PairExample { history_id: uuid(HISTORY_ID_3), snippet: "今天测试一下千问四Max的推理能力".into() }],
+                from_edits: 0,
+                from_follow: 1,
             },
         ],
     });

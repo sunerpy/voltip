@@ -18,6 +18,10 @@ pub const LEARN_TAKES: usize = 50;
 pub const MAX_LEARN_SELECTION_CHARS: usize = 8000;
 /// The least similarity at which a selection counts as the corrected form of a take.
 pub const MATCH_MIN: f64 = 0.4;
+/// How alike a later reading of a followed take must be to still hold it (自动跟踪输入框里的修改,
+/// docs/dictation.md §35.10): the take is known, not chosen among others, so less than
+/// [`MATCH_MIN`] (「用维他命录音」 → 「用 Voltip 录音」 is 3 / 9).
+pub const FOLLOW_MATCH_MIN: f64 = 0.3;
 /// Takes this close in similarity to the best one count as tied; the newer one wins.
 pub const MATCH_TIE: f64 = 0.05;
 /// Most takes one selection corrects (it may cover a few takes dictated one after another).
@@ -392,13 +396,13 @@ fn overlaps(a: (usize, usize), b: (usize, usize)) -> bool {
 /// or on the inserted text when the corrected one has no word in common with the selection (the
 /// original wording selected again to take a correction back).
 pub fn match_selection(selection: &str, takes: &[HistoryText]) -> Vec<Matched> {
-    match_at(selection, takes, None)
+    match_at(selection, takes, None, MATCH_MIN)
 }
 
 /// [`match_selection`], with only the takes whose part meets `focus` (characters of the normalised
 /// selection: a range that is not empty must overlap the take's part, an empty one must lie in it
 /// or at its edge) taking part in the choice, so takes elsewhere cannot take the places.
-fn match_at(selection: &str, takes: &[HistoryText], focus: Option<(usize, usize)>) -> Vec<Matched> {
+fn match_at(selection: &str, takes: &[HistoryText], focus: Option<(usize, usize)>, min: f64) -> Vec<Matched> {
     let selection = normalize(selection);
     let sel = toks(&selection);
     // Characters before each token of the selection, white space included: a token's text is its
@@ -448,7 +452,7 @@ fn match_at(selection: &str, takes: &[HistoryText], focus: Option<(usize, usize)
             (None, Some(i)) => (i, true),
             (None, None) => continue,
         };
-        if alignment.similarity >= MATCH_MIN && meets(&alignment) {
+        if alignment.similarity >= min && meets(&alignment) {
             candidates.push(Candidate { index, alignment, on_inserted: from_inserted, similarity: alignment.similarity });
         }
     }
@@ -503,7 +507,185 @@ fn match_at(selection: &str, takes: &[HistoryText], focus: Option<(usize, usize)
 pub fn match_around(before: &str, selected: &str, after: &str, takes: &[HistoryText]) -> Vec<Matched> {
     let (before, selected, after) = (normalize(before), normalize(selected), normalize(after));
     let (at, len) = (before.chars().count(), selected.chars().count());
-    match_at(&format!("{before}{selected}{after}"), takes, Some((at, at + len)))
+    match_at(&format!("{before}{selected}{after}"), takes, Some((at, at + len)), MATCH_MIN)
+}
+
+/// Where a followed take is in a paragraph read from the field it went to (自动跟踪输入框里的修改,
+/// docs/dictation.md §35.10): the paragraph as [`normalize`]d and the take's characters in it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct FollowSpot {
+    pub(crate) paragraph: String,
+    pub(crate) span: (usize, usize),
+}
+
+impl FollowSpot {
+    /// The field's text of the take.
+    pub(crate) fn text(&self) -> String {
+        self.paragraph.chars().skip(self.span.0).take(self.span.1.saturating_sub(self.span.0)).collect()
+    }
+}
+
+/// The take in the first reading after its paste, where the caret is at it or next to it: its
+/// place in the paragraph `before` `selected` `after`, `None` when the paragraph holds nothing like
+/// it. `take` is compared as inserted (its `corrected` is not looked at).
+pub(crate) fn follow_first(before: &str, selected: &str, after: &str, take: &HistoryText) -> Option<FollowSpot> {
+    let (before, selected, after) = (normalize(before), normalize(selected), normalize(after));
+    let (at, len) = (before.chars().count(), selected.chars().count());
+    let paragraph = format!("{before}{selected}{after}");
+    let take = HistoryText { corrected: None, ..take.clone() };
+    let found = match_at(&paragraph, std::slice::from_ref(&take), Some((at, at + len)), MATCH_MIN);
+    found.into_iter().next().map(|m| FollowSpot { paragraph, span: m.span })
+}
+
+/// The take in a later reading: `previous`'s span carried over the token LCS of the two paragraphs,
+/// and the match kept to it, so a change at the take's start or end is taken from that span and not
+/// from the text the user typed next to it. The take is known here, so less alike than a choice
+/// among the takes needs ([`FOLLOW_MATCH_MIN`]): a short take whose Chinese words became Latin
+/// ones stays found. `None` when the take is no longer there (the message was sent, the text
+/// deleted or undone).
+pub(crate) fn follow_next(previous: &FollowSpot, before: &str, selected: &str, after: &str, take: &HistoryText) -> Option<FollowSpot> {
+    let paragraph = format!("{}{}{}", normalize(before), normalize(selected), normalize(after));
+    let (old, new) = (toks(&previous.paragraph), toks(&paragraph));
+    let old_offsets = char_offsets(&old);
+    let (at, to) = previous.span;
+    let first = old_offsets.iter().rposition(|&o| o <= at).unwrap_or(0).min(old.len());
+    let last = old_offsets.iter().position(|&o| o >= to).unwrap_or(old.len()).max(first);
+    let (lo, hi) = map_range(&old, &new, (first, last))?;
+    let new_offsets = char_offsets(&new);
+    let take = HistoryText { corrected: None, ..take.clone() };
+    let found = match_at(&paragraph, std::slice::from_ref(&take), Some((new_offsets[lo], new_offsets[hi])), FOLLOW_MATCH_MIN);
+    found.into_iter().next().map(|m| FollowSpot { paragraph, span: m.span })
+}
+
+/// The share of `take`'s words that `corrected` does not keep (token LCS): 0 for the same text, 1
+/// when no word is left. A follow that changes more than half of a take is a rewrite, not a
+/// correction (docs/dictation.md §35.10). `None` past [`MAX_DIFF_CELLS`].
+pub(crate) fn changed_share(take: &str, corrected: &str) -> Option<f64> {
+    let (take, corrected) = (normalize(take), normalize(corrected));
+    let (a, c) = (toks(&take), toks(&corrected));
+    let words = words_of(&a);
+    if words == 0 {
+        return Some(0.0);
+    }
+    let kept = lcs_pairs(&a, &c)?.iter().filter(|&&(i, _)| a[i].word).count();
+    #[allow(clippy::cast_precision_loss)] // a few hundred words at most
+    Some((words - kept) as f64 / words as f64)
+}
+
+/// Characters before each token, white space included, and after the last one.
+fn char_offsets(toks: &[Tok<'_>]) -> Vec<usize> {
+    std::iter::once(0)
+        .chain(toks.iter().scan(0usize, |at, t| {
+            *at += t.text.chars().count();
+            Some(*at)
+        }))
+        .collect()
+}
+
+/// The take's text with only the user's changes, for 自动跟踪输入框里的修改 (docs/dictation.md
+/// §35.10): `take` as inserted (A), `baseline` the field's text of it in the first reading after
+/// the paste (B0, with the application's own rewrites in it, such as Word's capital at the start of
+/// a sentence), `current` its text now (Bt).
+///
+/// The application's rewrites are the runs where A and B0 differ, the user's changes the runs where
+/// B0 and Bt differ (token LCS, case counts). A change that shares a token with a rewrite, or is an
+/// insertion strictly inside one, is widened over it and replaces the rewrite's part of A as a
+/// whole, so the user's wording wins there. A rewrite the user did not touch, even one right next
+/// to a change, keeps A's wording and is not learned; an insertion right after (before) a rewrite
+/// goes after (before) the rewrite's part of A. `None` past [`MAX_DIFF_CELLS`].
+pub(crate) fn follow_corrected(take: &str, baseline: &str, current: &str) -> Option<String> {
+    let (take, baseline, current) = (normalize(take), normalize(baseline), normalize(current));
+    let (a, b0, bt) = (toks(&take), toks(&baseline), toks(&current));
+    // Where each token of B0 stands in A: its own token, or the whole A part of its rewrite.
+    let mut place: Vec<(usize, usize)> = vec![(0, 0); b0.len()];
+    // Rewrites, as (A range, B0 range); `rewrite[j]` the one B0's token `j` is in.
+    let mut rewrites: Vec<((usize, usize), (usize, usize))> = Vec::new();
+    let mut rewrite: Vec<Option<usize>> = vec![None; b0.len()];
+    let (mut ia, mut jb) = (0usize, 0usize);
+    for &(i, j) in lcs_pairs(&a, &b0)?.iter().chain(std::iter::once(&(a.len(), b0.len()))) {
+        if i > ia || j > jb {
+            for k in jb..j {
+                place[k] = (ia, i);
+                rewrite[k] = Some(rewrites.len());
+            }
+            rewrites.push(((ia, i), (jb, j)));
+        }
+        if j < b0.len() {
+            place[j] = (i, i + 1);
+        }
+        (ia, jb) = (i + 1, j + 1);
+    }
+    // The user's changes, as (B0 range, Bt range), in order.
+    let mut changes: Vec<((usize, usize), (usize, usize))> = Vec::new();
+    let mut kept: Vec<Option<usize>> = vec![None; b0.len()];
+    let (mut jb, mut jt) = (0usize, 0usize);
+    for &(j, t) in lcs_pairs(&b0, &bt)?.iter().chain(std::iter::once(&(b0.len(), bt.len()))) {
+        if j > jb || t > jt {
+            changes.push(((jb, j), (jt, t)));
+        }
+        if j < b0.len() {
+            kept[j] = Some(t);
+        }
+        (jb, jt) = (j + 1, t + 1);
+    }
+    // Widen each change over the rewrites it reaches into, then merge what overlaps: groups of
+    // changes over one B0 range each.
+    let mut items: Vec<(usize, usize, usize)> = changes
+        .iter()
+        .enumerate()
+        .map(|(c, &((lo, hi), _))| {
+            let (mut wlo, mut whi) = (lo, hi);
+            for &(_, (rlo, rhi)) in &rewrites {
+                let shares = lo < hi && lo < rhi && rlo < hi;
+                let inside = lo == hi && rlo < lo && lo < rhi;
+                if shares || inside {
+                    (wlo, whi) = (wlo.min(rlo), whi.max(rhi));
+                }
+            }
+            (wlo, whi, c)
+        })
+        .collect();
+    items.sort_unstable();
+    let mut groups: Vec<((usize, usize), Vec<usize>)> = Vec::new();
+    for (lo, hi, c) in items {
+        match groups.last_mut() {
+            // An insertion at a group's very start stays apart: it goes before that group.
+            Some((range, members)) if lo < range.1 && (lo > range.0 || hi > lo) => {
+                range.1 = range.1.max(hi);
+                members.push(c);
+            }
+            _ => groups.push(((lo, hi), vec![c])),
+        }
+    }
+    let join = |toks: &[Tok<'_>]| toks.iter().map(|t| t.text).collect::<String>();
+    let mut out = String::new();
+    let mut at = 0usize;
+    for ((lo, hi), members) in groups {
+        let (alo, ahi) = if lo < hi {
+            (place[lo].0, place[hi - 1].1)
+        } else {
+            let p = lo.checked_sub(1).map_or(0, |p| place[p].1);
+            (p, p)
+        };
+        // The group's part of Bt: its changes' runs and the tokens the user kept inside it.
+        let mut tlo = usize::MAX;
+        let mut thi = 0usize;
+        for &c in &members {
+            let (_, (s, e)) = changes[c];
+            (tlo, thi) = (tlo.min(s), thi.max(e));
+        }
+        for t in kept[lo..hi].iter().flatten() {
+            (tlo, thi) = (tlo.min(*t), thi.max(t + 1));
+        }
+        if tlo > thi {
+            continue;
+        }
+        out.push_str(&join(&a[at.min(alo)..alo]));
+        out.push_str(&join(&bt[tlo..thi]));
+        at = at.max(ahi);
+    }
+    out.push_str(&join(&a[at.min(a.len())..]));
+    Some(out)
 }
 
 #[cfg(test)]
@@ -525,6 +707,7 @@ mod tests {
             refined: false,
             vocabulary: VocabularyHits::default(),
             corrected: None,
+            corrected_via: None,
         }
     }
 
@@ -812,5 +995,65 @@ mod tests {
     fn line_endings_of_the_application_do_not_matter() {
         let take = plain("第一行 Quinn for max\n第二行", 10);
         assert_eq!(one("第一行 Qwen 4 max\r\n第二行", std::slice::from_ref(&take)).corrected, "第一行 Qwen 4 max\n第二行");
+    }
+
+    /// docs/dictation.md §35.10: the user's change is kept, the field's text of the take as is.
+    #[test]
+    fn a_followed_change_with_no_rewrite_of_the_application_is_the_field_text() {
+        let a = "今天测试一下千问四Max的推理能力";
+        assert_eq!(follow_corrected(a, a, "今天测试一下Qwen 4 Max的推理能力").as_deref(), Some("今天测试一下Qwen 4 Max的推理能力"));
+        assert_eq!(follow_corrected(a, a, a).as_deref(), Some(a), "nothing changed");
+    }
+
+    /// A rewrite of the application the user changed again: the user's wording wins over the whole
+    /// rewrite. Regression of the plan's review (2026-11-26): Word's capital at the start, then the
+    /// user's correction of that word.
+    #[test]
+    fn regression_a_change_over_a_rewrite_of_the_application_takes_the_users_wording() {
+        assert_eq!(follow_corrected("quinn for max", "Quinn for max", "Qwen 4 max").as_deref(), Some("Qwen 4 max"));
+        let take = plain("quinn for max", 10);
+        assert_eq!(pairs(&take, "Qwen 4 max"), [("quinn for".to_owned(), "Qwen 4".to_owned())]);
+    }
+
+    /// A rewrite the user only changed next to keeps the take's wording, and is not learned.
+    /// Regression of the plan's review (round 2, 2026-11-26): widening over adjacent rewrites
+    /// copied Word's capital into the correction.
+    #[test]
+    fn regression_a_rewrite_next_to_a_change_keeps_the_takes_wording() {
+        assert_eq!(follow_corrected("quinn foo", "Quinn foo", "Quinn bar").as_deref(), Some("quinn bar"));
+        assert_eq!(follow_corrected("quinn for max", "Quinn for max", "Quinn for Max").as_deref(), Some("quinn for Max"));
+    }
+
+    #[test]
+    fn an_insertion_next_to_a_rewrite_goes_beside_the_takes_part_of_it() {
+        assert_eq!(follow_corrected("quinn foo", "Quinn foo", "Quinn new foo").as_deref(), Some("quinn new foo"));
+        assert_eq!(follow_corrected("foo quinn", "foo Quinn", "foo new Quinn").as_deref(), Some("foo new quinn"));
+        // Strictly inside a rewrite of two words: the user's wording of the whole rewrite.
+        assert_eq!(follow_corrected("quinn for max", "Quinn For max", "Quinn new For max").as_deref(), Some("Quinn new For max"));
+    }
+
+    /// The take in the first reading after its paste, then carried through the user's edits: the
+    /// change at the take's start is taken from the take's span, not from the text glued before it.
+    #[test]
+    fn a_followed_take_is_found_after_its_paste_and_carried_through_the_edits() {
+        let take = plain("千问四Max的推理能力", 10);
+        let first = follow_first("我们讨论一下千问四Max的推理能力", "", "", &take).expect("found");
+        assert_eq!(first.text(), "千问四Max的推理能力");
+        // Corrected in place, the caret after the corrected words.
+        let next = follow_next(&first, "我们讨论一下Qwen 4", "", " Max的推理能力", &take).expect("still there");
+        assert_eq!(next.text(), "Qwen 4 Max的推理能力");
+        assert_eq!(follow_corrected(&take.text, &first.text(), &next.text()).as_deref(), Some("Qwen 4 Max的推理能力"));
+        assert_eq!(pairs(&take, "Qwen 4 Max的推理能力"), [("千问四".to_owned(), "Qwen 4".to_owned())]);
+        // Words typed after the take are not the take's.
+        let typed = follow_next(&next, "我们讨论一下Qwen 4 Max的推理能力，你觉得呢", "", "", &take).expect("still there");
+        assert_eq!(typed.text(), "Qwen 4 Max的推理能力");
+        // Sent: the field is empty.
+        assert_eq!(follow_next(&typed, "", "", "", &take), None);
+    }
+
+    #[test]
+    fn a_followed_take_that_is_not_in_the_first_reading_is_not_found() {
+        let take = plain("千问四Max的推理能力", 10);
+        assert_eq!(follow_first("完全不同的一句话", "", "", &take), None);
     }
 }

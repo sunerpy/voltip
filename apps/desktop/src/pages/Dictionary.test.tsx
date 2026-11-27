@@ -492,6 +492,57 @@ describe("Dictionary page · learning suggestions (docs/dictation.md §16.10)", 
     expect(await screen.findByTestId("learn-hotkey-recorder")).toBeInTheDocument();
   });
 
+  it("regression (§35.10): a pair only 自动跟踪 read is marked 自动跟踪, not 润色, and is suggested once", async () => {
+    // The polish mark showed whenever `count > from_edits`: a pair the follow alone read in the
+    // field was marked 润色, which it never was.
+    const user = userEvent.setup();
+    const fixed = (
+      id: string,
+      atMs: number,
+      raw: string,
+      to: string,
+      via: "selection" | "follow",
+    ): HistoryEntry => ({
+      ...take(id, atMs, raw, raw, false),
+      corrected: { text: to, at_ms: atMs + 60_000, via },
+    });
+    const followed = [
+      fixed(SF, AT - HOUR, "我在用 Quinn for max 做测试", "我在用 Qwen 4 max 做测试", "follow"),
+      fixed(
+        "00000000-0000-4000-8000-0000000000b7",
+        AT - HOUR - 1,
+        "又说非书",
+        "又说飞书",
+        "follow",
+      ),
+      fixed(
+        "00000000-0000-4000-8000-0000000000b8",
+        AT - HOUR - 2,
+        "提成在 Teams 里",
+        "集成在 Teams 里",
+        "selection",
+      ),
+      fixed(
+        "00000000-0000-4000-8000-0000000000b9",
+        AT - HOUR - 3,
+        "提成方案",
+        "集成方案",
+        "follow",
+      ),
+      ...takes(),
+    ];
+    renderApp({ path: "/dictionary", backend: learning({ history: followed }) });
+    await openSuggestions(user);
+    expect(shownPairs().map((p) => p[0])).toEqual(["非书→飞书", "提成→集成", "Quinn for→Qwen 4"]);
+    const sources = (heard: string) =>
+      within(rowOf(heard)).getByTestId("suggestion-sources").textContent;
+    expect(sources("Quinn for")).toBe("自动跟踪");
+    expect(sources("提成")).toBe("你的修改自动跟踪");
+    expect(sources("非书")).toBe("润色自动跟踪");
+    await showAll(user);
+    expect(sources("库伯内特斯")).toBe("润色");
+  });
+
   it("docs/dictation.md §35: with the shortcut set there is no hint, and /dictionary/suggestions opens the suggestions", async () => {
     const backend = learning({ settings: { learn_hotkey: "Ctrl+Alt+L" } });
     renderApp({ path: "/dictionary/suggestions", backend });

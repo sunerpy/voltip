@@ -3,7 +3,9 @@
 //! window leaves it `not_written`; the focus moving to the window's other EDIT is `unconfirmed`.
 //! And the copy that reads the selection (§19, 从选中文字学习 §35): Notepad's selection comes
 //! back while the shortcut's modifiers are still held, and the clipboard holds what it held; the
-//! learning read gives Notepad's text around its selection and around its caret.
+//! learning read gives Notepad's text around its selection and around its caret. 自动跟踪输入框里的
+//! 修改 (§35.10): a written paste keeps its EDIT, which is read again as it is edited, until
+//! another EDIT has the focus.
 //! It pastes and copies the way Voltip does (the clipboard, Ctrl+V and Ctrl+Insert) in windows it
 //! brings to the front, so it is ignored: CI runs it on the windows-2025 desktop (`hooks-windows`),
 //! never on a computer someone is using:
@@ -18,7 +20,7 @@ use std::sync::mpsc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use voltip_focus::{Expected, FocusContext, Reader, Settled, UnconfirmedWhy, Watch, windows as uia};
+use voltip_focus::{Expected, FocusContext, Follow, Reader, Settled, UnconfirmedWhy, Watch, windows as uia};
 use voltip_inject::{ClipboardPort as _, CopyOptions, Injector as _, Modifier, PasteOptions, SelectionSource as _, SystemClipboard, system_selection};
 use voltip_platform::HostOs;
 use voltip_platform::insert_check::rules::InsertCheck;
@@ -30,7 +32,7 @@ use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Threading::GetCurrentThreadId;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_KEYUP, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEINPUT, SendInput, VIRTUAL_KEY,
-    VK_A, VK_CONTROL, VK_HOME, VK_LEFT, VK_MENU, VK_SHIFT,
+    VK_A, VK_CONTROL, VK_DELETE, VK_END, VK_HOME, VK_LEFT, VK_MENU, VK_SHIFT,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, ES_AUTOHSCROLL, ES_READONLY, FindWindowW, GetForegroundWindow, GetMessageW,
@@ -306,6 +308,43 @@ fn a_paste_lands_in_notepad_a_read_only_edit_stays_and_another_edit_takes_the_fo
     let watch = wait_watch(&reader, OWN);
     click(own.other, own.top, "the other EDIT");
     assert_eq!(watch.settle(WATCH), Settled::unconfirmed(UnconfirmedWhy::ControlChanged), "the focus moved");
+}
+
+/// Read the kept control until `wanted` holds (the keys reach the window a little later).
+fn wait_follow(follow: &Follow, what: &str, wanted: impl Fn(&Result<FocusContext, UnconfirmedWhy>) -> bool) {
+    let until = Instant::now() + WAIT;
+    loop {
+        let read = follow.context(None);
+        if wanted(&read) {
+            return;
+        }
+        assert!(Instant::now() < until, "{what}: last read {read:?}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// docs/dictation.md §35.10: a written paste keeps its EDIT; the EDIT is read again as the user
+/// edits it (the last word selected and deleted), and once the read-only EDIT has the focus the
+/// follow says so instead of reading it.
+#[test]
+#[ignore = "pastes into windows it brings to the front: CI's windows-2025 desktop only"]
+fn a_kept_edit_is_read_again_as_it_is_edited_and_not_once_another_has_the_focus() {
+    let reader = Reader::new(HostOs::Windows, uia::open);
+    let own = OwnWindow::open();
+    click(own.other, own.top, "the editable EDIT");
+    drop(Held::down(&[VK_END]));
+    let watch = wait_watch(&reader, OWN);
+    paste_into(own.top);
+    let (settled, follow) = watch.settle_and_keep(WATCH);
+    assert_eq!(settled, Settled::sure(InsertCheck::Written), "the editable EDIT");
+    let follow = follow.expect("a written paste keeps its control");
+    wait_follow(&follow, "the paste", |r| r.as_ref().is_ok_and(|c| c.before == format!("前文{TYPED}")));
+    drop(Held::down(&[VK_SHIFT, VK_CONTROL, VK_LEFT]));
+    drop(Held::down(&[VK_DELETE]));
+    wait_follow(&follow, "the last word deleted", |r| r.as_ref().is_ok_and(|c| !c.before.contains("check")));
+    assert_eq!(follow.context(None).map(|c| c.before), Ok("前文voltip ".to_owned()));
+    click(own.readonly, own.top, "the read-only EDIT");
+    wait_follow(&follow, "the focus moved", |r| *r == Err(UnconfirmedWhy::ControlChanged));
 }
 
 /// Read Notepad for 从选中文字学习 until `wanted` holds (the keys reach Notepad a little later).

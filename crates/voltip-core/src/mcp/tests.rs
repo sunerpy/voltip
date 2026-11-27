@@ -51,7 +51,16 @@ fn rule(name: &str, source: EntrySource, pending: bool) -> ReplacementRule {
 }
 
 fn take(raw: &str, text: &str, at_ms: u64) -> HistoryText {
-    HistoryText { id: Uuid::new_v4(), at_ms, raw_text: raw.into(), text: text.into(), refined: true, vocabulary: VocabularyHits::default(), corrected: None }
+    HistoryText {
+        id: Uuid::new_v4(),
+        at_ms,
+        raw_text: raw.into(),
+        text: text.into(),
+        refined: true,
+        vocabulary: VocabularyHits::default(),
+        corrected: None,
+        corrected_via: None,
+    }
 }
 
 #[test]

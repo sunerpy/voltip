@@ -171,6 +171,33 @@ describe("learning suggestions (docs/dictation.md §16.10)", () => {
     });
   });
 
+  it("§35.10: a correction the follow read is counted as its own source, shown once read", () => {
+    const fixed = (
+      text: string,
+      to: string,
+      at: number,
+      via: "selection" | "follow",
+    ): HistoryEntry => ({
+      ...take(text, text, at, false),
+      corrected: { text: to, at_ms: at + 1, via },
+    });
+    const takes = [
+      fixed("我在用 Quinn for max 做测试", "我在用 Qwen 4 max 做测试", 50, "follow"),
+      fixed("发到非书群", "发到飞书群", 40, "selection"),
+      fixed("又是非书和非书", "又是飞书和飞书", 30, "follow"),
+      take("库伯内特斯部署", "Kubernetes 部署", 20),
+    ];
+    const out = suggestVocabulary([], [], takes, []);
+    expect(
+      out.pairs.map((p) => [p.heard, p.polished, p.count, p.from_edits, p.from_follow]),
+    ).toEqual([
+      ["非书", "飞书", 2, 1, 1],
+      ["Quinn for", "Qwen 4", 1, 0, 1],
+      ["库伯内特斯", "Kubernetes", 1, 0, 0],
+    ]);
+    expect([out.edited, out.total, out.repeated]).toEqual([3, 3, 2]);
+  });
+
   it("regression: a correction counts once per take, and a corrected take too long to compare is still edited", () => {
     // Goal review of PR #260 (2026-11-18): the plan counts the user's corrections once per take.
     const corrected = (text: string, fixed: string, at: number): HistoryEntry => ({

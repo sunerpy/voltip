@@ -782,6 +782,9 @@ describe("IPC contract fixtures (written by the Rust side)", () => {
     expect(typeof engines.vad_trim).toBe("boolean");
     // docs/dictation.md §28: both switches off in the fixture, so Rust sends them (it omits `true`).
     expect([engines.insert_check, engines.result_cards_stay]).toEqual([false, false]);
+    // §35.10: the experiment on in the fixture, so Rust sends it (it omits `false`).
+    expect(engines.follow_edits).toBe(true);
+    expect(engineSettingsSchema.parse({}).follow_edits).toBe(false);
     expect(OUTPUT_MODES).toContain(parsed.engines.effective_output_mode);
     expect(ACTIVATIONS).toContain(parsed.settings.activation);
     const rawSettings = z
@@ -1792,11 +1795,15 @@ describe("history queries (docs/dictation.md section 4.4)", () => {
       ready.repeated,
       ready.edited,
     ]).toEqual([2000, 1480, 3, 41, 10, 2]);
-    expect(ready.pairs.map((p) => [p.heard, p.polished, p.count, p.from_edits])).toEqual([
-      ["维他命", "Voltip", 12, 0],
-      ["提成", "集成", 3, 0],
+    expect(
+      ready.pairs.map((p) => [p.heard, p.polished, p.count, p.from_edits, p.from_follow]),
+    ).toEqual([
+      ["维他命", "Voltip", 12, 0, 0],
+      ["提成", "集成", 3, 0, 0],
       // docs/dictation.md §35: corrected by the user once.
-      ["Quinn for", "Qwen 4", 1, 1],
+      ["Quinn for", "Qwen 4", 1, 1, 0],
+      // §35.10: read once by 自动跟踪输入框里的修改.
+      ["千问四", "Qwen 4", 1, 0, 1],
     ]);
     expect(ready.pairs[0]?.examples).toHaveLength(2);
     expect(suggestionsAnswerSchema.parse(fixture.history_off)).toEqual({ status: "history_off" });

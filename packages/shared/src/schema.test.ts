@@ -525,6 +525,7 @@ describe("dictation contract (docs/dictation.md)", () => {
       // docs/dictation.md §28: both on by default (D13).
       insert_check: true,
       result_cards_stay: true,
+      follow_edits: false,
     });
     // `#[serde(default)]` everywhere: an empty block is the defaults, an empty status the empty one.
     expect(engineSettingsSchema.parse({})).toEqual(defaultEngineSettings());

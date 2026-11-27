@@ -459,6 +459,7 @@
       "switched_window": "paste_here",
       "insert_check": false,
       "result_cards_stay": false,
+      "follow_edits": true,
       "asr_fallback": {
         "enabled": true,
         "on_outage": true,
@@ -7455,6 +7456,7 @@
       "switched_window": "paste_here",
       "insert_check": false,
       "result_cards_stay": false,
+      "follow_edits": true,
       "asr_fallback": {
         "enabled": true,
         "on_outage": true,

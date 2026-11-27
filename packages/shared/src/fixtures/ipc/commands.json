@@ -326,6 +326,7 @@
         "asr_provider": "local",
         "chinese_script": "traditional",
         "clipboard_after": "keep",
+        "follow_edits": true,
         "inject": "paste",
         "insert_check": false,
         "language": "zh",

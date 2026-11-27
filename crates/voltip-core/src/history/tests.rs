@@ -1224,7 +1224,8 @@ fn recent_texts_are_the_newest_recognised_takes() {
             text: "最新。".into(),
             refined: true,
             vocabulary: VocabularyHits::default(),
-            corrected: None
+            corrected: None,
+            corrected_via: None
         }
     );
     // Whether the polish made the text, and what fired: what the correction summary leaves out (§25).

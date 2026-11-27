@@ -2,7 +2,9 @@
 //! paste into the test's own window, whose text view can be selected but not edited, leaves it
 //! `not_written`; a paste into a TextEdit document is `written`. Then the copy that reads the
 //! selection (§19, 从选中文字学习 §35): TextEdit's selection comes back with Cmd+C, and the
-//! pasteboard holds what it held before. AppKit wants the main thread, so
+//! pasteboard holds what it held before. 自动跟踪输入框里的修改 (§35.10): the document's text view,
+//! kept from the paste, is read again once its text is deleted, until another document has the
+//! focus. AppKit wants the main thread, so
 //! this test has its own `main` (`harness = false`): the main thread runs the application, the
 //! checks run on another thread. It pastes the way Voltip does (the pasteboard and Cmd+V) into
 //! windows it brings to the front, and needs the Accessibility permission for the test binary, so
@@ -24,7 +26,7 @@ mod mac {
         NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSResponder, NSTextView, NSView, NSWindow, NSWindowStyleMask, NSWorkspace,
     };
     use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
-    use voltip_focus::{Expected, Reader, Settled, UnconfirmedWhy, Watch, macos as ax};
+    use voltip_focus::{Expected, Follow, Reader, Settled, UnconfirmedWhy, Watch, macos as ax};
     use voltip_inject::{ClipboardPort as _, CopyOptions, Injector as _, Modifier, PasteOptions, SelectionSource as _, SystemClipboard, system_selection};
     use voltip_platform::HostOs;
     use voltip_platform::insert_check::rules::InsertCheck;
@@ -92,6 +94,35 @@ mod mac {
         }
     }
 
+    /// Backspace in the application in front (`kVK_Delete`): TextEdit deletes the selection.
+    fn delete_backward() {
+        const KVK_DELETE: u16 = 0x33;
+        const HID_EVENT_TAP: u32 = 0;
+        for down in [true, false] {
+            // SAFETY: a keyboard event from the default source, posted and released.
+            unsafe {
+                let event = CGEventCreateKeyboardEvent(std::ptr::null(), KVK_DELETE, down);
+                assert!(!event.is_null(), "CGEventCreateKeyboardEvent");
+                CGEventSetFlags(event, 0);
+                CGEventPost(HID_EVENT_TAP, event);
+                CFRelease(event);
+            }
+        }
+    }
+
+    /// Read the kept text view until `wanted` holds (the keys reach it a little later).
+    fn wait_follow(follow: &Follow, what: &str, wanted: impl Fn(&Result<voltip_focus::FocusContext, UnconfirmedWhy>) -> bool) {
+        let until = Instant::now() + WAIT;
+        loop {
+            let read = follow.context(None);
+            if wanted(&read) {
+                return;
+            }
+            assert!(Instant::now() < until, "{what}: last read {read:?}");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
     /// Read TextEdit for 从选中文字学习 until `wanted` holds (the keys reach it a little later).
     fn wait_context(reader: &Reader, what: &str, wanted: impl Fn(&voltip_focus::FocusContext) -> bool) -> voltip_focus::FocusContext {
         let until = Instant::now() + WAIT;
@@ -151,7 +182,12 @@ mod mac {
 
     impl TextEdit {
         fn open() -> Self {
-            let path = std::env::temp_dir().join(format!("voltip-focus-check-{}.txt", std::process::id()));
+            Self::open_named("")
+        }
+
+        /// A document of its own: `name` tells two documents of one check apart.
+        fn open_named(name: &str) -> Self {
+            let path = std::env::temp_dir().join(format!("voltip-focus-check-{}{name}.txt", std::process::id()));
             std::fs::write(&path, b"").expect("the document");
             let status = Command::new("open").arg("-a").arg("TextEdit").arg(&path).status().expect("open");
             assert!(status.success(), "open -a TextEdit: {status}");
@@ -184,8 +220,11 @@ mod mac {
         wait_front("TextEdit", |_, id| id.eq_ignore_ascii_case("com.apple.TextEdit"));
         let watch = wait_watch(&reader, "com.apple.textedit");
         paste();
-        assert_eq!(watch.settle(WATCH), Settled::sure(InsertCheck::Written), "TextEdit");
-        println!("focus_macos: TextEdit: written");
+        // docs/dictation.md §35.10: the written paste keeps its text view for the follow.
+        let (settled, follow) = watch.settle_and_keep(WATCH);
+        assert_eq!(settled, Settled::sure(InsertCheck::Written), "TextEdit");
+        let follow = follow.expect("a written paste keeps its text view");
+        println!("focus_macos: TextEdit: written, its text view kept");
 
         // docs/dictation.md §35: the learning read gives TextEdit's text around its selection.
         select_last_word();
@@ -205,6 +244,17 @@ mod mac {
         assert_eq!(copied.as_deref(), Some(TYPED), "TextEdit's selection");
         assert_eq!(pasteboard.read_text().expect("the pasteboard").as_deref(), Some("SENTINEL"), "the previous pasteboard is back");
         println!("focus_macos: TextEdit's selection: copied, the pasteboard put back");
+
+        // docs/dictation.md §35.10: the kept text view is read again once its text is deleted, and
+        // once another document has the focus the follow says so instead of reading it.
+        wait_follow(&follow, "the paste", |r| r.as_ref().is_ok_and(|c| c.selected == TYPED));
+        delete_backward();
+        wait_follow(&follow, "the text deleted", |r| r.as_ref().is_ok_and(|c| c.before.is_empty() && c.selected.is_empty() && c.after.is_empty()));
+        let other = TextEdit::open_named("-other");
+        wait_follow(&follow, "the focus moved", |r| *r == Err(UnconfirmedWhy::ControlChanged));
+        println!("focus_macos: TextEdit's kept text view: read after the edit, ControlChanged once another document has the focus");
+        drop(follow);
+        drop(other);
         drop(document);
     }
 

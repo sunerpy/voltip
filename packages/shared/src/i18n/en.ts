@@ -1286,12 +1286,12 @@ export const en: Messages = {
     suggestions: {
       explainTitle: "Learn from AI polish and your corrections",
       explain:
-        "Compares the recognised text of recent history entries with the polished text, and with the text you corrected in another app and noted with Learn from selection, and lists the words recognised as A and changed to B, most frequent first. Once a pair is in the dictionary, it is corrected right after recognition. The comparison is character by character; no AI is used.",
+        "Compares the recognised text of recent history entries with the polished text, and with the text you corrected in another app and noted with Learn from selection or Track your edits in the input field, and lists the words recognised as A and changed to B, most frequent first. Once a pair is in the dictionary, it is corrected right after recognition. The comparison is character by character; no AI is used.",
       /** The explanation card's hint while 从选中文字学习 has no shortcut (§35). */
       hint: "After you correct a dictation in another app, leave the cursor in the change or select the corrected text, and press the Learn from selection shortcut; your corrections show here too.",
       hintSet: "Set the shortcut",
       /** Where a pair came from (§35). */
-      source: { polish: "Polish", edit: "Your correction" },
+      source: { polish: "Polish", edit: "Your correction", follow: "Tracked" },
       undoNote:
         "Adding or ignoring can be undone right away. Once you leave the dictionary page, adding can no longer be undone; ignored pairs can be brought back from Ignored.",
       /** What the default 显示范围 shows (§35). */
@@ -2692,6 +2692,14 @@ export const en: Messages = {
       check: "Check that the text was written",
       checkHelp:
         "Compares the input field before and after the paste, on this computer only. Nothing is saved or uploaded.",
+      /** 自动跟踪输入框里的修改 (docs/dictation.md §35.10), an experiment: off by default. */
+      follow: "Track your edits in the input field",
+      followBadge: "Experimental",
+      followHelp:
+        "After each dictation is written to an input field, keeps reading the text near it in that field (up to 200 characters on each side). When you change a word of the dictation, the change goes to the dictionary's suggestions. Only the field the dictation went into is read, and reading stops when the focus leaves it or the next dictation starts.",
+      /** Why the switch is greyed out. */
+      followNeedsCheck: "Turn on Check that the text was written first.",
+      followNeedsHistory: "Turn on the history first.",
       stay: "Keep result cards on screen",
       stayHelp:
         "When the text wasn't written, the window changed or recognition failed, the result card stays until you close it or start the next dictation. Off, it disappears after its usual time.",
@@ -2752,7 +2760,7 @@ export const en: Messages = {
     history: {
       corrected: "Later corrected to",
       via: "Learn from selection · {time}",
-      viaFollow: "Edited in the text field · {time}",
+      viaFollow: "Edited in the input field · {time}",
       remove: "Remove",
       removeLabel: "Remove the later correction",
     },

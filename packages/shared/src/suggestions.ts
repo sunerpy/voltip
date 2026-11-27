@@ -301,12 +301,15 @@ export function suggestVocabulary(
         last_at_ms: take.at_ms,
         examples: [],
         from_edits: 0,
+        from_follow: 0,
         ...(single === undefined ? {} : { single }),
       };
       bySuggestion.set(key, suggestion);
     }
     suggestion.count += 1;
-    if (f.edit) suggestion.from_edits += 1;
+    // §35.10: a correction 自动跟踪输入框里的修改 read is counted apart from the taught ones.
+    if (f.edit && take.corrected?.via === "follow") suggestion.from_follow += 1;
+    else if (f.edit) suggestion.from_edits += 1;
     suggestion.last_at_ms = Math.max(suggestion.last_at_ms, take.at_ms);
     if (
       suggestion.examples.length < 3 &&
@@ -341,7 +344,9 @@ export function suggestVocabulary(
     refined: takes.slice(0, scanned).filter((t) => t.refined).length,
     skipped,
     total: pairs.length,
-    repeated: pairs.filter((p) => p.count >= SUGGESTION_REPEATED_MIN || p.from_edits > 0).length,
+    repeated: pairs.filter(
+      (p) => p.count >= SUGGESTION_REPEATED_MIN || p.from_edits > 0 || p.from_follow > 0,
+    ).length,
     edited,
     pairs: pairs.slice(0, limit),
   };

@@ -199,6 +199,7 @@ mod tests {
             refined: true,
             vocabulary: VocabularyHits::default(),
             corrected: None,
+            corrected_via: None,
         }
     }
 

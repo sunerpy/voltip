@@ -109,6 +109,8 @@ impl Runtime {
         }
         let Some(text) = self.texts.queue.pop_front() else { return false };
         self.texts.busy = true;
+        // docs/dictation.md §35.10: this text is not the user's edit of a followed take.
+        self.end_edit_follow_for_paste();
         let injector = self.dictation.injector();
         let tx = self.phone_tx.clone();
         tokio::spawn(async move {
@@ -190,6 +192,8 @@ impl Runtime {
             self.emit(CoreEvent::PasteResult { request_id, outcome: PasteOutcome::Failed { reason } });
             return;
         }
+        // docs/dictation.md §35.10: the pasted text is not the user's edit of a followed take.
+        self.end_edit_follow_for_paste();
         self.texts.busy = true;
         let (injector, probe, tx) = (self.dictation.injector(), self.dictation.probe(), self.phone_tx.clone());
         tokio::spawn(async move {

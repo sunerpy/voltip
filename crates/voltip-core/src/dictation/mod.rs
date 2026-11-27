@@ -29,11 +29,11 @@ pub use fallback::{
 };
 pub use ports::{
     AsrNote, AudioSource, CONFIRM_WITHIN, CONTEXT_CHARS, Capture, CaptureOptions, ClipboardCode, DWELL, DWELL_WITH_TEXT, DictationError, FOCUS_READ_DEADLINE,
-    FocusContext, FocusReader, FocusWatch, ForegroundApp, ForegroundProbe, GateCancel, InjectNote, Injection, Injector, InsertCheck, InsertGate, InsertSession,
-    Inserted, LIVE_CHUNK_SAMPLES, LIVE_SAMPLE_RATE_HZ, LevelFrame, LivePcm, LocalFailure, MAX_EDIT_SELECTION_CHARS, MAX_RECORDING, MAX_RECORDING_STREAMING,
-    MIN_RECORDING, Outage, PARTIAL_THROTTLE, PCM_SAMPLE_RATE_HZ, PROBE_DEADLINE, PcmStream, Receipt, Recording, RefineContext, RefineHints, Refined, Refiner,
-    Segment, SegmentBounds, Segmenter, SegmenterFactory, SelectionTiming, ServiceProbe, Settled, StreamEvent, StreamFinal, StreamingSession,
-    StreamingTranscriber, SwitchReason, Transcriber, Transcript, UnconfirmedWhy, Via, max_recording,
+    FocusContext, FocusFollow, FocusReader, FocusWatch, ForegroundApp, ForegroundProbe, GateCancel, InjectNote, Injection, Injector, InsertCheck, InsertGate,
+    InsertSession, Inserted, LIVE_CHUNK_SAMPLES, LIVE_SAMPLE_RATE_HZ, LevelFrame, LivePcm, LocalFailure, MAX_EDIT_SELECTION_CHARS, MAX_RECORDING,
+    MAX_RECORDING_STREAMING, MIN_RECORDING, Outage, PARTIAL_THROTTLE, PCM_SAMPLE_RATE_HZ, PROBE_DEADLINE, PcmStream, Receipt, Recording, RefineContext,
+    RefineHints, Refined, Refiner, Segment, SegmentBounds, Segmenter, SegmenterFactory, SelectionTiming, ServiceProbe, Settled, StreamEvent, StreamFinal,
+    StreamingSession, StreamingTranscriber, SwitchReason, Transcriber, Transcript, UnconfirmedWhy, Via, max_recording,
 };
 
 /// What a take is for (docs/dictation.md §19): dictating text, or rewriting the text selected in
