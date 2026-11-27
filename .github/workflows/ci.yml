@@ -539,8 +539,11 @@ jobs:
     name: windows-x64 · native run (Windows Server)
     needs: [windows-cross]
     runs-on: windows-2025
+    # A run takes 3.5 to 6.5 minutes (November 2026: median 205 s, longest 395 s of 154). The cap
+    # stays close to that because a runner the platform loses ends at the cap plus five minutes
+    # (actions/runner-images#14938), not 45 minutes after it froze; see the in-app update steps.
     # The upgrade probe (on demand) adds its rounds and the relay's build.
-    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.upgrade_probe && 120 || 60 }}
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.upgrade_probe && 120 || 20 }}
     defaults:
       run:
         shell: pwsh
@@ -716,11 +719,37 @@ jobs:
       # window): the installer run the way the updater runs it, passively as 0.1.6 and earlier do and
       # silently as later releases do. On this desktop each run's windows are sampled, none may be on
       # the screen, and the installer opens Voltip again (scripts/smoke-windows-update.ps1).
-      - name: NSIS installer — an in-app update shows no window and opens Voltip again
-        timeout-minutes: 15
+      # The hosted runner froze inside this check three times (PR runs 45843453853, 45853410576 and
+      # 46061322237, 2026-11-26/27): the step's own limit never fired, the job log was lost (404) and
+      # the job ended 40 to 45 minutes later. Of every ci.yml job since 2026-10-01 only four lost
+      # their runner, all in this job's NSIS update steps (the fourth in the upgrade probe, run
+      # 42471046202). So the machine's state is uploaded before the runs, each run is a step of its
+      # own (the steps API then names the run that froze), and the job's cap is short.
+      - name: NSIS installer — the machine before the in-app update runs
+        timeout-minutes: 2
         run: |
           $setup = Get-ChildItem dist-windows -Filter '*-setup.exe' | Select-Object -First 1
-          ./scripts/smoke-windows-update.ps1 -Setup $setup.FullName -OutDir smoke-windows-update
+          ./scripts/smoke-windows-update.ps1 -Setup $setup.FullName -OutDir smoke-windows-update -Snapshot before
+
+      - name: Upload the machine before the in-app update runs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-update-before-${{ github.run_attempt }}
+          path: smoke-windows-update/machine-before.txt
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: NSIS installer — an in-app update shows no window and opens Voltip again (passive, as 0.1.6 and earlier run it)
+        timeout-minutes: 6
+        run: |
+          $setup = Get-ChildItem dist-windows -Filter '*-setup.exe' | Select-Object -First 1
+          ./scripts/smoke-windows-update.ps1 -Setup $setup.FullName -OutDir smoke-windows-update -Run passive
+
+      - name: NSIS installer — an in-app update shows no window and opens Voltip again (silent, as later releases run it)
+        timeout-minutes: 6
+        run: |
+          $setup = Get-ChildItem dist-windows -Filter '*-setup.exe' | Select-Object -First 1
+          ./scripts/smoke-windows-update.ps1 -Setup $setup.FullName -OutDir smoke-windows-update -Run silent
 
       - name: Save the smoke test's models
         if: github.ref == 'refs/heads/main' && steps.smoke-models.outputs.cache-hit != 'true'

@@ -605,6 +605,48 @@ class ContinuousIntegration(unittest.TestCase):
         test = (ROOT / "scripts/release/test_appimage.py").read_text(encoding="utf-8")
         self.assertIn('@unittest.skipUnless(os.environ.get("CI") or squashfs_tools(),', test)
 
+    def test_regression_a_runner_lost_in_the_update_check_ends_early_and_leaves_the_machines_state(self) -> None:
+        # 2026-11-26/27 (PR runs 45843453853, 45853410576 and 46061322237, attempt 1 each): the hosted
+        # windows-2025 runner froze inside "NSIS installer — an in-app update shows no window and
+        # opens Voltip again". The step's own 15 minutes never fired, the job log answered 404, and
+        # the job ended 39 to 45 minutes later, the last one as "The hosted runner lost communication
+        # with the server". Of every job of ci.yml since 2026-10-01 only four lost their runner, all
+        # in windows-native's NSIS update steps (the fourth: the upgrade probe, run 42471046202).
+        # actions/runner-images#14938 has the same signature and ends such a job at its cap plus a
+        # five-minute grace. So the job's cap sits close to its longest run (395 s in November), each
+        # update run is a step of its own (the steps API then names the run that froze), and the
+        # machine's state before the runs is uploaded before the first one starts.
+        body = self.jobs["windows-native"]
+        self.assertIn("timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.upgrade_probe && 120 || 20 }}", body)
+        steps = re.split(r"\n      - name: ", body)
+
+        def step(script_args: str) -> int:
+            found = [i for i, s in enumerate(steps) if f"smoke-windows-update.ps1 -Setup $setup.FullName -OutDir smoke-windows-update {script_args}" in s]
+            self.assertEqual(len(found), 1, script_args)
+            return found[0]
+
+        before, passive, silent = step("-Snapshot before"), step("-Run passive"), step("-Run silent")
+        upload = next(i for i, s in enumerate(steps) if "uses: actions/upload-artifact@" in s and "smoke-windows-update/machine-before.txt" in s)
+        self.assertLess(before, upload)
+        self.assertLess(upload, passive)
+        self.assertLess(passive, silent)
+        # A rerun's attempt uploads its own copy (artifact names are unique within a run).
+        self.assertIn("name: windows-update-before-${{ github.run_attempt }}", steps[upload])
+        for index in (before, passive, silent):
+            limit = re.search(r"(?m)^        timeout-minutes: (\d+)$", steps[index])
+            self.assertIsNotNone(limit, steps[index].splitlines()[0])
+            self.assertLessEqual(int(limit.group(1)), 8, steps[index].splitlines()[0])
+        script = (ROOT / "scripts/smoke-windows-update.ps1").read_text(encoding="utf-8")
+        # docs/acceptance.md names the two runs; every wait in a run ends well inside its step's limit.
+        self.assertIn("'passive update run (0.1.6 and earlier)'", script)
+        self.assertIn("'silent update run (after 0.1.6)'", script)
+        self.assertIn("[int] $InstallTimeoutSec = 120", script)
+        self.assertIn("[int] $RelaunchTimeoutSec = 45", script)
+        # It asks the Restart Manager who holds the exe, as the installer does first, and never
+        # shuts anything down itself.
+        self.assertIn("RmGetList(uint session", script)
+        self.assertNotRegex(script, r"extern \w+ RmShutdown")
+
     def test_macos_exercises_the_preinstall_keychain_boundary(self) -> None:
         body = self.jobs["macos"]
         self.assertIn("--bin keychain_preinstall", body)
