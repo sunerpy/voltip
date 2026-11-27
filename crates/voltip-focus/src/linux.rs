@@ -223,7 +223,8 @@ impl AtSpi {
         let before = text(start.saturating_sub(window), start).await?;
         let selected = text(start, end).await?;
         let after = text(end, (end + window).min(chars)).await?;
-        FocusContext::from_parts(&before, &selected, &after)
+        // §35.10: where the paragraph starts, in characters, when the window reached it.
+        FocusContext::from_parts_at(&before, &selected, &after, start.saturating_sub(window), false)
     }
 
     /// [`FocusPlatform::text`].

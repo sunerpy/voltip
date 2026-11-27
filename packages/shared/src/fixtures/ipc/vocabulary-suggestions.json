@@ -133,6 +133,19 @@
         "heard": "Quinn for",
         "last_at_ms": 1758697000000,
         "polished": "Qwen 4"
+      },
+      {
+        "count": 1,
+        "examples": [
+          {
+            "history_id": "2d3e4f5a-6b7c-4d8e-9f0a-1b2c3d4e5f6a",
+            "snippet": "今天测试一下千问四Max的推理能力"
+          }
+        ],
+        "from_follow": 1,
+        "heard": "千问四",
+        "last_at_ms": 1758693400000,
+        "polished": "Qwen 4"
       }
     ],
     "refined": 1480,

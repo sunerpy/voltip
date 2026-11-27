@@ -312,6 +312,10 @@ export const engineSettingsSchema = z.object({
   /** 识别结果卡片常驻 (§28, user decision D13): a card stays until it is closed or the next take;
    *  off, it leaves after its usual time. Rust omits the default. */
   result_cards_stay: z.boolean().default(true),
+  /** 自动跟踪输入框里的修改 (docs/dictation.md §35.10, experimental): after a written paste, keep
+   *  reading that field and put the user's changes of the take into the learning suggestions.
+   *  Rust writes it only when on. */
+  follow_edits: z.boolean().default(false),
   /** The recognition fallback models (docs/dictation.md §3.5); absent = off, none listed. */
   asr_fallback: fallbackSettingsSchema.optional(),
   /** The clean-up (and voice edit) fallback models; absent = off, none listed. */
@@ -339,6 +343,7 @@ export function defaultEngineSettings(): EngineSettings {
     switched_window: "copy_only",
     insert_check: true,
     result_cards_stay: true,
+    follow_edits: false,
   };
 }
 
@@ -1743,8 +1748,9 @@ export type PairExample = z.infer<typeof pairExampleSchema>;
 
 /** One suggestion (`Suggestion`): what the recogniser wrote, what the polished text has instead
  *  or what the user corrected it to, how often, the newest take, up to three snippets, newest
- *  first, and how many of the times the user's own correction made it (docs/dictation.md §35;
- *  absent when none). */
+ *  first, how many of the times the user's own correction made it (从选中文字学习,
+ *  docs/dictation.md §35) and how many 自动跟踪输入框里的修改 read it (§35.10); each absent when
+ *  none. */
 export const suggestionSchema = z.object({
   heard: z.string(),
   polished: z.string(),
@@ -1752,6 +1758,7 @@ export const suggestionSchema = z.object({
   last_at_ms: z.number().nonnegative(),
   examples: z.array(pairExampleSchema),
   from_edits: z.number().int().nonnegative().default(0),
+  from_follow: z.number().int().nonnegative().default(0),
 });
 export type Suggestion = z.infer<typeof suggestionSchema>;
 
@@ -1767,8 +1774,8 @@ export const suggestionsAnswerSchema = z.discriminatedUnion("status", [
     refined: z.number().int().nonnegative(),
     skipped: z.number().int().nonnegative(),
     total: z.number().int().nonnegative(),
-    /** The suggestions counted `SUGGESTION_REPEATED_MIN` times or more, and those the user
-     *  corrected themselves (`from_edits`): the page's 推荐. */
+    /** The suggestions counted `SUGGESTION_REPEATED_MIN` times or more, and those from the user's
+     *  corrections (`from_edits` or `from_follow`): the page's 推荐. */
     repeated: z.number().int().nonnegative(),
     /** The takes looked at that the user corrected (docs/dictation.md §35). */
     edited: z.number().int().nonnegative().default(0),
@@ -1986,8 +1993,8 @@ export type ProcessedText = z.infer<typeof processedTextSchema>;
 export const correctedTextSchema = z.object({
   text: z.string(),
   at_ms: z.number().nonnegative(),
-  /** `follow`: read in the text field after the paste, the experimental tracking of a later
-   *  version (docs/dictation.md §35); this version writes `selection` only. */
+  /** `selection`: taught with 从选中文字学习 (docs/dictation.md §35); `follow`: read in the text
+   *  field after the paste by 自动跟踪输入框里的修改 (§35.10, experimental). */
   via: z.enum(["selection", "follow"]),
 });
 export type CorrectedText = z.infer<typeof correctedTextSchema>;

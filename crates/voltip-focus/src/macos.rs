@@ -167,7 +167,8 @@ impl FocusPlatform for Ax {
             let before = string_for_range(element, start.saturating_sub(window), start)?;
             let selected = if end > start { string_for_range(element, start, end)? } else { String::new() };
             let after = string_for_range(element, end, (end + window).min(chars))?;
-            return FocusContext::from_parts(&before, &selected, &after);
+            // §35.10: where the paragraph starts, in UTF-16 units, when the window reached it.
+            return FocusContext::from_parts_at(&before, &selected, &after, start.saturating_sub(window), true);
         }
         // Only the whole value: the copied selection places the context.
         let value = copy(element, "AXValue").and_then(|v| string(&v))?;

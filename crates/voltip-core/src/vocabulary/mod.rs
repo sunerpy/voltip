@@ -11,6 +11,7 @@
 //! back in [`Step::error`] together with the unchanged input.
 
 mod backtest;
+pub mod follow;
 mod ignored;
 pub mod learn;
 mod matcher;

@@ -48,6 +48,7 @@ mod auto_backup;
 pub use auto_backup::AUTO_WEEKLY_DELAY;
 mod backup;
 mod check;
+mod edit_follow;
 mod import;
 mod learn;
 pub use learn::{LEARN_NOTICE_DWELL, LearnNotice, LearnOutcome, NoticeAccepted};
@@ -135,6 +136,9 @@ pub struct CoreConfig {
     /// How long the pill's notice after a 从选中文字学习 stays once it shows, and again after each
     /// of its buttons (docs/dictation.md §35): [`LEARN_NOTICE_DWELL`]; tests shorten it.
     pub learn_notice_dwell: Duration,
+    /// The times of 自动跟踪输入框里的修改 (docs/dictation.md §35.10): how often the field is read,
+    /// how long a correction stands before it is kept, when the follow ends; tests shorten them.
+    pub follow_times: crate::vocabulary::follow::FollowTimes,
     /// Make the weekly automatic backup and show the automatic backups (docs/dictation.md
     /// §4.6.1): the desktop yes, the phone and the local speech service no. The backups before an
     /// update and before a replacing import are made wherever they are asked for.
@@ -253,6 +257,7 @@ impl CoreConfig {
             keeps_audio: true,
             result_cards: false,
             learn_notice_dwell: LEARN_NOTICE_DWELL,
+            follow_times: crate::vocabulary::follow::FollowTimes::default(),
             auto_backup: false,
             shows_live_preview: true,
             builtin_scenes: true,
@@ -1181,6 +1186,7 @@ impl AppCore {
             imports,
             auto,
             learn,
+            follows: edit_follow::EditFollows::default(),
         };
         rt.system_fingerprint = rt.config.network.system_fingerprint();
         rt.connect_relay()?;
@@ -1512,6 +1518,8 @@ struct Runtime {
     last_result: Option<String>,
     /// The import queue (docs/dictation.md §31).
     imports: import::ImportRuntime,
+    /// 自动跟踪输入框里的修改 (docs/dictation.md §35.10): the follow under way.
+    follows: edit_follow::EditFollows,
     /// 从选中文字学习 and its notice (docs/dictation.md §35).
     learn: learn::LearnRuntime,
     /// The automatic backups (docs/dictation.md §4.6.1).
@@ -1850,11 +1858,13 @@ impl Runtime {
             CoreCommand::ProbeProvider { provider, kind, base_url, key, model } => self.probe_provider(provider, kind, base_url, key, model),
             CoreCommand::RefreshProviderModels { provider, kind } => self.refresh_provider_models(provider, kind),
             CoreCommand::HistoryDelete(id) => self.history.delete(id).map(|_| {
+                self.edit_follow_entries_gone(Some(&[id]));
                 self.emit_history();
                 // docs/dictation.md §26: the entry's recording goes with it.
                 self.audio_entry_deleted(id);
             }),
             CoreCommand::HistoryClear => self.history.clear().map(|()| {
+                self.edit_follow_entries_gone(None);
                 self.emit_history();
                 self.audio_history_cleared();
             }),
@@ -2084,6 +2094,8 @@ impl Runtime {
         self.settings_store.save(&self.settings)?;
         self.emit(CoreEvent::Settings(self.settings.clone()));
         self.reconfigure_engines();
+        // docs/dictation.md §35.10: the switch or the insert check off ends the follow.
+        self.check_edit_follow();
         // `active` follows the selection.
         self.emit_models();
         Ok(())
@@ -2997,6 +3009,10 @@ impl Runtime {
                     self.emit(CoreEvent::Dictation(status));
                     // docs/dictation.md §35: after the phase, so the pill sees it idle first.
                     self.follow_learn_notice(&phase);
+                    // docs/dictation.md §35.10: a new take is under way; the last one's follow ends.
+                    if !matches!(phase, DictationPhase::Idle) && !phase.is_terminal() {
+                        self.end_edit_follow("a new take");
+                    }
                     // A phone's text waits for the take to end (docs/dictation.md §20.6).
                     if hint == PhaseHint::Idle {
                         self.deliver_next_text();
@@ -3018,7 +3034,15 @@ impl Runtime {
                     if let Some(name) = self.remote_take_name() {
                         entry.origin = Some(crate::history::EntryOrigin { device: name, kind: crate::history::OriginKind::Take });
                     }
-                    self.record_history(entry);
+                    // docs/dictation.md §35.10: the field it was written to is followed once the
+                    // entry is in the history; a control kept for it is released otherwise.
+                    let followed = self.settings.engines.follow_edits.then(|| entry.clone());
+                    let recorded = self.record_history(entry);
+                    match followed {
+                        Some(entry) if recorded => self.start_edit_follow(&entry),
+                        Some(_) => self.dictation.drop_follow(),
+                        None => {}
+                    }
                 }
                 Effect::Keep(new) => self.keep_recording(*new),
                 Effect::Kept { recording, status } => self.kept_status(recording, status),
@@ -3026,14 +3050,18 @@ impl Runtime {
         }
     }
 
-    /// Keep `entry` in the history, unless history is off (docs/dictation.md §4).
-    fn record_history(&mut self, entry: crate::history::HistoryEntry) {
+    /// Keep `entry` in the history, unless history is off (docs/dictation.md §4); whether it went in.
+    fn record_history(&mut self, entry: crate::history::HistoryEntry) -> bool {
         if !self.settings.history.enabled {
-            return;
+            return false;
         }
-        if let Err(e) = self.push_history(entry) {
-            tracing::warn!(error = %e, "history append failed");
-            self.emit(CoreEvent::Error(e.to_string()));
+        match self.push_history(entry) {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::warn!(error = %e, "history append failed");
+                self.emit(CoreEvent::Error(e.to_string()));
+                false
+            }
         }
     }
 
@@ -3505,6 +3533,8 @@ impl Runtime {
         }
         self.settings.history = history;
         self.save_settings()?;
+        // docs/dictation.md §35.10: no history, no follow.
+        self.check_edit_follow();
         // docs/dictation.md §26: no history, no new recordings (the kept ones stay with their
         // entries, as the entries do).
         self.dictation.set_keep_audio(keeps_audio(&self.config, &self.settings));

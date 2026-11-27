@@ -5301,13 +5301,20 @@ describe("MockBackend learning suggestions (docs/dictation.md section 16.10)", (
       ["瑞迪斯", "Redis", 2, 0],
       ["泰普斯克瑞普特", "TypeScript", 2, 0],
     ]);
-    // docs/dictation.md §35: a correction seen once is suggested too.
+    // docs/dictation.md §35: a correction seen once is suggested too, and one 自动跟踪 read (§35.10).
     expect(answer.pairs.find((p) => p.heard === "Quinn for")).toMatchObject({
       polished: "Qwen 4",
       count: 1,
       from_edits: 1,
+      from_follow: 0,
     });
-    expect([answer.repeated, answer.total, answer.edited]).toEqual([5, 9, 2]);
+    expect(answer.pairs.find((p) => p.heard === "千问四")).toMatchObject({
+      polished: "Qwen 4",
+      count: 1,
+      from_edits: 0,
+      from_follow: 1,
+    });
+    expect([answer.repeated, answer.total, answer.edited]).toEqual([6, 10, 3]);
     backend.destroy();
   });
 

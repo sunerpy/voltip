@@ -46,7 +46,7 @@ use std::collections::VecDeque;
 use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use parking_lot::Mutex;
@@ -59,7 +59,7 @@ use super::fallback::{ChainPolicy, FallbackRefiner, FallbackTranscriber, Link, Q
 use super::insert_check::Expected;
 use super::long::{self, EnergySegmenter};
 use super::ports::{
-    AsrNote, AudioSource, CONFIRM_WITHIN, Capture, CaptureOptions, ClipboardCode, DWELL, DWELL_WITH_TEXT, DictationError, FocusReader, FocusWatch,
+    AsrNote, AudioSource, CONFIRM_WITHIN, Capture, CaptureOptions, ClipboardCode, DWELL, DWELL_WITH_TEXT, DictationError, FocusFollow, FocusReader, FocusWatch,
     ForegroundApp, ForegroundProbe, GateCancel, InjectNote, Injection, Injector, InsertCheck, InsertGate, InsertSession, Inserted, LIVE_CHUNK_SAMPLES,
     LevelFrame, LivePcm, MAX_EDIT_SELECTION_CHARS, MAX_RECORDING, MIN_RECORDING, PARTIAL_THROTTLE, PCM_SAMPLE_RATE_HZ, PcmStream, Receipt, Recording,
     RefineContext, RefineHints, Refiner, Segment, Segmenter, SegmenterFactory, SelectionTiming, ServiceProbe, Settled, StreamEvent, StreamFinal,
@@ -999,6 +999,12 @@ pub struct DictationEngine {
     result_cards: bool,
     /// `EngineSettings.result_cards_stay` of the last configuration (§28).
     result_cards_stay: bool,
+    /// `EngineSettings.follow_edits` of the last configuration (docs/dictation.md §35.10).
+    follow_edits: bool,
+    /// The control of the last written paste, kept for 自动跟踪输入框里的修改 until the runtime takes
+    /// it or the engine drops it, and the generation deliveries keep under: every configuration
+    /// and every new take starts a new one ([`DictationEngine::drop_follow`]).
+    follow_slot: Arc<FollowSlot>,
     /// The dwell of the result card on screen while it stays (§28): armed when the setting is
     /// switched off; `None` when no card stays.
     pinned: Option<Duration>,
@@ -1256,6 +1262,8 @@ impl DictationEngine {
             insert_check: engines.insert_check,
             result_cards: false,
             result_cards_stay: engines.result_cards_stay,
+            follow_edits: engines.follow_edits,
+            follow_slot: Arc::default(),
             pinned: None,
             levels,
             internal: tx,
@@ -1449,6 +1457,9 @@ impl DictationEngine {
         self.inject_mode = engines.inject;
         self.insert_check = engines.insert_check;
         self.result_cards_stay = engines.result_cards_stay;
+        self.follow_edits = engines.follow_edits;
+        // docs/dictation.md §35.10: a control kept under the old configuration is not followed.
+        self.drop_follow();
         // docs/dictation.md §28: switched off while a card stays, it goes after its dwell from now.
         if !self.result_cards_stay
             && let Some(dwell) = self.pinned.take()
@@ -1612,6 +1623,8 @@ impl DictationEngine {
         self.disarm();
         self.pinned = None;
         self.abort_pipeline();
+        // docs/dictation.md §35.10: a new take is under way; the last one's field is not followed.
+        self.drop_follow();
         self.status.session += 1;
         self.status.kind = TakeKind::Dictation;
         let session = self.status.session;
@@ -1786,6 +1799,8 @@ impl DictationEngine {
         self.disarm();
         self.pinned = None;
         self.abort_pipeline();
+        // docs/dictation.md §35.10: a new take is under way; the last one's field is not followed.
+        self.drop_follow();
         self.status.session += 1;
         self.status.kind = kind;
         let session = self.status.session;
@@ -2123,7 +2138,36 @@ impl DictationEngine {
         self.take.gate = Some(gate.clone());
         // docs/dictation.md §28: a take that only copies has no paste to check.
         let check = (self.insert_check && self.take.inject_mode == InjectMode::Paste).then(|| self.injector.focus_reader()).flatten();
-        Delivery { injector: self.injector.clone(), gate, target: self.target(), check, probe: self.probe.clone() }
+        // §35.10: a dictation's written paste keeps its control for the runtime, under this take
+        // and generation.
+        let follow = (self.follow_edits && check.is_some() && self.status.kind == TakeKind::Dictation).then(|| FollowKeep {
+            slot: self.follow_slot.clone(),
+            session: self.status.session,
+            generation: self.follow_slot.generation(),
+        });
+        Delivery { injector: self.injector.clone(), gate, target: self.target(), check, probe: self.probe.clone(), follow }
+    }
+
+    /// The control of the take of `session` the last paste was written to, for 自动跟踪输入框里的
+    /// 修改 (docs/dictation.md §35.10): only when it was kept for that take under the current
+    /// configuration, the experiment and the insert check are on, and the take is a dictation.
+    /// Either way nothing stays kept here: what does not qualify is released.
+    pub fn take_follow(&mut self, session: u64) -> Option<Box<dyn FocusFollow>> {
+        let pending = self.follow_slot.take()?;
+        let wanted = pending.session == session
+            && pending.generation == self.follow_slot.generation()
+            && self.follow_edits
+            && self.insert_check
+            && self.status.session == session
+            && self.status.kind == TakeKind::Dictation;
+        wanted.then_some(pending.follow)
+    }
+
+    /// Release a kept control nobody took yet, and leave none for deliveries already under way
+    /// (docs/dictation.md §35.10): before a phone's text or a history paste goes into the field,
+    /// and whenever the configuration or the take changes.
+    pub fn drop_follow(&mut self) {
+        self.follow_slot.renew();
     }
 
     fn take_language(&self) -> Option<String> {
@@ -4407,6 +4451,68 @@ struct Delivery {
     /// The foreground probe, to name the window a paste goes to when the take does not wait for
     /// its own (`switched_window = paste_here`, docs/dictation.md §28.2).
     probe: Option<Arc<dyn ForegroundProbe>>,
+    /// Where a written paste's control is kept (docs/dictation.md §35.10); `None` when edits are
+    /// not followed.
+    follow: Option<FollowKeep>,
+}
+
+/// Where a delivery keeps a written paste's control for 自动跟踪输入框里的修改, and under which
+/// take and generation of the engine it was started (docs/dictation.md §35.10).
+#[derive(Clone)]
+struct FollowKeep {
+    slot: Arc<FollowSlot>,
+    session: u64,
+    generation: u64,
+}
+
+/// Where a written paste's control is kept for 自动跟踪输入框里的修改 (docs/dictation.md §35.10):
+/// one at most, waiting for the runtime ([`DictationEngine::take_follow`]), and the generation the
+/// deliveries keep under. A new generation releases what is kept, and a delivery that started
+/// under an older one keeps nothing: the switch turned off while a take was recognised.
+#[derive(Default)]
+pub(crate) struct FollowSlot {
+    generation: AtomicU64,
+    pending: parking_lot::Mutex<Option<PendingFollow>>,
+}
+
+struct PendingFollow {
+    session: u64,
+    generation: u64,
+    follow: Box<dyn FocusFollow>,
+}
+
+impl FollowSlot {
+    fn generation(&self) -> u64 {
+        self.generation.load(Ordering::SeqCst)
+    }
+
+    /// A delivery that started under `generation` may keep its control.
+    fn wants(&self, generation: u64) -> bool {
+        self.generation() == generation
+    }
+
+    /// Keep `pending`, releasing an older one; released at once instead when a new generation
+    /// started since its delivery did.
+    fn put(&self, pending: PendingFollow) {
+        let mut slot = self.pending.lock();
+        let released = if self.wants(pending.generation) { slot.replace(pending) } else { Some(pending) };
+        drop(slot);
+        drop(released);
+    }
+
+    fn take(&self) -> Option<PendingFollow> {
+        self.pending.lock().take()
+    }
+
+    /// A new generation: what is kept is released, and the deliveries under way keep nothing.
+    fn renew(&self) {
+        let released = {
+            let mut slot = self.pending.lock();
+            self.generation.fetch_add(1, Ordering::SeqCst);
+            slot.take()
+        };
+        drop(released);
+    }
 }
 
 /// What became of a take's text on its blocking thread.
@@ -4469,7 +4575,7 @@ impl Delivery {
 
     /// This delivery without the insert check.
     fn unchecked(self) -> Self {
-        Self { check: None, ..self }
+        Self { check: None, follow: None, ..self }
     }
 
     /// The application a paste goes to, by which the check knows a terminal or a remote desktop
@@ -4489,9 +4595,18 @@ impl Delivery {
     /// [`CONFIRM_WITHIN`] after the reads.
     fn settle(&self, app: Option<&ForegroundApp>, watch: Result<Box<dyn FocusWatch>, UnconfirmedWhy>) -> InsertCheck {
         let started = Instant::now();
-        let settled = match watch {
-            Ok(watch) => watch.settle(CONFIRM_WITHIN),
-            Err(why) => Settled::unconfirmed(why),
+        let settled = match (watch, &self.follow) {
+            // docs/dictation.md §35.10: a written paste's control stays kept for the runtime, unless
+            // the engine moved on (configured again, a new take) since this delivery started.
+            (Ok(watch), Some(keep)) if keep.slot.wants(keep.generation) => {
+                let (settled, follow) = watch.settle_and_keep(CONFIRM_WITHIN);
+                if let Some(follow) = follow {
+                    keep.slot.put(PendingFollow { session: keep.session, generation: keep.generation, follow });
+                }
+                settled
+            }
+            (Ok(watch), _) => watch.settle(CONFIRM_WITHIN),
+            (Err(why), _) => Settled::unconfirmed(why),
         };
         let app = app.map_or("-", |a| a.app_id.as_str());
         let after_ms = started.elapsed().as_millis();
@@ -10294,7 +10409,12 @@ mod tests {
         assert_eq!(record(&fx).unwrap().outcome, Outcome::Inserted { via: Via::Paste, check: Some(InsertCheck::NotWritten) });
         assert_eq!(
             reader.calls(),
-            FocusCalls { watched: vec![("notepad".to_owned(), FAKE_TRANSCRIPT.to_owned())], settled: vec![CONFIRM_WITHIN], contexts: Vec::new() }
+            FocusCalls {
+                watched: vec![("notepad".to_owned(), FAKE_TRANSCRIPT.to_owned())],
+                settled: vec![CONFIRM_WITHIN],
+                order: vec!["watch"],
+                ..FocusCalls::default()
+            }
         );
         assert_eq!(r.injector.injected(), [FAKE_TRANSCRIPT.to_owned()], "no second paste");
         assert_eq!(r.injector.events(), [InsertEvent::Begin, InsertEvent::Piece(FAKE_TRANSCRIPT.into()), InsertEvent::Finish]);
@@ -10415,6 +10535,66 @@ mod tests {
         assert_eq!(reader.calls().watched, [("windowsterminal".to_owned(), FAKE_TRANSCRIPT.to_owned())]);
     }
 
+    /// docs/dictation.md §35.10: with 自动跟踪输入框里的修改 on, a written paste's control is kept for
+    /// the runtime of that take; off, the paste is settled as before and nothing is kept.
+    #[tokio::test(start_paused = true)]
+    async fn a_written_paste_keeps_its_control_only_while_edits_are_followed() {
+        let (reader, _feed) = FakeFocusReader::following("前文", &format!("前文{FAKE_TRANSCRIPT}"));
+        let reader = Arc::new(reader);
+        let on = engines_with(|s| s.follow_edits = true);
+        let mut r = rig_with(&on, FakeTranscriber::ok(FAKE_TRANSCRIPT), FakeInjector::paste().with_focus_reader(reader.clone()));
+        let fx = r.take().await;
+        assert_eq!(done_check(&fx), Some(InsertCheck::Written), "{fx:?}");
+        assert_eq!(reader.calls().kept, 1);
+        let session = r.engine.status().session;
+        assert!(r.engine.take_follow(session).is_some(), "the runtime takes it");
+        assert!(r.engine.take_follow(session).is_none(), "once");
+        r.engine.configure(&engines_with(|_| {}));
+        let fx = r.take().await;
+        assert_eq!(done_check(&fx), Some(InsertCheck::Written));
+        assert_eq!(reader.calls().kept, 1, "off: nothing kept");
+        assert!(r.engine.take_follow(r.engine.status().session).is_none());
+    }
+
+    /// A kept control nobody took is released: by a new configuration (the switch turned off while
+    /// the take was processed), by a take of another session, by `drop_follow`.
+    #[tokio::test(start_paused = true)]
+    async fn a_kept_control_that_does_not_qualify_is_released() {
+        let (reader, _feed) = FakeFocusReader::following("前文", &format!("前文{FAKE_TRANSCRIPT}"));
+        let reader = Arc::new(reader);
+        let on = engines_with(|s| s.follow_edits = true);
+        let mut r = rig_with(&on, FakeTranscriber::ok(FAKE_TRANSCRIPT), FakeInjector::paste().with_focus_reader(reader.clone()));
+        r.take().await;
+        r.engine.configure(&on);
+        assert!(r.engine.take_follow(r.engine.status().session).is_none(), "configured since");
+        assert_eq!(reader.calls().released, 1);
+        r.take().await;
+        assert!(r.engine.take_follow(r.engine.status().session + 1).is_none(), "another session's");
+        assert_eq!(reader.calls().released, 2);
+        r.take().await;
+        r.engine.drop_follow();
+        assert!(r.engine.take_follow(r.engine.status().session).is_none());
+        assert_eq!((reader.calls().kept, reader.calls().released), (3, 3));
+    }
+
+    /// docs/dictation.md §35.10: only a dictation's field is followed. A voice edit's written paste
+    /// keeps no control, whatever the switch says.
+    #[tokio::test(start_paused = true)]
+    async fn a_voice_edits_paste_keeps_no_control() {
+        let (reader, _feed) = FakeFocusReader::following("", REWRITE);
+        let reader = Arc::new(reader);
+        let on = engines_with(|s| s.follow_edits = true);
+        let injector = FakeInjector::paste().with_selection(SELECTION).with_focus_reader(reader.clone());
+        let mut r = rig_probed_with(notepad(), FakeTranscriber::ok(INSTRUCTION), Some(FakeRefiner::ok(REWRITE)), None, &on, injector);
+        r.start_edit_open(vec![Modifier::Ctrl, Modifier::Alt]).await;
+        r.engine.stop().unwrap();
+        let fx = r.run_to_terminal().await;
+        assert_eq!(done_check(&fx), Some(InsertCheck::Written), "{fx:?}");
+        assert_eq!(r.engine.status().kind, TakeKind::Edit);
+        assert_eq!(reader.calls().kept, 0);
+        assert!(r.engine.take_follow(r.engine.status().session).is_none());
+    }
+
     /// 检查文字是否写入 off (`insert_check`, from the start and after a change): the reader is never
     /// asked and nothing is recorded; switched on again, the next take is checked.
     #[tokio::test(start_paused = true)]
@@ -10444,6 +10624,7 @@ mod tests {
             target: Target::none(),
             check: Some(reader.clone() as Arc<dyn crate::dictation::FocusReader>),
             probe: Some(notepad() as Arc<dyn ForegroundProbe>),
+            follow: None,
         };
         assert!(matches!(delivery().copy("文字", None), Insertion::Done { injection: Ok(Injection { via: Via::Clipboard, .. }), check: None }));
         assert_eq!(reader.calls(), FocusCalls::default());

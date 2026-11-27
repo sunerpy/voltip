@@ -476,6 +476,78 @@ describe("Settings · 听写 · 插入确认与结果卡片 (docs/dictation.md s
   });
 });
 
+describe("Settings · 听写 · 自动跟踪输入框里的修改 (docs/dictation.md section 35.10)", () => {
+  it("is off by default, marked 实验, says what it reads, and writes settings_set_engines with the rest unchanged", async () => {
+    const user = userEvent.setup();
+    const { backend } = renderApp({ path: "/settings/dictation" });
+    const dialog = await screen.findByRole("dialog", { name: "设置" });
+    const pane = within(dialog).getByTestId("dictation-pane");
+    const follow = within(pane).getByRole("switch", { name: "自动跟踪输入框里的修改" });
+    expect(follow).toHaveAttribute("aria-checked", "false");
+    expect(follow).toBeEnabled();
+    const row = within(pane).getByTestId("follow-edits-row");
+    expect(within(row).getByText("实验")).toBeInTheDocument();
+    expect(row).toHaveTextContent("前后各至多 200 字");
+    expect(within(row).queryByTestId("follow-edits-needs")).toBeNull();
+    await user.click(follow);
+    await waitFor(() => {
+      expect(backend.peek().settings.engines).toEqual({
+        ...defaultEngineSettings(),
+        follow_edits: true,
+      });
+    });
+    expect(within(pane).getByRole("switch", { name: "自动跟踪输入框里的修改" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+  });
+
+  it("is greyed out with the reason while 检查文字是否写入 is off", async () => {
+    const user = userEvent.setup();
+    const { backend } = renderApp({ path: "/settings/dictation" });
+    const dialog = await screen.findByRole("dialog", { name: "设置" });
+    const pane = within(dialog).getByTestId("dictation-pane");
+    await user.click(within(pane).getByRole("switch", { name: "检查文字是否写入" }));
+    await waitFor(() => {
+      expect(within(pane).getByRole("switch", { name: "自动跟踪输入框里的修改" })).toBeDisabled();
+    });
+    expect(within(pane).getByTestId("follow-edits-needs")).toHaveTextContent("检查文字是否写入");
+    expect(backend.peek().settings.engines.follow_edits).toBe(false);
+  });
+
+  it("regression: switched on, it can still be switched off while 检查文字是否写入 is off", async () => {
+    // Review of the branch (2026-11-27): greyed out while on, it could not be switched off, and
+    // came back by itself once the check was on again.
+    const user = userEvent.setup();
+    const backend = new MockBackend({
+      settings: { engines: { ...defaultEngineSettings(), follow_edits: true } },
+    });
+    renderApp({ path: "/settings/dictation", backend });
+    const dialog = await screen.findByRole("dialog", { name: "设置" });
+    const pane = within(dialog).getByTestId("dictation-pane");
+    await user.click(within(pane).getByRole("switch", { name: "检查文字是否写入" }));
+    await waitFor(() => {
+      expect(within(pane).getByTestId("follow-edits-needs")).toHaveTextContent("检查文字是否写入");
+    });
+    const follow = within(pane).getByRole("switch", { name: "自动跟踪输入框里的修改" });
+    expect(follow).toBeEnabled();
+    await user.click(follow);
+    await waitFor(() => {
+      expect(backend.peek().settings.engines.follow_edits).toBe(false);
+    });
+    expect(within(pane).getByRole("switch", { name: "自动跟踪输入框里的修改" })).toBeDisabled();
+  });
+
+  it("is greyed out with the reason while the history is off", async () => {
+    const backend = new MockBackend({ settings: { history: { enabled: false, keep: 2000 } } });
+    renderApp({ path: "/settings/dictation", backend });
+    const dialog = await screen.findByRole("dialog", { name: "设置" });
+    const pane = within(dialog).getByTestId("dictation-pane");
+    expect(within(pane).getByRole("switch", { name: "自动跟踪输入框里的修改" })).toBeDisabled();
+    expect(within(pane).getByTestId("follow-edits-needs")).toHaveTextContent("历史记录");
+  });
+});
+
 describe("Settings · 听写 · 最长录音时长 (docs/dictation.md section 22)", () => {
   it("lists 1 minute to 2 hours, shows the saved length and writes settings_set_recording with the rest unchanged", async () => {
     const user = userEvent.setup();

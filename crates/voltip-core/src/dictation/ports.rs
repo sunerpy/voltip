@@ -962,6 +962,23 @@ pub trait FocusWatch: Send {
     /// Read the control every [`super::insert_check::POLL_EVERY`] for at most `within`, and
     /// decide ([`super::insert_check::decide`]). Blocking.
     fn settle(self: Box<Self>, within: Duration) -> Settled;
+
+    /// [`FocusWatch::settle`], keeping the control for 自动跟踪输入框里的修改 (docs/dictation.md
+    /// §35.10) when the paste was written there. A reader that cannot keep a control settles and
+    /// keeps nothing. Blocking.
+    fn settle_and_keep(self: Box<Self>, within: Duration) -> (Settled, Option<Box<dyn FocusFollow>>) {
+        (self.settle(within), None)
+    }
+}
+
+/// The control a written paste went to, kept while 自动跟踪输入框里的修改 follows it
+/// (docs/dictation.md §35.10). Dropping it releases the control, without waiting.
+pub trait FocusFollow: Send + Sync {
+    /// The kept control's paragraph around its selection or caret ([`FocusContext`]) while it has
+    /// the keyboard focus: `ControlChanged` when another control has it, `Unreadable` for nothing
+    /// focused, a password field or a control that no longer answers, `Timeout` past
+    /// [`FOCUS_READ_DEADLINE`]. Blocking, bounded by that deadline.
+    fn context(&self, hint: Option<&str>) -> Result<FocusContext, UnconfirmedWhy>;
 }
 
 /// When a voice edit's copy chord can reach the foreground application (docs/dictation.md §19).

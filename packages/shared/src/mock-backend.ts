@@ -7116,8 +7116,9 @@ export function sampleBackup(nowMs: number): MockBackupFile {
 export function sampleSuggestionTakes(nowMs: number): HistoryEntry[] {
   const newest = startOfLocalDay(nowMs) - 3 * DAY_MS + 18 * 3_600_000;
   // The third text is the take as the user corrected it in the application (docs/dictation.md
-  // §35): the learning suggestions mark those pairs 你的修改.
-  const takes: [string, string, string?][] = [
+  // §35): the learning suggestions mark those pairs 你的修改, or 自动跟踪 when the fourth says the
+  // field was followed (§35.10).
+  const takes: [string, string, string?, ("selection" | "follow")?][] = [
     ["用维他命录了一段会议纪要", "用 Voltip 录了一段会议纪要。"],
     ["库伯内提斯集群要升级", "Kubernetes 集群要升级。"],
     ["缓存先放到瑞迪斯里", "缓存先放到 Redis 里。"],
@@ -7133,8 +7134,14 @@ export function sampleSuggestionTakes(nowMs: number): HistoryEntry[] {
     ["维他命的悬浮窗挡住了按钮", "Voltip 的悬浮窗挡住了按钮。"],
     ["维他命的设置页打不开", "维他命的设置页打不开。", "Voltip 的设置页打不开。"],
     ["我在用 Quinn for max 做测试", "我在用 Quinn for max 做测试。", "我在用 Qwen 4 max 做测试。"],
+    [
+      "今天测试一下千问四Max的推理能力",
+      "今天测试一下千问四Max的推理能力。",
+      "今天测试一下Qwen 4 Max的推理能力。",
+      "follow",
+    ],
   ];
-  return takes.map(([raw, text, corrected], i) => ({
+  return takes.map(([raw, text, corrected, via = "selection"], i) => ({
     id: `00000000-0000-4000-8000-${String(900 + i).padStart(12, "0")}`,
     at_ms: newest - i * 3 * 3_600_000,
     raw_text: raw,
@@ -7145,7 +7152,7 @@ export function sampleSuggestionTakes(nowMs: number): HistoryEntry[] {
           corrected: {
             text: corrected,
             at_ms: newest - i * 3 * 3_600_000 + 600_000,
-            via: "selection" as const,
+            via,
           },
         }),
     refined: true,

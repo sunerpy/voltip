@@ -2,7 +2,8 @@
 //! lands in an editable entry is `written`, the same keys on a read-only entry leave it
 //! `not_written`, the focus moving to another entry is `unconfirmed`, and with accessibility off
 //! nothing is read. 从选中文字学习's read (§35) gives the entry's text around its selection and
-//! around its caret. Ignored: it needs an X server, a D-Bus session with the accessibility bus and
+//! around its caret, and 自动跟踪输入框里的修改 (§35.10) reads a kept entry again as it is edited.
+//! Ignored: it needs an X server, a D-Bus session with the accessibility bus and
 //! GTK 3. Run it with `scripts/focus-check-linux.sh`, which sets them up (CI's `smoke-desktop`).
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -13,7 +14,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use voltip_focus::{Expected, FocusContext, Reader, Settled, UnconfirmedWhy, linux};
+use voltip_focus::{Expected, FocusContext, Follow, Reader, Settled, UnconfirmedWhy, linux};
 use voltip_platform::HostOs;
 use voltip_platform::insert_check::rules::InsertCheck;
 
@@ -157,6 +158,41 @@ fn a_learning_read_gives_the_entrys_text_around_the_selection_and_the_caret() {
     let at_start = wait_context(&reader, "the caret at the start", |c| c.selected.is_empty() && c.before.is_empty());
     assert_eq!(at_start.after, "前文 voltip check");
     assert_eq!(reader.context("gnome-terminal", None).err(), Some(UnconfirmedWhy::Skipped), "a terminal is never read");
+}
+
+/// Read the kept entry until `wanted` holds of a reading (the keys reach GTK a little later).
+fn wait_follow(follow: &Follow, what: &str, wanted: impl Fn(&Result<FocusContext, UnconfirmedWhy>) -> bool) {
+    let until = std::time::Instant::now() + ANSWER;
+    loop {
+        let read = follow.context(None);
+        if wanted(&read) {
+            return;
+        }
+        assert!(std::time::Instant::now() < until, "{what}: last read {read:?}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// docs/dictation.md §35.10: a written paste keeps its entry; the entry is read again as the user
+/// edits it (the last word selected and deleted), and once another entry has the focus the follow
+/// says so instead of reading it.
+#[test]
+#[ignore = "needs Xvfb, the accessibility bus and GTK 3: scripts/focus-check-linux.sh"]
+fn a_kept_entry_is_read_again_as_it_is_edited_and_not_once_another_has_the_focus() {
+    let mut window = Entries::start();
+    let reader = reader();
+    window.focus("editable");
+    let watch = reader.watch(APP, &Expected::of(TYPED)).expect("the focused entry is read");
+    xdotool(&["type", "--delay", "5", TYPED]);
+    let (settled, follow) = watch.settle_and_keep(WATCH);
+    assert_eq!(settled, Settled::sure(InsertCheck::Written));
+    let follow = follow.expect("a written paste keeps its entry");
+    wait_follow(&follow, "the paste", |r| r.as_ref().is_ok_and(|c| c.before == format!("前文{TYPED}")));
+    xdotool(&["key", "shift+ctrl+Left", "BackSpace"]);
+    wait_follow(&follow, "the last word deleted", |r| r.as_ref().is_ok_and(|c| !c.before.contains("check")));
+    assert_eq!(follow.context(None).map(|c| c.before), Ok("前文voltip ".to_owned()));
+    window.focus("other");
+    wait_follow(&follow, "the focus moved", |r| *r == Err(UnconfirmedWhy::ControlChanged));
 }
 
 #[test]

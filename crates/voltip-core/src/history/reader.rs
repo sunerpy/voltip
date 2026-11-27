@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::store::{BUSY_TIMEOUT, NEWEST_FIRST, decode, int};
-use super::{HISTORY_DB_FILE_NAME, HistoryEntry, derived};
+use super::{CorrectionVia, HISTORY_DB_FILE_NAME, HistoryEntry, derived};
 use crate::CoreError;
 use crate::scenes::AppRef;
 use crate::vocabulary::VocabularyHits;
@@ -113,6 +113,9 @@ pub struct HistoryText {
     /// The whole take as the user corrected it in the application it went to
     /// (`HistoryEntry.corrected`, docs/dictation.md §35); `None` when they did not teach it.
     pub corrected: Option<String>,
+    /// How that correction was read: taught by selection, or read by 自动跟踪输入框里的修改
+    /// (§35.10); `None` without a correction (or one read without it, counted as taught).
+    pub corrected_via: Option<CorrectionVia>,
 }
 
 /// [`HistoryReader::search`]: which entries, and where the page starts (docs/dictation.md §25).
@@ -296,7 +299,8 @@ impl HistoryReader {
         let texts = self.read(|conn| {
             let mut stmt = conn.prepare(&format!(
                 "SELECT id, at_ms, json_extract(json, '$.raw_text'), json_extract(json, '$.text'), json_extract(json, '$.refined'), \
-                 json_extract(json, '$.vocabulary'), json_extract(json, '$.corrected.text') FROM entries \
+                 json_extract(json, '$.vocabulary'), json_extract(json, '$.corrected.text'), \
+                 json_extract(json, '$.corrected.via') FROM entries \
                  WHERE kind = 'dictation' AND COALESCE(json_extract(json, '$.origin.kind'), '') NOT IN ('typed', 'clipboard') \
                  AND json_extract(json, '$.file') IS NULL {NEWEST_FIRST} LIMIT ?1"
             ))?;
@@ -309,11 +313,12 @@ impl HistoryReader {
                     row.get::<_, Option<i64>>(4)?,
                     row.get::<_, Option<String>>(5)?,
                     row.get::<_, Option<String>>(6)?,
+                    row.get::<_, Option<String>>(7)?,
                 ))
             })?;
             let mut out = Vec::new();
             for row in rows {
-                let (id, at_ms, raw_text, text, refined, vocabulary, corrected) = row?;
+                let (id, at_ms, raw_text, text, refined, vocabulary, corrected, via) = row?;
                 let Ok(id) = id.parse::<Uuid>() else { continue };
                 out.push(HistoryText {
                     id,
@@ -323,6 +328,7 @@ impl HistoryReader {
                     refined: refined == Some(1),
                     vocabulary: vocabulary.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default(),
                     corrected,
+                    corrected_via: via.and_then(|v| serde_json::from_value(serde_json::Value::String(v)).ok()),
                 });
             }
             Ok(out)

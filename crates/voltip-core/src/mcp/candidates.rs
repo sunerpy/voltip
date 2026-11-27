@@ -20,7 +20,7 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::history::HistoryText;
+use crate::history::{CorrectionVia, HistoryText};
 use crate::vocabulary::{BACKTEST_SNIPPET_CHARS, DictionaryEntry, MAX_TERM_CHARS, ReplacementRule, Vocabulary};
 
 /// Most pairs one call returns.
@@ -549,6 +549,9 @@ pub struct Pair {
     /// the MCP tool's wire, whose scan reads no corrections.
     #[serde(skip)]
     pub from_edits: u32,
+    /// Of `count`, the times 自动跟踪输入框里的修改 read it (§35.10); never on the MCP tool's wire.
+    #[serde(skip)]
+    pub from_follow: u32,
     /// The pair before it was widened (docs/dictation.md §16.10), when it was.
     #[serde(skip)]
     pub single: Option<(String, String)>,
@@ -582,7 +585,7 @@ fn snippet(raw: &str, at: usize, len: usize) -> String {
 }
 
 /// The widened pairs counted: one per form pair, with how often, how often from the user's
-/// corrections, the newest take, and up to [`MAX_EXAMPLES`] snippets (one per take, newest
+/// corrections (taught, or read by the follow), the newest take, and up to [`MAX_EXAMPLES`] snippets (one per take, newest
 /// first); most frequent first, then the most recent.
 pub(crate) fn tally(dictionary: &[DictionaryEntry], history: &[HistoryText], counted: Vec<Counted>) -> Vec<Pair> {
     let known: Vec<&str> = dictionary.iter().filter(|e| e.enabled).flat_map(|e| e.heard_as.iter().map(String::as_str)).collect();
@@ -606,13 +609,16 @@ pub(crate) fn tally(dictionary: &[DictionaryEntry], history: &[HistoryText], cou
                 last_at_ms: take.at_ms,
                 examples: Vec::new(),
                 from_edits: 0,
+                from_follow: 0,
                 single: single.clone(),
             });
             pairs.len() - 1
         });
         let pair = &mut pairs[slot];
         pair.count = pair.count.saturating_add(1);
-        if found.edit {
+        if found.edit && take.corrected_via == Some(CorrectionVia::Follow) {
+            pair.from_follow = pair.from_follow.saturating_add(1);
+        } else if found.edit {
             pair.from_edits = pair.from_edits.saturating_add(1);
         }
         pair.last_at_ms = pair.last_at_ms.max(take.at_ms);

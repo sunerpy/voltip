@@ -386,6 +386,12 @@ pub struct EngineSettings {
     /// dwell. On by default and then not written; files written before it read as on.
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
     pub result_cards_stay: bool,
+    /// 自动跟踪输入框里的修改 (docs/dictation.md §35.10), an experiment: after a take is written to
+    /// a field, keep reading that field for a while and put the user's corrections of the take into
+    /// the learning suggestions. Off by default and then not written; needs `insert_check` and the
+    /// history. Desktop only (the phones have no focus reader).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub follow_edits: bool,
     /// The recognition models to try after the selected one runs out of quota (docs/dictation.md §3.5).
     #[serde(skip_serializing_if = "FallbackSettings::is_default")]
     pub asr_fallback: FallbackSettings,
@@ -443,6 +449,7 @@ impl Default for EngineSettings {
             switched_window: SwitchedWindow::CopyOnly,
             insert_check: true,
             result_cards_stay: true,
+            follow_edits: false,
             asr_fallback: FallbackSettings::default(),
             llm_fallback: FallbackSettings::default(),
         }
@@ -800,6 +807,8 @@ pub struct ResolvedEngines {
     pub insert_check: bool,
     /// `EngineSettings.result_cards_stay` (docs/dictation.md §28).
     pub result_cards_stay: bool,
+    /// `EngineSettings.follow_edits` (docs/dictation.md §35.10).
+    pub follow_edits: bool,
     /// The recognition fallback models (docs/dictation.md §3.5).
     pub asr_fallback: FallbackPlan,
     /// The clean-up fallback models.
@@ -1140,6 +1149,7 @@ impl ResolvedEngines {
             switched_window: settings.switched_window,
             insert_check: settings.insert_check,
             result_cards_stay: settings.result_cards_stay,
+            follow_edits: settings.follow_edits,
             asr_fallback,
             refine_fallback,
             metering: None,
@@ -1833,6 +1843,23 @@ mod tests {
             .map(|r| serde_json::to_string(r).unwrap())
             .collect();
         assert_eq!(names, [r#""prompt""#, r#""hotwords""#, r#""not_supported""#, r#""empty""#]);
+    }
+
+    /// docs/dictation.md §35.10: the experiment is off unless switched on, and written only then.
+    #[test]
+    fn following_edits_is_off_unless_switched_on() {
+        let s = EngineSettings::default();
+        assert!(!s.follow_edits);
+        assert!(!serde_json::to_string(&s).unwrap().contains("follow_edits"), "off is not written");
+        let on = EngineSettings { follow_edits: true, ..EngineSettings::default() };
+        let json = serde_json::to_string(&on).unwrap();
+        assert!(json.contains(r#""follow_edits":true"#), "{json}");
+        let back: EngineSettings = serde_json::from_str(&json).unwrap();
+        assert!(back.follow_edits);
+        let old: EngineSettings = serde_json::from_str("{}").unwrap();
+        assert!(!old.follow_edits, "a file from before reads as off");
+        let resolved = ResolvedEngines::resolve(&on, &UserSecrets::default(), &BuiltIn::EMPTY);
+        assert!(resolved.follow_edits, "resolved as configured");
     }
 
     /// docs/dictation.md §28 (D13): 检查文字是否写入 and 识别结果卡片常驻 are on by default, read as on

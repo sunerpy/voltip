@@ -6,7 +6,10 @@
 //!
 //! A reading holds the control's length, caret and selection, the selected text and at most
 //! [`BEFORE_CARET_CHARS`] characters before the caret. It stays in memory for the few hundred
-//! milliseconds of one paste: never stored, sent or logged, and `Debug` prints no text.
+//! milliseconds of one paste: never stored, sent or logged, and `Debug` prints no text. With
+//! 自动跟踪输入框里的修改 on (docs/dictation.md §35.10, off by default), the control of a written
+//! paste is read again until the follow ends, each time a [`FocusContext`] of at most
+//! [`CONTEXT_CHARS`] characters on each side of the caret, kept in memory the same way.
 
 use std::time::{Duration, Instant};
 
@@ -239,6 +242,12 @@ pub struct FocusContext {
     pub selected: String,
     /// The paragraph's text after the selection (or the caret).
     pub after: String,
+    /// Where the paragraph starts in the control, in the reader's own units (UTF-16 or
+    /// characters), when the reader saw its start (the line break before it, or the start of the
+    /// text); `None` when it did not. Two readings of one control whose paragraphs start apart and
+    /// read differently are of two paragraphs (自动跟踪输入框里的修改, §35.10: the caret moved to
+    /// another line).
+    pub paragraph_at: Option<usize>,
 }
 
 impl FocusContext {
@@ -255,7 +264,19 @@ impl FocusContext {
         let before = before.rsplit('\n').next().unwrap_or_default();
         let after = normalize(after);
         let after = after.split('\n').next().unwrap_or_default();
-        Some(Self { before: last_chars(before, CONTEXT_CHARS).to_owned(), selected, after: first_chars(after, CONTEXT_CHARS).to_owned() })
+        Some(Self { before: last_chars(before, CONTEXT_CHARS).to_owned(), selected, after: first_chars(after, CONTEXT_CHARS).to_owned(), paragraph_at: None })
+    }
+
+    /// [`FocusContext::from_parts`] for a reader that read `before` from `before_from` on (in its
+    /// own units: UTF-16 with `utf16`, else characters): the paragraph's start is known when
+    /// `before` holds the line break before it, or starts the text.
+    pub fn from_parts_at(before: &str, selected: &str, after: &str, before_from: usize, utf16: bool) -> Option<Self> {
+        let units = |text: &str| if utf16 { text.encode_utf16().count() } else { text.chars().count() };
+        let paragraph_at = match before.char_indices().rev().find(|&(_, c)| is_break(c)) {
+            Some((at, c)) => Some(before_from + units(&before[..at + c.len_utf8()])),
+            None => (before_from == 0).then_some(0),
+        };
+        Some(Self { paragraph_at, ..Self::from_parts(before, selected, after)? })
     }
 
     /// The context of `text` around `[start, end)`, in characters (as AT-SPI counts); the offsets
@@ -263,7 +284,7 @@ impl FocusContext {
     pub fn around(text: &str, start: usize, end: usize) -> Option<Self> {
         let byte = |n: usize| text.char_indices().nth(n).map_or(text.len(), |(at, _)| at);
         let (start, end) = (byte(start.min(end)), byte(start.max(end)));
-        Self::from_parts(&text[..start], &text[start..end], &text[end..])
+        Self::from_parts_at(&text[..start], &text[start..end], &text[end..], 0, false)
     }
 
     /// The context of `units` (UTF-16, as UI Automation and the Accessibility API count) around
@@ -284,7 +305,10 @@ impl FocusContext {
         let before = String::from_utf16_lossy(&units[start.saturating_sub(window)..start]);
         let selected = String::from_utf16(&units[start..end]).ok()?;
         let after = String::from_utf16_lossy(&units[end..(end + window).min(units.len())]);
-        Self::from_parts(&before, &selected, &after)
+        // The paragraph's start: right after the last line break before the selection, which may
+        // lie beyond the window decoded.
+        let paragraph_at = units[..start].iter().rposition(|&u| matches!(u, 0x0A | 0x0D | 0x2028 | 0x2029)).map_or(0, |at| at + 1);
+        Some(Self { paragraph_at: Some(paragraph_at), ..Self::from_parts(&before, &selected, &after)? })
     }
 
     /// The context of the one place where `hint` (the copied selection) is in `value`, for a
@@ -300,7 +324,7 @@ impl FocusContext {
         if places.next().is_some() {
             return None;
         }
-        Self::from_parts(&value[..at], &hint, &value[at + hint.len()..])
+        Self::from_parts_at(&value[..at], &hint, &value[at + hint.len()..], 0, false)
     }
 
     /// Nothing selected, and nothing read on either side.
@@ -315,8 +339,14 @@ impl std::fmt::Debug for FocusContext {
             .field("before", &self.before.chars().count())
             .field("selected", &self.selected.chars().count())
             .field("after", &self.after.chars().count())
+            .field("paragraph_at", &self.paragraph_at)
             .finish()
     }
+}
+
+/// A character that ends a paragraph as [`normalize`] sees it.
+fn is_break(c: char) -> bool {
+    matches!(c, '\n' | '\r' | '\u{2028}' | '\u{2029}')
 }
 
 /// The first `n` characters of `text`.
@@ -630,6 +660,25 @@ mod tests {
         assert_eq!(FocusContext::find("Qwen 4 和 Qwen 4", "Qwen 4"), None, "twice: which one is not known");
         assert_eq!(FocusContext::find(value, "GPT"), None);
         assert_eq!(FocusContext::find(value, "  "), None);
+    }
+
+    /// docs/dictation.md §35.10: a reading says where its paragraph starts in the control when it
+    /// saw the start, so that the follow can tell an edit of the take's paragraph from the caret
+    /// gone to another paragraph that reads alike.
+    #[test]
+    fn a_learning_context_knows_where_its_paragraph_starts() {
+        assert_eq!(FocusContext::around("第一行\n第二行文字", 6, 6).unwrap().paragraph_at, Some(4), "after the line break, in characters");
+        assert_eq!(FocusContext::around("只有一行", 2, 2).unwrap().paragraph_at, Some(0));
+        let units: Vec<u16> = "😀\r\n选中".encode_utf16().collect();
+        assert_eq!(FocusContext::around_utf16(&units, 4, 5).unwrap().paragraph_at, Some(4), "in UTF-16 units");
+        let long: Vec<u16> = format!("{}选", "字".repeat(600)).encode_utf16().collect();
+        assert_eq!(FocusContext::around_utf16(&long, 600, 601).unwrap().paragraph_at, Some(0), "beyond the window decoded");
+        assert_eq!(FocusContext::from_parts_at("前文\r\n这一段", "", "", 10, true).unwrap().paragraph_at, Some(14));
+        assert_eq!(FocusContext::from_parts_at("前文😀\n这", "", "", 10, false).unwrap().paragraph_at, Some(14), "in characters");
+        assert_eq!(FocusContext::from_parts_at("没有换行", "", "", 10, false).unwrap().paragraph_at, None, "the start is beyond what was read");
+        assert_eq!(FocusContext::from_parts_at("没有换行", "", "", 0, false).unwrap().paragraph_at, Some(0), "the text's start");
+        assert_eq!(FocusContext::find("第一句。\r\n今天测试一下Qwen 4 Max", "Qwen 4").unwrap().paragraph_at, Some(5));
+        assert_eq!(FocusContext::from_parts("前", "", "后").unwrap().paragraph_at, None, "a reader that does not say");
     }
 
     #[test]

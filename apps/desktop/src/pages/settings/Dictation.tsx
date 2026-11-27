@@ -1,5 +1,6 @@
 import { MAX_MINUTES_CHOICES, type TFunction } from "@voltip/shared";
 import {
+  Badge,
   Segmented,
   Select,
   SettingsPane,
@@ -23,13 +24,20 @@ function lengthLabel(minutes: number, t: TFunction): string {
  *  the rest of the block unchanged. It used to sit among the 语音模型 page's recognition options;
  *  this is now the only place that sets it. Next to it what the clipboard holds after a paste and
  *  what a take does when the window changed (docs/dictation.md §14.3, `clipboard_after` /
- *  `switched_window`, written the same way), and whether a paste is checked and a result card
- *  stays on screen (§28, `insert_check` / `result_cards_stay`, the same way). Also the longest
+ *  `switched_window`, written the same way), whether a paste is checked and a result card stays
+ *  on screen (§28, `insert_check` / `result_cards_stay`, the same way), and whether the field is
+ *  followed after the paste (§35.10, `follow_edits`, an experiment). Also the longest
  *  recording (§22, `settings_set_recording` with the rest of the recording settings unchanged). */
 export function Dictation() {
   const { backend } = useBackend();
   const { t } = useI18n();
-  const { engines, recording } = useUiState().settings;
+  const { engines, recording, history } = useUiState().settings;
+  // docs/dictation.md §35.10: the follow reads the field the check confirmed, for a history entry.
+  const followNeeds = !engines.insert_check
+    ? t("insertCheck.settings.followNeedsCheck")
+    : !history.enabled
+      ? t("insertCheck.settings.followNeedsHistory")
+      : undefined;
   return (
     <SettingsPane
       title={t("settings.dictation.title")}
@@ -98,6 +106,38 @@ export function Dictation() {
             onChange={(insert_check) => {
               void backend.invoke("settings_set_engines", {
                 engines: { ...engines, insert_check },
+              });
+            }}
+          />
+        </StatusRow>
+        {/* docs/dictation.md §35.10: an experiment, off by default; while the check or the history
+            it needs is off it says why, and cannot be switched on. */}
+        <StatusRow
+          data-testid="follow-edits-row"
+          label={
+            <span className="inline-flex items-center gap-2">
+              {t("insertCheck.settings.follow")}
+              <Badge tone="info">{t("insertCheck.settings.followBadge")}</Badge>
+            </span>
+          }
+          help={
+            <>
+              {t("insertCheck.settings.followHelp")}
+              {followNeeds !== undefined && (
+                <span className="block" data-testid="follow-edits-needs">
+                  {followNeeds}
+                </span>
+              )}
+            </>
+          }>
+          <Toggle
+            checked={engines.follow_edits}
+            // Greyed out only while it cannot be switched on: switched on, it can always go off.
+            disabled={followNeeds !== undefined && !engines.follow_edits}
+            ariaLabel={t("insertCheck.settings.follow")}
+            onChange={(follow_edits) => {
+              void backend.invoke("settings_set_engines", {
+                engines: { ...engines, follow_edits },
               });
             }}
           />
